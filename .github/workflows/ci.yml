@@ -14,7 +14,9 @@ jobs:
       # FoundationModels(英訳機能)のcanImportにはmacOS 26 SDKが必要
       - name: Select Xcode 26
         run: |
-          sudo xcode-select -s /Applications/Xcode_26*.app
+          XCODE=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
           xcodebuild -version
 
       - name: Cache llama.cpp static libs

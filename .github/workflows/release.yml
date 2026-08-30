@@ -17,7 +17,9 @@ jobs:
       # 古いSDKでビルドすると英訳機能が黙って消えるため、後段のotool検証と併せて防ぐ
       - name: Select Xcode 26
         run: |
-          sudo xcode-select -s /Applications/Xcode_26*.app
+          XCODE=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
           xcodebuild -version
 
       - name: Cache llama.cpp static libs
