@@ -121,13 +121,8 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button("irohaを再起動") {
-                    // プロセスを終了すると、次の入力時にシステムが自動で再起動する。
-                    // NSApp.terminate → exit() 経由だと、C++静的デストラクタで
-                    // ggml(llama.cpp)のMetal解放処理がabortしてSIGABRTになり、
-                    // IMEの入力接続が壊れることがある。_exitで終了処理をスキップする
-                    // （モデルやKVキャッシュはプロセス内メモリのみで、失って問題ない）
-                    UserDefaults.standard.synchronize()
-                    _exit(0)
+                    // 終了処理の詳細（_exitを使う理由等）はAppRestarterのコメントを参照
+                    AppRestarter.restartInstalledApp()
                 }
             }
 

@@ -210,9 +210,8 @@ final class UpdateChecker {
             try FileManager.default.copyItem(at: newApp, to: installedURL)
             TISRegisterInputSource(installedURL as CFURL)
 
-            // 次の入力時にシステムが新バージョンを起動する（SettingsViewの再起動ボタンと同じ手法）
-            UserDefaults.standard.synchronize()
-            _exit(0)
+            // 新バージョンを即座に再起動する（入力ソースメニューから消える空白時間を作らない）
+            AppRestarter.restartInstalledApp()
         } catch {
             NSLog("iroha: アップデートエラー: \(error)")
             await Self.showInfoAlert(

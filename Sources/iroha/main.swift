@@ -53,6 +53,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// プロセスを終了し、インストール済みのirohaを即座に再起動する。
+/// システム任せの遅延起動（次の入力まで起動しない）だと、その間
+/// 入力ソースメニューからirohaの項目が消えてユーザを不安にさせるため、
+/// openで明示的に再起動して空白時間をなくす。
+/// exit()ではなく_exit()なのは、ggml(llama.cpp)のC++静的デストラクタが
+/// Metal解放処理でabortすることがあるため（SettingsViewの再起動ボタンと同じ理由）
+enum AppRestarter {
+    static func restartInstalledApp() -> Never {
+        UserDefaults.standard.synchronize()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        // 自プロセスの終了を待ってから起動する（0.3秒で十分）
+        process.arguments = ["-c", "sleep 0.3; /usr/bin/open '\(SelfInstaller.installedURL.path)'"]
+        try? process.run()
+        _exit(0)
+    }
+}
+
 /// zip配布用のセルフインストーラ。
 /// ~/Library/Input Methods 以外から起動されたら、自身をそこへコピーして
 /// 入力ソース登録し、案内を表示して終了する。
@@ -85,6 +103,8 @@ enum SelfInstaller {
                     + " iroha を追加してください。\n初回入力時に変換モデル（約72MB）を自動ダウンロードします。",
                 showsSettingsButton: true
             )
+            // インストール先のirohaを即起動して、入力ソースメニューにすぐ現れるようにする
+            AppRestarter.restartInstalledApp()
         } catch {
             showAlert(
                 message: "インストールに失敗しました",
