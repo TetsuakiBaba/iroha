@@ -28,8 +28,11 @@ final class IrohaInputController: IMKInputController {
         return URL(fileURLWithPath: engineModelPath).deletingPathExtension().lastPathComponent
     }
 
-    /// 変換エンジンはプロセスで1つを共有する（モデルは初回変換時にロード）
-    private static let engine = ZenzEngine(modelPath: engineModelPath)
+    /// 変換エンジンはプロセスで1つを共有する（モデルは初回変換時にロード）。
+    /// ユーザ辞書のデコレータで包み、登録単語を変換結果に反映させる
+    /// （ユーザ辞書が空のときは素通しなのでふるまいは変わらない）
+    private static let engine: any ConversionEngine = UserDictionaryEngine(
+        base: ZenzEngine(modelPath: engineModelPath))
 
     private enum Mode {
         case composing          // 入力・ライブ変換中
@@ -260,6 +263,15 @@ final class IrohaInputController: IMKInputController {
         )
         settingsItem.target = self
         menu.addItem(settingsItem)
+
+        let dictionaryItem = NSMenuItem(
+            title: "ユーザ辞書...",
+            action: #selector(openUserDictionary(_:)),
+            keyEquivalent: ""
+        )
+        dictionaryItem.target = self
+        menu.addItem(dictionaryItem)
+
         menu.addItem(NSMenuItem.separator())
 
         let liveItem = NSMenuItem(
@@ -333,6 +345,13 @@ final class IrohaInputController: IMKInputController {
     }
 
     @objc private func openSettings(_ sender: Any?) {
+        (NSApp.delegate as? AppDelegate)?.openSettingsWindow()
+    }
+
+    // メニュー操作はメインスレッドから来る（SettingsUIStateは@MainActor）
+    @MainActor
+    @objc private func openUserDictionary(_ sender: Any?) {
+        SettingsUIState.shared.showingUserDictionary = true
         (NSApp.delegate as? AppDelegate)?.openSettingsWindow()
     }
 

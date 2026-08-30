@@ -50,6 +50,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 変換モデルが無ければバックグラウンドでダウンロード開始
         ModelDownloader.shared.startIfNeeded()
+
+        // macOSのユーザ辞書の取り込み（設定がONのときだけ）
+        UserDictionarySync.syncOnLaunchIfEnabled()
     }
 }
 

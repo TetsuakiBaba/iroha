@@ -10,7 +10,7 @@ import IrohaCore
 //   iroha-cli bench <eval.tsv>                    : 評価（TSV: 読み\t正解）。精度とレイテンシを報告
 //   iroha-cli ajimee <evaluation_items.json>      : AJIMEE-Bench評価（acc@1・MinCER）。scripts/fetch-ajimee.shで取得
 //   iroha-cli repl                                : 対話モード（1行ずつ変換、レイテンシ表示）
-//   環境変数 IROHA_MODEL でモデルパスを上書き可能
+//   環境変数 IROHA_MODEL でモデルパス、IROHA_USER_DICT でユーザ辞書を上書き可能
 
 func romajiToKana(_ input: String) -> String {
     // ASCII文字を含む場合のみローマ字として解釈する
@@ -38,14 +38,25 @@ func editDistance(_ a: [Character], _ b: [Character]) -> Int {
     return previous[b.count]
 }
 
-func makeEngine() -> ZenzEngine {
+/// IME本体と同じ構成（zenz + ユーザ辞書）でエンジンを組み立てる。
+/// IROHA_USER_DICT でユーザ辞書のJSONを差し替えられる（既定は本体と同じファイル）
+func makeEngine() -> any ConversionEngine {
+    let zenz: ZenzEngine
     if let path = ProcessInfo.processInfo.environment["IROHA_MODEL"] {
-        return ZenzEngine(modelPath: path)
+        zenz = ZenzEngine(modelPath: path)
+    } else {
+        zenz = ZenzEngine()
     }
-    return ZenzEngine()
+    let store: UserDictionaryStore
+    if let path = ProcessInfo.processInfo.environment["IROHA_USER_DICT"] {
+        store = UserDictionaryStore(url: URL(fileURLWithPath: path))
+    } else {
+        store = .shared
+    }
+    return UserDictionaryEngine(base: zenz, dictionary: { store.current })
 }
 
-func convertAndPrint(engine: ZenzEngine, reading: String, context: String, count: Int = 1) async {
+func convertAndPrint(engine: any ConversionEngine, reading: String, context: String, count: Int = 1) async {
     let kana = romajiToKana(reading)
     do {
         let start = ContinuousClock.now

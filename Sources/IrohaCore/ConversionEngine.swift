@@ -10,6 +10,13 @@ public protocol ConversionEngine: Sendable {
     ///   - candidateCount: 返す候補数の上限（1ならグリーディ、2以上でビーム探索）
     /// - Returns: 尤度順の変換候補
     func convert(reading: String, context: String, candidateCount: Int) async throws -> [String]
+
+    /// モデルの事前ロード（初回変換のもたつき防止）。必要のない実装は何もしなくてよい
+    func prewarm() async throws
+}
+
+extension ConversionEngine {
+    public func prewarm() async throws {}
 }
 
 public enum ConversionError: Error, CustomStringConvertible {

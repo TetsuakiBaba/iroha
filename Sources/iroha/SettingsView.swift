@@ -1,6 +1,14 @@
 import SwiftUI
 import IrohaCore
 
+/// 設定ウィンドウの一時的な表示状態（メニューから直接ユーザ辞書を開く等）。
+/// ウィンドウの生成タイミングに依存しないよう、プロセスで1つを共有する
+@MainActor
+final class SettingsUIState: ObservableObject {
+    static let shared = SettingsUIState()
+    @Published var showingUserDictionary = false
+}
+
 /// irohaの設定ウィンドウ。値はUserDefaults（irohaのドメイン）に保存され、
 /// コントローラ側が都度読み出す。
 struct SettingsView: View {
@@ -14,11 +22,14 @@ struct SettingsView: View {
     @AppStorage("ollamaModel") private var ollamaModel = ""
     @AppStorage("lmStudioModel") private var lmStudioModel = ""
     @AppStorage("autoUpdateCheck") private var autoUpdateCheck = true
+    @AppStorage(UserDictionarySync.autoSyncKey) private var syncSystemDictionary = false
     @ObservedObject private var modelDownloader = ModelDownloader.shared
 
     @State private var remoteModels: [String] = []
     @State private var remoteModelsError: String?
     @State private var loadingRemoteModels = false
+    @ObservedObject private var uiState = SettingsUIState.shared
+    @State private var userDictionaryCount = UserDictionaryStore.shared.entries.count
 
     var body: some View {
         Form {
@@ -70,6 +81,21 @@ struct SettingsView: View {
             }
             .onChange(of: translationService) { fetchRemoteModels() }
             .onAppear { fetchRemoteModels() }
+
+            Section("ユーザ辞書") {
+                LabeledContent("登録単語") {
+                    HStack {
+                        Text("\(userDictionaryCount) 件").foregroundStyle(.secondary)
+                        Button("編集...") { uiState.showingUserDictionary = true }
+                    }
+                }
+                Toggle("起動時にmacOSのユーザ辞書を取り込む", isOn: $syncSystemDictionary)
+                Text("「システム設定 > キーボード > ユーザ辞書」に登録した単語を取り込みます"
+                    + "（読み取りのみ。macOS側の辞書は変更しません）。"
+                    + "取り込んだ単語をirohaで編集すると、以後の取り込みでは上書きされません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             Section("句読点") {
                 Picker("句読点スタイル", selection: $punctuationStyle) {
@@ -156,6 +182,12 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 440)
         .fixedSize(horizontal: false, vertical: true)
+        .sheet(isPresented: $uiState.showingUserDictionary) { UserDictionaryView() }
+        .onReceive(
+            NotificationCenter.default.publisher(for: UserDictionaryStore.didChangeNotification)
+        ) { _ in
+            userDictionaryCount = UserDictionaryStore.shared.entries.count
+        }
     }
 
     // MARK: - 翻訳サービス（Ollama / LM Studio）

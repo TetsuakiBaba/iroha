@@ -30,7 +30,8 @@ let package = Package(
             name: "iroha",
             dependencies: ["IrohaCore"],
             swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
-            linkerSettings: llamaLinkerSettings
+            // sqlite3: macOSのユーザ辞書（TextReplacements.db）の読み取りに使う
+            linkerSettings: llamaLinkerSettings + [.linkedLibrary("sqlite3")]
         ),
         // 変換エンジンをコマンドラインで試す検証用ハーネス
         .executableTarget(

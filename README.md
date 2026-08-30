@@ -5,6 +5,7 @@
 - **ライブ変換**: ことえりのライブ変換のように、入力に追従して読みをLLMへ送り、変換結果をリアルタイム表示。Enterで確定
 - **候補変換**: スペースキーでn-best候補を候補ウィンドウに表示
 - **文脈対応**: 直前に確定した文字列を条件としてLLMに与え、文脈に合った変換を行う
+- **ユーザ辞書**: 固有名詞などを登録して変換に反映。macOSのユーザ辞書（システム設定 > キーボード > ユーザ辞書）から取り込める
 - **ローカル動作**: 変換モデルは [zenz-v3.1-small](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf)（GPT-2系95M・GGUF・約70MB）を llama.cpp（Metal）で実行。実測レイテンシは1変換あたり15〜30ms程度（Apple Silicon）
 
 ## インストール
@@ -72,6 +73,19 @@ Ollama / LM Studio から選択でき、Ollama / LM Studio では利用可能な
 パスワード欄（Secure Input）ではmacOSがIMEをシステムレベルで無効化するため、
 iroha側の対応は不要。
 
+### ユーザ辞書
+
+メニューの「ユーザ辞書...」（または設定ウィンドウの「編集...」）から、よみと単語を登録できる。
+登録した単語は、読み全体が一致すればLLMを介さずそのまま変換結果になり、
+文の一部が一致する場合は一致部分を単語で埋めて残りだけをLLMが変換する
+（例:「きららざかにいく」→「雲母坂」+「に行く」）。
+
+「macOSのユーザ辞書から取り込む」で、システム設定 > キーボード > ユーザ辞書 に
+登録済みの単語を取り込める（設定でONにすれば起動時に自動同期）。読み取り専用で、
+macOS側の辞書は変更しない。ローマ字入力では到達できないよみ（"omw" のような
+ASCIIショートカット）は取り込みの対象外。取り込んだ単語をirohaで編集すると
+以後の同期では上書きされない。
+
 ## 開発
 
 ```sh
@@ -87,6 +101,9 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
 - モデルの評価は `iroha-cli bench testdata/eval.tsv`（完全一致率・CER・レイテンシ）。
   自作モデルの学習パイプライン（データ準備→学習→GGUF変換→評価）は [training/](training/README.md) を参照
 - モデルファイルは `~/Library/Application Support/iroha/models/` に置く（環境変数 `IROHA_MODEL` で上書き可）
+- ユーザ辞書は `~/Library/Application Support/iroha/user-dictionary.json`（環境変数 `IROHA_USER_DICT` で
+  iroha-cli から差し替え可）。macOSのユーザ辞書の実体は `~/Library/KeyboardServices/TextReplacements.db`
+  （非公開スキーマのSQLite。実データが未チェックポイントのWALにあるため db/-wal/-shm ごとコピーして読む）
 - zenzのプロンプト形式: `[U+EE02 + 左文脈] + U+EE00 + カタカナ読み + U+EE01 → 変換結果`
 - llama.cppにはzenzのpre-tokenizer名（`gpt2-small-japanese-char`）を認識させる
   [パッチ](patches/llama-cpp-zenz-pretokenizer.patch)を当てている（build-llama.shが自動適用）
