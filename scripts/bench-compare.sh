@@ -11,12 +11,29 @@
 #     ~/Library/Application\ Support/iroha/models/zenz-v3.1-small.gguf \
 #     training/iroha-llmjp-150m/iroha-llmjp-150m-f16.gguf
 set -euo pipefail
-cd "$(dirname "$0")/.."
 
 if [ $# -lt 1 ]; then
     echo "使い方: $0 <model.gguf> [model.gguf ...]" >&2
     exit 1
 fi
+
+# 相対パスは呼び出し時のカレントディレクトリ基準で絶対パス化してから
+# リポジトリルートへ移動する（cd後に解決すると別の場所を指してしまう）
+MODELS=()
+for MODEL in "$@"; do
+    case "$MODEL" in
+        /*) ;;
+        *) MODEL="$PWD/$MODEL" ;;
+    esac
+    if [ ! -f "$MODEL" ]; then
+        echo "エラー: モデルファイルが見つかりません: $MODEL" >&2
+        exit 1
+    fi
+    MODELS+=("$MODEL")
+done
+set -- "${MODELS[@]}"
+
+cd "$(dirname "$0")/.."
 
 if [ ! -f testdata/ajimee/evaluation_items.json ]; then
     echo "==> AJIMEE-Benchデータを取得" >&2

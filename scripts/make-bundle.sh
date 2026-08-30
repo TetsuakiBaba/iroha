@@ -17,7 +17,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/iroha "$APP/Contents/MacOS/iroha"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
-cp Resources/main.tiff Resources/en.tiff "$APP/Contents/Resources/"
+cp Resources/main.tiff Resources/en.tiff Resources/AppIcon.icns "$APP/Contents/Resources/"
 cp -R Resources/ja.lproj Resources/en.lproj "$APP/Contents/Resources/"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
