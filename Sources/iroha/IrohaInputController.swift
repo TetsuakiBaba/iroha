@@ -11,14 +11,25 @@ import IrohaCore
 @objc(IrohaInputController)
 final class IrohaInputController: IMKInputController {
 
-    /// 変換エンジンはプロセスで1つを共有する（モデルは初回変換時にロード）。
+    /// エンジンが読み込むモデルのパス（プロセス起動時に確定。変更は再起動後に反映）。
     /// UserDefaultsの"modelPath"でモデルファイルを差し替えられる
-    private static let engine: ZenzEngine = {
+    static let engineModelPath: String = {
         if let path = UserDefaults.standard.string(forKey: "modelPath"), !path.isEmpty {
-            return ZenzEngine(modelPath: path)
+            return path
         }
-        return ZenzEngine()
+        return ZenzEngine.defaultModelPath
     }()
+
+    /// 表示用のモデル名（ファイル名。未取得ならその旨）
+    static var engineModelDisplayName: String {
+        guard FileManager.default.fileExists(atPath: engineModelPath) else {
+            return "モデル未取得"
+        }
+        return URL(fileURLWithPath: engineModelPath).deletingPathExtension().lastPathComponent
+    }
+
+    /// 変換エンジンはプロセスで1つを共有する（モデルは初回変換時にロード）
+    private static let engine = ZenzEngine(modelPath: engineModelPath)
 
     private enum Mode {
         case composing          // 入力・ライブ変換中
@@ -138,6 +149,8 @@ final class IrohaInputController: IMKInputController {
         Task.detached { TranslationService.prewarm() }
         // アップデートの自動確認（1日1回まで、設定でOFF可）
         Task { await UpdateChecker.shared.autoCheckIfDue() }
+        // 変換モデルが未取得のままなら再試行（起動時にオフラインだった場合など。60秒スロットル付き）
+        ModelDownloader.shared.startIfNeeded()
     }
 
     override func setValue(_ value: Any!, forTag tag: Int, client sender: Any!) {
@@ -295,8 +308,16 @@ final class IrohaInputController: IMKInputController {
         menu.addItem(updateItem)
 
         menu.addItem(NSMenuItem.separator())
+        // 変換モデルの取得状況（未取得・ダウンロード中・失敗のときだけ表示）
+        if let status = ModelDownloader.shared.statusMenuText {
+            let statusItem = NSMenuItem(title: status, action: nil, keyEquivalent: "")
+            statusItem.isEnabled = false
+            menu.addItem(statusItem)
+        }
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let versionItem = NSMenuItem(title: "iroha \(version) (zenz-v3.1)", action: nil, keyEquivalent: "")
+        let versionItem = NSMenuItem(
+            title: "iroha \(version) (\(Self.engineModelDisplayName))",
+            action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
         menu.addItem(versionItem)
         return menu

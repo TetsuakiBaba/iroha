@@ -148,9 +148,12 @@ struct SettingsView: View {
 
             Section {
                 LabeledContent("バージョン") {
-                    Text("\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") (zenz-v3.1 / llama.cpp)")
+                    Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")
                 }
-                Text("変換モデル zenz-v3.1（Keita Miwa氏, CC-BY-SA-4.0）/ llama.cpp（MIT）")
+                LabeledContent("変換モデル") {
+                    Text(IrohaInputController.engineModelDisplayName)
+                }
+                Text("既定の変換モデル zenz-v3.1（Keita Miwa氏, CC-BY-SA-4.0）/ llama.cpp（MIT）")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

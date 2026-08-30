@@ -21,13 +21,32 @@ final class ModelDownloader: NSObject, ObservableObject {
     @Published private(set) var state: State = .idle
 
     private var session: URLSession?
+    private var lastAttempt: Date?
 
-    /// モデルが未設定・未取得ならバックグラウンドでダウンロードを開始する
+    /// IMEメニューに出す取得状況（表示不要ならnil）
+    var statusMenuText: String? {
+        // 独自モデル指定時や取得済みなら表示しない
+        if let custom = UserDefaults.standard.string(forKey: "modelPath"), !custom.isEmpty { return nil }
+        if FileManager.default.fileExists(atPath: ZenzEngine.defaultModelPath) { return nil }
+        switch state {
+        case .downloading(let progress):
+            return "変換モデルをダウンロード中… \(Int(progress * 100))%"
+        case .failed:
+            return "変換モデルのダウンロードに失敗（自動で再試行します）"
+        default:
+            return "変換モデルを準備中…"
+        }
+    }
+
+    /// モデルが未設定・未取得ならバックグラウンドでダウンロードを開始する。
+    /// 失敗後の再試行はactivateServerからも呼ばれるため60秒のスロットル付き
     func startIfNeeded() {
         // ユーザーが独自モデルを指定している場合は何もしない
         if let custom = UserDefaults.standard.string(forKey: "modelPath"), !custom.isEmpty { return }
         guard !FileManager.default.fileExists(atPath: ZenzEngine.defaultModelPath) else { return }
         if case .downloading = state { return }
+        if let last = lastAttempt, Date().timeIntervalSince(last) < 60 { return }
+        lastAttempt = Date()
 
         NSLog("iroha: 変換モデルをダウンロードします: \(Self.modelURL)")
         setState(.downloading(progress: 0))
