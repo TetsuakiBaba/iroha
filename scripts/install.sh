@@ -11,8 +11,11 @@ swift build -c release --product iroha
 APP=".build/iroha.app"
 DEST="$HOME/Library/Input Methods/iroha.app"
 
-# バンドル組み立てと署名（SIGN_IDENTITY未指定ならad-hoc）
-./scripts/make-bundle.sh
+# バンドル組み立てと署名（SIGN_IDENTITY未指定ならad-hoc）。
+# 開発ビルドはgit describeのバージョン（例: 0.4.2-3-g7aae579）を表示して
+# リリースビルドと区別できるようにする（リリースはCIがタグから注入）
+VERSION="${VERSION:-$(git describe --tags --dirty --always 2>/dev/null | sed 's/^v//')}" \
+  ./scripts/make-bundle.sh
 
 echo "==> インストール: $DEST"
 mkdir -p "$HOME/Library/Input Methods"

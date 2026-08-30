@@ -27,4 +27,6 @@ swift build && swift test        # ビルドと単体テスト
 - FoundationModelsはmacOS 26+のため `#if canImport` + `@available(macOS 26.0, *)` ガード必須
   （パッケージのフロアはmacOS 14）
 - llama.cppの静的ライブラリは `./scripts/build-llama.sh` で `vendor/dist` に生成（未コミット）
-- バージョンはgitタグが唯一の情報源（Info.plistのコミット値は開発ビルド表示用）
+- バージョンはgitタグが唯一の情報源。リリースはCIがタグから、開発ビルドは
+  install.shがgit describeから注入する（Info.plistのコミット値はフォールバック。
+  リリース時にゆるく追随させる）
