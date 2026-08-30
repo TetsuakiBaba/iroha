@@ -10,8 +10,15 @@ struct SettingsView: View {
     @AppStorage("candidateCount") private var candidateCount = 8
     @AppStorage("modelPath") private var modelPath = ""
     @AppStorage("translateCommitModifier") private var translateCommitModifier = "control"
+    @AppStorage(TranslationBackend.userDefaultsKey) private var translationService = "apple"
+    @AppStorage("ollamaModel") private var ollamaModel = ""
+    @AppStorage("lmStudioModel") private var lmStudioModel = ""
     @AppStorage("autoUpdateCheck") private var autoUpdateCheck = true
     @ObservedObject private var modelDownloader = ModelDownloader.shared
+
+    @State private var remoteModels: [String] = []
+    @State private var remoteModelsError: String?
+    @State private var loadingRemoteModels = false
 
     var body: some View {
         Form {
@@ -35,12 +42,34 @@ struct SettingsView: View {
                     Text("⌥ option + Return").tag("option")
                     Text("⇧ shift + Return").tag("shift")
                 }
-                Text(TranslationService.isAvailable
-                     ? "未確定文字列をオンデバイスAI（Apple Intelligence）で英訳して入力します。"
-                     : "Apple Intelligence（macOS 26以降で有効化）が必要です。利用できない間は通常の確定になります。")
+                Picker("翻訳サービス", selection: $translationService) {
+                    Text("Apple Intelligence（オンデバイス）").tag("apple")
+                    Text("Ollama").tag("ollama")
+                    Text("LM Studio").tag("lmstudio")
+                }
+                if translationService != "apple" {
+                    Picker("モデル", selection: remoteModelBinding) {
+                        Text("選択してください").tag("")
+                        ForEach(remoteModelChoices, id: \.self) { model in
+                            Text(model).tag(model)
+                        }
+                    }
+                    HStack {
+                        Button("モデル一覧を更新") { fetchRemoteModels() }
+                        if loadingRemoteModels {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                    if let error = remoteModelsError {
+                        Text(error).font(.caption).foregroundStyle(.red)
+                    }
+                }
+                Text(translationCaption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .onChange(of: translationService) { fetchRemoteModels() }
+            .onAppear { fetchRemoteModels() }
 
             Section("句読点") {
                 Picker("句読点スタイル", selection: $punctuationStyle) {
@@ -129,5 +158,64 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 440)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // MARK: - 翻訳サービス（Ollama / LM Studio）
+
+    private var remoteModelBinding: Binding<String> {
+        translationService == "ollama" ? $ollamaModel : $lmStudioModel
+    }
+
+    /// 選択中のモデルが一覧に無い場合（サーバ側で削除された等）も選択肢として残す
+    private var remoteModelChoices: [String] {
+        let current = remoteModelBinding.wrappedValue
+        if !current.isEmpty, !remoteModels.contains(current) {
+            return [current] + remoteModels
+        }
+        return remoteModels
+    }
+
+    private var translationCaption: String {
+        switch translationService {
+        case "ollama":
+            return "ローカルのOllama（\(RemoteTranslator.ollamaEndpoint)）で英訳します。"
+                + "thinking（思考過程）は無効化されます。失敗時は通常の確定になります。"
+        case "lmstudio":
+            return "ローカルのLM Studio（\(RemoteTranslator.lmStudioEndpoint)）で英訳します。"
+                + "thinking（思考過程）は出力されません。失敗時は通常の確定になります。"
+        default:
+            return TranslationService.appleAvailable
+                ? "未確定文字列をオンデバイスAI（Apple Intelligence）で英訳して入力します。"
+                : "Apple Intelligence（macOS 26以降で有効化）が必要です。利用できない間は通常の確定になります。"
+        }
+    }
+
+    private func fetchRemoteModels() {
+        guard translationService != "apple" else { return }
+        let service: RemoteTranslator.Service = translationService == "ollama" ? .ollama : .lmstudio
+        loadingRemoteModels = true
+        remoteModelsError = nil
+        Task {
+            do {
+                let models = try await RemoteTranslator.listModels(service: service)
+                await MainActor.run {
+                    loadingRemoteModels = false
+                    remoteModels = models
+                    if models.isEmpty {
+                        remoteModelsError = "\(service.displayName)にモデルが見つかりません。"
+                    } else if remoteModelBinding.wrappedValue.isEmpty {
+                        // 未選択なら先頭を自動選択
+                        remoteModelBinding.wrappedValue = models[0]
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    loadingRemoteModels = false
+                    remoteModels = []
+                    remoteModelsError =
+                        "\(service.displayName)に接続できません。起動しているか確認してください。"
+                }
+            }
+        }
     }
 }

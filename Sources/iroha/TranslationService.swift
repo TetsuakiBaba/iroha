@@ -3,11 +3,38 @@ import Foundation
 import FoundationModels
 #endif
 
-/// 日本語→英語のオンデバイス翻訳（Apple FoundationModels / macOS 26+）。
+/// 翻訳バックエンドの種類（設定パネルで選択）
+enum TranslationBackend: String, CaseIterable {
+    case apple      // Apple FoundationModels（オンデバイス、macOS 26+）
+    case ollama     // ローカルのOllamaサーバ
+    case lmstudio   // ローカルのLM Studioサーバ
+
+    static let userDefaultsKey = "translationService"
+
+    static var current: TranslationBackend {
+        TranslationBackend(
+            rawValue: UserDefaults.standard.string(forKey: userDefaultsKey) ?? "apple"
+        ) ?? .apple
+    }
+}
+
+/// 日本語→英語翻訳のディスパッチャ。
+/// バックエンド（Apple / Ollama / LM Studio）を設定に応じて切り替える。
 /// 利用不可・失敗時はnilを返し、呼び出し側が日本語をそのまま確定する。
 enum TranslationService {
 
     static var isAvailable: Bool {
+        switch TranslationBackend.current {
+        case .apple:
+            return appleAvailable
+        case .ollama:
+            return !RemoteTranslator.ollamaModel.isEmpty
+        case .lmstudio:
+            return !RemoteTranslator.lmStudioModel.isEmpty
+        }
+    }
+
+    static var appleAvailable: Bool {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
             if case .available = SystemLanguageModel.default.availability { return true }
@@ -26,17 +53,18 @@ enum TranslationService {
     }
     #endif
 
-    /// モデルの事前ロードを促す（プロセスで一度だけ。失敗しても無害）
+    /// モデルの事前ロードを促す（Appleバックエンド時のみ・プロセスで一度だけ。失敗しても無害）
     static func prewarm() {
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), isAvailable, !Prewarm.done {
+        if #available(macOS 26.0, *), TranslationBackend.current == .apple,
+           appleAvailable, !Prewarm.done {
             Prewarm.done = true
             Prewarm.session.prewarm()
         }
         #endif
     }
 
-    private static let instructions = """
+    static let instructions = """
         You are a Japanese-to-English translation engine. \
         Translate the user's Japanese text into natural English. \
         Output ONLY the English translation - no quotation marks, no romaji, \
@@ -44,19 +72,35 @@ enum TranslationService {
         """
 
     /// ストリーミング翻訳。途中経過（累積の英文）をonPartialへ随時渡し、完成文を返す。
-    /// stallTimeoutの間トークンが1つも進まなければ打ち切ってnilを返す
+    /// ストールタイムアウトの間サーバから何も届かなければ打ち切ってnilを返す
     /// （進捗がある限りは打ち切らない。呼び出し側はnilで日本語にフォールバックする）
     static func translate(
         _ japanese: String,
-        stallTimeout: TimeInterval = 10,
         onPartial: @escaping @Sendable (String) -> Void = { _ in }
     ) async -> String? {
+        switch TranslationBackend.current {
+        case .apple:
+            return await translateWithApple(japanese, stallTimeout: 10, onPartial: onPartial)
+        case .ollama:
+            // ローカルLLMはモデルのコールドロードに時間がかかることがあるため長めに待つ
+            return await RemoteTranslator.translate(
+                japanese, service: .ollama, stallTimeout: 30, onPartial: onPartial)
+        case .lmstudio:
+            return await RemoteTranslator.translate(
+                japanese, service: .lmstudio, stallTimeout: 30, onPartial: onPartial)
+        }
+    }
+
+    private static func translateWithApple(
+        _ japanese: String,
+        stallTimeout: TimeInterval,
+        onPartial: @escaping @Sendable (String) -> Void
+    ) async -> String? {
         #if canImport(FoundationModels)
-        guard #available(macOS 26.0, *), isAvailable else { return nil }
+        guard #available(macOS 26.0, *), appleAvailable else { return nil }
         // セッションは毎回作る: 履歴が翻訳結果に影響しないよう常にステートレスにする
         let session = LanguageModelSession(instructions: instructions)
-        let progress = ProgressBox()
-        let respondTask = Task { () -> String in
+        return await runWithStallWatchdog(stallTimeout: stallTimeout) { progress in
             var latest = ""
             let stream = session.streamResponse(
                 to: japanese,
@@ -69,7 +113,20 @@ enum TranslationService {
             }
             return latest
         }
-        // ストール監視: 一定時間進捗がなければキャンセル（生成が続く限りは待つ）
+        #else
+        return nil
+        #endif
+    }
+
+    /// ストール監視付きで生成処理を実行する共通ヘルパー。
+    /// stallTimeoutの間progressが進まなければ処理をキャンセルしnilを返す。
+    /// エラー（ガードレール拒否・接続失敗・キャンセル）もnilに落とす
+    static func runWithStallWatchdog(
+        stallTimeout: TimeInterval,
+        _ body: @escaping @Sendable (ProgressBox) async throws -> String
+    ) async -> String? {
+        let progress = ProgressBox()
+        let task = Task { try await body(progress) }
         let watchdog = Task {
             var last = progress.value
             while !Task.isCancelled {
@@ -77,7 +134,7 @@ enum TranslationService {
                 if Task.isCancelled { return }
                 let now = progress.value
                 if now == last {
-                    respondTask.cancel()
+                    task.cancel()
                     return
                 }
                 last = now
@@ -85,22 +142,18 @@ enum TranslationService {
         }
         defer { watchdog.cancel() }
         do {
-            let text = try await respondTask.value
+            let text = try await task.value
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return text.isEmpty ? nil : text
         } catch {
-            // ガードレール拒否・レート制限・ストール打ち切り（キャンセル）もここに落ちる
             NSLog("iroha: 翻訳エラー: \(error)")
             return nil
         }
-        #else
-        return nil
-        #endif
     }
 }
 
 /// ストリーム進捗のスレッド安全なカウンタ（ストール監視用）
-private final class ProgressBox: @unchecked Sendable {
+final class ProgressBox: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
     func bump() {
