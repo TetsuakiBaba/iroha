@@ -1,0 +1,4 @@
+/* 入力メニューに表示される名前 */
+"CFBundleName" = "iroha";
+"com.apple.inputmethod.Japanese" = "ひらがな (iroha)";
+"com.apple.inputmethod.Roman" = "英数 (iroha)";

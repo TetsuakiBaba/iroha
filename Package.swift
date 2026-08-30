@@ -1,0 +1,49 @@
+// swift-tools-version:6.0
+import PackageDescription
+
+// llama.cpp（vendor/dist に scripts/build-llama.sh がスタティックビルドを配置する）
+let llamaHeaderFlags: [String] = ["-Xcc", "-Ivendor/dist/include"]
+let llamaLinkerSettings: [LinkerSetting] = [
+    .unsafeFlags(["-Lvendor/dist/lib"]),
+    .linkedLibrary("c++"),
+    .linkedFramework("Metal"),
+    .linkedFramework("MetalKit"),
+    .linkedFramework("Accelerate"),
+    .linkedFramework("Foundation"),
+]
+
+let package = Package(
+    name: "iroha",
+    platforms: [.macOS(.v14)],
+    targets: [
+        // llama.cpp C APIへのブリッジ
+        .systemLibrary(name: "CLlama", path: "Sources/CLlama"),
+        // 変換ロジック（ローマ字→かな、zenz変換エンジン）。IMEなしで単体テスト可能
+        .target(
+            name: "IrohaCore",
+            dependencies: ["CLlama"],
+            swiftSettings: [.unsafeFlags(llamaHeaderFlags)],
+            linkerSettings: llamaLinkerSettings
+        ),
+        // IME本体（InputMethodKit）。scripts/install.shで.appバンドルに組み立てる
+        .executableTarget(
+            name: "iroha",
+            dependencies: ["IrohaCore"],
+            swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
+            linkerSettings: llamaLinkerSettings
+        ),
+        // 変換エンジンをコマンドラインで試す検証用ハーネス
+        .executableTarget(
+            name: "iroha-cli",
+            dependencies: ["IrohaCore"],
+            swiftSettings: [.unsafeFlags(llamaHeaderFlags)],
+            linkerSettings: llamaLinkerSettings
+        ),
+        .testTarget(
+            name: "IrohaCoreTests",
+            dependencies: ["IrohaCore"],
+            swiftSettings: [.unsafeFlags(llamaHeaderFlags)],
+            linkerSettings: llamaLinkerSettings
+        ),
+    ]
+)

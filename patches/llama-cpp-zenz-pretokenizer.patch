@@ -1,0 +1,12 @@
+diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
+index ff926ce..0924d41 100644
+--- a/src/llama-vocab.cpp
++++ b/src/llama-vocab.cpp
+@@ -2185,6 +2185,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+                 pre_type = LLAMA_VOCAB_PRE_TYPE_STARCODER;
+             } else if (
+                     tokenizer_pre == "gpt-2"   ||
++                    tokenizer_pre == "gpt2-small-japanese-char" || // iroha: zenz (ku-nlp/gpt2-small-japanese-char) support
+                     tokenizer_pre == "phi-2"   ||
+                     tokenizer_pre == "jina-es" ||
+                     tokenizer_pre == "jina-de" ||

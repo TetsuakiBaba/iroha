@@ -1,0 +1,4 @@
+/* Names shown in the input source menu */
+"CFBundleName" = "iroha";
+"com.apple.inputmethod.Japanese" = "Hiragana (iroha)";
+"com.apple.inputmethod.Roman" = "Alphanumeric (iroha)";

@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      # FoundationModels(英訳機能)のcanImportにはmacOS 26 SDKが必要
+      - name: Select Xcode 26
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26*.app
+          xcodebuild -version
+
+      - name: Cache llama.cpp static libs
+        id: llama-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/dist
+          key: llama-${{ runner.os }}-${{ runner.arch }}-b10689-${{ hashFiles('patches/llama-cpp-zenz-pretokenizer.patch', 'scripts/build-llama.sh') }}
+
+      - name: Build llama.cpp
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-llama.sh
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test

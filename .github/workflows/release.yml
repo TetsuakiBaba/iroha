@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # gh release create
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      # FoundationModels(英訳機能)のcanImportにはmacOS 26 SDKが必要。
+      # 古いSDKでビルドすると英訳機能が黙って消えるため、後段のotool検証と併せて防ぐ
+      - name: Select Xcode 26
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26*.app
+          xcodebuild -version
+
+      - name: Cache llama.cpp static libs
+        id: llama-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/dist
+          key: llama-${{ runner.os }}-${{ runner.arch }}-b10689-${{ hashFiles('patches/llama-cpp-zenz-pretokenizer.patch', 'scripts/build-llama.sh') }}
+
+      - name: Build llama.cpp
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-llama.sh
+
+      - name: Build
+        run: swift build -c release --product iroha
+
+      - name: Verify FoundationModels linkage
+        run: |
+          otool -l .build/release/iroha | grep -q FoundationModels.framework \
+            || { echo "::error::FoundationModels not linked - SDK too old, 英訳機能が消えています"; exit 1; }
+
+      - name: Import signing certificate
+        env:
+          P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          P12_PASS: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/build.keychain-db"
+          KC_PASS=$(uuidgen)
+          security create-keychain -p "$KC_PASS" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PASS" "$KC"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$P12_PASS" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PASS" "$KC" > /dev/null
+          security list-keychains -d user -s "$KC" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Assemble and sign bundle
+        env:
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          VERSION="$VERSION" BUILD_NUMBER="${{ github.run_number }}" ./scripts/make-bundle.sh
+          codesign --verify --strict --verbose=2 .build/iroha.app
+
+      - name: Notarize and staple
+        env:
+          KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          echo "$KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          ditto -c -k --keepParent .build/iroha.app "$RUNNER_TEMP/iroha-notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/iroha-notarize.zip" \
+            --key "$RUNNER_TEMP/AuthKey.p8" \
+            --key-id "${{ secrets.NOTARY_KEY_ID }}" \
+            --issuer "${{ secrets.NOTARY_ISSUER_ID }}" \
+            --wait --timeout 30m
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+          xcrun stapler staple .build/iroha.app
+          ditto -c -k --keepParent .build/iroha.app "iroha-$VERSION.zip"
+
+      - name: Verify Gatekeeper acceptance
+        run: spctl --assess --type execute --verbose=4 .build/iroha.app
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PRERELEASE=""
+          case "$GITHUB_REF_NAME" in *-*) PRERELEASE="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" "iroha-$VERSION.zip" \
+            --title "iroha $VERSION" --generate-notes $PRERELEASE

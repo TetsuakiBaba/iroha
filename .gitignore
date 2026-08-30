@@ -1,0 +1,13 @@
+.build/
+.DS_Store
+vendor/llama.cpp/
+vendor/dist/
+*.gguf
+.venv/
+training/base/
+training/train*.txt
+training/__pycache__/
+training/imellm-llmjp-150m/
+training/iroha-*/
+testdata/ajimee/
+training/*.log
