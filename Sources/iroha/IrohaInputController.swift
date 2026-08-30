@@ -29,10 +29,11 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 変換エンジンはプロセスで1つを共有する（モデルは初回変換時にロード）。
-    /// ユーザ辞書のデコレータで包み、登録単語を変換結果に反映させる
-    /// （ユーザ辞書が空のときは素通しなのでふるまいは変わらない）
-    private static let engine: any ConversionEngine = UserDictionaryEngine(
-        base: ZenzEngine(modelPath: engineModelPath))
+    /// 学習 → ユーザ辞書 → LLM の順にデコレータで包む
+    /// （どちらも空なら素通しなのでふるまいは変わらない）
+    private static let engine: any ConversionEngine = LearningEngine(
+        base: UserDictionaryEngine(base: ZenzEngine(modelPath: engineModelPath)),
+        dictionary: { LearningSettings.dictionary })
 
     private enum Mode {
         case composing          // 入力・ライブ変換中
@@ -113,6 +114,9 @@ final class IrohaInputController: IMKInputController {
 
     /// 文節変換中の状態
     private var segments: [BunsetsuSegment] = []
+    /// 文節変換に入った時点のエンジンの変換結果。
+    /// これと違う内容で確定されたら「ユーザによる修正」とみなして学習する
+    private var segmentBaseline: String?
     private var currentSegmentIndex = 0
     /// 非同期の文節処理が古い状態に適用されるのを防ぐ世代カウンタ
     private var segmentGeneration = 0
@@ -514,6 +518,7 @@ final class IrohaInputController: IMKInputController {
         // 暫定表示: 全体を1文節として今の表示内容をそのまま使う
         let interim = (lastConversion?.reading == reading) ? lastConversion!.result : reading
         segments = [BunsetsuSegment(reading: reading, result: interim, candidates: nil)]
+        segmentBaseline = (lastConversion?.reading == reading) ? lastConversion?.result : nil
         currentSegmentIndex = 0
         refreshSegmentDisplay(client: client)
 
@@ -533,6 +538,7 @@ final class IrohaInputController: IMKInputController {
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     guard self.mode == .segmenting, generation == self.segmentGeneration else { return }
+                    self.segmentBaseline = full
                     self.segments = aligned.map {
                         BunsetsuSegment(reading: $0.reading, result: $0.conversion, candidates: nil)
                     }
@@ -726,6 +732,7 @@ final class IrohaInputController: IMKInputController {
         segmentGeneration += 1
         mode = .composing
         segments = []
+        segmentBaseline = nil
         panelCandidates = []
         cancelConversion()
         updateMarkedText(client: client, display: composer.display)
@@ -734,7 +741,21 @@ final class IrohaInputController: IMKInputController {
     /// 全文節の変換結果を結合して確定する
     private func commitSegments(client: IMKTextInput?) {
         let text = segments.map(\.result).joined()
+        learnIfCorrected(committed: text)
         commitText(text.isEmpty ? composer.display : text, client: client)
+    }
+
+    /// 文節変換の結果がエンジンの出力と違っていたら、ユーザによる修正として学習する。
+    /// （修正しなかった文節も、位置ごとの文脈つきで一緒に覚える。
+    /// そうしないと「きしゃのきしゃ」の後半が次回また第一候補に戻ってしまう）
+    private func learnIfCorrected(committed: String) {
+        guard LearningSettings.isEnabled, !segments.isEmpty, !committed.isEmpty,
+              let baseline = segmentBaseline, committed != baseline else { return }
+        let reading = segments.map(\.reading).joined()
+        let pairs = segments.map { (reading: $0.reading, result: $0.result) }
+        Task.detached(priority: .utility) {
+            LearningStore.shared.record(reading: reading, result: committed, segments: pairs)
+        }
     }
 
     /// 文節列を未確定文字列として表示する（現在の文節は太い下線）
@@ -1003,6 +1024,7 @@ final class IrohaInputController: IMKInputController {
         cancelConversion()
         composer = Self.makeComposer()  // 設定（句読点スタイル）の変更もここで反映される
         segments = []
+        segmentBaseline = nil
         panelCandidates = []
         displayOverride = nil
         autoCommitPending = false

@@ -10,7 +10,8 @@ import IrohaCore
 //   iroha-cli bench <eval.tsv>                    : 評価（TSV: 読み\t正解）。精度とレイテンシを報告
 //   iroha-cli ajimee <evaluation_items.json>      : AJIMEE-Bench評価（acc@1・MinCER）。scripts/fetch-ajimee.shで取得
 //   iroha-cli repl                                : 対話モード（1行ずつ変換、レイテンシ表示）
-//   環境変数 IROHA_MODEL でモデルパス、IROHA_USER_DICT でユーザ辞書を上書き可能
+//   環境変数 IROHA_MODEL でモデルパス、IROHA_USER_DICT でユーザ辞書、
+//   IROHA_LEARNING で学習結果のファイルを上書き可能
 
 func romajiToKana(_ input: String) -> String {
     // ASCII文字を含む場合のみローマ字として解釈する
@@ -53,7 +54,15 @@ func makeEngine() -> any ConversionEngine {
     } else {
         store = .shared
     }
-    return UserDictionaryEngine(base: zenz, dictionary: { store.current })
+    let learning: LearningStore
+    if let path = ProcessInfo.processInfo.environment["IROHA_LEARNING"] {
+        learning = LearningStore(url: URL(fileURLWithPath: path))
+    } else {
+        learning = .shared
+    }
+    return LearningEngine(
+        base: UserDictionaryEngine(base: zenz, dictionary: { store.current }),
+        dictionary: { learning.current })
 }
 
 func convertAndPrint(engine: any ConversionEngine, reading: String, context: String, count: Int = 1) async {

@@ -23,6 +23,7 @@ struct SettingsView: View {
     @AppStorage("lmStudioModel") private var lmStudioModel = ""
     @AppStorage("autoUpdateCheck") private var autoUpdateCheck = true
     @AppStorage(UserDictionarySync.autoSyncKey) private var syncSystemDictionary = false
+    @AppStorage(LearningSettings.enabledKey) private var learningEnabled = true
     @ObservedObject private var modelDownloader = ModelDownloader.shared
 
     @State private var remoteModels: [String] = []
@@ -30,6 +31,7 @@ struct SettingsView: View {
     @State private var loadingRemoteModels = false
     @ObservedObject private var uiState = SettingsUIState.shared
     @State private var userDictionaryCount = UserDictionaryStore.shared.entries.count
+    @State private var learningCount = LearningStore.shared.count
 
     var body: some View {
         Form {
@@ -81,6 +83,22 @@ struct SettingsView: View {
             }
             .onChange(of: translationService) { fetchRemoteModels() }
             .onAppear { fetchRemoteModels() }
+
+            Section("学習") {
+                Toggle("変換の修正を学習する", isOn: $learningEnabled)
+                LabeledContent("学習した変換") {
+                    HStack {
+                        Text("\(learningCount) 件").foregroundStyle(.secondary)
+                        Button("リセット") { LearningStore.shared.reset() }
+                            .disabled(learningCount == 0)
+                    }
+                }
+                Text("文節変換（スペースキー）で候補を選び直して確定すると、その変換を覚えて"
+                    + "次から最初に出します。同じ読みでも文中の位置で使い分けます"
+                    + "（「きしゃのきしゃ」を「記者の貴社」に直すと、次からそう変換されます）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             Section("ユーザ辞書") {
                 LabeledContent("登録単語") {
@@ -187,6 +205,11 @@ struct SettingsView: View {
             NotificationCenter.default.publisher(for: UserDictionaryStore.didChangeNotification)
         ) { _ in
             userDictionaryCount = UserDictionaryStore.shared.entries.count
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: LearningStore.didChangeNotification)
+        ) { _ in
+            learningCount = LearningStore.shared.count
         }
     }
 

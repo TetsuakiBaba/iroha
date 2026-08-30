@@ -6,6 +6,7 @@
 - **候補変換**: スペースキーでn-best候補を候補ウィンドウに表示
 - **文脈対応**: 直前に確定した文字列を条件としてLLMに与え、文脈に合った変換を行う
 - **ユーザ辞書**: 固有名詞などを登録して変換に反映。macOSのユーザ辞書（システム設定 > キーボード > ユーザ辞書）から取り込める
+- **学習**: 文節変換で修正して確定した変換を覚え、次から第一候補にする。同じ読みでも文中の位置で使い分ける（「きしゃのきしゃ」→「記者の貴社」）
 - **ローカル動作**: 変換モデルは [zenz-v3.1-small](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf)（GPT-2系95M・GGUF・約70MB）を llama.cpp（Metal）で実行。実測レイテンシは1変換あたり15〜30ms程度（Apple Silicon）
 
 ## インストール
@@ -73,6 +74,23 @@ Ollama / LM Studio から選択でき、Ollama / LM Studio では利用可能な
 パスワード欄（Secure Input）ではmacOSがIMEをシステムレベルで無効化するため、
 iroha側の対応は不要。
 
+### 学習
+
+文節変換（スペースキー）で候補を選び直したり文節を伸縮したりして確定すると、
+その修正を学習して次から第一候補にする。同じ読みでも文中の位置で使い分けるため、
+文節ごとに「直前までに確定した文字列」を条件として一緒に覚える。
+
+```
+きしゃのきしゃ -> 貴社の貴社        （学習前）
+   ↓ スペースキーで「記者の」に修正して確定
+きしゃのきしゃ     -> 記者の貴社     （入力全体が一致するので即座に、LLMを呼ばない）
+きしゃのきしゃがきた -> 記者の貴社が来た （文節の学習が連鎖して当たる）
+あのきしゃにのる   -> あの汽車に乗る  （文脈が違うので学習は当たらない）
+```
+
+エンジンの出力をそのまま確定した場合は何も覚えない（修正したときだけ学習する）。
+設定でOFFにでき、「リセット」で全消去できる。
+
 ### ユーザ辞書
 
 メニューの「ユーザ辞書...」（または設定ウィンドウの「編集...」）から、よみと単語を登録できる。
@@ -101,6 +119,7 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
 - モデルの評価は `iroha-cli bench testdata/eval.tsv`（完全一致率・CER・レイテンシ）。
   自作モデルの学習パイプライン（データ準備→学習→GGUF変換→評価）は [training/](training/README.md) を参照
 - モデルファイルは `~/Library/Application Support/iroha/models/` に置く（環境変数 `IROHA_MODEL` で上書き可）
+- 学習結果は `~/Library/Application Support/iroha/learning.json`（環境変数 `IROHA_LEARNING` で差し替え可）
 - ユーザ辞書は `~/Library/Application Support/iroha/user-dictionary.json`（環境変数 `IROHA_USER_DICT` で
   iroha-cli から差し替え可）。macOSのユーザ辞書の実体は `~/Library/KeyboardServices/TextReplacements.db`
   （非公開スキーマのSQLite。実データが未チェックポイントのWALにあるため db/-wal/-shm ごとコピーして読む）

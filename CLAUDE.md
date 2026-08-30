@@ -28,8 +28,11 @@ swift build && swift test        # ビルドと単体テスト
 - FoundationModelsはmacOS 26+のため `#if canImport` + `@available(macOS 26.0, *)` ガード必須
   （パッケージのフロアはmacOS 14）
 - llama.cppの静的ライブラリは `./scripts/build-llama.sh` で `vendor/dist` に生成（未コミット）
-- ユーザ辞書はLLMの外側で処理する（`UserDictionaryEngine`が読みを分割し、辞書一致部分を
-  埋めて残りだけをエンジンに渡す）。macOS側の辞書は読み取り専用で絶対に書き込まない
+- ユーザ辞書・学習はLLMの外側で処理する（`ConversionEngine`のデコレータを
+  学習 → ユーザ辞書 → LLM の順に重ね、読みを分割して一致部分を埋める）。
+  macOS側の辞書は読み取り専用で絶対に書き込まない
+- 学習は「文節変換の結果がエンジンの出力と違ったら記録」。同じ読みの使い分けのため
+  文節ごとに直前の確定文字列を文脈として持つ（文脈なしの学習は入力の先頭でしか当てない）
 - バージョンはgitタグが唯一の情報源。リリースはCIがタグから、開発ビルドは
   install.shがgit describeから注入する（Info.plistのコミット値はフォールバック。
   リリース時にゆるく追随させる）
