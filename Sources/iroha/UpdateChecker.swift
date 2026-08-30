@@ -91,19 +91,34 @@ final class UpdateChecker {
         }
     }
 
-    /// セマンティックバージョン比較（"v"接頭辞と"-"以降のプレリリース識別子は無視）
+    /// セマンティックバージョン比較（"v"接頭辞は無視、プレリリース識別子も比較する:
+    /// 0.4.0-beta.1 < 0.4.0-beta.2 < 0.4.0）
     static func isNewer(_ remote: String, than local: String) -> Bool {
-        func numbers(_ version: String) -> [Int] {
-            let core = version
-                .trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
-                .split(separator: "-")[0]
-            return core.split(separator: ".").map { Int($0) ?? 0 }
+        func parse(_ version: String) -> (core: [Int], pre: [Substring]) {
+            let trimmed = version.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+            let parts = trimmed.split(separator: "-", maxSplits: 1)
+            let core = parts[0].split(separator: ".").map { Int($0) ?? 0 }
+            let pre = parts.count > 1 ? parts[1].split(separator: ".") : []
+            return (core, pre)
         }
-        let r = numbers(remote), l = numbers(local)
-        for i in 0..<max(r.count, l.count) {
-            let rv = i < r.count ? r[i] : 0
-            let lv = i < l.count ? l[i] : 0
+        let r = parse(remote), l = parse(local)
+        for i in 0..<max(r.core.count, l.core.count) {
+            let rv = i < r.core.count ? r.core[i] : 0
+            let lv = i < l.core.count ? l.core[i] : 0
             if rv != lv { return rv > lv }
+        }
+        // コアが同一: 正式版（プレリリース無し）はプレリリースより新しい
+        if r.pre.isEmpty != l.pre.isEmpty { return r.pre.isEmpty }
+        // 両方プレリリース: 識別子を順に比較（数値同士は数値として）
+        for i in 0..<max(r.pre.count, l.pre.count) {
+            if i >= r.pre.count { return false }  // remoteの識別子が少ない → 古い
+            if i >= l.pre.count { return true }
+            let rp = r.pre[i], lp = l.pre[i]
+            if let ri = Int(rp), let li = Int(lp) {
+                if ri != li { return ri > li }
+            } else if rp != lp {
+                return rp > lp
+            }
         }
         return false
     }
