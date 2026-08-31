@@ -162,50 +162,47 @@ private struct AISettingsTab: View {
 
     var body: some View {
         Form {
-            // 入力中: 修飾キー+Returnで未確定文字列をAI変換して確定
+            // グループ1: 入力中の未確定文字列を修飾キー+ReturnでAI変換して確定。
+            // グループ全体を1つのSectionにまとめ、1枚のカードとして描画する
             Section {
                 Text("修飾キー+Returnで、入力中の未確定文字列をAIに渡し、返ってきた結果を確定します。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                AICommitPresetEditor(index: 0)
+                AICommitPresetEditor(index: 1)
+                AICommitPresetEditor(index: 2)
             } header: {
                 Label("AI変換して確定（入力中）", systemImage: "return")
                     .font(.headline)
             }
             .headerProminence(.increased)
 
-            // 注意: ForEachでSectionを生成するとmacOS 26のFormがカードを
-            // 分割しなくなる（全セクションが1枚に結合される）ため、展開して並べる
-            AICommitPresetEditor(index: 0)
-            AICommitPresetEditor(index: 1)
-            AICommitPresetEditor(index: 2)
+            // グループ2: 画面上の選択テキストをAIで書き換える。こちらも1枚のカード
+            Section {
+                SelectionIntroRows(selectionEnabled: $selectionEnabled)
 
-            // 入力後: 画面上の選択テキストをAIで書き換える（ここから別グループ）
-            SelectionIntroSection(selectionEnabled: $selectionEnabled)
-
-            Section("マウスで選択したとき") {
+                FormSubheader("マウスで選択したとき")
                 Picker("トリガー", selection: $triggerMode) {
                     ForEach(SelectionTriggerMode.allCases) { mode in
                         Text(mode.label).tag(mode.rawValue)
                     }
                 }
                 .disabled(!selectionEnabled)
-            }
 
-            Section("その場でAIに指示") {
+                FormSubheader("その場でAIに指示")
                 HotkeyField(label: "ショートカット", hotkey: $onDemandHotkey)
                     .disabled(!selectionEnabled)
                 Text("選択テキストに自由な指示を出せます（選択なしで押すとテキスト生成になります）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
 
-            SelectionPresetEditor(index: 0)
-            SelectionPresetEditor(index: 1)
-            SelectionPresetEditor(index: 2)
-            SelectionPresetEditor(index: 3)
-            SelectionPresetEditor(index: 4)
+                SelectionPresetEditor(index: 0)
+                SelectionPresetEditor(index: 1)
+                SelectionPresetEditor(index: 2)
+                SelectionPresetEditor(index: 3)
+                SelectionPresetEditor(index: 4)
 
-            Section("除外するアプリ") {
+                FormSubheader("除外するアプリ")
                 TextField(
                     "", text: $excludedBundleIds,
                     prompt: Text("com.example.app, com.example.other"))
@@ -215,61 +212,68 @@ private struct AISettingsTab: View {
                     + "（カンマまたは改行区切り）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } header: {
+                Label("選択テキストのAI編集", systemImage: "cursorarrow.rays")
+                    .font(.headline)
+                    .padding(.top, 24)
             }
-
-            Section {
-                Text("どのAIで処理するか（Apple Intelligence / Ollama / LM Studio / OpenAI互換）は"
-                    + "「モデル」タブで設定します。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            .headerProminence(.increased)
         }
         .formStyle(.grouped)
     }
 }
 
-/// 「選択テキストのAI編集」グループの導入セクション（見出し・有効化・権限）
-private struct SelectionIntroSection: View {
+/// カード内の小見出し行（グループ内の区分け用）
+private struct FormSubheader: View {
+    private let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.subheadline.weight(.semibold))
+            .padding(.top, 4)
+    }
+}
+
+/// 「選択テキストのAI編集」グループの導入行（有効化トグルと権限の状態）
+private struct SelectionIntroRows: View {
     @Binding var selectionEnabled: Bool
     @State private var accessibilityGranted = AXIsProcessTrusted()
 
     var body: some View {
-        Section {
-            Toggle("選択テキストのAI編集を有効にする", isOn: $selectionEnabled)
-            Text("どのアプリでも、選択したテキストをショートカットやマウス操作からAIで"
-                + "処理して置き換えられます。"
-                + "ショートカットはirohaが起動している間だけ有効です"
-                + "（ログイン後に一度日本語入力すると起動します）。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            LabeledContent("アクセシビリティ権限") {
-                HStack {
-                    if accessibilityGranted {
-                        Label("許可済み", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    } else {
-                        Label("未許可", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                        Button("システム設定を開く") {
-                            if let url = URL(
-                                string: "x-apple.systempreferences:"
-                                    + "com.apple.preference.security?Privacy_Accessibility") {
-                                NSWorkspace.shared.open(url)
-                            }
+        Toggle("選択テキストのAI編集を有効にする", isOn: $selectionEnabled)
+            .onAppear { accessibilityGranted = AXIsProcessTrusted() }
+        Text("どのアプリでも、選択したテキストをショートカットやマウス操作からAIで"
+            + "処理して置き換えられます。"
+            + "ショートカットはirohaが起動している間だけ有効です"
+            + "（ログイン後に一度日本語入力すると起動します）。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        LabeledContent("アクセシビリティ権限") {
+            HStack {
+                if accessibilityGranted {
+                    Label("許可済み", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    Label("未許可", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Button("システム設定を開く") {
+                        if let url = URL(
+                            string: "x-apple.systempreferences:"
+                                + "com.apple.preference.security?Privacy_Accessibility") {
+                            NSWorkspace.shared.open(url)
                         }
                     }
-                    Button("再確認") { accessibilityGranted = AXIsProcessTrusted() }
                 }
+                Button("再確認") { accessibilityGranted = AXIsProcessTrusted() }
             }
-            Text("選択テキストの取得と置換にアクセシビリティ権限が必要です。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        } header: {
-            Label("選択テキストのAI編集", systemImage: "cursorarrow.rays")
-                .font(.headline)
-                .padding(.top, 24)
-                .onAppear { accessibilityGranted = AXIsProcessTrusted() }
         }
+        Text("選択テキストの取得と置換にアクセシビリティ権限が必要です。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 }
 
@@ -437,7 +441,19 @@ private struct AICommitPresetEditor: View {
     }
 
     var body: some View {
-        Section {
+        FormSubheader("\(index + 1). \(headerName)")
+            // 同じショートカットを複数のプリセットに割り当てられないようにする
+            .onChange(of: shortcut) {
+                guard shortcut != AICommitShortcut.off.rawValue else { return }
+                for other in 0..<AICommitSettings.count where other != index {
+                    let key = AICommitSettings.shortcutKey(other)
+                    let current = UserDefaults.standard.string(forKey: key)
+                        ?? AICommitSettings.defaults[other].shortcut.rawValue
+                    if current == shortcut {
+                        UserDefaults.standard.set(AICommitShortcut.off.rawValue, forKey: key)
+                    }
+                }
+            }
             HStack {
                 // ラベルを別に置く（TextFieldのタイトルにすると値が右寄せになる）
                 Text("名前")
@@ -489,21 +505,6 @@ private struct AICommitPresetEditor: View {
                     }
                 }
             }
-        } header: {
-            Text("\(index + 1). \(headerName)")
-        }
-        // 同じショートカットを複数のプリセットに割り当てられないようにする
-        .onChange(of: shortcut) {
-            guard shortcut != AICommitShortcut.off.rawValue else { return }
-            for other in 0..<AICommitSettings.count where other != index {
-                let key = AICommitSettings.shortcutKey(other)
-                let current = UserDefaults.standard.string(forKey: key)
-                    ?? AICommitSettings.defaults[other].shortcut.rawValue
-                if current == shortcut {
-                    UserDefaults.standard.set(AICommitShortcut.off.rawValue, forKey: key)
-                }
-            }
-        }
     }
 
     private var headerName: String {
@@ -561,9 +562,9 @@ private struct SelectionPresetEditor: View {
     }
 
     var body: some View {
-        Section {
-            // 機能全体がOFFのときは編集も無効に（Sectionの外に.disabledを掛けると
-            // カードが分割されてグループの見た目が崩れるため、中身に掛ける）
+        // 機能全体がOFFのときは編集もまとめて無効にする
+        Group {
+            FormSubheader("プリセット\(index + 1). \(headerName)")
             HStack {
                 Toggle("", isOn: $enabled)
                     .labelsHidden()
@@ -601,8 +602,6 @@ private struct SelectionPresetEditor: View {
                     }
                 }
             }
-        } header: {
-            Text("プリセット\(index + 1). \(headerName)")
         }
         .disabled(!groupEnabled)
     }

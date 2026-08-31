@@ -48,6 +48,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             NSApp.setActivationPolicy(.regular)
             openSettingsWindow()
+            // UI確認用: 環境変数で高さを上書きできる（縦長タブのスクリーンショット用）
+            if let raw = ProcessInfo.processInfo.environment["IROHA_SETTINGS_HEIGHT"],
+               let height = Double(raw) {
+                settingsWindowController?.window?.setContentSize(
+                    NSSize(width: 600, height: height))
+            }
             // スクリーンショットで確認しやすいよう、主ディスプレイの左上に固定して開く
             if let window = settingsWindowController?.window, let screen = NSScreen.screens.first {
                 window.setFrameTopLeftPoint(
