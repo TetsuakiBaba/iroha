@@ -682,6 +682,7 @@ private struct ModelSettingsTab: View {
 
 private struct AboutSettingsTab: View {
     @AppStorage("autoUpdateCheck") private var autoUpdateCheck = true
+    @State private var showingUninstallConfirm = false
 
     var body: some View {
         Form {
@@ -711,7 +712,29 @@ private struct AboutSettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section("アンインストール") {
+                Button("irohaをアンインストール...", role: .destructive) {
+                    showingUninstallConfirm = true
+                }
+                Text("入力ソースの一覧からirohaを外し、アプリ本体を削除して終了します。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
+        .alert("irohaをアンインストールしますか？", isPresented: $showingUninstallConfirm) {
+            Button("アプリのみ削除", role: .destructive) {
+                Uninstaller.run(purgeData: false)
+            }
+            Button("データも含めて削除", role: .destructive) {
+                Uninstaller.run(purgeData: true)
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("入力ソースからirohaを外し、~/Library/Input Methods/iroha.app を削除して"
+                + "終了します。「データも含めて削除」を選ぶと、ユーザ辞書・学習・変換モデル・"
+                + "設定・APIキーも削除します。")
+        }
     }
 }
