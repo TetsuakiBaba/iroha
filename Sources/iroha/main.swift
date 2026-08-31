@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func openSettingsWindow() {
         if settingsWindowController == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 440, height: 680),
+                contentRect: NSRect(x: 0, y: 0, width: 520, height: 692),
                 styleMask: [.titled, .closable, .resizable],
                 backing: .buffered,
                 defer: false
@@ -33,6 +33,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 開発用: 設定ウィンドウだけを開く（IMEとしては接続しない）。UIの確認に使う
+        //   "~/Library/Input Methods/iroha.app/Contents/MacOS/iroha" --settings [タブ名]
+        if let index = CommandLine.arguments.firstIndex(of: "--settings") {
+            switch CommandLine.arguments.count > index + 1 ? CommandLine.arguments[index + 1] : "" {
+            case "dictionary": SettingsUIState.shared.selectedTab = .dictionary
+            case "ai": SettingsUIState.shared.selectedTab = .ai
+            case "model": SettingsUIState.shared.selectedTab = .model
+            case "about": SettingsUIState.shared.selectedTab = .about
+            default: SettingsUIState.shared.selectedTab = .input
+            }
+            NSApp.setActivationPolicy(.regular)
+            openSettingsWindow()
+            return
+        }
+
         // ~/Library/Input Methods の外（Downloads等）から起動された場合は
         // セルフインストールして終了する（zipを解凍してダブルクリックするだけで導入できる）
         if SelfInstaller.installIfNeeded() { return }  // installIfNeededは戻らない（_exit）

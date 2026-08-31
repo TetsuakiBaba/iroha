@@ -13,6 +13,9 @@
 swift build && swift test        # ビルドと単体テスト
 ./scripts/install.sh             # ローカルの ~/Library/Input Methods/ へインストール（ad-hoc署名）
 /usr/bin/log stream --predicate 'process == "iroha"' --style compact  # IMEログ
+
+# 設定ウィンドウだけを開く（IMEに接続しない。UI確認用）
+"$HOME/Library/Input Methods/iroha.app/Contents/MacOS/iroha" --settings [input|dictionary|ai|model|about]
 ```
 
 - `log` はzshの組み込みと衝突するため必ず `/usr/bin/log` をフルパスで呼ぶ

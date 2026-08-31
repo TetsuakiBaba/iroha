@@ -358,7 +358,7 @@ final class IrohaInputController: IMKInputController {
     // メニュー操作はメインスレッドから来る（SettingsUIStateは@MainActor）
     @MainActor
     @objc private func openUserDictionary(_ sender: Any?) {
-        SettingsUIState.shared.showingUserDictionary = true
+        SettingsUIState.shared.openUserDictionary()
         (NSApp.delegate as? AppDelegate)?.openSettingsWindow()
     }
 
