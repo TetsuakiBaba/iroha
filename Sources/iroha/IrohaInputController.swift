@@ -411,7 +411,12 @@ final class IrohaInputController: IMKInputController {
             displayOverride = nil
             autoCommitPending = false
             composer.deleteBackward()
-            composerDidChange(client: client)
+            // 削除中はライブ変換を止めてかな表示に戻す。漢字のままだと1かな消しただけで
+            // 文節構造が変わり、どこを消したのか分からなくなるため。
+            // 次の1文字を入力した時点でライブ変換が再開する（そのままEnterならかなで確定）
+            conversionTask?.cancel()
+            conversionTask = nil
+            updateMarkedText(client: client, display: composer.display)
             return true
         case kVK_Escape:
             guard isComposing else { return false }
