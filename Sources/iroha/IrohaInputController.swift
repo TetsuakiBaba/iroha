@@ -86,7 +86,7 @@ final class IrohaInputController: IMKInputController {
     }
     private static let commitOnPunctuationKey = "commitOnPunctuation"
     private var commitOnPunctuationEnabled: Bool {
-        UserDefaults.standard.object(forKey: Self.commitOnPunctuationKey) as? Bool ?? true
+        UserDefaults.standard.object(forKey: Self.commitOnPunctuationKey) as? Bool ?? false
     }
 
     // MARK: 状態
@@ -285,15 +285,6 @@ final class IrohaInputController: IMKInputController {
         liveItem.state = liveConversionEnabled ? .on : .off
         menu.addItem(liveItem)
 
-        let punctItem = NSMenuItem(
-            title: "句読点で自動確定",
-            action: #selector(toggleCommitOnPunctuation(_:)),
-            keyEquivalent: ""
-        )
-        punctItem.target = self
-        punctItem.state = commitOnPunctuationEnabled ? .on : .off
-        menu.addItem(punctItem)
-
         let styleItem = NSMenuItem(
             title: "句読点スタイル: \(Self.punctuationStyle)",
             action: #selector(togglePunctuationStyle(_:)),
@@ -355,10 +346,6 @@ final class IrohaInputController: IMKInputController {
     @objc private func openUserDictionary(_ sender: Any?) {
         SettingsUIState.shared.openUserDictionary()
         (NSApp.delegate as? AppDelegate)?.openSettingsWindow()
-    }
-
-    @objc private func toggleCommitOnPunctuation(_ sender: Any?) {
-        UserDefaults.standard.set(!commitOnPunctuationEnabled, forKey: Self.commitOnPunctuationKey)
     }
 
     @objc private func togglePunctuationStyle(_ sender: Any?) {

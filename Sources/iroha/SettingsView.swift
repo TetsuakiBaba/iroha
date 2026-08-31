@@ -60,7 +60,7 @@ struct SettingsView: View {
 
 private struct InputSettingsTab: View {
     @AppStorage("liveConversion") private var liveConversion = true
-    @AppStorage("commitOnPunctuation") private var commitOnPunctuation = true
+    @AppStorage("commitOnPunctuation") private var commitOnPunctuation = false
     @AppStorage("candidateCount") private var candidateCount = 8
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
 
