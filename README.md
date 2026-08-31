@@ -155,6 +155,9 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
   iroha-cli から差し替え可）。macOSのユーザ辞書の実体は `~/Library/KeyboardServices/TextReplacements.db`
   （非公開スキーマのSQLite。実データが未チェックポイントのWALにあるため db/-wal/-shm ごとコピーして読む）
 - zenzのプロンプト形式: `[U+EE02 + 左文脈] + U+EE00 + カタカナ読み + U+EE01 → 変換結果`
+- 生成は読みで縛る（[ReadingConstraint](Sources/IrohaCore/ReadingConstraint.swift)）。
+  ひらがな・句読点は読みと一致する位置でしか出せず、読みを使い切るまで終端させない。
+  これがないと「こんにちはあかちゃん → こんにちは。赤ちゃん」のように読みにない文字が混ざる
 - llama.cppにはzenzのpre-tokenizer名（`gpt2-small-japanese-char`）を認識させる
   [パッチ](patches/llama-cpp-zenz-pretokenizer.patch)を当てている（build-llama.shが自動適用）
 

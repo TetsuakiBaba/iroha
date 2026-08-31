@@ -15,18 +15,21 @@ public actor ZenzEngine: ConversionEngine {
         let model: OpaquePointer
         let context: OpaquePointer
         let vocab: OpaquePointer
-        let sampler: UnsafeMutablePointer<llama_sampler>
+        /// トークンID → 出力文字列（UTF-8として不正なバイト断片はnil）
+        let tokenTexts: [String?]
+        /// トークンID → 生成終了とみなすトークンか（EOG・zenzの特殊トークン）
+        let tokenIsTerminator: [Bool]
 
         init(model: OpaquePointer, context: OpaquePointer, vocab: OpaquePointer,
-             sampler: UnsafeMutablePointer<llama_sampler>) {
+             tokenTexts: [String?], tokenIsTerminator: [Bool]) {
             self.model = model
             self.context = context
             self.vocab = vocab
-            self.sampler = sampler
+            self.tokenTexts = tokenTexts
+            self.tokenIsTerminator = tokenIsTerminator
         }
 
         deinit {
-            llama_sampler_free(sampler)
             llama_free(context)
             llama_model_free(model)
         }
@@ -60,7 +63,7 @@ public actor ZenzEngine: ConversionEngine {
 
         if candidateCount <= 1 {
             let result = try generate(runtime: runtime, promptTokens: promptTokens,
-                                      forcedFirstToken: nil, readingLength: reading.count)
+                                      forcedFirstToken: nil, reading: reading)
             return [result.isEmpty ? reading : result]
         }
 
@@ -70,13 +73,19 @@ public actor ZenzEngine: ConversionEngine {
         llama_memory_clear(llama_get_memory(runtime.context), true)
         try decode(ctx: runtime.context, tokens: &tokens)
 
-        let firstTokens = topTokens(runtime: runtime, count: candidateCount * 3)
+        let constraint = ReadingConstraint(reading: reading)
+        let firstTokens = topTokens(runtime: runtime, count: candidateCount * 8)
         var results: [String] = []
         for token in firstTokens {
             try Task.checkCancellation()
             if llama_vocab_is_eog(runtime.vocab, token) { continue }
+            // 読みと辻褄の合わない先頭トークンは候補にしない
+            if let constraint {
+                guard let text = runtime.tokenTexts[Int(token)],
+                      constraint.advance(constraint.initialMask, text: text) != 0 else { continue }
+            }
             let text = try generate(runtime: runtime, promptTokens: promptTokens,
-                                    forcedFirstToken: token, readingLength: reading.count)
+                                    forcedFirstToken: token, reading: reading)
             if !text.isEmpty, !results.contains(text) {
                 results.append(text)
             }
@@ -98,12 +107,50 @@ public actor ZenzEngine: ConversionEngine {
         return indexed.sorted { $0.logit > $1.logit }.prefix(count).map(\.token)
     }
 
-    /// 貪欲法で1候補を生成する。forcedFirstTokenがあれば先頭をそのトークンに固定する
+    /// 現在のlogitsから、読みの制約を満たすもっとも尤度の高いトークンを選ぶ。
+    /// 制約を満たすトークンが1つもなければ制約を諦めて素の最尤トークンを返す（relaxed）
+    private func selectToken(runtime: Runtime, constraint: ReadingConstraint?, mask: UInt64)
+        -> (token: llama_token, mask: UInt64, relaxed: Bool)? {
+        guard let logits = llama_get_logits_ith(runtime.context, -1) else { return nil }
+        let vocabSize = Int(llama_vocab_n_tokens(runtime.vocab))
+        var best: (index: Int, logit: Float)?
+        var bestMask: UInt64 = 0
+        var fallback: (index: Int, logit: Float)?
+
+        for index in 0..<vocabSize {
+            let logit = logits[index]
+            if fallback == nil || logit > fallback!.logit { fallback = (index, logit) }
+            guard let constraint else { continue }
+            // 現在の最良より低いトークンは制約を調べるまでもない
+            if let best, logit <= best.logit { continue }
+            if runtime.tokenIsTerminator[index] {
+                // 読みを使い切っていなければ終端は許さない（食い残し防止）
+                guard constraint.isComplete(mask) else { continue }
+                best = (index, logit)
+                bestMask = mask
+            } else {
+                guard let text = runtime.tokenTexts[index] else { continue }
+                let next = constraint.advance(mask, text: text)
+                guard next != 0 else { continue }
+                best = (index, logit)
+                bestMask = next
+            }
+        }
+
+        if let best, constraint != nil {
+            return (llama_token(best.index), bestMask, false)
+        }
+        guard let fallback else { return nil }
+        return (llama_token(fallback.index), 0, constraint != nil)
+    }
+
+    /// 貪欲法で1候補を生成する。forcedFirstTokenがあれば先頭をそのトークンに固定する。
+    /// 各ステップでは読みと辻褄の合うトークンだけを選ぶ（constrained decoding）
     private func generate(
         runtime: Runtime,
         promptTokens: [llama_token],
         forcedFirstToken: llama_token?,
-        readingLength: Int
+        reading: String
     ) throws -> String {
         let ctx = runtime.context
         let vocab = runtime.vocab
@@ -129,10 +176,22 @@ public actor ZenzEngine: ConversionEngine {
         }
         if let forcedFirstToken { appendPiece(forcedFirstToken) }
 
-        let maxNewTokens = readingLength * 3 + 8
+        // 読みの消費状況（constrained decoding用）。追跡できない読みや
+        // 制約を満たすトークンが尽きた場合はnilにして素の貪欲生成に戻す
+        var constraint = ReadingConstraint(reading: reading)
+        var mask = constraint?.initialMask ?? 0
+        if let forcedFirstToken, let active = constraint {
+            mask = active.advance(mask, text: runtime.tokenTexts[Int(forcedFirstToken)] ?? "")
+            if mask == 0 { constraint = nil }
+        }
+
+        let maxNewTokens = reading.count * 3 + 8
         generation: for _ in 0..<maxNewTokens {
             try Task.checkCancellation()
-            let token = llama_sampler_sample(runtime.sampler, ctx, -1)
+            guard let picked = selectToken(runtime: runtime, constraint: constraint, mask: mask) else { break }
+            let token = picked.token
+            if picked.relaxed { constraint = nil }
+            mask = picked.mask
             if llama_vocab_is_eog(vocab, token) { break }
 
             appendPiece(token)
@@ -199,14 +258,38 @@ public actor ZenzEngine: ConversionEngine {
             throw ConversionError.modelLoadFailed("vocabの取得に失敗")
         }
 
-        guard let chain = llama_sampler_chain_init(llama_sampler_chain_default_params()) else {
-            llama_free(createdContext)
-            llama_model_free(loadedModel)
-            throw ConversionError.modelLoadFailed("サンプラの作成に失敗")
-        }
-        llama_sampler_chain_add(chain, llama_sampler_init_greedy())
+        let (tokenTexts, tokenIsTerminator) = Self.buildTokenTable(vocab: vocab)
 
-        self.runtime = Runtime(model: loadedModel, context: createdContext, vocab: vocab, sampler: chain)
+        self.runtime = Runtime(model: loadedModel, context: createdContext, vocab: vocab,
+                               tokenTexts: tokenTexts, tokenIsTerminator: tokenIsTerminator)
+    }
+
+    /// 語彙全体の出力文字列を1度だけ取り出しておく（制約判定を毎トークン安く行うため）
+    private static func buildTokenTable(vocab: OpaquePointer) -> (texts: [String?], terminators: [Bool]) {
+        let vocabSize = Int(llama_vocab_n_tokens(vocab))
+        var texts = [String?](repeating: nil, count: vocabSize)
+        var terminators = [Bool](repeating: false, count: vocabSize)
+        var buffer = [CChar](repeating: 0, count: 128)
+        for index in 0..<vocabSize {
+            let token = llama_token(index)
+            if llama_vocab_is_eog(vocab, token) {
+                terminators[index] = true
+                continue
+            }
+            let written = llama_token_to_piece(vocab, token, &buffer, Int32(buffer.count), 0, true)
+            guard written > 0 else { continue }
+            let bytes = buffer.withUnsafeBytes { raw in
+                Data(raw.bindMemory(to: UInt8.self).prefix(Int(written)))
+            }
+            guard let text = String(data: bytes, encoding: .utf8), !text.isEmpty else { continue }
+            // zenzの特殊トークン（私用領域 U+EE00-U+EE0F）は生成終了の印
+            if text.unicodeScalars.contains(where: { (0xEE00...0xEE0F).contains($0.value) }) {
+                terminators[index] = true
+                continue
+            }
+            texts[index] = text
+        }
+        return (texts, terminators)
     }
 
     private func tokenize(_ text: String, addSpecial: Bool) throws -> [llama_token] {
