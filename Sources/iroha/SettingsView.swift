@@ -1,3 +1,4 @@
+import ApplicationServices
 import SwiftUI
 import IrohaCore
 
@@ -5,6 +6,7 @@ import IrohaCore
 enum SettingsTab: Hashable {
     case input       // 入力・変換のふるまい
     case dictionary  // ユーザ辞書と学習
+    case selection   // 選択テキストのAI処理（グローバルショートカット）
     case ai          // AIで処理して確定
     case model       // かな漢字変換モデル
     case about       // アップデートとバージョン情報
@@ -38,6 +40,9 @@ struct SettingsView: View {
             DictionarySettingsTab()
                 .tabItem { Label("辞書", systemImage: "character.book.closed") }
                 .tag(SettingsTab.dictionary)
+            SelectionSettingsTab()
+                .tabItem { Label("選択", systemImage: "cursorarrow.rays") }
+                .tag(SettingsTab.selection)
             AISettingsTab()
                 .tabItem { Label("AI", systemImage: "sparkles") }
                 .tag(SettingsTab.ai)
@@ -49,8 +54,8 @@ struct SettingsView: View {
                 .tag(SettingsTab.about)
         }
         // タブごとに高さが変わらないよう固定サイズにする（収まらない分はフォーム内でスクロール）。
-        // macOS 26ではタブがタイトルバーに入るため、5項目が折り畳まれない幅が要る
-        .frame(minWidth: 520, idealWidth: 520, minHeight: 690, idealHeight: 690)
+        // macOS 26ではタブがタイトルバーに入るため、6項目が折り畳まれない幅が要る
+        .frame(minWidth: 600, idealWidth: 600, minHeight: 690, idealHeight: 690)
         .sheet(isPresented: $uiState.showingUserDictionary) { UserDictionaryView() }
     }
 }
@@ -156,6 +161,9 @@ private struct AISettingsTab: View {
     @AppStorage(TranslationBackend.userDefaultsKey) private var translationService = "apple"
     @AppStorage("ollamaModel") private var ollamaModel = ""
     @AppStorage("lmStudioModel") private var lmStudioModel = ""
+    @AppStorage("openAIModel") private var openAIModel = ""
+    @AppStorage("openAIEndpoint") private var openAIEndpoint = ""
+    @State private var openAIKey = RemoteTranslator.openAIAPIKey
 
     @State private var remoteModels: [String] = []
     @State private var remoteModelsError: String?
@@ -180,14 +188,41 @@ private struct AISettingsTab: View {
                     Text("Apple Intelligence（オンデバイス）").tag("apple")
                     Text("Ollama").tag("ollama")
                     Text("LM Studio").tag("lmstudio")
+                    Text("OpenAI互換（外部API）").tag("openai")
                 }
-                if translationService != "apple" {
+                if translationService == "openai" {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("エンドポイント")
+                        TextField(
+                            "", text: $openAIEndpoint,
+                            prompt: Text("https://api.openai.com/v1"))
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    HStack {
+                        Text("APIキー")
+                        SecureField("", text: $openAIKey)
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: openAIKey) {
+                                SecretStore.set(openAIKey, for: RemoteTranslator.openAIKeyAccount)
+                            }
+                    }
+                }
+                if translationService == "openai", remoteModels.isEmpty {
+                    // 一覧が取れないサービスもあるので手入力を許す
+                    HStack {
+                        Text("モデル")
+                        TextField("", text: $openAIModel, prompt: Text("gpt-4o-mini"))
+                            .textFieldStyle(.roundedBorder)
+                    }
+                } else if translationService != "apple" {
                     Picker("モデル", selection: remoteModelBinding) {
                         Text("選択してください").tag("")
                         ForEach(remoteModelChoices, id: \.self) { model in
                             Text(model).tag(model)
                         }
                     }
+                }
+                if translationService != "apple" {
                     HStack {
                         Button("モデル一覧を更新") { fetchRemoteModels() }
                         if loadingRemoteModels {
@@ -211,7 +246,11 @@ private struct AISettingsTab: View {
     // MARK: AIサービス（Apple Intelligence / Ollama / LM Studio）
 
     private var remoteModelBinding: Binding<String> {
-        translationService == "ollama" ? $ollamaModel : $lmStudioModel
+        switch translationService {
+        case "ollama": return $ollamaModel
+        case "openai": return $openAIModel
+        default: return $lmStudioModel
+        }
     }
 
     /// 選択中のモデルが一覧に無い場合（サーバ側で削除された等）も選択肢として残す
@@ -224,8 +263,12 @@ private struct AISettingsTab: View {
     }
 
     private var translationCaption: String {
-        let common = "3つのAI変換すべてがこのサービスを使います。"
+        let common = "AI変換と選択テキスト処理のすべてがこのサービスを使います。"
         switch translationService {
+        case "openai":
+            return common + "OpenAI互換API（\(RemoteTranslator.openAIEndpoint)）に接続します。"
+                + "未確定文字列や選択テキストが外部サービスへ送信されるので注意してください。"
+                + "APIキーはKeychainに保存されます。失敗時は通常の確定になります。"
         case "ollama":
             return common + "ローカルのOllama（\(RemoteTranslator.ollamaEndpoint)）に接続します。"
                 + "thinking（思考過程）は無効化されます。失敗時は通常の確定になります。"
@@ -242,7 +285,12 @@ private struct AISettingsTab: View {
 
     private func fetchRemoteModels() {
         guard translationService != "apple" else { return }
-        let service: RemoteTranslator.Service = translationService == "ollama" ? .ollama : .lmstudio
+        let service: RemoteTranslator.Service
+        switch translationService {
+        case "ollama": service = .ollama
+        case "openai": service = .openai
+        default: service = .lmstudio
+        }
         loadingRemoteModels = true
         remoteModelsError = nil
         Task {
@@ -366,6 +414,183 @@ private struct AICommitPresetEditor: View {
     private var isDefault: Bool {
         name == AICommitSettings.defaults[index].name
             && prompt == AICommitSettings.defaults[index].prompt
+    }
+}
+
+
+// MARK: - 選択テキストのAI処理
+
+private struct SelectionSettingsTab: View {
+    @AppStorage(SelectionSettings.enabledKey) private var enabled = false
+    @AppStorage(SelectionSettings.triggerModeKey) private var triggerMode = "bubble"
+    @AppStorage(SelectionSettings.onDemandHotkeyKey) private var onDemandHotkey = "Ctrl+0"
+    @AppStorage(SelectionSettings.excludedBundleIdsKey) private var excludedBundleIds = ""
+
+    @State private var accessibilityGranted = AXIsProcessTrusted()
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("選択テキストのAI処理を有効にする", isOn: $enabled)
+                Text("どのアプリでも、選択したテキストをショートカットやマウス操作からAIで"
+                    + "処理して置き換えられます。処理には設定 > AI のAIサービスを使います。"
+                    + "ショートカットはirohaが起動している間だけ有効です"
+                    + "（ログイン後に一度日本語入力すると起動します）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                LabeledContent("アクセシビリティ権限") {
+                    HStack {
+                        if accessibilityGranted {
+                            Label("許可済み", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else {
+                            Label("未許可", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Button("システム設定を開く") {
+                                if let url = URL(
+                                    string: "x-apple.systempreferences:"
+                                        + "com.apple.preference.security?Privacy_Accessibility") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                        }
+                        Button("再確認") { accessibilityGranted = AXIsProcessTrusted() }
+                    }
+                }
+                Text("選択テキストの取得と置換にアクセシビリティ権限が必要です。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("選択テキストのAI処理")
+            }
+
+            Section("マウスで選択したとき") {
+                Picker("トリガー", selection: $triggerMode) {
+                    ForEach(SelectionTriggerMode.allCases) { mode in
+                        Text(mode.label).tag(mode.rawValue)
+                    }
+                }
+                .disabled(!enabled)
+            }
+
+            Section("その場でAIに指示") {
+                HotkeyField(label: "ショートカット", hotkey: $onDemandHotkey)
+                    .disabled(!enabled)
+                Text("選択テキストに自由な指示を出せます（選択なしで押すとテキスト生成になります）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(0..<SelectionSettings.count, id: \.self) { index in
+                SelectionPresetEditor(index: index)
+                    .disabled(!enabled)
+            }
+
+            Section("除外するアプリ") {
+                TextField(
+                    "", text: $excludedBundleIds,
+                    prompt: Text("com.example.app, com.example.other"))
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(!enabled)
+                Text("ここに書いたバンドルIDのアプリでは、マウス選択のトリガーを出しません"
+                    + "（カンマまたは改行区切り）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { accessibilityGranted = AXIsProcessTrusted() }
+    }
+}
+
+/// "Ctrl+1" 形式のグローバルショートカット入力欄（形式チェック付き）
+private struct HotkeyField: View {
+    let label: String
+    @Binding var hotkey: String
+
+    var body: some View {
+        HStack {
+            Text(label)
+            TextField("", text: $hotkey, prompt: Text("例: Ctrl+1"))
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 140)
+            if hotkey.trimmingCharacters(in: .whitespaces).isEmpty {
+                Text("なし").font(.caption).foregroundStyle(.secondary)
+            } else if GlobalShortcut.isValid(hotkey) {
+                Image(systemName: "checkmark.circle").foregroundStyle(.green)
+            } else {
+                Text("認識できない形式です").font(.caption).foregroundStyle(.red)
+            }
+            Spacer()
+        }
+    }
+}
+
+/// 選択テキストプリセット1つ分の編集欄（有効・名前・ショートカット・プロンプト）
+private struct SelectionPresetEditor: View {
+    private let index: Int
+    @AppStorage private var enabled: Bool
+    @AppStorage private var name: String
+    @AppStorage private var prompt: String
+    @AppStorage private var hotkey: String
+    @State private var expanded = false
+
+    init(index: Int) {
+        self.index = index
+        let defaults = SelectionSettings.defaults[index]
+        _enabled = AppStorage(wrappedValue: defaults.enabled, SelectionSettings.enabledObjectKey(index))
+        _name = AppStorage(wrappedValue: defaults.name, SelectionSettings.nameKey(index))
+        _prompt = AppStorage(wrappedValue: defaults.prompt, SelectionSettings.promptKey(index))
+        _hotkey = AppStorage(wrappedValue: defaults.hotkey, SelectionSettings.hotkeyKey(index))
+    }
+
+    var body: some View {
+        Section {
+            HStack {
+                Toggle("", isOn: $enabled)
+                    .labelsHidden()
+                Text("名前")
+                TextField("", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 140)
+                Spacer()
+                HotkeyField(label: "", hotkey: $hotkey)
+                    .frame(width: 260)
+            }
+
+            DisclosureGroup(isExpanded: $expanded) {
+                TextEditor(text: $prompt)
+                    .font(.body)
+                    .frame(height: 72)
+                    .scrollContentBackground(.hidden)
+                    .padding(4)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(nsColor: .separatorColor)))
+                Text("\(AICommitSettings.textPlaceholder) と書くとその位置に選択テキストが"
+                    + "入ります（無ければプロンプトに続けて渡されます）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } label: {
+                HStack(spacing: 6) {
+                    Text("プロンプト")
+                    if !expanded {
+                        Text(prompt.replacingOccurrences(of: "\n", with: " "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+            }
+        } header: {
+            Text("プリセット\(index + 1). \(headerName)")
+        }
+    }
+
+    private var headerName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? SelectionSettings.defaults[index].name : trimmed
     }
 }
 

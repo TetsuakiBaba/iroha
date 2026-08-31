@@ -167,6 +167,13 @@ final class IrohaInputController: IMKInputController {
         guard let event, event.type == .keyDown,
               let client = sender as? IMKTextInput else { return false }
 
+        // 選択テキスト処理のグローバルショートカットが未確定文字列と競合しないよう、
+        // キー処理後の合成状態を知らせておく（IMKはメインスレッドで呼ぶ）
+        defer {
+            SelectionActionCoordinator.isIMEComposing =
+                isComposing || mode == .segmenting || isTranslating
+        }
+
         // 英訳確定の待機中: Escで取消、それ以外は握りつぶす（最大でもタイムアウトの10秒）
         if isTranslating {
             if Int(event.keyCode) == kVK_Escape {
@@ -875,6 +882,8 @@ final class IrohaInputController: IMKInputController {
     /// 現在の表示内容（ライブ変換結果 or かな or 文節列）をそのまま確定する
     private func commitCurrent(client: IMKTextInput?) {
         if mode == .segmenting { hidePanel() }
+        // キー入力以外の確定（フォーカス移動等）でも合成状態の変化を知らせる
+        defer { SelectionActionCoordinator.isIMEComposing = false }
         guard let text = resolveCommitText() else { return }
         commitText(text, client: client)
     }

@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func openSettingsWindow() {
         if settingsWindowController == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 520, height: 742),
+                contentRect: NSRect(x: 0, y: 0, width: 600, height: 742),
                 styleMask: [.titled, .closable, .resizable],
                 backing: .buffered,
                 defer: false
@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let index = CommandLine.arguments.firstIndex(of: "--settings") {
             switch CommandLine.arguments.count > index + 1 ? CommandLine.arguments[index + 1] : "" {
             case "dictionary": SettingsUIState.shared.selectedTab = .dictionary
+            case "selection": SettingsUIState.shared.selectedTab = .selection
             case "ai": SettingsUIState.shared.selectedTab = .ai
             case "model": SettingsUIState.shared.selectedTab = .model
             case "about": SettingsUIState.shared.selectedTab = .about
@@ -76,6 +77,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // macOSのユーザ辞書の取り込み（設定がONのときだけ）
         UserDictionarySync.syncOnLaunchIfEnabled()
+
+        // 選択テキストのAI処理（グローバルショートカット・マウス選択トリガー）。
+        // 設定でOFF（既定）の間はホットキー登録も監視もしない
+        SelectionActionCoordinator.shared.start()
     }
 }
 

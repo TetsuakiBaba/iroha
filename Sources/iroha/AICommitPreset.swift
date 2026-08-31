@@ -5,6 +5,20 @@ import Foundation
 struct AIRequest: Sendable {
     var instructions: String
     var userMessage: String
+
+    /// プロンプトと入力テキストから依頼を組み立てる。
+    /// プロンプトに {text} があればその位置へ差し込み、無ければ指示のあとに続けて渡す
+    /// （AI変換プリセットと選択テキストプリセットで共通の規則）
+    static func build(prompt: String, text: String) -> AIRequest {
+        if prompt.contains(AICommitSettings.textPlaceholder) {
+            return AIRequest(
+                instructions: AICommitSettings.outputRule,
+                userMessage: prompt.replacingOccurrences(
+                    of: AICommitSettings.textPlaceholder, with: text))
+        }
+        return AIRequest(
+            instructions: prompt + "\n" + AICommitSettings.outputRule, userMessage: text)
+    }
 }
 
 /// 「AI変換して確定」に割り当てられる修飾キー+Return。
@@ -73,18 +87,9 @@ struct AICommitPreset: Identifiable, Equatable {
         return trimmed.isEmpty ? AICommitSettings.defaults[index].prompt : trimmed
     }
 
-    /// 未確定文字列をAIへの依頼に組み立てる。
-    /// プロンプトに {text} があればその位置へ差し込み、無ければ指示のあとに続けて渡す
+    /// 未確定文字列をAIへの依頼に組み立てる（{text}差し込みの規則はAIRequest.buildを参照）
     func request(for text: String) -> AIRequest {
-        let prompt = effectivePrompt
-        if prompt.contains(AICommitSettings.textPlaceholder) {
-            return AIRequest(
-                instructions: AICommitSettings.outputRule,
-                userMessage: prompt.replacingOccurrences(
-                    of: AICommitSettings.textPlaceholder, with: text))
-        }
-        return AIRequest(
-            instructions: prompt + "\n" + AICommitSettings.outputRule, userMessage: text)
+        AIRequest.build(prompt: effectivePrompt, text: text)
     }
 }
 

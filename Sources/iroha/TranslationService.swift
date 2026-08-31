@@ -8,6 +8,7 @@ enum TranslationBackend: String, CaseIterable {
     case apple      // Apple FoundationModels（オンデバイス、macOS 26+）
     case ollama     // ローカルのOllamaサーバ
     case lmstudio   // ローカルのLM Studioサーバ
+    case openai     // OpenAI互換API（APIキーはKeychain。テキストが外部に送られる）
 
     static let userDefaultsKey = "translationService"
 
@@ -31,6 +32,8 @@ enum TranslationService {
             return !RemoteTranslator.ollamaModel.isEmpty
         case .lmstudio:
             return !RemoteTranslator.lmStudioModel.isEmpty
+        case .openai:
+            return !RemoteTranslator.openAIModel.isEmpty
         }
     }
 
@@ -89,6 +92,9 @@ enum TranslationService {
         case .lmstudio:
             return await RemoteTranslator.run(
                 request, service: .lmstudio, stallTimeout: 30, onPartial: onPartial)
+        case .openai:
+            return await RemoteTranslator.run(
+                request, service: .openai, stallTimeout: 30, onPartial: onPartial)
         }
     }
 

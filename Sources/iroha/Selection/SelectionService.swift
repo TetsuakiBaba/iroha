@@ -1,0 +1,305 @@
+import AppKit
+import ApplicationServices
+import Foundation
+
+/// 選択テキストの取得と置換の対象コンテキスト（取得時のアプリとフォーカス要素）
+struct SelectionContext {
+    let applicationName: String
+    let bundleIdentifier: String?
+    let application: NSRunningApplication?
+    let focusedElement: AXUIElement?
+    let selectedTextRange: CFRange?
+}
+
+struct SelectionCaptureResult {
+    let selectedText: String?
+    let context: SelectionContext
+}
+
+/// 他アプリの選択テキストを取得し、AIの結果で置き換えるサービス（GenGoから移植）。
+/// 取得はアクセシビリティAPI（速い・副作用なし）を優先し、
+/// 取れないアプリでは Cmd+C を送ってペーストボード経由で取る。
+/// 置換は Cmd+V で行い、ユーザのペーストボードは退避して必ず復元する。
+@MainActor
+final class SelectionService {
+    private let pasteboard = NSPasteboard.general
+    private let copyKeyCode: CGKeyCode = 8  // C
+    private let pasteKeyCode: CGKeyCode = 9  // V
+
+    private struct PasteboardSnapshot {
+        let items: [[NSPasteboard.PasteboardType: Data]]
+    }
+
+    enum SelectionError: LocalizedError {
+        case accessibilityPermissionDenied
+        case eventCreationFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .accessibilityPermissionDenied:
+                return "アクセシビリティ権限が必要です。システム設定 > プライバシーとセキュリティ >"
+                    + " アクセシビリティ で iroha を許可してください。"
+            case .eventCreationFailed:
+                return "キーボードイベントを作成できませんでした。"
+            }
+        }
+    }
+
+    func ensureAccessibilityPermission(prompt: Bool) -> Bool {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: prompt] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
+
+    /// アクセシビリティAPIだけで選択テキストを取る（キー送信なし。マウス選択トリガー用）
+    func captureAccessibleSelectedText(prompt: Bool = false) -> SelectionCaptureResult? {
+        guard ensureAccessibilityPermission(prompt: prompt) else { return nil }
+
+        let sourceApp = NSWorkspace.shared.frontmostApplication
+        guard sourceApp?.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            return nil
+        }
+
+        guard let focusedElement = focusedElement(for: sourceApp),
+              !isSecureTextElement(focusedElement) else {
+            return nil
+        }
+
+        guard
+            let value = attributeValue(kAXSelectedTextAttribute as CFString, on: focusedElement),
+            let selectedText = value as? String,
+            !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return nil
+        }
+
+        let selectedRange = selectedTextRange(for: focusedElement)
+        if let selectedRange, selectedRange.length <= 0 { return nil }
+
+        let context = SelectionContext(
+            applicationName: sourceApp?.localizedName ?? "Unknown",
+            bundleIdentifier: sourceApp?.bundleIdentifier,
+            application: sourceApp,
+            focusedElement: focusedElement,
+            selectedTextRange: selectedRange
+        )
+        return SelectionCaptureResult(selectedText: selectedText, context: context)
+    }
+
+    /// 選択テキストを取る（AXで取れなければ Cmd+C フォールバック）。
+    /// selectedTextがnilでも戻る（選択なし=テキスト生成モードの入口になる）
+    func captureSelectedText() async throws -> SelectionCaptureResult {
+        guard ensureAccessibilityPermission(prompt: true) else {
+            throw SelectionError.accessibilityPermissionDenied
+        }
+
+        // AX経路が使えるならキー送信なしで済ませる（Cmd+CがIMEや対象アプリを通る副作用を避ける）
+        if let accessible = captureAccessibleSelectedText(), accessible.selectedText != nil {
+            return accessible
+        }
+
+        let sourceApp = NSWorkspace.shared.frontmostApplication
+        let focusedElement = focusedElement(for: sourceApp)
+        if let focusedElement, isSecureTextElement(focusedElement) {
+            // パスワード欄はコピーもしない
+            return SelectionCaptureResult(
+                selectedText: nil,
+                context: SelectionContext(
+                    applicationName: sourceApp?.localizedName ?? "Unknown",
+                    bundleIdentifier: sourceApp?.bundleIdentifier,
+                    application: sourceApp,
+                    focusedElement: focusedElement,
+                    selectedTextRange: nil
+                ))
+        }
+        let context = SelectionContext(
+            applicationName: sourceApp?.localizedName ?? "Unknown",
+            bundleIdentifier: sourceApp?.bundleIdentifier,
+            application: sourceApp,
+            focusedElement: focusedElement,
+            selectedTextRange: focusedElement.flatMap(selectedTextRange(for:))
+        )
+
+        let pasteboardSnapshot = snapshotPasteboard()
+        let marker = "__IROHA_SELECTION_MARKER_\(UUID().uuidString)__"
+
+        writePasteboard(marker)
+        defer { restorePasteboard(pasteboardSnapshot) }
+
+        try sendModifiedKey(keyCode: copyKeyCode, flags: .maskCommand)
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let captured = pasteboard.string(forType: .string)
+        let selectedText: String?
+        if let captured, captured != marker,
+           !captured.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            selectedText = captured
+        } else {
+            selectedText = nil
+        }
+
+        return SelectionCaptureResult(selectedText: selectedText, context: context)
+    }
+
+    /// 選択範囲をtextで置き換える（フォーカスと選択範囲を復元してからペースト）
+    func applyReplacement(_ text: String, context: SelectionContext?) async throws {
+        try await pasteText(text, context: context, restoreSelection: true)
+    }
+
+    /// カーソル位置へtextを挿入する（選択なしのテキスト生成用）
+    func insertGeneratedText(_ text: String, context: SelectionContext?) async throws {
+        try await pasteText(text, context: context, restoreSelection: false)
+    }
+
+    private func pasteText(_ text: String, context: SelectionContext?, restoreSelection: Bool) async throws {
+        guard ensureAccessibilityPermission(prompt: true) else {
+            throw SelectionError.accessibilityPermissionDenied
+        }
+
+        let pasteboardSnapshot = snapshotPasteboard()
+        writePasteboard(text)
+        defer { restorePasteboard(pasteboardSnapshot) }
+
+        if let context {
+            await restoreFocus(for: context, restoreSelection: restoreSelection)
+        }
+
+        try await Task.sleep(nanoseconds: 120_000_000)
+        try sendModifiedKey(keyCode: pasteKeyCode, flags: .maskCommand)
+        try await Task.sleep(nanoseconds: 250_000_000)
+    }
+
+    // MARK: - ペーストボードの退避と復元
+
+    private func writePasteboard(_ string: String) {
+        pasteboard.clearContents()
+        pasteboard.setString(string, forType: .string)
+    }
+
+    private func snapshotPasteboard() -> PasteboardSnapshot {
+        let items = pasteboard.pasteboardItems?.map { item in
+            Dictionary(uniqueKeysWithValues: item.types.compactMap { type in
+                item.data(forType: type).map { (type, $0) }
+            })
+        } ?? []
+        return PasteboardSnapshot(items: items)
+    }
+
+    private func restorePasteboard(_ snapshot: PasteboardSnapshot) {
+        pasteboard.clearContents()
+        let items = snapshot.items.map { values -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            for (type, data) in values {
+                item.setData(data, forType: type)
+            }
+            return item
+        }
+        if !items.isEmpty {
+            pasteboard.writeObjects(items)
+        }
+    }
+
+    private func sendModifiedKey(keyCode: CGKeyCode, flags: CGEventFlags) throws {
+        guard
+            let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
+            let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false)
+        else {
+            throw SelectionError.eventCreationFailed
+        }
+        keyDown.flags = flags
+        keyUp.flags = flags
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+    }
+
+    // MARK: - フォーカスの復元
+
+    private func restoreFocus(for context: SelectionContext, restoreSelection: Bool) async {
+        if let application = context.application {
+            application.activate(options: [.activateIgnoringOtherApps])
+        }
+
+        try? await Task.sleep(nanoseconds: 180_000_000)
+
+        guard let targetElement = restorableFocusedElement(for: context) else { return }
+
+        if restoreSelection, let selectedTextRange = context.selectedTextRange {
+            var range = selectedTextRange
+            if let axRange = AXValueCreate(.cfRange, &range) {
+                _ = AXUIElementSetAttributeValue(
+                    targetElement,
+                    kAXSelectedTextRangeAttribute as CFString,
+                    axRange
+                )
+                try? await Task.sleep(nanoseconds: 80_000_000)
+            }
+        }
+    }
+
+    private func restorableFocusedElement(for context: SelectionContext) -> AXUIElement? {
+        if let focusedElement = context.focusedElement {
+            let focusResult = AXUIElementSetAttributeValue(
+                focusedElement,
+                kAXFocusedAttribute as CFString,
+                kCFBooleanTrue
+            )
+            if focusResult == .success {
+                return focusedElement
+            }
+        }
+
+        guard let fallbackElement = focusedElement(for: context.application) else {
+            return context.focusedElement
+        }
+        _ = AXUIElementSetAttributeValue(
+            fallbackElement,
+            kAXFocusedAttribute as CFString,
+            kCFBooleanTrue
+        )
+        return fallbackElement
+    }
+
+    // MARK: - AXヘルパー
+
+    private func focusedElement(for application: NSRunningApplication?) -> AXUIElement? {
+        guard let application else { return nil }
+        let appElement = AXUIElementCreateApplication(application.processIdentifier)
+        guard
+            let value = attributeValue(kAXFocusedUIElementAttribute as CFString, on: appElement),
+            CFGetTypeID(value) == AXUIElementGetTypeID()
+        else {
+            return nil
+        }
+        return unsafeBitCast(value, to: AXUIElement.self)
+    }
+
+    private func selectedTextRange(for element: AXUIElement) -> CFRange? {
+        guard
+            let value = attributeValue(kAXSelectedTextRangeAttribute as CFString, on: element),
+            CFGetTypeID(value) == AXValueGetTypeID()
+        else {
+            return nil
+        }
+        let axValue = unsafeBitCast(value, to: AXValue.self)
+        guard AXValueGetType(axValue) == .cfRange else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(axValue, .cfRange, &range) else { return nil }
+        return range
+    }
+
+    private func isSecureTextElement(_ element: AXUIElement) -> Bool {
+        guard
+            let value = attributeValue(kAXSubroleAttribute as CFString, on: element),
+            let subrole = value as? String
+        else {
+            return false
+        }
+        return subrole == "AXSecureTextField"
+    }
+
+    private func attributeValue(_ attribute: CFString, on element: AXUIElement) -> CFTypeRef? {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard result == .success else { return nil }
+        return value
+    }
+}
