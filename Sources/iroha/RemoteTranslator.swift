@@ -1,6 +1,6 @@
 import Foundation
 
-/// ローカルLLMサーバ（Ollama / LM Studio）を使った翻訳バックエンド。
+/// ローカルLLMサーバ（Ollama / LM Studio）を使うAIバックエンド。
 /// どちらもストリーミングで応答を受け、thinking（思考過程）は出力しないよう
 /// リクエストで無効化し、混入した場合も<think>ブロックを除去する。
 enum RemoteTranslator {
@@ -57,10 +57,10 @@ enum RemoteTranslator {
         }
     }
 
-    // MARK: - 翻訳（ストリーミング）
+    // MARK: - 実行（ストリーミング）
 
-    static func translate(
-        _ japanese: String,
+    static func run(
+        _ request: AIRequest,
         service: Service,
         stallTimeout: TimeInterval,
         onPartial: @escaping @Sendable (String) -> Void
@@ -68,33 +68,33 @@ enum RemoteTranslator {
         await TranslationService.runWithStallWatchdog(stallTimeout: stallTimeout) { progress in
             switch service {
             case .ollama:
-                return try await streamOllama(japanese, progress: progress, onPartial: onPartial)
+                return try await streamOllama(request, progress: progress, onPartial: onPartial)
             case .lmstudio:
-                return try await streamLMStudio(japanese, progress: progress, onPartial: onPartial)
+                return try await streamLMStudio(request, progress: progress, onPartial: onPartial)
             }
         }
     }
 
-    private static func chatMessages(_ japanese: String) -> [[String: String]] {
+    private static func chatMessages(_ request: AIRequest) -> [[String: String]] {
         [
-            ["role": "system", "content": TranslationService.instructions],
-            ["role": "user", "content": japanese],
+            ["role": "system", "content": request.instructions],
+            ["role": "user", "content": request.userMessage],
         ]
     }
 
     /// Ollama /api/chat（JSONLストリーム）。"think": false でthinkingを無効化
     private static func streamOllama(
-        _ japanese: String,
+        _ request: AIRequest,
         progress: ProgressBox,
         onPartial: @escaping @Sendable (String) -> Void
     ) async throws -> String {
-        var request = URLRequest(url: URL(string: ollamaEndpoint + "/api/chat")!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 300
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        var urlRequest = URLRequest(url: URL(string: ollamaEndpoint + "/api/chat")!)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.timeoutInterval = 300
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": ollamaModel,
-            "messages": chatMessages(japanese),
+            "messages": chatMessages(request),
             "stream": true,
             "think": false,  // qwen3等のthinkingモデルの思考出力を無効化
             "options": ["temperature": 0.3],
@@ -107,7 +107,7 @@ enum RemoteTranslator {
             let error: String?
         }
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw RemoteError.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
         }
@@ -129,17 +129,17 @@ enum RemoteTranslator {
     /// LM Studio /v1/chat/completions（OpenAI互換SSE）。
     /// reasoning系デルタはデコード対象外として無視し、<think>ブロックも除去する
     private static func streamLMStudio(
-        _ japanese: String,
+        _ request: AIRequest,
         progress: ProgressBox,
         onPartial: @escaping @Sendable (String) -> Void
     ) async throws -> String {
-        var request = URLRequest(url: URL(string: lmStudioEndpoint + "/v1/chat/completions")!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 300
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        var urlRequest = URLRequest(url: URL(string: lmStudioEndpoint + "/v1/chat/completions")!)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.timeoutInterval = 300
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": lmStudioModel,
-            "messages": chatMessages(japanese),
+            "messages": chatMessages(request),
             "stream": true,
             "temperature": 0.3,
         ] as [String: Any])
@@ -152,7 +152,7 @@ enum RemoteTranslator {
             let choices: [Choice]?
         }
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw RemoteError.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
         }

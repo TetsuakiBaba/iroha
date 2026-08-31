@@ -14,8 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func openSettingsWindow() {
         if settingsWindowController == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 440, height: 480),
-                styleMask: [.titled, .closable],
+                contentRect: NSRect(x: 0, y: 0, width: 440, height: 680),
+                styleMask: [.titled, .closable, .resizable],
                 backing: .buffered,
                 defer: false
             )

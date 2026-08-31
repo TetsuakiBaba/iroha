@@ -17,7 +17,9 @@ struct SettingsView: View {
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
     @AppStorage("candidateCount") private var candidateCount = 8
     @AppStorage("modelPath") private var modelPath = ""
-    @AppStorage("translateCommitModifier") private var translateCommitModifier = "control"
+    @AppStorage(AICommitSettings.translateModifierKey) private var translateCommitModifier = "control"
+    @AppStorage(AICommitSettings.customModifierKey) private var aiCommitModifier = "off"
+    @AppStorage(AICommitSettings.customPromptKey) private var aiCommitPrompt = AICommitSettings.defaultPrompt
     @AppStorage(TranslationBackend.userDefaultsKey) private var translationService = "apple"
     @AppStorage("ollamaModel") private var ollamaModel = ""
     @AppStorage("lmStudioModel") private var lmStudioModel = ""
@@ -50,12 +52,55 @@ struct SettingsView: View {
 
             Section("英訳して確定") {
                 Picker("ショートカット", selection: $translateCommitModifier) {
-                    Text("オフ").tag("off")
-                    Text("⌃ control + Return").tag("control")
-                    Text("⌥ option + Return").tag("option")
-                    Text("⇧ shift + Return").tag("shift")
+                    shortcutOptions
                 }
-                Picker("翻訳サービス", selection: $translationService) {
+                Text("未確定文字列をAIで英訳して入力します。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            // 同じショートカットを2つの機能に割り当てられないようにする
+            .onChange(of: translateCommitModifier) {
+                if translateCommitModifier != "off", translateCommitModifier == aiCommitModifier {
+                    aiCommitModifier = "off"
+                }
+            }
+
+            Section("AI変換して確定") {
+                Picker("ショートカット", selection: $aiCommitModifier) {
+                    shortcutOptions
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("プロンプト")
+                        Spacer()
+                        Button("既定に戻す") { aiCommitPrompt = AICommitSettings.defaultPrompt }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                            .disabled(aiCommitPrompt == AICommitSettings.defaultPrompt)
+                    }
+                    TextEditor(text: $aiCommitPrompt)
+                        .font(.body)
+                        .frame(height: 68)
+                        .scrollContentBackground(.hidden)
+                        .padding(4)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color(nsColor: .separatorColor)))
+                }
+                Text("未確定文字列をこのプロンプトでAIに処理させて入力します。"
+                    + "プロンプトに \(AICommitSettings.textPlaceholder) と書くとその位置に"
+                    + "未確定文字列が入ります（無ければプロンプトに続けて渡されます）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .onChange(of: aiCommitModifier) {
+                if aiCommitModifier != "off", aiCommitModifier == translateCommitModifier {
+                    translateCommitModifier = "off"
+                }
+            }
+
+            Section("AIサービス") {
+                Picker("サービス", selection: $translationService) {
                     Text("Apple Intelligence（オンデバイス）").tag("apple")
                     Text("Ollama").tag("ollama")
                     Text("LM Studio").tag("lmstudio")
@@ -199,7 +244,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 440)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(minHeight: 400, idealHeight: 680, maxHeight: .infinity)
         .sheet(isPresented: $uiState.showingUserDictionary) { UserDictionaryView() }
         .onReceive(
             NotificationCenter.default.publisher(for: UserDictionaryStore.didChangeNotification)
@@ -213,7 +258,16 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - 翻訳サービス（Ollama / LM Studio）
+    /// 英訳・AI変換で共通のショートカット選択肢
+    @ViewBuilder
+    private var shortcutOptions: some View {
+        Text("オフ").tag("off")
+        Text("⌃ control + Return").tag("control")
+        Text("⌥ option + Return").tag("option")
+        Text("⇧ shift + Return").tag("shift")
+    }
+
+    // MARK: - AIサービス（Apple Intelligence / Ollama / LM Studio）
 
     private var remoteModelBinding: Binding<String> {
         translationService == "ollama" ? $ollamaModel : $lmStudioModel
@@ -229,17 +283,19 @@ struct SettingsView: View {
     }
 
     private var translationCaption: String {
+        let common = "「英訳して確定」と「AI変換して確定」の両方がこのサービスを使います。"
         switch translationService {
         case "ollama":
-            return "ローカルのOllama（\(RemoteTranslator.ollamaEndpoint)）で英訳します。"
+            return common + "ローカルのOllama（\(RemoteTranslator.ollamaEndpoint)）に接続します。"
                 + "thinking（思考過程）は無効化されます。失敗時は通常の確定になります。"
         case "lmstudio":
-            return "ローカルのLM Studio（\(RemoteTranslator.lmStudioEndpoint)）で英訳します。"
+            return common + "ローカルのLM Studio（\(RemoteTranslator.lmStudioEndpoint)）に接続します。"
                 + "thinking（思考過程）は出力されません。失敗時は通常の確定になります。"
         default:
-            return TranslationService.appleAvailable
-                ? "未確定文字列をオンデバイスAI（Apple Intelligence）で英訳して入力します。"
-                : "Apple Intelligence（macOS 26以降で有効化）が必要です。利用できない間は通常の確定になります。"
+            return common + (TranslationService.appleAvailable
+                ? "オンデバイスAI（Apple Intelligence）で処理します。"
+                : "Apple Intelligence（macOS 26以降で有効化）が必要です。"
+                    + "利用できない間は通常の確定になります。")
         }
     }
 

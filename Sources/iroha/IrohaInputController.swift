@@ -89,15 +89,13 @@ final class IrohaInputController: IMKInputController {
         UserDefaults.standard.object(forKey: Self.commitOnPunctuationKey) as? Bool ?? true
     }
     /// 英訳確定（修飾キー+Enter）に使う修飾キー。nilなら機能オフ
-    private static let translateCommitModifierKey = "translateCommitModifier"
     private var translateCommitModifier: NSEvent.ModifierFlags? {
-        switch UserDefaults.standard.string(forKey: Self.translateCommitModifierKey) ?? "control" {
-        case "control": return .control
-        case "option": return .option
-        case "shift": return .shift
-        case "command": return .command
-        default: return nil  // "off"
-        }
+        AICommitSettings.modifier(
+            forKey: AICommitSettings.translateModifierKey, fallback: "control")
+    }
+    /// AI変換確定（修飾キー+Enter、プロンプトは設定）に使う修飾キー。nilなら機能オフ
+    private var aiCommitModifier: NSEvent.ModifierFlags? {
+        AICommitSettings.modifier(forKey: AICommitSettings.customModifierKey, fallback: "off")
     }
 
     // MARK: 状態
@@ -224,12 +222,17 @@ final class IrohaInputController: IMKInputController {
             }
         }
 
-        // 修飾キー+Enter: 未確定文字列を英訳して確定（修飾キーは設定で変更可能）
-        if let modifier = translateCommitModifier,
-           Int(event.keyCode) == kVK_Return || Int(event.keyCode) == kVK_ANSI_KeypadEnter,
-           event.modifierFlags.intersection([.command, .control, .option, .shift]) == modifier,
+        // 修飾キー+Enter: 未確定文字列をAIで処理して確定（修飾キーは設定で変更可能）
+        if Int(event.keyCode) == kVK_Return || Int(event.keyCode) == kVK_ANSI_KeypadEnter,
            isComposing || mode == .segmenting {
-            return handleTranslateCommit(client: client)
+            let pressed = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            if let modifier = translateCommitModifier, pressed == modifier {
+                return handleAICommit(.translate, client: client)
+            }
+            if let modifier = aiCommitModifier, pressed == modifier {
+                return handleAICommit(
+                    .custom(prompt: AICommitSettings.customPrompt), client: client)
+            }
         }
 
         // Command/Control付きのキーはIMEでは扱わない（未確定文字列は確定して逃がす）
@@ -910,15 +913,15 @@ final class IrohaInputController: IMKInputController {
         return composer.display
     }
 
-    // MARK: - 英訳して確定（修飾キー+Enter）
+    // MARK: - AIで処理して確定（修飾キー+Enter）
 
-    /// 現在の未確定文字列を英訳して確定する。
-    /// 合成状態はリセットせず生かしたまま翻訳を待つ（Escで通常の未確定状態に戻れる）
-    private func handleTranslateCommit(client: IMKTextInput) -> Bool {
+    /// 現在の未確定文字列をAI（英訳 or ユーザ設定のプロンプト）で処理して確定する。
+    /// 合成状態はリセットせず生かしたまま結果を待つ（Escで通常の未確定状態に戻れる）
+    private func handleAICommit(_ action: AICommitAction, client: IMKTextInput) -> Bool {
         if mode == .segmenting { hidePanel() }
         guard let japanese = resolveCommitText(), !japanese.isEmpty else { return true }
         guard TranslationService.isAvailable else {
-            // macOS 26未満 / Apple Intelligence無効: 通常の確定にフォールバック
+            // macOS 26未満 / Apple Intelligence無効 / モデル未選択: 通常の確定にフォールバック
             commitText(japanese, client: client)
             return true
         }
@@ -934,8 +937,9 @@ final class IrohaInputController: IMKInputController {
         startTranslationSpinner()
 
         translationTask = Task { [weak self] in
-            // ストリーミング: 届いた英文を随時マークテキストに反映する
-            let english = await TranslationService.translate(japanese, onPartial: { [weak self] partial in
+            // ストリーミング: 届いた結果を随時マークテキストに反映する
+            let request = action.request(for: japanese)
+            let output = await TranslationService.run(request, onPartial: { [weak self] partial in
                 guard let self else { return }
                 Task { @MainActor in
                     guard self.isTranslating,
@@ -953,14 +957,14 @@ final class IrohaInputController: IMKInputController {
                       generation == self.translationGeneration else { return }
                 self.isTranslating = false
                 // 失敗・タイムアウト時は日本語をそのまま確定（テキストを失わない）
-                self.commitText(english ?? japanese, client: self.client())
+                self.commitText(output ?? japanese, client: self.client())
             }
         }
         return true
     }
 
-    /// 翻訳中の表示: 「日本語 ⇢ (途中までの英文)スピナー」をグレー下線で表示。
-    /// スピナーはタイマーで、英文はストリーミングの到着で、それぞれ再描画される
+    /// 処理中の表示: 「日本語 ⇢ (途中までの結果)スピナー」をグレー下線で表示。
+    /// スピナーはタイマーで、結果はストリーミングの到着で、それぞれ再描画される
     private func refreshTranslatingMarkedText(client: IMKTextInput) {
         let spinner = Self.spinnerFrames[translationSpinnerIndex % Self.spinnerFrames.count]
         let text = translationPartial.isEmpty
