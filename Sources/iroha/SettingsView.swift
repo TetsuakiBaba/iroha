@@ -6,9 +6,8 @@ import IrohaCore
 enum SettingsTab: Hashable {
     case input       // 入力・変換のふるまい
     case dictionary  // ユーザ辞書と学習
-    case selection   // 選択テキストのAI処理（グローバルショートカット）
-    case ai          // AIで処理して確定
-    case model       // かな漢字変換モデル
+    case ai          // AI変換（入力中のAI確定 + 選択テキストのAI編集）
+    case model       // モデル（かな漢字変換モデル + AIサービス）
     case about       // アップデートとバージョン情報
 }
 
@@ -40,11 +39,8 @@ struct SettingsView: View {
             DictionarySettingsTab()
                 .tabItem { Label("辞書", systemImage: "character.book.closed") }
                 .tag(SettingsTab.dictionary)
-            SelectionSettingsTab()
-                .tabItem { Label("選択", systemImage: "cursorarrow.rays") }
-                .tag(SettingsTab.selection)
             AISettingsTab()
-                .tabItem { Label("AI", systemImage: "sparkles") }
+                .tabItem { Label("AI変換", systemImage: "sparkles") }
                 .tag(SettingsTab.ai)
             ModelSettingsTab()
                 .tabItem { Label("モデル", systemImage: "cube") }
@@ -54,7 +50,7 @@ struct SettingsView: View {
                 .tag(SettingsTab.about)
         }
         // タブごとに高さが変わらないよう固定サイズにする（収まらない分はフォーム内でスクロール）。
-        // macOS 26ではタブがタイトルバーに入るため、6項目が折り畳まれない幅が要る
+        // macOS 26ではタブがタイトルバーに入るため、全項目が折り畳まれない幅が要る
         .frame(minWidth: 600, idealWidth: 600, minHeight: 690, idealHeight: 690)
         .sheet(isPresented: $uiState.showingUserDictionary) { UserDictionaryView() }
     }
@@ -155,9 +151,114 @@ private struct DictionarySettingsTab: View {
     }
 }
 
-// MARK: - AI
+// MARK: - AI変換（入力中のAI確定 + 選択テキストのAI編集）
 
 private struct AISettingsTab: View {
+    // 選択テキストのAI編集
+    @AppStorage(SelectionSettings.enabledKey) private var selectionEnabled = false
+    @AppStorage(SelectionSettings.triggerModeKey) private var triggerMode = "bubble"
+    @AppStorage(SelectionSettings.onDemandHotkeyKey) private var onDemandHotkey = "Ctrl+0"
+    @AppStorage(SelectionSettings.excludedBundleIdsKey) private var excludedBundleIds = ""
+    @State private var accessibilityGranted = AXIsProcessTrusted()
+
+    var body: some View {
+        Form {
+            // 入力中: 修飾キー+Returnで未確定文字列をAI変換して確定
+            Section {
+                Text("修飾キー+Returnで、入力中の未確定文字列をAIに渡し、返ってきた結果を確定します。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("AI変換して確定（入力中）")
+            }
+
+            ForEach(0..<AICommitSettings.count, id: \.self) { index in
+                AICommitPresetEditor(index: index)
+            }
+
+            // 入力後: 画面上の選択テキストをAIで書き換える
+            Section {
+                Toggle("選択テキストのAI編集を有効にする", isOn: $selectionEnabled)
+                Text("どのアプリでも、選択したテキストをショートカットやマウス操作からAIで"
+                    + "処理して置き換えられます。"
+                    + "ショートカットはirohaが起動している間だけ有効です"
+                    + "（ログイン後に一度日本語入力すると起動します）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                LabeledContent("アクセシビリティ権限") {
+                    HStack {
+                        if accessibilityGranted {
+                            Label("許可済み", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else {
+                            Label("未許可", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Button("システム設定を開く") {
+                                if let url = URL(
+                                    string: "x-apple.systempreferences:"
+                                        + "com.apple.preference.security?Privacy_Accessibility") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                        }
+                        Button("再確認") { accessibilityGranted = AXIsProcessTrusted() }
+                    }
+                }
+                Text("選択テキストの取得と置換にアクセシビリティ権限が必要です。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("選択テキストのAI編集")
+            }
+
+            Section("マウスで選択したとき") {
+                Picker("トリガー", selection: $triggerMode) {
+                    ForEach(SelectionTriggerMode.allCases) { mode in
+                        Text(mode.label).tag(mode.rawValue)
+                    }
+                }
+                .disabled(!selectionEnabled)
+            }
+
+            Section("その場でAIに指示") {
+                HotkeyField(label: "ショートカット", hotkey: $onDemandHotkey)
+                    .disabled(!selectionEnabled)
+                Text("選択テキストに自由な指示を出せます（選択なしで押すとテキスト生成になります）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(0..<SelectionSettings.count, id: \.self) { index in
+                SelectionPresetEditor(index: index)
+                    .disabled(!selectionEnabled)
+            }
+
+            Section("除外するアプリ") {
+                TextField(
+                    "", text: $excludedBundleIds,
+                    prompt: Text("com.example.app, com.example.other"))
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(!selectionEnabled)
+                Text("ここに書いたバンドルIDのアプリでは、マウス選択のトリガーを出しません"
+                    + "（カンマまたは改行区切り）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Text("どのAIで処理するか（Apple Intelligence / Ollama / LM Studio / OpenAI互換）は"
+                    + "「モデル」タブで設定します。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { accessibilityGranted = AXIsProcessTrusted() }
+    }
+}
+
+/// AIサービス（バックエンド）の設定セクション。「モデル」タブに置く
+private struct AIServiceSection: View {
     @AppStorage(TranslationBackend.userDefaultsKey) private var translationService = "apple"
     @AppStorage("ollamaModel") private var ollamaModel = ""
     @AppStorage("lmStudioModel") private var lmStudioModel = ""
@@ -170,80 +271,63 @@ private struct AISettingsTab: View {
     @State private var loadingRemoteModels = false
 
     var body: some View {
-        Form {
-            Section {
-                Text("修飾キー+Returnで、未確定文字列をAIに渡し、返ってきた結果を確定します。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("AI変換して確定")
+        Section("AIサービス") {
+            Picker("サービス", selection: $translationService) {
+                Text("Apple Intelligence（オンデバイス）").tag("apple")
+                Text("Ollama").tag("ollama")
+                Text("LM Studio").tag("lmstudio")
+                Text("OpenAI互換（外部API）").tag("openai")
             }
-
-            ForEach(0..<AICommitSettings.count, id: \.self) { index in
-                AICommitPresetEditor(index: index)
-            }
-
-            Section("AIサービス") {
-                Picker("サービス", selection: $translationService) {
-                    Text("Apple Intelligence（オンデバイス）").tag("apple")
-                    Text("Ollama").tag("ollama")
-                    Text("LM Studio").tag("lmstudio")
-                    Text("OpenAI互換（外部API）").tag("openai")
+            if translationService == "openai" {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("エンドポイント")
+                    TextField(
+                        "", text: $openAIEndpoint,
+                        prompt: Text("https://api.openai.com/v1"))
+                        .textFieldStyle(.roundedBorder)
                 }
-                if translationService == "openai" {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("エンドポイント")
-                        TextField(
-                            "", text: $openAIEndpoint,
-                            prompt: Text("https://api.openai.com/v1"))
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    HStack {
-                        Text("APIキー")
-                        SecureField("", text: $openAIKey)
-                            .textFieldStyle(.roundedBorder)
-                            .onChange(of: openAIKey) {
-                                SecretStore.set(openAIKey, for: RemoteTranslator.openAIKeyAccount)
-                            }
-                    }
-                }
-                if translationService == "openai", remoteModels.isEmpty {
-                    // 一覧が取れないサービスもあるので手入力を許す
-                    HStack {
-                        Text("モデル")
-                        TextField("", text: $openAIModel, prompt: Text("gpt-4o-mini"))
-                            .textFieldStyle(.roundedBorder)
-                    }
-                } else if translationService != "apple" {
-                    Picker("モデル", selection: remoteModelBinding) {
-                        Text("選択してください").tag("")
-                        ForEach(remoteModelChoices, id: \.self) { model in
-                            Text(model).tag(model)
+                HStack {
+                    Text("APIキー")
+                    SecureField("", text: $openAIKey)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: openAIKey) {
+                            SecretStore.set(openAIKey, for: RemoteTranslator.openAIKeyAccount)
                         }
-                    }
                 }
-                if translationService != "apple" {
-                    HStack {
-                        Button("モデル一覧を更新") { fetchRemoteModels() }
-                        if loadingRemoteModels {
-                            ProgressView().controlSize(.small)
-                        }
-                    }
-                    if let error = remoteModelsError {
-                        Text(error).font(.caption).foregroundStyle(.red)
-                    }
-                }
-                Text(translationCaption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
-            .onChange(of: translationService) { fetchRemoteModels() }
+            if translationService == "openai", remoteModels.isEmpty {
+                // 一覧が取れないサービスもあるので手入力を許す
+                HStack {
+                    Text("モデル")
+                    TextField("", text: $openAIModel, prompt: Text("gpt-4o-mini"))
+                        .textFieldStyle(.roundedBorder)
+                }
+            } else if translationService != "apple" {
+                Picker("モデル", selection: remoteModelBinding) {
+                    Text("選択してください").tag("")
+                    ForEach(remoteModelChoices, id: \.self) { model in
+                        Text(model).tag(model)
+                    }
+                }
+            }
+            if translationService != "apple" {
+                HStack {
+                    Button("モデル一覧を更新") { fetchRemoteModels() }
+                    if loadingRemoteModels {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                if let error = remoteModelsError {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
+            }
+            Text(translationCaption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .formStyle(.grouped)
+        .onChange(of: translationService) { fetchRemoteModels() }
         .onAppear { fetchRemoteModels() }
     }
-
-    // MARK: AIサービス（Apple Intelligence / Ollama / LM Studio）
 
     private var remoteModelBinding: Binding<String> {
         switch translationService {
@@ -263,7 +347,7 @@ private struct AISettingsTab: View {
     }
 
     private var translationCaption: String {
-        let common = "AI変換と選択テキスト処理のすべてがこのサービスを使います。"
+        let common = "「AI変換して確定」と「選択テキストのAI編集」はここで選んだサービスを使います。"
         switch translationService {
         case "openai":
             return common + "OpenAI互換API（\(RemoteTranslator.openAIEndpoint)）に接続します。"
@@ -418,91 +502,6 @@ private struct AICommitPresetEditor: View {
 }
 
 
-// MARK: - 選択テキストのAI処理
-
-private struct SelectionSettingsTab: View {
-    @AppStorage(SelectionSettings.enabledKey) private var enabled = false
-    @AppStorage(SelectionSettings.triggerModeKey) private var triggerMode = "bubble"
-    @AppStorage(SelectionSettings.onDemandHotkeyKey) private var onDemandHotkey = "Ctrl+0"
-    @AppStorage(SelectionSettings.excludedBundleIdsKey) private var excludedBundleIds = ""
-
-    @State private var accessibilityGranted = AXIsProcessTrusted()
-
-    var body: some View {
-        Form {
-            Section {
-                Toggle("選択テキストのAI処理を有効にする", isOn: $enabled)
-                Text("どのアプリでも、選択したテキストをショートカットやマウス操作からAIで"
-                    + "処理して置き換えられます。処理には設定 > AI のAIサービスを使います。"
-                    + "ショートカットはirohaが起動している間だけ有効です"
-                    + "（ログイン後に一度日本語入力すると起動します）。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                LabeledContent("アクセシビリティ権限") {
-                    HStack {
-                        if accessibilityGranted {
-                            Label("許可済み", systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                        } else {
-                            Label("未許可", systemImage: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                            Button("システム設定を開く") {
-                                if let url = URL(
-                                    string: "x-apple.systempreferences:"
-                                        + "com.apple.preference.security?Privacy_Accessibility") {
-                                    NSWorkspace.shared.open(url)
-                                }
-                            }
-                        }
-                        Button("再確認") { accessibilityGranted = AXIsProcessTrusted() }
-                    }
-                }
-                Text("選択テキストの取得と置換にアクセシビリティ権限が必要です。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("選択テキストのAI処理")
-            }
-
-            Section("マウスで選択したとき") {
-                Picker("トリガー", selection: $triggerMode) {
-                    ForEach(SelectionTriggerMode.allCases) { mode in
-                        Text(mode.label).tag(mode.rawValue)
-                    }
-                }
-                .disabled(!enabled)
-            }
-
-            Section("その場でAIに指示") {
-                HotkeyField(label: "ショートカット", hotkey: $onDemandHotkey)
-                    .disabled(!enabled)
-                Text("選択テキストに自由な指示を出せます（選択なしで押すとテキスト生成になります）。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            ForEach(0..<SelectionSettings.count, id: \.self) { index in
-                SelectionPresetEditor(index: index)
-                    .disabled(!enabled)
-            }
-
-            Section("除外するアプリ") {
-                TextField(
-                    "", text: $excludedBundleIds,
-                    prompt: Text("com.example.app, com.example.other"))
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(!enabled)
-                Text("ここに書いたバンドルIDのアプリでは、マウス選択のトリガーを出しません"
-                    + "（カンマまたは改行区切り）。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-        .onAppear { accessibilityGranted = AXIsProcessTrusted() }
-    }
-}
-
 /// "Ctrl+1" 形式のグローバルショートカット入力欄（形式チェック付き）
 private struct HotkeyField: View {
     let label: String
@@ -594,7 +593,7 @@ private struct SelectionPresetEditor: View {
     }
 }
 
-// MARK: - 変換モデル
+// MARK: - モデル（かな漢字変換モデル + AIサービス）
 
 private struct ModelSettingsTab: View {
     @AppStorage("modelPath") private var modelPath = ""
@@ -602,7 +601,7 @@ private struct ModelSettingsTab: View {
 
     var body: some View {
         Form {
-            Section("変換モデル") {
+            Section("かな漢字変換モデル") {
                 switch modelDownloader.state {
                 case .downloading(let progress):
                     LabeledContent("モデルをダウンロード中") {
@@ -653,6 +652,8 @@ private struct ModelSettingsTab: View {
                     AppRestarter.restartInstalledApp()
                 }
             }
+
+            AIServiceSection()
         }
         .formStyle(.grouped)
     }

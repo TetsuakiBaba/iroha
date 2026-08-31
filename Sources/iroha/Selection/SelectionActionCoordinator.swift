@@ -289,7 +289,7 @@ final class SelectionActionCoordinator {
 
     private func runAI(title: String, request: AIRequest, source: String, isGeneration: Bool) {
         guard TranslationService.isAvailable else {
-            showNotice("AIサービスが利用できません（設定 > AI を確認）")
+            showNotice("AIサービスが利用できません（設定 > モデル を確認）")
             return
         }
 

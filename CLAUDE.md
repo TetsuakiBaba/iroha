@@ -27,7 +27,7 @@ swift build && swift test        # ビルドと単体テスト
 - `Sources/iroha/` — IME本体（Swift 5モード）: IMKコントローラ、設定UI、
   AIバックエンド（Apple FoundationModels / Ollama / LM Studio / OpenAI互換）、
   アップデータ、モデルDL、macOSユーザ辞書の取り込み（`SystemUserDictionary`）、
-  選択テキストのAI処理（`Selection/`。グローバルショートカットとマウス選択で
+  選択テキストのAI編集（`Selection/`。グローバルショートカットとマウス選択で
   他アプリの選択テキストをAIで置換する。GenGoの機能を移植。既定OFF・要アクセシビリティ権限）
 - `Sources/IrohaCore/` — 変換エンジン（Swift 6モード）: zenz + llama.cpp
 - FoundationModelsはmacOS 26+のため `#if canImport` + `@available(macOS 26.0, *)` ガード必須
