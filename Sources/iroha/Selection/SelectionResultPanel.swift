@@ -113,16 +113,20 @@ final class SelectionPanelController: NSWindowController {
         }
     }
 
-    /// フェーズが変わったときに高さを合わせる（左上を固定）
+    /// 内容に合わせてサイズを更新する（左上を固定。ストリーミング中も呼ばれる）
     func refreshSize() {
         guard let window, window.isVisible else { return }
         let size = contentSize(for: model.phase)
         let frame = window.frame
         guard abs(frame.height - size.height) > 0.5 || abs(frame.width - size.width) > 0.5 else { return }
-        window.setFrame(
-            NSRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height),
-            display: true
-        )
+        var target = NSRect(
+            x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height)
+        // 下や右に伸びて画面外へ出ないようにクランプ
+        if let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame {
+            target.origin.x = min(max(target.minX, visibleFrame.minX + 8), visibleFrame.maxX - size.width - 8)
+            target.origin.y = min(max(target.minY, visibleFrame.minY + 8), visibleFrame.maxY - size.height - 8)
+        }
+        window.setFrame(target, display: true)
     }
 
     func dismiss() {
@@ -136,9 +140,40 @@ final class SelectionPanelController: NSWindowController {
     private func contentSize(for phase: SelectionPanelModel.Phase) -> NSSize {
         switch phase {
         case .promptInput: return NSSize(width: 460, height: model.sourceText.isEmpty ? 120 : 168)
-        case .processing, .done: return NSSize(width: 460, height: 260)
+        case .processing, .done: return outputPanelSize()
         case .notice: return NSSize(width: 300, height: 56)
         }
+    }
+
+    /// 出力テキストを実測して、内容に見合ったサイズを返す。
+    /// 短い結果は小さく、長い結果は上限まで広げてスクロールに任せる
+    private func outputPanelSize() -> NSSize {
+        let minWidth: CGFloat = 300   // フッタのボタン類が収まる幅
+        let maxWidth: CGFloat = 460
+        let maxHeight: CGFloat = 340
+        // テキスト以外の固定分: 外周パディング12×2 + テキスト欄の内側8×2
+        let chromeWidth: CGFloat = 40
+        // ヘッダ + フッタ + 縦の余白ぶん
+        let chromeHeight: CGFloat = 104
+
+        let font = NSFont.preferredFont(forTextStyle: .body)
+        let text = model.outputText.isEmpty ? "　" : model.outputText
+        let attributed = NSAttributedString(string: text, attributes: [.font: font])
+        let unbounded = NSSize(
+            width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        let options: NSString.DrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
+
+        // 幅: 最長行に合わせて縮める（折り返しが必要なら上限のまま）
+        let naturalRect = attributed.boundingRect(with: unbounded, options: options)
+        let width = min(maxWidth, max(minWidth, ceil(naturalRect.width) + chromeWidth))
+
+        // 高さ: その幅で折り返したときの行数ぶん
+        let wrappedRect = attributed.boundingRect(
+            with: NSSize(width: width - chromeWidth, height: .greatestFiniteMagnitude),
+            options: options)
+        let textHeight = max(ceil(wrappedRect.height), ceil(font.boundingRectForFont.height))
+        let height = min(maxHeight, textHeight + chromeHeight)
+        return NSSize(width: width, height: height)
     }
 }
 

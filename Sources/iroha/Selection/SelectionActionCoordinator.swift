@@ -315,6 +315,7 @@ final class SelectionActionCoordinator {
                 Task { @MainActor [weak self] in
                     guard let self, gen == self.generation else { return }
                     self.model.outputText = partial.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.panelController.refreshSize()  // 内容に合わせて伸ばす
                 }
             })
             guard let self else { return }
