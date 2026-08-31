@@ -169,8 +169,10 @@ private struct AISettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
-                Text("AI変換して確定（入力中）")
+                Label("AI変換して確定（入力中）", systemImage: "return")
+                    .font(.headline)
             }
+            .headerProminence(.increased)
 
             ForEach(0..<AICommitSettings.count, id: \.self) { index in
                 AICommitPresetEditor(index: index)
@@ -208,8 +210,13 @@ private struct AISettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
-                Text("選択テキストのAI編集")
+                // ここから下は別グループ（入力中ではなく、既存テキストの編集）なので
+                // 見出しを大きくして間隔を空け、視覚的に区切る
+                Label("選択テキストのAI編集", systemImage: "cursorarrow.rays")
+                    .font(.headline)
+                    .padding(.top, 24)
             }
+            .headerProminence(.increased)
 
             Section("マウスで選択したとき") {
                 Picker("トリガー", selection: $triggerMode) {
