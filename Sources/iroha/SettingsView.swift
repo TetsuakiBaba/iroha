@@ -50,7 +50,7 @@ struct SettingsView: View {
         }
         // タブごとに高さが変わらないよう固定サイズにする（収まらない分はフォーム内でスクロール）。
         // macOS 26ではタブがタイトルバーに入るため、5項目が折り畳まれない幅が要る
-        .frame(minWidth: 520, idealWidth: 520, minHeight: 640, idealHeight: 640)
+        .frame(minWidth: 520, idealWidth: 520, minHeight: 690, idealHeight: 690)
         .sheet(isPresented: $uiState.showingUserDictionary) { UserDictionaryView() }
     }
 }
@@ -153,9 +153,6 @@ private struct DictionarySettingsTab: View {
 // MARK: - AI
 
 private struct AISettingsTab: View {
-    @AppStorage(AICommitSettings.translateModifierKey) private var translateCommitModifier = "control"
-    @AppStorage(AICommitSettings.customModifierKey) private var aiCommitModifier = "off"
-    @AppStorage(AICommitSettings.customPromptKey) private var aiCommitPrompt = AICommitSettings.defaultPrompt
     @AppStorage(TranslationBackend.userDefaultsKey) private var translationService = "apple"
     @AppStorage("ollamaModel") private var ollamaModel = ""
     @AppStorage("lmStudioModel") private var lmStudioModel = ""
@@ -166,53 +163,16 @@ private struct AISettingsTab: View {
 
     var body: some View {
         Form {
-            Section("英訳して確定") {
-                Picker("ショートカット", selection: $translateCommitModifier) {
-                    shortcutOptions
-                }
-                Text("未確定文字列をAIで英訳して入力します。")
+            Section {
+                Text("修飾キー+Returnで、未確定文字列をAIに渡し、返ってきた結果を確定します。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-            // 同じショートカットを2つの機能に割り当てられないようにする
-            .onChange(of: translateCommitModifier) {
-                if translateCommitModifier != "off", translateCommitModifier == aiCommitModifier {
-                    aiCommitModifier = "off"
-                }
+            } header: {
+                Text("AI変換して確定")
             }
 
-            Section("AI変換して確定") {
-                Picker("ショートカット", selection: $aiCommitModifier) {
-                    shortcutOptions
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("プロンプト")
-                        Spacer()
-                        Button("既定に戻す") { aiCommitPrompt = AICommitSettings.defaultPrompt }
-                            .buttonStyle(.link)
-                            .font(.caption)
-                            .disabled(aiCommitPrompt == AICommitSettings.defaultPrompt)
-                    }
-                    TextEditor(text: $aiCommitPrompt)
-                        .font(.body)
-                        .frame(height: 68)
-                        .scrollContentBackground(.hidden)
-                        .padding(4)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color(nsColor: .separatorColor)))
-                }
-                Text("未確定文字列をこのプロンプトでAIに処理させて入力します。"
-                    + "プロンプトに \(AICommitSettings.textPlaceholder) と書くとその位置に"
-                    + "未確定文字列が入ります（無ければプロンプトに続けて渡されます）。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .onChange(of: aiCommitModifier) {
-                if aiCommitModifier != "off", aiCommitModifier == translateCommitModifier {
-                    translateCommitModifier = "off"
-                }
+            ForEach(0..<AICommitSettings.count, id: \.self) { index in
+                AICommitPresetEditor(index: index)
             }
 
             Section("AIサービス") {
@@ -248,15 +208,6 @@ private struct AISettingsTab: View {
         .onAppear { fetchRemoteModels() }
     }
 
-    /// 英訳・AI変換で共通のショートカット選択肢
-    @ViewBuilder
-    private var shortcutOptions: some View {
-        Text("オフ").tag("off")
-        Text("⌃ control + Return").tag("control")
-        Text("⌥ option + Return").tag("option")
-        Text("⇧ shift + Return").tag("shift")
-    }
-
     // MARK: AIサービス（Apple Intelligence / Ollama / LM Studio）
 
     private var remoteModelBinding: Binding<String> {
@@ -273,7 +224,7 @@ private struct AISettingsTab: View {
     }
 
     private var translationCaption: String {
-        let common = "「英訳して確定」と「AI変換して確定」の両方がこのサービスを使います。"
+        let common = "3つのAI変換すべてがこのサービスを使います。"
         switch translationService {
         case "ollama":
             return common + "ローカルのOllama（\(RemoteTranslator.ollamaEndpoint)）に接続します。"
@@ -316,6 +267,105 @@ private struct AISettingsTab: View {
                 }
             }
         }
+    }
+}
+
+/// AI変換プリセット1つ分の編集欄（名前・ショートカット・プロンプト）。
+/// 3つ並べても縦に収まるよう、プロンプトは折りたたんでおく
+private struct AICommitPresetEditor: View {
+    private let index: Int
+    @AppStorage private var name: String
+    @AppStorage private var prompt: String
+    @AppStorage private var shortcut: String
+    @State private var expanded = false
+
+    init(index: Int) {
+        self.index = index
+        let defaults = AICommitSettings.defaults[index]
+        _name = AppStorage(wrappedValue: defaults.name, AICommitSettings.nameKey(index))
+        _prompt = AppStorage(wrappedValue: defaults.prompt, AICommitSettings.promptKey(index))
+        _shortcut = AppStorage(
+            wrappedValue: defaults.shortcut.rawValue, AICommitSettings.shortcutKey(index))
+    }
+
+    var body: some View {
+        Section {
+            HStack {
+                // ラベルを別に置く（TextFieldのタイトルにすると値が右寄せになる）
+                Text("名前")
+                TextField("", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 140)
+                Spacer()
+                Picker("", selection: $shortcut) {
+                    ForEach(AICommitShortcut.allCases) { option in
+                        Text(option.label).tag(option.rawValue)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 250)
+            }
+
+            DisclosureGroup(isExpanded: $expanded) {
+                TextEditor(text: $prompt)
+                    .font(.body)
+                    .frame(height: 72)
+                    .scrollContentBackground(.hidden)
+                    .padding(4)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(nsColor: .separatorColor)))
+                HStack(alignment: .top) {
+                    Text("\(AICommitSettings.textPlaceholder) と書くとその位置に未確定文字列が"
+                        + "入ります（無ければプロンプトに続けて渡されます）。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("既定に戻す") {
+                        name = AICommitSettings.defaults[index].name
+                        prompt = AICommitSettings.defaults[index].prompt
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .disabled(isDefault)
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("プロンプト")
+                    if !expanded {
+                        Text(prompt.replacingOccurrences(of: "\n", with: " "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+            }
+        } header: {
+            Text("\(index + 1). \(headerName)")
+        }
+        // 同じショートカットを複数のプリセットに割り当てられないようにする
+        .onChange(of: shortcut) {
+            guard shortcut != AICommitShortcut.off.rawValue else { return }
+            for other in 0..<AICommitSettings.count where other != index {
+                let key = AICommitSettings.shortcutKey(other)
+                let current = UserDefaults.standard.string(forKey: key)
+                    ?? AICommitSettings.defaults[other].shortcut.rawValue
+                if current == shortcut {
+                    UserDefaults.standard.set(AICommitShortcut.off.rawValue, forKey: key)
+                }
+            }
+        }
+    }
+
+    private var headerName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? AICommitSettings.defaults[index].name : trimmed
+    }
+
+    private var isDefault: Bool {
+        name == AICommitSettings.defaults[index].name
+            && prompt == AICommitSettings.defaults[index].prompt
     }
 }
 

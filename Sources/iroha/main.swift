@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func openSettingsWindow() {
         if settingsWindowController == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 520, height: 692),
+                contentRect: NSRect(x: 0, y: 0, width: 520, height: 742),
                 styleMask: [.titled, .closable, .resizable],
                 backing: .buffered,
                 defer: false
@@ -33,6 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 「英訳して確定」「AI変換して確定」が別設定だった頃の値をプリセットへ移す
+        AICommitSettings.migrateIfNeeded()
+
         // 開発用: 設定ウィンドウだけを開く（IMEとしては接続しない）。UIの確認に使う
         //   "~/Library/Input Methods/iroha.app/Contents/MacOS/iroha" --settings [タブ名]
         if let index = CommandLine.arguments.firstIndex(of: "--settings") {
@@ -45,6 +48,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             NSApp.setActivationPolicy(.regular)
             openSettingsWindow()
+            // スクリーンショットで確認しやすいよう、主ディスプレイの左上に固定して開く
+            if let window = settingsWindowController?.window, let screen = NSScreen.screens.first {
+                window.setFrameTopLeftPoint(
+                    NSPoint(x: screen.frame.minX + 40, y: screen.frame.maxY - 60))
+            }
             return
         }
 

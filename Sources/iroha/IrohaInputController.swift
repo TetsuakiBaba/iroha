@@ -88,15 +88,6 @@ final class IrohaInputController: IMKInputController {
     private var commitOnPunctuationEnabled: Bool {
         UserDefaults.standard.object(forKey: Self.commitOnPunctuationKey) as? Bool ?? true
     }
-    /// 英訳確定（修飾キー+Enter）に使う修飾キー。nilなら機能オフ
-    private var translateCommitModifier: NSEvent.ModifierFlags? {
-        AICommitSettings.modifier(
-            forKey: AICommitSettings.translateModifierKey, fallback: "control")
-    }
-    /// AI変換確定（修飾キー+Enter、プロンプトは設定）に使う修飾キー。nilなら機能オフ
-    private var aiCommitModifier: NSEvent.ModifierFlags? {
-        AICommitSettings.modifier(forKey: AICommitSettings.customModifierKey, fallback: "off")
-    }
 
     // MARK: 状態
 
@@ -128,6 +119,8 @@ final class IrohaInputController: IMKInputController {
     private var translationTask: Task<Void, Never>?
     /// 翻訳中表示の状態（翻訳対象の日本語・ストリーミング途中の英文・スピナー）
     private var translatingJapanese = ""
+    /// 実行中のプリセット名（結果が届くまでの表示に使う）
+    private var translationLabel = ""
     private var translationPartial = ""
     private var translationSpinnerIndex = 0
     private var translationSpinnerTimer: Timer?
@@ -222,17 +215,12 @@ final class IrohaInputController: IMKInputController {
             }
         }
 
-        // 修飾キー+Enter: 未確定文字列をAIで処理して確定（修飾キーは設定で変更可能）
+        // 修飾キー+Enter: 未確定文字列をAIで変換して確定（プリセットは設定で変更可能）
         if Int(event.keyCode) == kVK_Return || Int(event.keyCode) == kVK_ANSI_KeypadEnter,
-           isComposing || mode == .segmenting {
-            let pressed = event.modifierFlags.intersection([.command, .control, .option, .shift])
-            if let modifier = translateCommitModifier, pressed == modifier {
-                return handleAICommit(.translate, client: client)
-            }
-            if let modifier = aiCommitModifier, pressed == modifier {
-                return handleAICommit(
-                    .custom(prompt: AICommitSettings.customPrompt), client: client)
-            }
+           isComposing || mode == .segmenting,
+           let preset = AICommitSettings.preset(
+            matching: event.modifierFlags.intersection([.command, .control, .option, .shift])) {
+            return handleAICommit(preset, client: client)
         }
 
         // Command/Control付きのキーはIMEでは扱わない（未確定文字列は確定して逃がす）
@@ -915,9 +903,9 @@ final class IrohaInputController: IMKInputController {
 
     // MARK: - AIで処理して確定（修飾キー+Enter）
 
-    /// 現在の未確定文字列をAI（英訳 or ユーザ設定のプロンプト）で処理して確定する。
+    /// 現在の未確定文字列をAI（プリセットのプロンプト）で変換して確定する。
     /// 合成状態はリセットせず生かしたまま結果を待つ（Escで通常の未確定状態に戻れる）
-    private func handleAICommit(_ action: AICommitAction, client: IMKTextInput) -> Bool {
+    private func handleAICommit(_ preset: AICommitPreset, client: IMKTextInput) -> Bool {
         if mode == .segmenting { hidePanel() }
         guard let japanese = resolveCommitText(), !japanese.isEmpty else { return true }
         guard TranslationService.isAvailable else {
@@ -931,6 +919,7 @@ final class IrohaInputController: IMKInputController {
         let generation = translationGeneration
         isTranslating = true
         translatingJapanese = japanese
+        translationLabel = preset.displayName
         translationPartial = ""
         translationSpinnerIndex = 0
         refreshTranslatingMarkedText(client: client)
@@ -938,7 +927,7 @@ final class IrohaInputController: IMKInputController {
 
         translationTask = Task { [weak self] in
             // ストリーミング: 届いた結果を随時マークテキストに反映する
-            let request = action.request(for: japanese)
+            let request = preset.request(for: japanese)
             let output = await TranslationService.run(request, onPartial: { [weak self] partial in
                 guard let self else { return }
                 Task { @MainActor in
@@ -968,7 +957,7 @@ final class IrohaInputController: IMKInputController {
     private func refreshTranslatingMarkedText(client: IMKTextInput) {
         let spinner = Self.spinnerFrames[translationSpinnerIndex % Self.spinnerFrames.count]
         let text = translationPartial.isEmpty
-            ? "\(translatingJapanese) ⇢ \(spinner)"
+            ? "\(translatingJapanese) ⇢ \(translationLabel) \(spinner)"
             : "\(translatingJapanese) ⇢ \(translationPartial) \(spinner)"
         let attributed = NSAttributedString(
             string: text,
