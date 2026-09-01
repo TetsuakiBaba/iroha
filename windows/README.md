@@ -87,8 +87,12 @@ windows\build\iroha-cli\iroha-cli.exe bench testdata\eval.tsv
       （パイプにAppContainer/低整合性からの接続を許可、ログオン時のサーバ自動起動
       ［HKCU Run。AppContainer内のTIPはプロセスを起動できないため］、
       言語バーの入力モードボタン「あ/A」＝クリックで切替・テーマ連動アイコン）
+- [x] M6a: 設定ウィンドウ（iroha-settings.exe: モデル選択・ダウンロード・切替、
+      ユーザ辞書の一覧/追加/削除、学習リセット。あ/Aボタン右クリックで起動。
+      config.json + IPCのReloadでサーバへ即時反映）と配布用バンドル（make-bundle.ps1）
 - [ ] M5b: UIlessモード（ITfCandidateListUIElement。タスクバー検索ボックス等）
-- [ ] M6: 製品化（インストーラ、Authenticode署名、設定UI・辞書編集、UIA対応）
+- [ ] M6b: 製品化の残り（インストーラ/署名、release.ymlの両OS対応、UIA対応、
+      ライブ変換［エンジン準備済み・TIP非同期化が未実装］）
 
 参考実装: CorvusSKK（構成の手本）、Microsoft textservice step01-06（チュートリアル）、
 SampleIME（登録・UIlessの正解集）、mozc `src/win32/tip/`（完成形）。

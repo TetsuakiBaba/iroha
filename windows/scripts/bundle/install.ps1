@@ -42,7 +42,9 @@ Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
 Write-Host "==> zenzモデルの確認"
 & (Join-Path $SourceDir "fetch-model.ps1")
 
-Start-Process (Join-Path $InstallDir "iroha-server.exe") -WindowStyle Hidden
+# 管理者スクリプトから直接起動すると昇格権限を引き継ぐため、explorer.exe経由で
+# デスクトップユーザ権限（非昇格）で起動する
+Start-Process explorer.exe -ArgumentList "`"$(Join-Path $InstallDir 'iroha-server.exe')`""
 
 Write-Host ""
 Write-Host "==> インストール完了"

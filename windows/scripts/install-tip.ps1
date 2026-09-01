@@ -90,7 +90,9 @@ if ($p.ExitCode -ne 0) { throw "regsvr32 が失敗しました（コード: $($p
 # ログオン時の自動起動を登録し、今すぐも起動しておく
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
     -Name "iroha-server" -Value "`"$(Join-Path $InstallDir 'iroha-server.exe')`""
-Start-Process (Join-Path $InstallDir "iroha-server.exe") -WindowStyle Hidden
+# このスクリプトは管理者で動いているため、直接起動するとサーバが昇格権限を
+# 引き継いでしまう。explorer.exe経由でデスクトップユーザ権限（非昇格）で起動する
+Start-Process explorer.exe -ArgumentList "`"$(Join-Path $InstallDir 'iroha-server.exe')`""
 
 Write-Host "==> インストール完了"
 Write-Host "設定 > 時刻と言語 > 言語と地域 > 日本語 > 言語のオプション > キーボード に「iroha」が現れます。"
