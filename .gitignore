@@ -2,6 +2,8 @@
 .DS_Store
 vendor/llama.cpp/
 vendor/dist/
+vendor/dist-windows/
+windows/**/build/
 *.gguf
 .venv/
 training/base/
@@ -11,3 +13,6 @@ training/imellm-llmjp-150m/
 training/iroha-*/
 testdata/ajimee/
 training/*.log
+
+# 助成金申請書類（非公開）
+grants/
