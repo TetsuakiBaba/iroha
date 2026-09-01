@@ -44,6 +44,9 @@ def main() -> None:
     parser.add_argument("--warmup-steps", type=int, default=250)
     parser.add_argument("--num-proc", type=int, default=max(1, (os.cpu_count() or 2) // 2),
                         help="トークナイズの並列プロセス数")
+    parser.add_argument("--resume", action="store_true",
+                        help="出力ディレクトリの最新チェックポイントから同一ランを再開する"
+                             "（中断・クラッシュからの復帰用。設定やデータを変えたランには使わない）")
     parser.add_argument("--llama-vocab", default=None,
                         help="vocab-only GGUFのパス（make-vocab-gguf.shで生成）。指定すると"
                              "llama.cppのトークナイザで学習データをトークン化し、iroha推論時"
@@ -110,23 +113,11 @@ def main() -> None:
         return result
 
     def tokenize(batch):
+        # attention_mask と labels は input_ids から導出できるため保存しない
+        # （collateで生成する。1億行規模ではキャッシュが3倍差＝100GB級の差になる）
         if args.llama_vocab:
-            input_ids = encode_batch_llama(batch["text"])
-        else:
-            input_ids = encode_batch_hf(batch["text"])
-        # U+EE01より前（プロンプト部分）は損失計算から除外する
-        labels = []
-        for ids in input_ids:
-            row = []
-            seen_output_tag = False
-            for token_id in ids:
-                row.append(token_id if seen_output_tag else -100)
-                if token_id == output_tag_id:
-                    seen_output_tag = True
-            labels.append(row)
-        return {"input_ids": input_ids,
-                "attention_mask": [[1] * len(ids) for ids in input_ids],
-                "labels": labels}
+            return {"input_ids": encode_batch_llama(batch["text"])}
+        return {"input_ids": encode_batch_hf(batch["text"])}
 
     # llama.cppトークナイザはfork安全でない（macOSでは子プロセスがデッドロックする）ため
     # メインプロセスでトークン化する。実測 約3.5万行/s なので全件1.29億行でも約1時間
@@ -141,10 +132,18 @@ def main() -> None:
         longest = max(len(f["input_ids"]) for f in features)
         batch = {"input_ids": [], "attention_mask": [], "labels": []}
         for f in features:
-            n = len(f["input_ids"])
-            batch["input_ids"].append(f["input_ids"] + [pad_id] * (longest - n))
+            ids = f["input_ids"]
+            n = len(ids)
+            # U+EE01より前（プロンプト部分）は損失計算から除外する
+            labels = []
+            seen_output_tag = False
+            for token_id in ids:
+                labels.append(token_id if seen_output_tag else -100)
+                if token_id == output_tag_id:
+                    seen_output_tag = True
+            batch["input_ids"].append(ids + [pad_id] * (longest - n))
             batch["attention_mask"].append([1] * n + [0] * (longest - n))
-            batch["labels"].append(f["labels"] + [-100] * (longest - n))
+            batch["labels"].append(labels + [-100] * (longest - n))
         return {k: torch.tensor(v) for k, v in batch.items()}
 
     training_args = TrainingArguments(
@@ -166,7 +165,7 @@ def main() -> None:
 
     trainer = Trainer(model=model, args=training_args,
                       train_dataset=tokenized, data_collator=collate)
-    trainer.train()
+    trainer.train(resume_from_checkpoint=args.resume or None)
     trainer.save_model(args.out)
     tokenizer.save_pretrained(args.out)
 

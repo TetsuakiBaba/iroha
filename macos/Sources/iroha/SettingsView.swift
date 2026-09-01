@@ -196,6 +196,11 @@ private struct AISettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                Text("プリセットのショートカットは、テキストを選択していないときに押すと"
+                    + "「テキストを生成」の入力欄になり、結果をカーソル位置へ挿入します。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 SelectionPresetEditor(index: 0)
                 SelectionPresetEditor(index: 1)
                 SelectionPresetEditor(index: 2)

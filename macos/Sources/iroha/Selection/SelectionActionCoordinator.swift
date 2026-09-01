@@ -105,11 +105,12 @@ final class SelectionActionCoordinator {
             do {
                 let capture = try await self.selectionService.captureSelectedText()
                 guard !self.isExcluded(capture.context.bundleIdentifier) else { return }
+                self.currentContext = capture.context
                 guard let selectedText = capture.selectedText else {
-                    self.showNotice("テキストを選択してください")
+                    // 選択なし: プロンプトを入力してテキストを生成し、カーソル位置へ挿入する
+                    self.presentPromptInput(sourceText: nil)
                     return
                 }
-                self.currentContext = capture.context
                 self.runAI(
                     title: preset.displayName,
                     request: preset.request(for: selectedText),
@@ -256,15 +257,19 @@ final class SelectionActionCoordinator {
 
     /// オンデマンド: プロンプト入力状態でパネルを出す（選択なしなら生成モード）
     private func presentPromptInput(sourceText: String?) {
+        let isGeneration = (sourceText == nil)
         model.phase = .promptInput
-        model.title = "AIに指示"
+        model.title = isGeneration ? Self.generationTitle : Self.onDemandTitle
         model.sourceText = sourceText ?? ""
         model.outputText = ""
         model.promptText = ""
         model.notice = nil
-        model.isGeneration = (sourceText == nil)
+        model.isGeneration = isGeneration
         panelController.present(near: NSEvent.mouseLocation)
     }
+
+    private static let onDemandTitle = "AIに指示"
+    private static let generationTitle = "テキストを生成"
 
     private func submitOnDemandPrompt() {
         let prompt = model.promptText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -280,7 +285,7 @@ final class SelectionActionCoordinator {
             request = AIRequest.build(prompt: prompt, text: model.sourceText)
         }
         runAI(
-            title: "AIに指示",
+            title: model.isGeneration ? Self.generationTitle : Self.onDemandTitle,
             request: request,
             source: model.sourceText,
             isGeneration: model.isGeneration
