@@ -38,72 +38,9 @@ if (-not (Select-String -Path $vocabCpp -Pattern "gpt2-small-japanese-char" -Qui
     if ($LASTEXITCODE -ne 0) { throw "パッチの適用に失敗しました" }
 }
 
-# ---- MSVCツールセットの検出 ----
-# CMakeのVisual Studioジェネレータ（COMベースのVS検出）がこの環境で動かないため、
-# INCLUDE/LIB/PATH を直接組み立てて Ninja ジェネレータを使う。
-$vsRoots = @(
-    "C:\Program Files\Microsoft Visual Studio\2022\Community",
-    "C:\Program Files\Microsoft Visual Studio\2022\Professional",
-    "C:\Program Files\Microsoft Visual Studio\2022\Enterprise",
-    "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
-)
-$vcTools = $null
-foreach ($root in $vsRoots) {
-    $msvcDir = Join-Path $root "VC\Tools\MSVC"
-    if (-not (Test-Path $msvcDir)) { continue }
-    # includeとデスクトップ用libが揃っている（＝完全にインストールされた）最新ツールセットを選ぶ
-    $candidates = Get-ChildItem $msvcDir -Directory | Sort-Object Name -Descending
-    foreach ($c in $candidates) {
-        if ((Test-Path (Join-Path $c.FullName "include\stdbool.h")) -and
-            (Test-Path (Join-Path $c.FullName "lib\x64\msvcrt.lib"))) {
-            $vcTools = $c.FullName
-            break
-        }
-    }
-    if ($vcTools) { break }
-}
-if (-not $vcTools) {
-    throw ("完全なMSVCツールセットが見つかりません。Visual Studio Installer で " +
-           "「C++によるデスクトップ開発」ワークロード（MSVC v143 + Windows SDK）を追加してください。")
-}
-Write-Host "==> MSVC: $vcTools"
-
-# ---- Windows SDK の検出 ----
-$sdkRoot = "${env:ProgramFiles(x86)}\Windows Kits\10"
-$sdkVer = Get-ChildItem (Join-Path $sdkRoot "Include") -Directory |
-    Where-Object { Test-Path (Join-Path $_.FullName "um\windows.h") } |
-    Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty Name
-if (-not $sdkVer) { throw "Windows SDK が見つかりません" }
-Write-Host "==> Windows SDK: $sdkVer"
-
-# ---- cmake / ninja の検出（PATH → pipユーザースクリプトの順） ----
-$pipScripts = "$env:APPDATA\Python\Python310\Scripts"
-$toolDirs = @()
-if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
-    if (Test-Path (Join-Path $pipScripts "cmake.exe")) { $toolDirs += $pipScripts }
-    else { throw "cmake が見つかりません（winget install Kitware.CMake か pip install --user cmake ninja）" }
-}
-if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
-    if ((Test-Path (Join-Path $pipScripts "ninja.exe")) -and ($toolDirs -notcontains $pipScripts)) { $toolDirs += $pipScripts }
-}
-
-# ---- MSVC環境変数の構築（vcvars64.bat相当） ----
-$env:PATH = (@(
-    (Join-Path $vcTools "bin\Hostx64\x64"),
-    (Join-Path $sdkRoot "bin\$sdkVer\x64")
-) + $toolDirs + @($env:PATH)) -join ";"
-$env:INCLUDE = @(
-    (Join-Path $vcTools "include"),
-    (Join-Path $sdkRoot "Include\$sdkVer\ucrt"),
-    (Join-Path $sdkRoot "Include\$sdkVer\um"),
-    (Join-Path $sdkRoot "Include\$sdkVer\shared"),
-    (Join-Path $sdkRoot "Include\$sdkVer\winrt")
-) -join ";"
-$env:LIB = @(
-    (Join-Path $vcTools "lib\x64"),
-    (Join-Path $sdkRoot "Lib\$sdkVer\ucrt\x64"),
-    (Join-Path $sdkRoot "Lib\$sdkVer\um\x64")
-) -join ";"
+# ---- MSVC環境の構築（vswhere優先の自動検出。詳細は msvc-env.ps1） ----
+. (Join-Path $PSScriptRoot "msvc-env.ps1")
+Initialize-MsvcEnvironment
 
 # ---- CMake configure ----
 # GGML_OPENMP=OFF: vcomp*.dll への依存を避ける（IMEは配布物のDLL依存を最小にしたい）
