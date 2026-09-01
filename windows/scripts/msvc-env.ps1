@@ -7,6 +7,28 @@
 #   2) 既知パスのワイルドカード探索（C:\Program Files\Microsoft Visual Studio\*\*）
 # の順に試し、ヘッダとデスクトップ用CRTライブラリが揃った最新ツールセットを選ぶ。
 
+# Vulkan SDKを探して$env:VULKAN_SDKを設定し、glslcをPATHに足す（Vulkanビルド用）
+function Initialize-VulkanSdk {
+    if (-not $env:VULKAN_SDK) {
+        $candidates = @()
+        foreach ($base in @("C:\VulkanSDK", "$env:LOCALAPPDATA\VulkanSDK")) {
+            if (Test-Path $base) {
+                if (Test-Path (Join-Path $base "Bin\glslc.exe")) { $candidates += $base }
+                $candidates += Get-ChildItem $base -Directory -ErrorAction SilentlyContinue |
+                    Sort-Object Name -Descending | Select-Object -ExpandProperty FullName
+            }
+        }
+        $env:VULKAN_SDK = $candidates |
+            Where-Object { Test-Path (Join-Path $_ "Bin\glslc.exe") } |
+            Select-Object -First 1
+    }
+    if (-not $env:VULKAN_SDK) {
+        throw "Vulkan SDK が見つかりません（https://vulkan.lunarg.com/ からインストールしてください）"
+    }
+    Write-Host "==> Vulkan SDK: $env:VULKAN_SDK"
+    $env:PATH = "$env:VULKAN_SDK\Bin;$env:PATH" # glslc
+}
+
 function Initialize-MsvcEnvironment {
     # ---- Visual Studioのインストール先候補 ----
     $vsRoots = @()

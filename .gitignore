@@ -3,7 +3,9 @@
 vendor/llama.cpp/
 vendor/dist/
 vendor/dist-windows/
+vendor/dist-windows-vulkan/
 windows/**/build/
+windows/build-vulkan/
 *.gguf
 .venv/
 training/base/

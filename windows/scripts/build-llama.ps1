@@ -1,13 +1,18 @@
 ﻿# llama.cppをWindows用にスタティックビルドして vendor/dist-windows に配置する。
-# macos/scripts/build-llama.sh のWindows版。CPUバックエンドのみ（CUDA/Vulkanは今後検討）。
+# macos/scripts/build-llama.sh のWindows版。
+#
+# -Backend vulkan でVulkan対応ビルド（vendor/dist-windows-vulkan に分離配置。
+# ビルドにはVulkan SDKが必要。実行時はGPUが無ければCPUに自動フォールバック）。
 #
 # 前提:
-#   - Visual Studio 2022（「C++によるデスクトップ開発」ワークロード: MSVC v143 + Windows SDK）
+#   - Visual Studio（「C++によるデスクトップ開発」ワークロード: MSVC + Windows SDK）
 #   - cmake / ninja（PATH上、または pip install --user cmake ninja）
 #
 # 注意: vendor/dist はmacOS用（Metal依存）なので絶対に上書きしない。
-#       ビルドディレクトリも build-windows に分離する（vendor/llama.cpp/build はmacOS用）。
+#       ビルドディレクトリも build-windows* に分離する（vendor/llama.cpp/build はmacOS用）。
 #       このリポジトリはDropboxでmacOSマシンと同期されているため、分離を崩すとMac環境を壊す。
+
+param([ValidateSet("cpu", "vulkan")][string]$Backend = "cpu")
 
 # 注意: EAPはContinueにする。stderrがリダイレクトされる環境（CI等）では
 # ネイティブコマンド（git/cmake）のstderr出力がErrorRecord化し、Stopだと
@@ -19,8 +24,17 @@ $LlamaTag = "b10689"
 # vendor/ と patches/ はリポジトリルートにある
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $LlamaDir = Join-Path $RepoRoot "vendor\llama.cpp"
-$BuildDir = Join-Path $LlamaDir "build-windows"
-$DistDir  = Join-Path $RepoRoot "vendor\dist-windows"
+$Suffix   = if ($Backend -eq "vulkan") { "-vulkan" } else { "" }
+$BuildDir = Join-Path $LlamaDir "build-windows$Suffix"
+$DistDir  = Join-Path $RepoRoot "vendor\dist-windows$Suffix"
+
+# ---- Vulkan SDK（-Backend vulkan のとき） ----
+$vulkanFlags = @()
+if ($Backend -eq "vulkan") {
+    . (Join-Path $PSScriptRoot "msvc-env.ps1")
+    Initialize-VulkanSdk
+    $vulkanFlags = @("-DGGML_VULKAN=ON")
+}
 
 # ---- llama.cpp の取得（未取得の場合のみ） ----
 if (-not (Test-Path $LlamaDir)) {
@@ -48,7 +62,7 @@ Initialize-MsvcEnvironment
 #   明示する（Haswell 2013年以降のCPUで動くベースライン。無指定だと変換が5倍遅い）
 # CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY: コンパイラ検査でexeリンクを行わない
 #   （静的ライブラリしか作らないので不要。不完全なVSインストールでも検査が通る）
-Write-Host "==> CMake configure"
+Write-Host "==> CMake configure ($Backend)"
 cmake -S $LlamaDir -B $BuildDir -G Ninja `
     -DCMAKE_BUILD_TYPE=Release `
     -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY `
@@ -60,6 +74,7 @@ cmake -S $LlamaDir -B $BuildDir -G Ninja `
     -DGGML_FMA=ON `
     -DGGML_F16C=ON `
     -DGGML_BMI2=ON `
+    @vulkanFlags `
     -DLLAMA_BUILD_TESTS=OFF `
     -DLLAMA_BUILD_EXAMPLES=OFF `
     -DLLAMA_BUILD_SERVER=OFF `
@@ -71,7 +86,7 @@ Write-Host "==> ビルド（llamaライブラリのみ）"
 cmake --build $BuildDir --target llama
 if ($LASTEXITCODE -ne 0) { throw "ビルドに失敗しました" }
 
-Write-Host "==> vendor/dist-windows へ配置"
+Write-Host "==> $DistDir へ配置"
 New-Item -ItemType Directory -Force (Join-Path $DistDir "include") -ErrorAction Stop | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $DistDir "lib") -ErrorAction Stop | Out-Null
 $libs = @(
@@ -80,6 +95,9 @@ $libs = @(
     "ggml\src\ggml-base.lib",
     "ggml\src\ggml-cpu.lib"
 )
+if ($Backend -eq "vulkan") {
+    $libs += "ggml\src\ggml-vulkan\ggml-vulkan.lib"
+}
 foreach ($rel in $libs) {
     $src = Join-Path $BuildDir $rel
     if (-not (Test-Path $src)) { throw "成果物が見つかりません: $src" }
