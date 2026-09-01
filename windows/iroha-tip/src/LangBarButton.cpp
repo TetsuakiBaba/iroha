@@ -70,7 +70,9 @@ STDMETHODIMP LangBarButton::GetInfo(TF_LANGBARITEMINFO* info) {
     if (!info) return E_INVALIDARG;
     info->clsidService = CLSID_IROHA_TIP;
     info->guidItem = GUID_LBI_INPUTMODE;
-    info->dwStyle = TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY;
+    // TEXTCOLORICON: モノクロのアイコンをホストがテーマの文字色で塗る
+    info->dwStyle = TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY |
+                    TF_LBI_STYLE_TEXTCOLORICON;
     info->ulSort = 0;
     wcscpy_s(info->szDescription, L"iroha 入力モード");
     return S_OK;
@@ -141,8 +143,11 @@ HICON LangBarButton::CreateModeIcon() const {
                              NONANTIALIASED_QUALITY, DEFAULT_PITCH, L"Meiryo UI");
     HGDIOBJ oldFont = SelectObject(memory, font);
     SetBkMode(memory, TRANSPARENT);
+    // TF_LBI_STYLE_TEXTCOLORICONの場合ホストがテーマ色で塗り直すため
+    // 白で描く（RGB(0,0,0)は透過画素と区別できないため使わない）。
+    // ホストが塗らない環境向けのフォールバックとしてテーマに合わせる
     const bool light = IsSystemLightTheme();
-    SetTextColor(memory, light ? RGB(0, 0, 0) : RGB(255, 255, 255));
+    SetTextColor(memory, light ? RGB(16, 16, 16) : RGB(255, 255, 255));
     RECT rect = {0, 0, size, size};
     DrawTextW(memory, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     GdiFlush();

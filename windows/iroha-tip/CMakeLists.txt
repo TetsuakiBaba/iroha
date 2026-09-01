@@ -2,7 +2,7 @@
 # 入力先の全プロセスにロードされるため、依存は最小に保つ
 # （変換エンジン・llama.cppは絶対にここへリンクしない。iroha-server側に置く）。
 cmake_minimum_required(VERSION 3.21)
-project(iroha-tip LANGUAGES CXX)
+project(iroha-tip LANGUAGES CXX RC)
 
 add_library(iroha-tip SHARED
     src/CandidateWindow.cpp
@@ -15,6 +15,7 @@ add_library(iroha-tip SHARED
     src/Registration.cpp
     src/TextService.cpp
     src/iroha-tip.def
+    src/iroha-tip.rc
 )
 target_include_directories(iroha-tip PRIVATE ../shared)
 

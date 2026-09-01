@@ -71,10 +71,13 @@ HRESULT RegisterProfile() {
     HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
                                   CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&mgr));
     if (FAILED(hr)) return hr;
+    // アイコンはこのDLLのリソース1番（言語切替UI・入力インジケーターに出る）
+    const std::wstring iconPath = ModulePath();
     hr = mgr->RegisterProfile(CLSID_IROHA_TIP, IROHA_LANGID, GUID_IROHA_PROFILE,
                               kDescription,
                               static_cast<ULONG>(wcslen(kDescription)),
-                              nullptr, 0, 0, // アイコンは未設定（M5で追加）
+                              iconPath.c_str(),
+                              static_cast<ULONG>(iconPath.size()), 0,
                               nullptr, 0, TRUE, 0);
     mgr->Release();
     return hr;
