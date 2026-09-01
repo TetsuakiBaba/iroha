@@ -723,7 +723,7 @@ final class IrohaInputController: IMKInputController {
         mode = .composing
         segments = []
         segmentBaseline = nil
-        panelCandidates = []
+        hidePanel()
         cancelConversion()
         updateMarkedText(client: client, display: composer.display)
     }
@@ -1019,7 +1019,9 @@ final class IrohaInputController: IMKInputController {
         composer = Self.makeComposer()  // 設定（句読点スタイル）の変更もここで反映される
         segments = []
         segmentBaseline = nil
-        panelCandidates = []
+        // 候補ウィンドウを閉じる。文節変換中に文字を打って確定した場合など、
+        // hidePanelを経由しない確定経路でパネルが残るのを防ぐ
+        hidePanel()
         displayOverride = nil
         autoCommitPending = false
         mode = .composing
