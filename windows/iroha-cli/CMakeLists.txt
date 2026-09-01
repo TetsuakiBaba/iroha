@@ -4,6 +4,7 @@ project(iroha-cli LANGUAGES CXX)
 
 add_executable(iroha-cli main.cpp)
 target_link_libraries(iroha-cli PRIVATE iroha-engine)
+target_include_directories(iroha-cli PRIVATE ../shared)
 if(MSVC)
     target_compile_options(iroha-cli PRIVATE /utf-8 /W4 /EHsc)
     target_compile_definitions(iroha-cli PRIVATE _CRT_SECURE_NO_WARNINGS)

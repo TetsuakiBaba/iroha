@@ -2,7 +2,9 @@
 
 #include <new>
 
+#include "ConvertClient.h"
 #include "DisplayAttribute.h"
+#include "iroha/unicode.h"
 
 TextService::TextService() : refCount_(1) { DllAddRef(); }
 
@@ -84,6 +86,9 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* threadMgr, TfClientId clientI
         categoryMgr->RegisterGUID(GUID_IROHA_DISPLAY_ATTRIBUTE, &displayAttributeAtom_);
         categoryMgr->Release();
     }
+
+    // 変換サーバを先に起こしてモデルのプリロードを走らせておく
+    ConvertClient::EnsureServer();
     return S_OK;
 }
 
@@ -103,7 +108,7 @@ STDMETHODIMP TextService::Deactivate() {
         composition_->Release();
         composition_ = nullptr;
     }
-    composer_.Clear();
+    ResetState();
     clientId_ = TF_CLIENTID_NULL;
     return S_OK;
 }
@@ -139,16 +144,26 @@ TextService::KeyAction TextService::DecideKeyAction(WPARAM wParam, LPARAM lParam
         return KeyAction::None;
     }
     const bool composing = composition_ != nullptr;
+    const bool converting = converting_;
+    const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     switch (wParam) {
         case VK_RETURN:
             return composing ? KeyAction::Commit : KeyAction::None;
         case VK_ESCAPE:
+            if (converting) return KeyAction::BackToComposing;
             return composing ? KeyAction::Cancel : KeyAction::None;
         case VK_BACK:
+            if (converting) return KeyAction::BackToComposing;
             return composing ? KeyAction::Backspace : KeyAction::None;
         case VK_SPACE:
-            // M4: ここを変換サーバへの問い合わせに置き換える
-            return composing ? KeyAction::Commit : KeyAction::None;
+            if (converting) {
+                return shift ? KeyAction::PrevCandidate : KeyAction::NextCandidate;
+            }
+            return composing ? KeyAction::Convert : KeyAction::None;
+        case VK_DOWN:
+            return converting ? KeyAction::NextCandidate : KeyAction::None;
+        case VK_UP:
+            return converting ? KeyAction::PrevCandidate : KeyAction::None;
         default:
             break;
     }
@@ -156,9 +171,9 @@ TextService::KeyAction TextService::DecideKeyAction(WPARAM wParam, LPARAM lParam
     if (c == 0) return KeyAction::None;
     const bool isLetter = (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z');
     const bool isDigit = (c >= L'0' && c <= L'9');
-    if (isLetter || IsComposerSymbol(c) || (composing && isDigit)) {
+    if (isLetter || IsComposerSymbol(c) || (composing && !converting && isDigit)) {
         *outChar = c;
-        return KeyAction::Input;
+        return converting ? KeyAction::CommitThenInput : KeyAction::Input;
     }
     return KeyAction::None;
 }
@@ -173,15 +188,69 @@ HRESULT TextService::HandleKey(ITfContext* context, KeyAction action,
             composer_.DeleteBackward();
             if (composer_.Empty()) return CancelComposition(context);
             return UpdateComposition(context);
-        case KeyAction::Commit:
-            composer_.Flush();
-            return CommitComposition(context);
+        case KeyAction::Commit: {
+            std::wstring text;
+            if (converting_ && candidateIndex_ < candidates_.size()) {
+                text = iroha::Utf32ToUtf16(candidates_[candidateIndex_]);
+            } else {
+                composer_.Flush();
+                text = iroha::Utf32ToUtf16(composer_.Display());
+            }
+            return CommitText(context, text);
+        }
         case KeyAction::Cancel:
             return CancelComposition(context);
+        case KeyAction::Convert:
+            return StartConversion(context);
+        case KeyAction::NextCandidate:
+        case KeyAction::PrevCandidate: {
+            if (candidates_.empty()) return S_OK;
+            if (action == KeyAction::NextCandidate) {
+                candidateIndex_ = (candidateIndex_ + 1) % candidates_.size();
+            } else {
+                candidateIndex_ =
+                    (candidateIndex_ + candidates_.size() - 1) % candidates_.size();
+            }
+            return ShowText(context,
+                            iroha::Utf32ToUtf16(candidates_[candidateIndex_]));
+        }
+        case KeyAction::BackToComposing:
+            converting_ = false;
+            candidates_.clear();
+            candidateIndex_ = 0;
+            return UpdateComposition(context);
+        case KeyAction::CommitThenInput: {
+            std::wstring text;
+            if (candidateIndex_ < candidates_.size()) {
+                text = iroha::Utf32ToUtf16(candidates_[candidateIndex_]);
+            }
+            const HRESULT hr = CommitText(context, text);
+            if (FAILED(hr)) return hr;
+            composer_.Input(static_cast<char32_t>(character));
+            return UpdateComposition(context);
+        }
         case KeyAction::None:
             break;
     }
     return S_OK;
+}
+
+HRESULT TextService::StartConversion(ITfContext* context) {
+    composer_.Flush();
+    const std::u32string reading = composer_.Display(); // Flush後は確定かなのみ
+    if (reading.empty()) return CancelComposition(context);
+
+    // TODO(M4.5): 直前の確定文字列を左文脈として渡す（macOS版と同じ挙動にする）
+    std::vector<std::u32string> candidates;
+    if (!ConvertClient::Convert(reading, U"", 9, &candidates) || candidates.empty()) {
+        // サーバ不調時は読みのまま表示を続ける（Enterでかな確定できる）
+        IrohaLog(L"StartConversion: server unavailable");
+        return UpdateComposition(context);
+    }
+    candidates_ = std::move(candidates);
+    candidateIndex_ = 0;
+    converting_ = true;
+    return ShowText(context, iroha::Utf32ToUtf16(candidates_[candidateIndex_]));
 }
 
 STDMETHODIMP TextService::OnSetFocus(BOOL) {
@@ -240,7 +309,7 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie,
         composition_->Release();
         composition_ = nullptr;
     }
-    composer_.Clear();
+    ResetState();
     return S_OK;
 }
 

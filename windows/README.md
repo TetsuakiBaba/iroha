@@ -13,11 +13,11 @@ WindowsのIME（TSF: Text Services Framework）実装。方針（2026-09決定�
 
 ```
 iroha-tip/      TSFテキストサービスDLL（C++/COM。変換ロジックを持たない）
-iroha-server/   変換サーバ（llama.cpp + エンジン。今後実装）
+iroha-server/   変換サーバ常駐プロセス（llama.cpp + ZenzEngineをホスト）
 iroha-core/     変換エンジンのC++移植
                 （iroha-core=純粋ロジック / iroha-engine=ZenzEngine+llama.cpp）
-iroha-cli/      検証用CLI（kana / convert / segment / bench / repl）
-shared/         TIP/サーバ共通のIPCプロトコル定義（今後実装）
+iroha-cli/      検証用CLI（kana / convert / segment / bench / remote / repl）
+shared/         TIP⇔サーバの名前付きパイプIPCプロトコル（ipc_protocol.h）
 scripts/        ビルド・インストールスクリプト
 ```
 
@@ -63,8 +63,10 @@ windows\build\iroha-cli\iroha-cli.exe bench testdata\eval.tsv
 
 - [x] M1: 登録できる空TIP（設定に現れWin+Spaceで選べる、Activate/Deactivateがログに出る）
 - [x] M2: キーを食って文字を挿入（ITfKeyEventSink + エディットセッション）
-- [x] M3: コンポジション表示（RomajiComposer移植、下線、Enter確定/Esc破棄。Spaceは仮確定）
-- [ ] M4: 変換サーバ接続 + 候補ウィンドウ（iroha-core + llama.cpp、名前付きパイプIPC）
+- [x] M3: コンポジション表示（RomajiComposer移植、下線、Enter確定/Esc破棄）
+- [x] M4a: 変換サーバ接続（iroha-server + パイプIPC。Spaceで変換、Space/↑↓で候補送り、
+      Esc/Backspaceで読みに戻る、TIP有効化時にサーバ自動起動+モデルプリロード）
+- [ ] M4b: 自前候補ウィンドウ（GetTextExt座標、ページング、数字キー選択）と左文脈の伝搬
 - [ ] M5: 互換性強化（UIlessモード、ストアアプリ/AppContainer、通知領域アイコン）
 - [ ] M6: 製品化（インストーラ、Authenticode署名、学習・ユーザ辞書、UIA対応）
 

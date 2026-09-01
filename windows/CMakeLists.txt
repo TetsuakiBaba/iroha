@@ -7,4 +7,5 @@ enable_testing()
 
 add_subdirectory(iroha-core)
 add_subdirectory(iroha-cli)
+add_subdirectory(iroha-server)
 add_subdirectory(iroha-tip)

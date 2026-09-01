@@ -7,6 +7,7 @@
 //   iroha-cli convert [--context 文脈] [--n 候補数] <読み>
 //   iroha-cli segment <読み>                       : 変換 + 文節分割の検証
 //   iroha-cli bench <eval.tsv>                    : 評価（TSV: 読み\t正解）
+//   iroha-cli remote <読み>                        : 変換サーバ経由の変換（IPC検証用）
 //   iroha-cli repl                                : 対話モード
 //   環境変数 IROHA_MODEL でモデルパスを上書き可能
 //
@@ -25,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include "ipc_protocol.h"
 #include "iroha/reading_aligner.h"
 #include "iroha/romaji_composer.h"
 #include "iroha/unicode.h"
@@ -187,6 +189,33 @@ int wmain(int argc, wchar_t** argv) {
     if (command == U"kana" && args.size() >= 3) {
         Print32(RomajiToKana(args[2]));
         PrintUtf8("\n");
+        return 0;
+    }
+
+    if (command == U"remote" && args.size() >= 3) {
+        // 変換サーバ経由（TIPと同じ経路）。サーバは別途起動しておくこと
+        const std::u32string kana = RomajiToKana(args[2]);
+        const auto start = std::chrono::steady_clock::now();
+        std::vector<char> responseBytes;
+        if (!iroha::ipc::Call(
+                iroha::ipc::BuildConvertRequest(Utf32ToUtf8(kana), "", 9),
+                &responseBytes, 15000)) {
+            std::fprintf(stderr, "サーバに接続できません（iroha-server.exe を起動してください）\n");
+            return 1;
+        }
+        const auto response = iroha::ipc::ParseConvertResponse(responseBytes);
+        if (!response.ok) {
+            std::fprintf(stderr, "サーバエラー: %s\n", response.error.c_str());
+            return 1;
+        }
+        const double ms = MillisecondsSince(start);
+        Print32(kana);
+        PrintUtf8(" -> ");
+        for (size_t i = 0; i < response.candidates.size(); ++i) {
+            if (i > 0) PrintUtf8(" / ");
+            PrintUtf8(response.candidates[i]);
+        }
+        std::printf("  [%.1fms]\n", ms);
         return 0;
     }
 

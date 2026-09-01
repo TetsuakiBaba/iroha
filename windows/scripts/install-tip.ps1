@@ -17,8 +17,12 @@ if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrat
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $BuiltDll = Join-Path $RepoRoot "windows\build\iroha-tip\iroha-tip.dll"
+$BuiltServer = Join-Path $RepoRoot "windows\build\iroha-server\iroha-server.exe"
 $InstallDir = Join-Path $env:ProgramFiles "iroha"
 $InstalledDll = Join-Path $InstallDir "iroha-tip.dll"
+
+# 変換サーバが動いていると exe を上書きできないため先に止める
+try { Stop-Process -Name "iroha-server" -Force -ErrorAction Stop } catch {}
 
 if ($Uninstall) {
     if (Test-Path $InstalledDll) {
@@ -28,6 +32,8 @@ if ($Uninstall) {
         if ($p.ExitCode -ne 0) { Write-Warning "regsvr32 /u が失敗しました（コード: $($p.ExitCode)）" }
         Remove-Item $InstalledDll -Force
     }
+    Remove-Item (Join-Path $InstallDir "iroha-server.exe") -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $InstallDir "*.pdb") -Force -ErrorAction SilentlyContinue
     if ((Test-Path $InstallDir) -and -not (Get-ChildItem $InstallDir)) {
         Remove-Item $InstallDir -Force
     }
@@ -46,9 +52,17 @@ try {
     throw ("DLLのコピーに失敗しました。iroha を使用中のアプリを終了するか、" +
            "MS-IMEに切り替えてから再実行してください: $_")
 }
+# 変換サーバ（TIPがこのディレクトリから起動する）
+if (Test-Path $BuiltServer) {
+    Copy-Item $BuiltServer $InstallDir -Force
+} else {
+    Write-Warning "iroha-server.exe が見つかりません（変換が動きません）: $BuiltServer"
+}
 # デバッグ用にPDBも並べる（あれば）
-$pdb = [IO.Path]::ChangeExtension($BuiltDll, ".pdb")
-if (Test-Path $pdb) { Copy-Item $pdb $InstallDir -Force }
+foreach ($src in @($BuiltDll, $BuiltServer)) {
+    $pdb = [IO.Path]::ChangeExtension($src, ".pdb")
+    if (Test-Path $pdb) { Copy-Item $pdb $InstallDir -Force }
+}
 
 Write-Host "==> TSF登録: $InstalledDll"
 # regsvr32はGUIアプリなのでStart-Process -Waitで終了を待って終了コードを取る

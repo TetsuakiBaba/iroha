@@ -6,6 +6,7 @@ project(iroha-tip LANGUAGES CXX)
 
 add_library(iroha-tip SHARED
     src/Composition.cpp
+    src/ConvertClient.cpp
     src/DisplayAttribute.cpp
     src/DllMain.cpp
     src/Globals.cpp
@@ -13,6 +14,7 @@ add_library(iroha-tip SHARED
     src/TextService.cpp
     src/iroha-tip.def
 )
+target_include_directories(iroha-tip PRIVATE ../shared)
 
 target_compile_features(iroha-tip PRIVATE cxx_std_17)
 target_compile_definitions(iroha-tip PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00)

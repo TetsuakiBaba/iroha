@@ -61,6 +61,13 @@ HRESULT TextService::SetCompositionText(TfEditCookie ec, ITfContext* context,
     return hr;
 }
 
+void TextService::ResetState() {
+    composer_.Clear();
+    converting_ = false;
+    candidates_.clear();
+    candidateIndex_ = 0;
+}
+
 void TextService::EndCompositionInternal(TfEditCookie ec, ITfContext* context,
                                          const std::wstring& finalText) {
     SetCompositionText(ec, context, finalText, false);
@@ -77,39 +84,40 @@ void TextService::EndCompositionInternal(TfEditCookie ec, ITfContext* context,
     composition_->EndComposition(ec);
     composition_->Release();
     composition_ = nullptr;
-    composer_.Clear();
+    ResetState();
 }
 
-HRESULT TextService::UpdateComposition(ITfContext* context) {
+HRESULT TextService::ShowText(ITfContext* context, const std::wstring& text) {
     return RequestSyncEditSession(
-        context, clientId_, [this, context](TfEditCookie ec) -> HRESULT {
+        context, clientId_, [this, context, &text](TfEditCookie ec) -> HRESULT {
             HRESULT hr = EnsureComposition(ec, context);
             if (FAILED(hr)) {
-                composer_.Clear();
+                ResetState();
                 return hr;
             }
-            return SetCompositionText(ec, context,
-                                      iroha::Utf32ToUtf16(composer_.Display()), true);
+            return SetCompositionText(ec, context, text, true);
         });
 }
 
-HRESULT TextService::CommitComposition(ITfContext* context) {
+HRESULT TextService::UpdateComposition(ITfContext* context) {
+    return ShowText(context, iroha::Utf32ToUtf16(composer_.Display()));
+}
+
+HRESULT TextService::CommitText(ITfContext* context, const std::wstring& text) {
     if (!composition_) {
-        composer_.Clear();
+        ResetState();
         return S_OK;
     }
     return RequestSyncEditSession(
-        context, clientId_, [this, context](TfEditCookie ec) -> HRESULT {
-            // Flush済みなのでDisplay()は確定かなのみ
-            EndCompositionInternal(ec, context,
-                                   iroha::Utf32ToUtf16(composer_.Display()));
+        context, clientId_, [this, context, &text](TfEditCookie ec) -> HRESULT {
+            EndCompositionInternal(ec, context, text);
             return S_OK;
         });
 }
 
 HRESULT TextService::CancelComposition(ITfContext* context) {
     if (!composition_) {
-        composer_.Clear();
+        ResetState();
         return S_OK;
     }
     return RequestSyncEditSession(context, clientId_,
