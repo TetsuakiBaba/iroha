@@ -46,12 +46,21 @@ if (-not (Test-Path $BuiltDll)) {
 }
 
 New-Item -ItemType Directory -Force $InstallDir | Out-Null
-try {
-    Copy-Item $BuiltDll $InstalledDll -Force
-} catch {
-    throw ("DLLのコピーに失敗しました。iroha を使用中のアプリを終了するか、" +
-           "MS-IMEに切り替えてから再実行してください: $_")
+
+# ロード中のDLLは上書きできないがリネームはできるので、退避してから新DLLを置く。
+# 退避ファイルは次回インストール時（またはロックが外れた後）に削除される
+Get-ChildItem "$InstallDir\iroha-tip.dll.old-*" -ErrorAction SilentlyContinue | ForEach-Object {
+    try { Remove-Item $_.FullName -Force -ErrorAction Stop } catch {}
 }
+if (Test-Path $InstalledDll) {
+    $backup = "$InstalledDll.old-$(Get-Date -Format yyyyMMddHHmmss)"
+    try {
+        Move-Item $InstalledDll $backup -Force
+    } catch {
+        throw "旧DLLの退避に失敗しました: $_"
+    }
+}
+Copy-Item $BuiltDll $InstalledDll
 # 変換サーバ（TIPがこのディレクトリから起動する）
 if (Test-Path $BuiltServer) {
     Copy-Item $BuiltServer $InstallDir -Force
