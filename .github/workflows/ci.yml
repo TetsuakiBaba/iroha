@@ -37,3 +37,25 @@ jobs:
       - name: Test
         working-directory: macos
         run: swift test
+
+  build-and-test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache llama.cpp static libs
+        id: llama-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/dist-windows
+          key: llama-${{ runner.os }}-${{ runner.arch }}-b10689-${{ hashFiles('patches/llama-cpp-zenz-pretokenizer.patch', 'windows/scripts/build-llama.ps1') }}
+
+      - name: Build llama.cpp
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File windows/scripts/build-llama.ps1
+
+      # iroha-core/engine/cli/server/tip のビルドと単体テスト
+      - name: Build and test
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File windows/scripts/build-tip.ps1
