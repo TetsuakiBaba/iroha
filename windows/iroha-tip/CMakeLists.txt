@@ -11,6 +11,7 @@ add_library(iroha-tip SHARED
     src/DisplayAttribute.cpp
     src/DllMain.cpp
     src/Globals.cpp
+    src/LangBarButton.cpp
     src/Registration.cpp
     src/TextService.cpp
     src/iroha-tip.def

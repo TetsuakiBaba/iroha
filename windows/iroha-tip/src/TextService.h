@@ -6,6 +6,8 @@
 #include "Globals.h"
 #include "iroha/romaji_composer.h"
 
+class LangBarButton;
+
 // TSFテキストサービス本体。
 // M1: 登録・有効化。M2/M3: キー入力→ローマ字かな合成のコンポジション表示・確定。
 // M4: Spaceで変換して文節モードへ。←→で文節移動、Shift+←→で区切り調整、
@@ -45,6 +47,10 @@ public:
     // ITfDisplayAttributeProvider
     STDMETHODIMP EnumDisplayAttributeInfo(IEnumTfDisplayAttributeInfo** enumInfo) override;
     STDMETHODIMP GetDisplayAttributeInfo(REFGUID guid, ITfDisplayAttributeInfo** info) override;
+
+    // 通知領域のモードボタンから呼ばれる
+    bool IsDirectMode() const { return directMode_; }
+    void OnModeButtonClicked();
 
 private:
     ~TextService();
@@ -112,6 +118,8 @@ private:
 
     // 英数モード（trueの間はキーを一切食わない）。半角/全角キー等で切り替える
     bool directMode_ = false;
+    // 通知領域の入力モードボタン（あ/A）
+    LangBarButton* langBarButton_ = nullptr;
 
     // 変換後の文節（Spaceで変換すると入力全体がこの列になる）
     struct ConversionSegment {

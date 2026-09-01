@@ -8,6 +8,8 @@
 
 #include "ipc_protocol.h"
 
+#include <sddl.h>
+
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -45,6 +47,39 @@ std::string DefaultModelPath() {
 std::filesystem::path StorePath(const wchar_t* envName, const wchar_t* fileName) {
     if (const wchar_t* env = _wgetenv(envName)) return std::filesystem::path(env);
     return std::filesystem::path(DataDir() + L"\\" + fileName);
+}
+
+// ストアアプリ（AppContainer・低整合性）内のTIPからも接続できるパイプの
+// セキュリティ記述子を作る:
+//   - 実行ユーザにフルアクセス
+//   - ALL APPLICATION PACKAGES / ALL RESTRICTED APPLICATION PACKAGES に読み書き
+//   - 低整合性レベルからのアクセスを許可（UWPはLow ILで動く）
+PSECURITY_DESCRIPTOR CreatePipeSecurityDescriptor() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return nullptr;
+    BYTE buffer[256] = {};
+    DWORD length = 0;
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (GetTokenInformation(token, TokenUser, buffer, sizeof(buffer), &length)) {
+        LPWSTR userSid = nullptr;
+        if (ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(buffer)->User.Sid,
+                                   &userSid)) {
+            wchar_t sddl[512];
+            _snwprintf_s(sddl, _TRUNCATE,
+                         L"D:(A;;GA;;;%s)"
+                         L"(A;;GRGW;;;S-1-15-2-1)"
+                         L"(A;;GRGW;;;S-1-15-2-2)"
+                         L"S:(ML;;NW;;;LW)",
+                         userSid);
+            LocalFree(userSid);
+            if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    sddl, SDDL_REVISION_1, &descriptor, nullptr)) {
+                descriptor = nullptr;
+            }
+        }
+    }
+    CloseHandle(token);
+    return descriptor;
 }
 
 // IME本体と同じ構成のエンジン一式: 学習 → ユーザ辞書 → zenz
@@ -169,6 +204,11 @@ int wmain() {
     }
 
     const std::wstring pipeName = iroha::ipc::PipeName();
+    PSECURITY_DESCRIPTOR pipeSecurity = CreatePipeSecurityDescriptor();
+    if (!pipeSecurity) Log("pipe SD unavailable (falling back to default ACL)");
+    SECURITY_ATTRIBUTES securityAttributes = {};
+    securityAttributes.nLength = sizeof(securityAttributes);
+    securityAttributes.lpSecurityDescriptor = pipeSecurity;
     Log("serving");
 
     bool running = true;
@@ -177,7 +217,8 @@ int wmain() {
             pipeName.c_str(), PIPE_ACCESS_DUPLEX,
             PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
             PIPE_UNLIMITED_INSTANCES, iroha::ipc::kMaxMessageBytes,
-            iroha::ipc::kMaxMessageBytes, 0, nullptr);
+            iroha::ipc::kMaxMessageBytes, 0,
+            pipeSecurity ? &securityAttributes : nullptr);
         if (pipe == INVALID_HANDLE_VALUE) {
             Log("CreateNamedPipe failed");
             return 1;
@@ -202,6 +243,7 @@ int wmain() {
         }
         CloseHandle(pipe);
     }
+    if (pipeSecurity) LocalFree(pipeSecurity);
     Log("shutdown");
     return 0;
 }

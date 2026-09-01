@@ -5,6 +5,7 @@
 #include "ConvertClient.h"
 #include "DisplayAttribute.h"
 #include "EditSession.h"
+#include "LangBarButton.h"
 #include "iroha/reading_aligner.h"
 #include "iroha/unicode.h"
 
@@ -91,6 +92,17 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* threadMgr, TfClientId clientI
         categoryMgr->Release();
     }
 
+    // 通知領域の入力モードボタン（あ/A）
+    ITfLangBarItemMgr* langBarMgr = nullptr;
+    if (SUCCEEDED(threadMgr_->QueryInterface(IID_PPV_ARGS(&langBarMgr)))) {
+        langBarButton_ = new (std::nothrow) LangBarButton(this);
+        if (langBarButton_ && FAILED(langBarMgr->AddItem(langBarButton_))) {
+            langBarButton_->Release();
+            langBarButton_ = nullptr;
+        }
+        langBarMgr->Release();
+    }
+
     // 変換サーバを先に起こしてモデルのプリロードを走らせておく
     ConvertClient::EnsureServer();
     return S_OK;
@@ -103,6 +115,16 @@ STDMETHODIMP TextService::Deactivate() {
         if (SUCCEEDED(threadMgr_->QueryInterface(IID_PPV_ARGS(&keystrokeMgr)))) {
             keystrokeMgr->UnadviseKeyEventSink(clientId_);
             keystrokeMgr->Release();
+        }
+        if (langBarButton_) {
+            ITfLangBarItemMgr* langBarMgr = nullptr;
+            if (SUCCEEDED(threadMgr_->QueryInterface(IID_PPV_ARGS(&langBarMgr)))) {
+                langBarMgr->RemoveItem(langBarButton_);
+                langBarMgr->Release();
+            }
+            langBarButton_->Detach();
+            langBarButton_->Release();
+            langBarButton_ = nullptr;
         }
         threadMgr_->Release();
         threadMgr_ = nullptr;
@@ -269,6 +291,7 @@ HRESULT TextService::HandleKey(ITfContext* context, KeyAction action,
             HRESULT hr = S_OK;
             if (composition_) hr = CommitCurrent(context);
             directMode_ = newDirect;
+            if (langBarButton_) langBarButton_->NotifyUpdate();
             IrohaLog(L"input mode: %s", directMode_ ? L"direct" : L"kana");
             return hr;
         }
@@ -575,6 +598,13 @@ STDMETHODIMP TextService::OnPreservedKey(ITfContext*, REFGUID, BOOL* eaten) {
     if (!eaten) return E_INVALIDARG;
     *eaten = FALSE;
     return S_OK;
+}
+
+void TextService::OnModeButtonClicked() {
+    // クリックはキーイベント外なのでコンポジションには触らず、モードだけ切り替える
+    directMode_ = !directMode_;
+    if (langBarButton_) langBarButton_->NotifyUpdate();
+    IrohaLog(L"input mode (click): %s", directMode_ ? L"direct" : L"kana");
 }
 
 // ---- ITfCompositionSink ----

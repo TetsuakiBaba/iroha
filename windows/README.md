@@ -76,7 +76,11 @@ windows\build\iroha-cli\iroha-cli.exe bench testdata\eval.tsv
 - [x] M4e: 文節操作（変換後は文節モード: ←→で文節移動［選択文節は太下線］、
       Shift+←→で区切り調整＋再変換、Space/↑↓で選択文節の候補送り、
       候補は「文節の読み＋左側の確定済み文字列」を文脈に生成、Enterで一括確定）
-- [ ] M5: 互換性強化（UIlessモード、ストアアプリ/AppContainer、通知領域アイコン）
+- [x] M5a: ストアアプリ対応と通知領域アイコン
+      （パイプにAppContainer/低整合性からの接続を許可、ログオン時のサーバ自動起動
+      ［HKCU Run。AppContainer内のTIPはプロセスを起動できないため］、
+      言語バーの入力モードボタン「あ/A」＝クリックで切替・テーマ連動アイコン）
+- [ ] M5b: UIlessモード（ITfCandidateListUIElement。タスクバー検索ボックス等）
 - [ ] M6: 製品化（インストーラ、Authenticode署名、設定UI・辞書編集、UIA対応）
 
 参考実装: CorvusSKK（構成の手本）、Microsoft textservice step01-06（チュートリアル）、

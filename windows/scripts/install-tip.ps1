@@ -34,6 +34,8 @@ if ($Uninstall) {
     }
     Remove-Item (Join-Path $InstallDir "iroha-server.exe") -Force -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $InstallDir "*.pdb") -Force -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
+        -Name "iroha-server" -ErrorAction SilentlyContinue
     if ((Test-Path $InstallDir) -and -not (Get-ChildItem $InstallDir)) {
         Remove-Item $InstallDir -Force
     }
@@ -77,6 +79,12 @@ Write-Host "==> TSF登録: $InstalledDll"
 # regsvr32はGUIアプリなのでStart-Process -Waitで終了を待って終了コードを取る
 $p = Start-Process "$env:SystemRoot\System32\regsvr32.exe" -ArgumentList "/s", "`"$InstalledDll`"" -Wait -PassThru
 if ($p.ExitCode -ne 0) { throw "regsvr32 が失敗しました（コード: $($p.ExitCode)）" }
+
+# ストアアプリ（AppContainer）内のTIPはサーバを起動できないため、
+# ログオン時の自動起動を登録し、今すぐも起動しておく
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
+    -Name "iroha-server" -Value "`"$(Join-Path $InstallDir 'iroha-server.exe')`""
+Start-Process (Join-Path $InstallDir "iroha-server.exe") -WindowStyle Hidden
 
 Write-Host "==> インストール完了"
 Write-Host "設定 > 時刻と言語 > 言語と地域 > 日本語 > 言語のオプション > キーボード に「iroha」が現れます。"
