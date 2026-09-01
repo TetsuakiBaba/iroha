@@ -91,8 +91,19 @@ final class IrohaInputController: IMKInputController {
 
     // MARK: 状態
 
-    /// F6/F7等による表示の強制上書き（ひらがな・カタカナ・英数）。次の入力でクリア
+    /// F6/F7等による表示の強制上書き（ひらがな・カタカナ・英数）。
+    /// 次の入力でfixedChunksへ取り込まれる
     private var displayOverride: String?
+
+    /// F6-F10 / Ctrl+U,I,O,P,Tで表示形を指定した部分。
+    /// 指定した見た目のまま未確定文字列の先頭に残し、以降の入力ではライブ変換の対象にしない
+    private struct FixedChunk {
+        var reading: String   // 元の読み（BS・Escでかなに戻すときに使う）
+        var text: String      // 固定した表示（カタカナ・英数など）
+    }
+    private var fixedChunks: [FixedChunk] = []
+    /// 固定部分の表示文字列
+    private var fixedText: String { fixedChunks.map(\.text).joined() }
     /// 句読点入力後、変換結果の到着を待って自動確定するフラグ
     private var autoCommitPending = false
     /// 最後に完了したライブ変換の（読み, 変換結果）
@@ -126,7 +137,10 @@ final class IrohaInputController: IMKInputController {
     private var translationSpinnerTimer: Timer?
     private static let spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-    private var isComposing: Bool { !composer.isEmpty }
+    private var isComposing: Bool { !composer.isEmpty || !fixedChunks.isEmpty }
+
+    /// 変換をやめてかなで見せるときの表示（固定部分 + 入力中のかな）
+    private var kanaDisplay: String { fixedText + composer.display }
 
     private var candidatesPanel: IMKCandidates? {
         (NSApp.delegate as? AppDelegate)?.candidatesPanel
@@ -333,7 +347,7 @@ final class IrohaInputController: IMKInputController {
         // OFFにしたら現在の変換表示をかなに戻す
         if !liveConversionEnabled, isComposing, mode == .composing, let client = client() {
             cancelConversion()
-            updateMarkedText(client: client, display: composer.display)
+            updateMarkedText(client: client, display: kanaDisplay)
         }
     }
 
@@ -404,13 +418,15 @@ final class IrohaInputController: IMKInputController {
             guard isComposing else { return false }
             displayOverride = nil
             autoCommitPending = false
+            // 固定部分しか残っていないときは、直前の固定部分を読みに戻してから削除する
+            if composer.isEmpty { unlockLastFixedChunk() }
             composer.deleteBackward()
             // 削除中はライブ変換を止めてかな表示に戻す。漢字のままだと1かな消しただけで
             // 文節構造が変わり、どこを消したのか分からなくなるため。
             // 次の1文字を入力した時点でライブ変換が再開する（そのままEnterならかなで確定）
             conversionTask?.cancel()
             conversionTask = nil
-            updateMarkedText(client: client, display: composer.display)
+            updateMarkedText(client: client, display: kanaDisplay)
             return true
         case kVK_Escape:
             guard isComposing else { return false }
@@ -418,7 +434,12 @@ final class IrohaInputController: IMKInputController {
             if displayOverride != nil {
                 // F6/F7等の上書き表示をやめてかなに戻す
                 displayOverride = nil
-                updateMarkedText(client: client, display: composer.display)
+                updateMarkedText(client: client, display: kanaDisplay)
+            } else if !fixedChunks.isEmpty {
+                // 固定した部分をかなに戻して、ふつうの入力状態にする
+                unlockFixedChunks()
+                cancelConversion()
+                updateMarkedText(client: client, display: kanaDisplay)
             } else if lastConversion != nil {
                 // 1回目のEsc: 変換をやめてかな表示に戻す
                 cancelConversion()
@@ -449,7 +470,7 @@ final class IrohaInputController: IMKInputController {
             if isComposing { commitCurrent(client: client) }
             return false
         }
-        displayOverride = nil
+        lockDisplayOverride()
         composer.input(first)
         // 句読点で自動確定（ライブ変換時のみ）: 変換結果の到着を待って確定する
         autoCommitPending = liveConversionEnabled && commitOnPunctuationEnabled
@@ -462,6 +483,8 @@ final class IrohaInputController: IMKInputController {
     /// F6=ひらがな / F7=カタカナ / F8=半角カタカナ / F9=全角英数 / F10=半角英数
     private func applyFunctionKeyConversion(keyCode: Int, client: IMKTextInput) -> Bool {
         guard isComposing else { return false }
+        // 固定部分しかない（新しく打った読みがない）ときは対象がない
+        guard !composer.isEmpty else { return true }
         conversionTask?.cancel()
         autoCommitPending = false
         composer.flush()
@@ -485,9 +508,36 @@ final class IrohaInputController: IMKInputController {
         }
         if let converted {
             displayOverride = converted
-            updateMarkedText(client: client, display: converted)
+            updateMarkedText(client: client, display: fixedText + converted)
         }
         return true  // 変換できない場合もキーは消費する（Fキーがアプリに漏れないように）
+    }
+
+    /// F6-F10等で指定した表示形を「固定部分」として取り込む（確定はしない）。
+    /// 以降の入力では、この部分をライブ変換にかけ直さない
+    private func lockDisplayOverride() {
+        guard let text = displayOverride else { return }
+        displayOverride = nil
+        // applyFunctionKeyConversionでflush済みなので、composer.textが指定した部分の読み
+        let reading = composer.text
+        guard !text.isEmpty, !reading.isEmpty else { return }
+        fixedChunks.append(FixedChunk(reading: reading, text: text))
+        composer = Self.makeComposer()
+        // 残りの読みは空になったので、進行中のライブ変換も破棄する
+        cancelConversion()
+    }
+
+    /// 直前の固定部分を読みに戻してcomposerへ返す
+    private func unlockLastFixedChunk() {
+        guard let last = fixedChunks.popLast() else { return }
+        composer.prependText(last.reading)
+    }
+
+    /// 固定部分をすべて読みに戻してcomposerへ返す
+    private func unlockFixedChunks() {
+        guard !fixedChunks.isEmpty else { return }
+        composer.prependText(fixedChunks.map(\.reading).joined())
+        fixedChunks = []
     }
 
     // MARK: - 文節変換モード
@@ -496,24 +546,33 @@ final class IrohaInputController: IMKInputController {
     private func enterSegmentMode(client: IMKTextInput) {
         conversionTask?.cancel()
         autoCommitPending = false
-        displayOverride = nil
+        lockDisplayOverride()
         composer.flush()
         let reading = composer.text
-        guard !reading.isEmpty else { return }
+        // 固定部分はそのまま先頭の文節にする（変換し直さない）
+        let fixedSegments = fixedChunks.map {
+            BunsetsuSegment(reading: $0.reading, result: $0.text, candidates: nil)
+        }
+        let fixedPrefix = fixedText
+        guard !reading.isEmpty || !fixedSegments.isEmpty else { return }
 
         mode = .segmenting
         segmentGeneration += 1
         let generation = segmentGeneration
 
-        // 暫定表示: 全体を1文節として今の表示内容をそのまま使う
+        // 暫定表示: 残りの読み全体を1文節として今の表示内容をそのまま使う
         let interim = (lastConversion?.reading == reading) ? lastConversion!.result : reading
-        segments = [BunsetsuSegment(reading: reading, result: interim, candidates: nil)]
-        segmentBaseline = (lastConversion?.reading == reading) ? lastConversion?.result : nil
-        currentSegmentIndex = 0
+        segments = fixedSegments + (reading.isEmpty ? []
+            : [BunsetsuSegment(reading: reading, result: interim, candidates: nil)])
+        let cachedConversion = (lastConversion?.reading == reading) ? lastConversion?.result : nil
+        segmentBaseline = cachedConversion.map { fixedPrefix + $0 }
+        currentSegmentIndex = min(fixedSegments.count, segments.count - 1)
         refreshSegmentDisplay(client: client)
 
-        let context = recentCommitted
-        let cachedConversion = (lastConversion?.reading == reading) ? lastConversion?.result : nil
+        // 固定部分だけなら変換するものがない
+        guard !reading.isEmpty else { return }
+
+        let context = recentCommitted + fixedPrefix
         conversionTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -528,11 +587,11 @@ final class IrohaInputController: IMKInputController {
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     guard self.mode == .segmenting, generation == self.segmentGeneration else { return }
-                    self.segmentBaseline = full
-                    self.segments = aligned.map {
+                    self.segmentBaseline = fixedPrefix + full
+                    self.segments = fixedSegments + aligned.map {
                         BunsetsuSegment(reading: $0.reading, result: $0.conversion, candidates: nil)
                     }
-                    self.currentSegmentIndex = 0
+                    self.currentSegmentIndex = min(fixedSegments.count, self.segments.count - 1)
                     if let client = self.client() {
                         self.refreshSegmentDisplay(client: client)
                     }
@@ -725,14 +784,14 @@ final class IrohaInputController: IMKInputController {
         segmentBaseline = nil
         hidePanel()
         cancelConversion()
-        updateMarkedText(client: client, display: composer.display)
+        updateMarkedText(client: client, display: kanaDisplay)
     }
 
     /// 全文節の変換結果を結合して確定する
     private func commitSegments(client: IMKTextInput?) {
         let text = segments.map(\.result).joined()
         learnIfCorrected(committed: text)
-        commitText(text.isEmpty ? composer.display : text, client: client)
+        commitText(text.isEmpty ? kanaDisplay : text, client: client)
     }
 
     /// 文節変換の結果がエンジンの出力と違っていたら、ユーザによる修正として学習する。
@@ -798,7 +857,8 @@ final class IrohaInputController: IMKInputController {
         // 変換済みの読みと同じなら再変換不要
         if lastConversion?.reading == reading { return }
 
-        let context = recentCommitted
+        // 固定部分は変換し直さず、後続の変換の文脈として渡す
+        let context = recentCommitted + fixedText
         conversionTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -830,17 +890,18 @@ final class IrohaInputController: IMKInputController {
     /// ちらつき防止: 入力が進んで読みが伸びた場合も、前回の変換結果を接頭辞として
     /// 使い続け、新しく増えたかなだけを末尾に足す（新しい変換結果が届いたら置き換わる）
     private var currentDisplay: String {
-        if let displayOverride { return displayOverride }
+        let prefix = fixedText
+        if let displayOverride { return prefix + displayOverride }
         if let lastConversion {
             if lastConversion.reading == composer.text {
-                return lastConversion.result + composer.pending
+                return prefix + lastConversion.result + composer.pending
             }
             if composer.text.hasPrefix(lastConversion.reading) {
                 let addedKana = composer.text.dropFirst(lastConversion.reading.count)
-                return lastConversion.result + addedKana + composer.pending
+                return prefix + lastConversion.result + addedKana + composer.pending
             }
         }
-        return composer.display
+        return prefix + composer.display
     }
 
     private func cancelConversion() {
@@ -880,26 +941,28 @@ final class IrohaInputController: IMKInputController {
     private func resolveCommitText() -> String? {
         if mode == .segmenting {
             let text = segments.map(\.result).joined()
-            return text.isEmpty ? composer.display : text
+            return text.isEmpty ? kanaDisplay : text
         }
         guard isComposing else { return nil }
+        // 固定部分（F6/F7等で指定した見た目）は常にそのまま先頭に付く
+        let prefix = fixedText
         if let displayOverride {
             // F6/F7等で上書き表示中はその内容を確定する
-            return displayOverride
+            return prefix + displayOverride
         }
         // 未解決ローマ字を確定（"n"→"ん"）。flushで増えたかなは変換結果の後ろに付ける
         let readingBeforeFlush = composer.text
         composer.flush()
         let flushedSuffix = String(composer.text.dropFirst(readingBeforeFlush.count))
         if let lastConversion, lastConversion.reading == readingBeforeFlush {
-            return lastConversion.result + flushedSuffix
+            return prefix + lastConversion.result + flushedSuffix
         }
         if let lastConversion, readingBeforeFlush.hasPrefix(lastConversion.reading) {
             // 変換が追いつく前の確定: 表示と同じく「変換済み接頭辞 + 追加のかな」を確定する
             let addedKana = readingBeforeFlush.dropFirst(lastConversion.reading.count)
-            return lastConversion.result + addedKana + flushedSuffix
+            return prefix + lastConversion.result + addedKana + flushedSuffix
         }
-        return composer.display
+        return prefix + composer.display
     }
 
     // MARK: - AIで処理して確定（修飾キー+Enter）
@@ -1017,6 +1080,7 @@ final class IrohaInputController: IMKInputController {
         stopTranslationSpinner()
         cancelConversion()
         composer = Self.makeComposer()  // 設定（句読点スタイル）の変更もここで反映される
+        fixedChunks = []
         segments = []
         segmentBaseline = nil
         // 候補ウィンドウを閉じる。文節変換中に文字を打って確定した場合など、

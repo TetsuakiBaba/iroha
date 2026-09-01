@@ -103,6 +103,24 @@ final class RomajiComposerTests: XCTestCase {
         XCTAssertEqual(composer.display, "き")
     }
 
+    func testPrependText() {
+        // 固定表示（F6/F7等）を解除して読みに戻すときの挿入
+        var composer = RomajiComposer()
+        composer.input("totemok")
+        composer.prependText("きょうは")
+        XCTAssertEqual(composer.display, "きょうはとてもk")
+        XCTAssertEqual(composer.text, "きょうはとても")
+        XCTAssertFalse(composer.rawIsReliable)
+        // 挿入した読みも1文字ずつ消せる
+        for _ in 0..<4 { composer.deleteBackward() }
+        XCTAssertEqual(composer.display, "きょうは")
+        // 空文字の挿入は何もしない
+        var empty = RomajiComposer()
+        empty.prependText("")
+        XCTAssertTrue(empty.isEmpty)
+        XCTAssertTrue(empty.rawIsReliable)
+    }
+
     func testPassthroughUnknown() {
         // 数字はそのまま通す。"b2" は b が解決不能になった時点で文字として出力される
         XCTAssertEqual(compose("a1b2", flush: true), "あ1b2")

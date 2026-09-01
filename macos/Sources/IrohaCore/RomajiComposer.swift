@@ -75,6 +75,15 @@ public struct RomajiComposer: Sendable, Equatable {
         }
     }
 
+    /// 確定済みかなの先頭に文字列を挿入する（固定表示を解除して読みに戻すときに使う）
+    public mutating func prependText(_ kana: String) {
+        guard !kana.isEmpty else { return }
+        text = kana + text
+        // 挿入したかなは打鍵列と対応しないためrawは使えなくなる
+        raw = ""
+        rawIsReliable = false
+    }
+
     public mutating func clear() {
         text = ""
         pending = ""
