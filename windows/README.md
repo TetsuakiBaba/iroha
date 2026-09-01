@@ -38,6 +38,13 @@ powershell -ExecutionPolicy Bypass -File windows\scripts\install-tip.ps1 -Uninst
 # zenzモデルの取得（%LOCALAPPDATA%\iroha\models へ、約72MB）
 powershell -ExecutionPolicy Bypass -File windows\scripts\fetch-model.ps1
 
+# Vulkan対応ビルド（要Vulkan SDK。dist-windows-vulkan / build-vulkan に分離）
+powershell -ExecutionPolicy Bypass -File windows\scripts\build-llama.ps1 -Backend vulkan
+powershell -ExecutionPolicy Bypass -File windows\scripts\build-tip.ps1 -Vulkan
+# 注意: zenz-v3.1-small級の小型モデルでは内蔵GPU（Intel Iris Plus実測）だと
+# CPU AVX2より約2倍遅い（n=1: 71ms→157ms）。既定はCPUビルドとし、
+# VulkanはディスクリートGPU向けのオプション扱い
+
 # エンジンの検証・評価（macOS版と同じeval.tsvで数値を突き合わせる）
 windows\build\iroha-cli\iroha-cli.exe convert kyouhaiitenki
 windows\build\iroha-cli\iroha-cli.exe bench testdata\eval.tsv
