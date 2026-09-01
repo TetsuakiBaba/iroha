@@ -1,10 +1,11 @@
 // swift-tools-version:6.0
 import PackageDescription
 
-// llama.cpp（vendor/dist に scripts/build-llama.sh がスタティックビルドを配置する）
-let llamaHeaderFlags: [String] = ["-Xcc", "-Ivendor/dist/include"]
+// llama.cpp（リポジトリ直下の vendor/dist に scripts/build-llama.sh がスタティックビルドを配置する）
+// 相対パスはcwd基準のため、ビルドは必ず macos/ ディレクトリから実行すること
+let llamaHeaderFlags: [String] = ["-Xcc", "-I../vendor/dist/include"]
 let llamaLinkerSettings: [LinkerSetting] = [
-    .unsafeFlags(["-Lvendor/dist/lib"]),
+    .unsafeFlags(["-L../vendor/dist/lib"]),
     .linkedLibrary("c++"),
     .linkedFramework("Metal"),
     .linkedFramework("MetalKit"),

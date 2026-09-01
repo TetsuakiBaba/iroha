@@ -4,10 +4,10 @@
 #   1. testdata/eval.tsv          … 独自評価セット（完全一致・CER）
 #   2. AJIMEE-Bench (200件)       … zenzai公式ベンチマーク（acc@1・MinCER）
 #
-# 使い方:
-#   scripts/bench-compare.sh <model1.gguf> [model2.gguf ...]
+# 使い方（リポジトリルートから）:
+#   macos/scripts/bench-compare.sh <model1.gguf> [model2.gguf ...]
 # 例（zenz と 学習済みllm-jp-3-150m の比較）:
-#   scripts/bench-compare.sh \
+#   macos/scripts/bench-compare.sh \
 #     ~/Library/Application\ Support/iroha/models/zenz-v3.1-small.gguf \
 #     training/iroha-llmjp-150m/iroha-llmjp-150m-f16.gguf
 set -euo pipefail
@@ -18,7 +18,7 @@ if [ $# -lt 1 ]; then
 fi
 
 # 相対パスは呼び出し時のカレントディレクトリ基準で絶対パス化してから
-# リポジトリルートへ移動する（cd後に解決すると別の場所を指してしまう）
+# パッケージルート(macos/)へ移動する（cd後に解決すると別の場所を指してしまう）
 MODELS=()
 for MODEL in "$@"; do
     case "$MODEL" in
@@ -35,7 +35,7 @@ set -- "${MODELS[@]}"
 
 cd "$(dirname "$0")/.."
 
-if [ ! -f testdata/ajimee/evaluation_items.json ]; then
+if [ ! -f ../testdata/ajimee/evaluation_items.json ]; then
     echo "==> AJIMEE-Benchデータを取得" >&2
     bash scripts/fetch-ajimee.sh >&2
 fi
@@ -53,12 +53,12 @@ TABLE="| モデル | eval.tsv 完全一致 | eval.tsv CER | AJIMEE acc@1 | AJIME
 for MODEL in "$@"; do
     NAME=$(basename "$MODEL" .gguf)
     echo "==> $NAME : eval.tsv" >&2
-    IROHA_MODEL="$MODEL" "$CLI" bench testdata/eval.tsv > "$RESULTS/$NAME.bench.txt" 2>/dev/null
+    IROHA_MODEL="$MODEL" "$CLI" bench ../testdata/eval.tsv > "$RESULTS/$NAME.bench.txt" 2>/dev/null
     BENCH=$(tail -1 "$RESULTS/$NAME.bench.txt")
     echo "    $BENCH" >&2
 
     echo "==> $NAME : AJIMEE-Bench" >&2
-    IROHA_MODEL="$MODEL" "$CLI" ajimee testdata/ajimee/evaluation_items.json > "$RESULTS/$NAME.ajimee.txt" 2>/dev/null
+    IROHA_MODEL="$MODEL" "$CLI" ajimee ../testdata/ajimee/evaluation_items.json > "$RESULTS/$NAME.ajimee.txt" 2>/dev/null
     AJIMEE=$(grep '^全体:' "$RESULTS/$NAME.ajimee.txt")
     echo "    $AJIMEE" >&2
 
@@ -77,4 +77,4 @@ done
 echo
 echo "$TABLE"
 echo
-echo "（誤答の内訳は各モデルの実行ログ参照。再実行: IROHA_MODEL=<gguf> $CLI ajimee testdata/ajimee/evaluation_items.json）"
+echo "（誤答の内訳は各モデルの実行ログ参照。再実行: IROHA_MODEL=<gguf> $CLI ajimee ../testdata/ajimee/evaluation_items.json）"

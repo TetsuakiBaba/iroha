@@ -4,7 +4,8 @@
 # データのライセンスは日本語Wikipedia入力誤りデータセット(v2)に準拠し CC-BY-SA 3.0。
 # リポジトリには含めず、評価時にこのスクリプトで取得する。
 set -euo pipefail
-cd "$(dirname "$0")/.."
+# testdata/ はリポジトリルートにあるため、そこへ移動する
+cd "$(dirname "$0")/../.."
 
 DEST=testdata/ajimee/evaluation_items.json
 mkdir -p testdata/ajimee

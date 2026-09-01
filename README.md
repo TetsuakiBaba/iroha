@@ -40,13 +40,13 @@
 
 ```sh
 # 1. llama.cppをスタティックビルド（初回のみ、zenz対応パッチを適用）
-./scripts/build-llama.sh
+./macos/scripts/build-llama.sh
 
 # 2. 変換モデル(zenz-v3.1-small)をダウンロード（初回のみ、約70MB）
-./scripts/fetch-model.sh
+./macos/scripts/fetch-model.sh
 
 # 3. ビルドして ~/Library/Input Methods/ にインストール
-./scripts/install.sh
+./macos/scripts/install.sh
 ```
 
 その後、**システム設定 > キーボード > 入力ソース > 編集 > + > 日本語 > iroha** を追加する
@@ -72,7 +72,7 @@
 | Ctrl+Shift+J / ; | ひらがな / 英数モード切替 |
 
 文節分割は「変換結果中のひらがな（助詞・送り仮名）を読みと突き合わせる」軽量な
-アライメント（[ReadingAligner](Sources/IrohaCore/ReadingAligner.swift)）による初期推定で、
+アライメント（[ReadingAligner](macos/Sources/IrohaCore/ReadingAligner.swift)）による初期推定で、
 Shift+←→でユーザがいつでも調整できる。文節の候補生成は選択中の文節の読みと
 左側の確定済み文字列を文脈としてLLMに与えて行う。
 
@@ -146,7 +146,11 @@ ASCIIショートカット）は取り込みの対象外。取り込んだ単語
 
 ## 開発
 
+macOS版のSwiftパッケージは `macos/` 配下にある（Windows版は今後 `windows/` に実装予定）。
+ビルドコマンドは `macos/` から実行する:
+
 ```sh
+cd macos
 swift test                                 # 単体テスト（ローマ字変換など）
 swift build && .build/debug/iroha-cli repl  # CLIで変換を試す（レイテンシ表示付き）
 .build/debug/iroha-cli convert --n 5 "きしゃ"          # n-best候補
@@ -154,9 +158,9 @@ swift build && .build/debug/iroha-cli repl  # CLIで変換を試す（レイテ�
 log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
 ```
 
-- 変換エンジンは [ConversionEngine](Sources/IrohaCore/ConversionEngine.swift) プロトコルで抽象化されており、
-  [ZenzEngine](Sources/IrohaCore/ZenzEngine.swift)（zenz-v3 + llama.cpp）を別モデルに差し替えられる
-- モデルの評価は `iroha-cli bench testdata/eval.tsv`（完全一致率・CER・レイテンシ）。
+- 変換エンジンは [ConversionEngine](macos/Sources/IrohaCore/ConversionEngine.swift) プロトコルで抽象化されており、
+  [ZenzEngine](macos/Sources/IrohaCore/ZenzEngine.swift)（zenz-v3 + llama.cpp）を別モデルに差し替えられる
+- モデルの評価は `iroha-cli bench ../testdata/eval.tsv`（完全一致率・CER・レイテンシ）。
   自作モデルの学習パイプライン（データ準備→学習→GGUF変換→評価）は [training/](training/README.md) を参照
 - モデルファイルは `~/Library/Application Support/iroha/models/` に置く（環境変数 `IROHA_MODEL` で上書き可）
 - 学習結果は `~/Library/Application Support/iroha/learning.json`（環境変数 `IROHA_LEARNING` で差し替え可）
@@ -164,7 +168,7 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
   iroha-cli から差し替え可）。macOSのユーザ辞書の実体は `~/Library/KeyboardServices/TextReplacements.db`
   （非公開スキーマのSQLite。実データが未チェックポイントのWALにあるため db/-wal/-shm ごとコピーして読む）
 - zenzのプロンプト形式: `[U+EE02 + 左文脈] + U+EE00 + カタカナ読み + U+EE01 → 変換結果`
-- 生成は読みで縛る（[ReadingConstraint](Sources/IrohaCore/ReadingConstraint.swift)）。
+- 生成は読みで縛る（[ReadingConstraint](macos/Sources/IrohaCore/ReadingConstraint.swift)）。
   ひらがな・句読点は読みと一致する位置でしか出せず、読みを使い切るまで終端させない。
   これがないと「こんにちはあかちゃん → こんにちは。赤ちゃん」のように読みにない文字が混ざる
 - llama.cppにはzenzのpre-tokenizer名（`gpt2-small-japanese-char`）を認識させる
@@ -180,7 +184,7 @@ git tag v0.4.0 && git push origin v0.4.0
 ```
 
 - `CFBundleShortVersionString` はタグから、`CFBundleVersion` はワークフローの実行番号から注入される
-  （`Resources/Info.plist` のコミット値は開発ビルドの表示用）
+  （`macos/Resources/Info.plist` のコミット値は開発ビルドの表示用）
 - `-` を含むタグ（例 `v0.4.0-beta.1`）はプレリリースになり、アップデート通知の対象外
   （アップデータのQAは `defaults write dev.iroha.inputmethod.iroha updateCheckURL <リリースAPIのURL>` で行う）
 - 署名関連のSecrets: `MACOS_CERTIFICATE_P12` / `MACOS_CERTIFICATE_PASSWORD` / `MACOS_SIGN_IDENTITY` /

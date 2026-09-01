@@ -3,15 +3,16 @@
 ## リリースポリシー（重要）
 
 **ユーザーが明示的に「リリースして」と言うまでリリースしない。**
-機能追加・修正はコミット + push + ローカルインストール（`./scripts/install.sh`）まで。
+機能追加・修正はコミット + push + ローカルインストール（`./macos/scripts/install.sh`）まで。
 `git tag vX.Y.Z && git push origin vX.Y.Z` はリリース指示があったときのみ実行する
 （タグpushでGitHub Actionsが署名・公証・Release作成まで自動実行される）。
 
 ## 日常の開発コマンド
 
 ```sh
-swift build && swift test        # ビルドと単体テスト
-./scripts/install.sh             # ローカルの ~/Library/Input Methods/ へインストール（ad-hoc署名）
+cd macos && swift build && swift test   # ビルドと単体テスト（必ず macos/ から実行。
+                                        # Package.swiftのvendor/dist参照がcwd相対のため）
+./macos/scripts/install.sh       # ローカルの ~/Library/Input Methods/ へインストール（ad-hoc署名）
 /usr/bin/log stream --predicate 'process == "iroha"' --style compact  # IMEログ
 
 # 設定ウィンドウだけを開く（IMEに接続しない。UI確認用）
@@ -24,15 +25,21 @@ swift build && swift test        # ビルドと単体テスト
 
 ## プロジェクト構成の要点
 
-- `Sources/iroha/` — IME本体（Swift 5モード）: IMKコントローラ、設定UI、
+- プラットフォーム別レイアウト: macOS版のSwiftパッケージ一式（Package.swift / Sources /
+  Tests / Resources / scripts）は `macos/` 配下。Windows版は今後 `windows/` に実装する。
+  `vendor/`（llama.cpp）・`patches/`・`testdata/`・`training/`・`.venv` はプラットフォーム共有の
+  ためリポジトリ直下に置く（**`training/` のスクリプトがルート直下の `vendor/`・`.venv` を
+  参照しているので、これらを `macos/` 配下へ移動してはならない**）
+- `macos/Sources/iroha/` — IME本体（Swift 5モード）: IMKコントローラ、設定UI、
   AIバックエンド（Apple FoundationModels / Ollama / LM Studio / OpenAI互換）、
   アップデータ、モデルDL、macOSユーザ辞書の取り込み（`SystemUserDictionary`）、
   選択テキストのAI編集（`Selection/`。グローバルショートカットとマウス選択で
   他アプリの選択テキストをAIで置換する。GenGoの機能を移植。既定OFF・要アクセシビリティ権限）
-- `Sources/IrohaCore/` — 変換エンジン（Swift 6モード）: zenz + llama.cpp
+- `macos/Sources/IrohaCore/` — 変換エンジン（Swift 6モード）: zenz + llama.cpp。
+  Foundationのみ依存でmacOS専用APIは不使用（将来のWindows移植候補）
 - FoundationModelsはmacOS 26+のため `#if canImport` + `@available(macOS 26.0, *)` ガード必須
   （パッケージのフロアはmacOS 14）
-- llama.cppの静的ライブラリは `./scripts/build-llama.sh` で `vendor/dist` に生成（未コミット）
+- llama.cppの静的ライブラリは `./macos/scripts/build-llama.sh` で `vendor/dist` に生成（未コミット）
 - ユーザ辞書・学習はLLMの外側で処理する（`ConversionEngine`のデコレータを
   学習 → ユーザ辞書 → LLM の順に重ね、読みを分割して一致部分を埋める）。
   macOS側の辞書は読み取り専用で絶対に書き込まない

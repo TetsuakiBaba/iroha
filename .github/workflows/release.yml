@@ -27,18 +27,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: vendor/dist
-          key: llama-${{ runner.os }}-${{ runner.arch }}-b10689-${{ hashFiles('patches/llama-cpp-zenz-pretokenizer.patch', 'scripts/build-llama.sh') }}
+          key: llama-${{ runner.os }}-${{ runner.arch }}-b10689-${{ hashFiles('patches/llama-cpp-zenz-pretokenizer.patch', 'macos/scripts/build-llama.sh') }}
 
       - name: Build llama.cpp
         if: steps.llama-cache.outputs.cache-hit != 'true'
-        run: ./scripts/build-llama.sh
+        run: ./macos/scripts/build-llama.sh
 
       - name: Build
+        working-directory: macos
         run: swift build -c release --product iroha
 
       - name: Verify FoundationModels linkage
         run: |
-          otool -l .build/release/iroha | grep -q FoundationModels.framework \
+          otool -l macos/.build/release/iroha | grep -q FoundationModels.framework \
             || { echo "::error::FoundationModels not linked - SDK too old, 英訳機能が消えています"; exit 1; }
 
       - name: Import signing certificate
@@ -63,26 +64,26 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          VERSION="$VERSION" BUILD_NUMBER="${{ github.run_number }}" ./scripts/make-bundle.sh
-          codesign --verify --strict --verbose=2 .build/iroha.app
+          VERSION="$VERSION" BUILD_NUMBER="${{ github.run_number }}" ./macos/scripts/make-bundle.sh
+          codesign --verify --strict --verbose=2 macos/.build/iroha.app
 
       - name: Notarize and staple
         env:
           KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
         run: |
           echo "$KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
-          ditto -c -k --keepParent .build/iroha.app "$RUNNER_TEMP/iroha-notarize.zip"
+          ditto -c -k --keepParent macos/.build/iroha.app "$RUNNER_TEMP/iroha-notarize.zip"
           xcrun notarytool submit "$RUNNER_TEMP/iroha-notarize.zip" \
             --key "$RUNNER_TEMP/AuthKey.p8" \
             --key-id "${{ secrets.NOTARY_KEY_ID }}" \
             --issuer "${{ secrets.NOTARY_ISSUER_ID }}" \
             --wait --timeout 30m
           rm -f "$RUNNER_TEMP/AuthKey.p8"
-          xcrun stapler staple .build/iroha.app
-          ditto -c -k --keepParent .build/iroha.app "iroha-$VERSION.zip"
+          xcrun stapler staple macos/.build/iroha.app
+          ditto -c -k --keepParent macos/.build/iroha.app "iroha-$VERSION.zip"
 
       - name: Verify Gatekeeper acceptance
-        run: spctl --assess --type execute --verbose=4 .build/iroha.app
+        run: spctl --assess --type execute --verbose=4 macos/.build/iroha.app
 
       - name: Create GitHub Release
         env:

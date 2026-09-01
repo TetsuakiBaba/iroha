@@ -24,14 +24,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: vendor/dist
-          key: llama-${{ runner.os }}-${{ runner.arch }}-b10689-${{ hashFiles('patches/llama-cpp-zenz-pretokenizer.patch', 'scripts/build-llama.sh') }}
+          key: llama-${{ runner.os }}-${{ runner.arch }}-b10689-${{ hashFiles('patches/llama-cpp-zenz-pretokenizer.patch', 'macos/scripts/build-llama.sh') }}
 
       - name: Build llama.cpp
         if: steps.llama-cache.outputs.cache-hit != 'true'
-        run: ./scripts/build-llama.sh
+        run: ./macos/scripts/build-llama.sh
 
       - name: Build
+        working-directory: macos
         run: swift build
 
       - name: Test
+        working-directory: macos
         run: swift test

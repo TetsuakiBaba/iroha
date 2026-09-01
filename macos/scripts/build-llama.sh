@@ -2,7 +2,8 @@
 # llama.cppをスタティックビルドして vendor/dist に配置する。
 # 前提: brew install cmake
 set -euo pipefail
-cd "$(dirname "$0")/.."
+# vendor/ と patches/ はリポジトリルートにあるため、そこへ移動する
+cd "$(dirname "$0")/../.."
 
 LLAMA_TAG="b10689"
 
