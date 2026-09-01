@@ -15,6 +15,9 @@
 #include <string>
 #include <vector>
 
+#include <memory>
+
+#include "iroha/config.h"
 #include "iroha/conversion_engine.h"
 #include "iroha/learning_engine.h"
 #include "iroha/learning_store.h"
@@ -28,6 +31,7 @@ namespace {
 
 void Log(const char* message) {
     std::printf("%s\n", message);
+    std::fflush(stdout);
     OutputDebugStringA((std::string("[iroha-server] ") + message + "\n").c_str());
 }
 
@@ -36,9 +40,19 @@ std::wstring DataDir() {
     return (localAppData ? std::wstring(localAppData) : L".") + L"\\iroha";
 }
 
-std::string DefaultModelPath() {
+// モデルパスの決定: IROHA_MODEL環境変数 > config.jsonの"model" > 既定。
+// config側はファイル名（modelsディレクトリ相対）と絶対パスの両方を受ける
+std::string ResolveModelPath() {
     if (const wchar_t* env = _wgetenv(L"IROHA_MODEL")) {
         return iroha::Utf32ToUtf8(iroha::Utf16ToUtf32(env));
+    }
+    const iroha::Config config =
+        iroha::LoadConfig(std::filesystem::path(DataDir() + L"\\config.json"));
+    if (!config.model.empty()) {
+        const std::wstring model = iroha::Utf32ToUtf16(config.model);
+        const std::filesystem::path path(model);
+        if (path.is_absolute()) return iroha::Utf32ToUtf8(config.model);
+        return iroha::Utf32ToUtf8(iroha::Utf16ToUtf32(DataDir() + L"\\models\\" + model));
     }
     return iroha::Utf32ToUtf8(
         iroha::Utf16ToUtf32(DataDir() + L"\\models\\zenz-v3.1-small-Q5_K_M.gguf"));
@@ -82,10 +96,38 @@ PSECURITY_DESCRIPTOR CreatePipeSecurityDescriptor() {
     return descriptor;
 }
 
-// IME本体と同じ構成のエンジン一式: 学習 → ユーザ辞書 → zenz
+// IME本体と同じ構成のエンジン一式: 学習 → ユーザ辞書 → zenz。
+// 設定GUIからのReload要求で設定・辞書を読み直す（モデルは変わったときだけロード）
 struct ServerState {
-    iroha::ConversionEngine* engine = nullptr;
-    iroha::LearningStore* learning = nullptr;
+    std::string modelPath;
+    std::unique_ptr<iroha::ZenzEngine> zenz;
+    std::unique_ptr<iroha::UserDictionaryStore> userDictionary;
+    std::unique_ptr<iroha::LearningStore> learning;
+    std::unique_ptr<iroha::UserDictionaryEngine> dictionaryEngine;
+    std::unique_ptr<iroha::LearningEngine> engine;
+
+    void Build() {
+        const std::string newModelPath = ResolveModelPath();
+        if (!zenz || newModelPath != modelPath) {
+            zenz = std::make_unique<iroha::ZenzEngine>(newModelPath);
+            modelPath = newModelPath;
+            std::string error;
+            if (zenz->Prewarm(&error)) {
+                Log(("model loaded: " + newModelPath).c_str());
+            } else {
+                // モデル未取得でも起動は継続する（変換要求時にエラーを返す）
+                Log(("prewarm failed: " + error).c_str());
+            }
+        }
+        userDictionary = std::make_unique<iroha::UserDictionaryStore>(
+            StorePath(L"IROHA_USER_DICT", L"user-dictionary.json"));
+        learning = std::make_unique<iroha::LearningStore>(
+            StorePath(L"IROHA_LEARNING", L"learning.json"));
+        dictionaryEngine = std::make_unique<iroha::UserDictionaryEngine>(
+            zenz.get(), [this] { return userDictionary->Current(); });
+        engine = std::make_unique<iroha::LearningEngine>(
+            dictionaryEngine.get(), [this] { return learning->Current(); });
+    }
 };
 
 // 1リクエストを処理してレスポンスのバイト列を返す。shutdownならfalseを返す
@@ -119,6 +161,10 @@ bool HandleRequest(ServerState& state, const std::vector<char>& request,
             candidateCount = candidateCount > 32 ? 32 : candidateCount;
             std::vector<std::u32string> candidates;
             std::string error;
+            if (!state.engine) {
+                *response = iroha::ipc::BuildErrorResponse("エンジン未初期化");
+                return true;
+            }
             if (!state.engine->Convert(iroha::Utf8ToUtf32(readingUtf8),
                                        iroha::Utf8ToUtf32(contextUtf8),
                                        static_cast<int>(candidateCount), &candidates,
@@ -133,6 +179,12 @@ bool HandleRequest(ServerState& state, const std::vector<char>& request,
                 utf8Candidates.push_back(iroha::Utf32ToUtf8(candidate));
             }
             *response = iroha::ipc::BuildOkResponse(utf8Candidates);
+            return true;
+        }
+        case iroha::ipc::MessageType::Reload: {
+            Log("reload requested");
+            state.Build();
+            *response = iroha::ipc::BuildOkResponse({});
             return true;
         }
         case iroha::ipc::MessageType::Record: {
@@ -183,25 +235,9 @@ int wmain() {
     }
 
     // IME本体と同じ構成でエンジンを組み立てる: 学習 → ユーザ辞書 → zenz
-    // （macOS版 iroha-cli の makeEngine と同じ。環境変数で差し替え可能）
-    iroha::ZenzEngine zenz(DefaultModelPath());
-    iroha::UserDictionaryStore userDictionary(
-        StorePath(L"IROHA_USER_DICT", L"user-dictionary.json"));
-    iroha::LearningStore learning(StorePath(L"IROHA_LEARNING", L"learning.json"));
-    iroha::UserDictionaryEngine dictionaryEngine(
-        &zenz, [&userDictionary] { return userDictionary.Current(); });
-    iroha::LearningEngine engine(&dictionaryEngine,
-                                 [&learning] { return learning.Current(); });
-    ServerState state{&engine, &learning};
-    {
-        std::string error;
-        if (zenz.Prewarm(&error)) {
-            Log("model loaded");
-        } else {
-            // モデル未取得でも起動は継続する（変換要求時にエラーを返す）
-            Log(("prewarm failed: " + error).c_str());
-        }
-    }
+    // （macOS版 iroha-cli の makeEngine と同じ。環境変数・config.jsonで差し替え可能）
+    ServerState state;
+    state.Build();
 
     const std::wstring pipeName = iroha::ipc::PipeName();
     PSECURITY_DESCRIPTOR pipeSecurity = CreatePipeSecurityDescriptor();

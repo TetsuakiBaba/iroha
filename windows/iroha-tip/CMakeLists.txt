@@ -24,4 +24,4 @@ target_compile_definitions(iroha-tip PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A0
 target_compile_options(iroha-tip PRIVATE /utf-8 /W4 /EHsc)
 # iroha-coreからは入力合成（RomajiComposer）と文字コード変換のみ使う。
 # 変換エンジン・llama.cpp関連は将来もリンクしないこと。
-target_link_libraries(iroha-tip PRIVATE iroha-core ole32 oleaut32 uuid advapi32 user32)
+target_link_libraries(iroha-tip PRIVATE iroha-core ole32 oleaut32 uuid advapi32 user32 shell32)

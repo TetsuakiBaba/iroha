@@ -2,8 +2,10 @@
 
 #include <ctffunc.h> // GUID_LBI_INPUTMODE
 #include <olectl.h>  // CONNECT_E_*
+#include <shellapi.h>
 
 #include <cstring>
+#include <string>
 
 #include "TextService.h"
 
@@ -96,7 +98,22 @@ STDMETHODIMP LangBarButton::GetTooltipString(BSTR* tooltip) {
     return *tooltip ? S_OK : E_OUTOFMEMORY;
 }
 
-STDMETHODIMP LangBarButton::OnClick(TfLBIClick, POINT, const RECT*) {
+STDMETHODIMP LangBarButton::OnClick(TfLBIClick click, POINT, const RECT*) {
+    if (click == TF_LBI_CLK_RIGHT) {
+        // 右クリックで設定ウィンドウ（DLLと同じディレクトリのiroha-settings.exe）
+        wchar_t path[MAX_PATH];
+        const DWORD length = GetModuleFileNameW(g_hInst, path, ARRAYSIZE(path));
+        if (length > 0) {
+            std::wstring exe(path, length);
+            const size_t slash = exe.find_last_of(L'\\');
+            if (slash != std::wstring::npos) {
+                exe = exe.substr(0, slash + 1) + L"iroha-settings.exe";
+                ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, nullptr,
+                              SW_SHOWNORMAL);
+            }
+        }
+        return S_OK;
+    }
     if (owner_) owner_->OnModeButtonClicked();
     return S_OK;
 }

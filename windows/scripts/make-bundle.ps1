@@ -32,6 +32,7 @@ New-Item -ItemType Directory -Force $stage | Out-Null
 
 Copy-Item (Join-Path $BuildDir "iroha-tip\iroha-tip.dll") $stage
 Copy-Item (Join-Path $BuildDir "iroha-server\iroha-server.exe") $stage
+Copy-Item (Join-Path $BuildDir "iroha-settings\iroha-settings.exe") $stage
 Copy-Item (Join-Path $PSScriptRoot "bundle\install.ps1") $stage
 Copy-Item (Join-Path $PSScriptRoot "bundle\uninstall.ps1") $stage
 Copy-Item (Join-Path $PSScriptRoot "fetch-model.ps1") $stage

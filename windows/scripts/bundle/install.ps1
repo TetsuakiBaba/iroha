@@ -29,6 +29,7 @@ if (Test-Path $InstalledDll) {
 }
 Copy-Item (Join-Path $SourceDir "iroha-tip.dll") $InstalledDll
 Copy-Item (Join-Path $SourceDir "iroha-server.exe") $InstallDir -Force
+Copy-Item (Join-Path $SourceDir "iroha-settings.exe") $InstallDir -Force
 
 Write-Host "==> TSF登録"
 $p = Start-Process "$env:SystemRoot\System32\regsvr32.exe" -ArgumentList "/s", "`"$InstalledDll`"" -Wait -PassThru

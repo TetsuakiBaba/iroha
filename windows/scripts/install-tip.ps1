@@ -69,6 +69,12 @@ if (Test-Path $BuiltServer) {
 } else {
     Write-Warning "iroha-server.exe が見つかりません（変換が動きません）: $BuiltServer"
 }
+# 設定ウィンドウ（通知領域のあ/Aボタンの右クリックで開く）
+$BuiltSettings = Join-Path $RepoRoot "windows\build\iroha-settings\iroha-settings.exe"
+if (Test-Path $BuiltSettings) {
+    try { Stop-Process -Name "iroha-settings" -Force -ErrorAction Stop } catch {}
+    Copy-Item $BuiltSettings $InstallDir -Force
+}
 # デバッグ用にPDBも並べる（あれば）
 foreach ($src in @($BuiltDll, $BuiltServer)) {
     $pdb = [IO.Path]::ChangeExtension($src, ".pdb")

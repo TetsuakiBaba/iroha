@@ -32,6 +32,7 @@ enum class MessageType : uint32_t {
     Convert = 2,
     Shutdown = 3,
     Record = 4, // 確定の通知（学習用）
+    Reload = 5, // 設定・辞書・モデルの再読み込み（設定GUIから）
 };
 
 inline std::wstring PipeName() {
@@ -90,6 +91,13 @@ inline std::vector<char> BuildShutdownRequest() {
     std::vector<char> buf;
     PutU32(&buf, kProtocolVersion);
     PutU32(&buf, static_cast<uint32_t>(MessageType::Shutdown));
+    return buf;
+}
+
+inline std::vector<char> BuildReloadRequest() {
+    std::vector<char> buf;
+    PutU32(&buf, kProtocolVersion);
+    PutU32(&buf, static_cast<uint32_t>(MessageType::Reload));
     return buf;
 }
 

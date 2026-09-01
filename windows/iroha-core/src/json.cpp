@@ -213,6 +213,12 @@ struct Parser {
 } // namespace
 
 bool Parse(std::string_view text, Value* out) {
+    // メモ帳等が付けるUTF-8 BOMは読み飛ばす
+    if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
+        static_cast<unsigned char>(text[1]) == 0xBB &&
+        static_cast<unsigned char>(text[2]) == 0xBF) {
+        text.remove_prefix(3);
+    }
     Parser parser{text};
     if (!parser.ParseValue(out)) return false;
     parser.SkipWhitespace();

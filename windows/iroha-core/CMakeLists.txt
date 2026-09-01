@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.21)
 project(iroha-core LANGUAGES CXX)
 
 add_library(iroha-core STATIC
+    src/config.cpp
     src/json.cpp
     src/kana.cpp
     src/learning_dictionary.cpp
