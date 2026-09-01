@@ -140,8 +140,30 @@ bool IsComposerSymbol(wchar_t c) {
 TextService::KeyAction TextService::DecideKeyAction(WPARAM wParam, LPARAM lParam,
                                                     wchar_t* outChar) const {
     *outChar = 0;
+    const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+    // 入力モードの切替キーは英数モード中でも受ける。
+    //   半角/全角（VK_KANJI / VK_DBE_SBCSCHAR / VK_DBE_DBCSCHAR、US配列は Alt+`）
+    //   ひらがなキー（VK_DBE_HIRAGANA/VK_DBE_KATAKANA）、無変換相当（VK_DBE_ALPHANUMERIC）
+    switch (wParam) {
+        case VK_KANJI: // 0x19
+        case 0xF3:     // VK_DBE_SBCSCHAR（半角/全角）
+        case 0xF4:     // VK_DBE_DBCSCHAR
+            return KeyAction::ToggleDirectMode;
+        case 0xF2: // VK_DBE_HIRAGANA
+        case 0xF1: // VK_DBE_KATAKANA
+            return KeyAction::SetKanaMode;
+        case 0xF0: // VK_DBE_ALPHANUMERIC（英数）
+            return KeyAction::SetDirectMode;
+        case VK_OEM_3: // US配列の Alt+`
+            if (alt) return KeyAction::ToggleDirectMode;
+            break;
+        default:
+            break;
+    }
+    // 英数モード中はキーを一切食わない
+    if (directMode_) return KeyAction::None;
     // Ctrl/Altショートカットには介入しない
-    if ((GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000)) {
+    if ((GetKeyState(VK_CONTROL) & 0x8000) || alt) {
         return KeyAction::None;
     }
     const bool composing = composition_ != nullptr;
@@ -239,6 +261,30 @@ HRESULT TextService::HandleKey(ITfContext* context, KeyAction action,
             if (FAILED(hr)) return hr;
             composer_.Input(static_cast<char32_t>(character));
             return UpdateComposition(context);
+        }
+        case KeyAction::ToggleDirectMode:
+        case KeyAction::SetKanaMode:
+        case KeyAction::SetDirectMode: {
+            bool newDirect = directMode_;
+            if (action == KeyAction::ToggleDirectMode) newDirect = !directMode_;
+            if (action == KeyAction::SetKanaMode) newDirect = false;
+            if (action == KeyAction::SetDirectMode) newDirect = true;
+            if (newDirect == directMode_) return S_OK;
+            // 未確定文字列が残っていたら現状のまま確定してから切り替える
+            HRESULT hr = S_OK;
+            if (composition_) {
+                std::wstring text;
+                if (converting_ && candidateIndex_ < candidates_.size()) {
+                    text = iroha::Utf32ToUtf16(candidates_[candidateIndex_]);
+                } else {
+                    composer_.Flush();
+                    text = iroha::Utf32ToUtf16(composer_.Display());
+                }
+                hr = CommitText(context, text);
+            }
+            directMode_ = newDirect;
+            IrohaLog(L"input mode: %s", directMode_ ? L"direct" : L"kana");
+            return hr;
         }
         case KeyAction::None:
             break;

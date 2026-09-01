@@ -61,6 +61,9 @@ private:
         SelectCandidate, // 数字キーで候補を直接選択
         BackToComposing, // 候補表示をやめて読みに戻る
         CommitThenInput, // 現候補を確定して新しい入力を始める
+        ToggleDirectMode, // かな⇔英数の切替（半角/全角キー等）
+        SetKanaMode,      // ひらがなキー
+        SetDirectMode,    // 無変換/英数キー
     };
     KeyAction DecideKeyAction(WPARAM wParam, LPARAM lParam, wchar_t* outChar) const;
     HRESULT HandleKey(ITfContext* context, KeyAction action, wchar_t character);
@@ -90,6 +93,8 @@ private:
     iroha::RomajiComposer composer_;
     TfGuidAtom displayAttributeAtom_ = TF_INVALID_GUIDATOM;
 
+    // 英数モード（trueの間はキーを一切食わない）。半角/全角キー等で切り替える
+    bool directMode_ = false;
     // 変換状態（M4）。convertingの間、コンポジションには現候補を表示する
     bool converting_ = false;
     std::vector<std::u32string> candidates_;

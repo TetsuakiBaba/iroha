@@ -68,6 +68,8 @@ windows\build\iroha-cli\iroha-cli.exe bench testdata\eval.tsv
       Esc/Backspaceで読みに戻る、TIP有効化時にサーバ自動起動+モデルプリロード）
 - [x] M4b: 自前候補ウィンドウ（GetTextExt座標に表示、数字キー1-9で選択、
       EVENT_OBJECT_IME_*発火、フォーカス非奪取）と左文脈の伝搬（コンポジション直前40文字）
+- [x] M4c: 入力モード切替（半角/全角・Alt+`でかな⇔英数トグル、ひらがな/英数キー対応。
+      モード表示アイコンはM5の通知領域対応で追加する）
 - [ ] M5: 互換性強化（UIlessモード、ストアアプリ/AppContainer、通知領域アイコン）
 - [ ] M6: 製品化（インストーラ、Authenticode署名、学習・ユーザ辞書、UIA対応）
 
