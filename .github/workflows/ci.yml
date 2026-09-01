@@ -50,12 +50,25 @@ jobs:
           path: vendor/dist-windows
           key: llama-${{ runner.os }}-${{ runner.arch }}-b10689-${{ hashFiles('patches/llama-cpp-zenz-pretokenizer.patch', 'windows/scripts/build-llama.ps1') }}
 
+      # 失敗時はログ末尾をアノテーションに出す（公開APIから読めるように）
       - name: Build llama.cpp
         if: steps.llama-cache.outputs.cache-hit != 'true'
         shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File windows/scripts/build-llama.ps1
+        run: |
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File windows/scripts/build-llama.ps1 2>&1
+          $out | ForEach-Object { Write-Host $_ }
+          if ($LASTEXITCODE -ne 0) {
+            ($out | Select-Object -Last 25) | ForEach-Object { Write-Host "::error::$_" }
+            exit 1
+          }
 
       # iroha-core/engine/cli/server/tip のビルドと単体テスト
       - name: Build and test
         shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File windows/scripts/build-tip.ps1
+        run: |
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File windows/scripts/build-tip.ps1 2>&1
+          $out | ForEach-Object { Write-Host $_ }
+          if ($LASTEXITCODE -ne 0) {
+            ($out | Select-Object -Last 25) | ForEach-Object { Write-Host "::error::$_" }
+            exit 1
+          }
