@@ -41,6 +41,10 @@ private:
     struct Runtime;
 
     bool EnsureLoaded(std::string* error);
+    // KVキャッシュとの共通プレフィックスを再利用してトークン列を評価する。
+    // 成功時は末尾トークンのlogitsが有効。失敗時はキャッシュを破棄してfalse
+    bool DecodePrompt(Runtime& rt, const std::vector<int32_t>& tokens,
+                      std::string* error);
 
     // 左文脈として与える最大文字数（zenz-v3の学習設定に合わせる）
     static constexpr size_t kMaxContextLength = 40;

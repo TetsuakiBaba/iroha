@@ -36,6 +36,8 @@ struct ZenzEngine::Runtime {
     std::vector<std::optional<std::u32string>> tokenTexts;
     // トークンID → 生成終了とみなすトークンか（EOG・zenzの特殊トークン）
     std::vector<char> tokenIsTerminator;
+    // 現在KVキャッシュに載っているトークン列（プレフィックス再利用の照合用）
+    std::vector<llama_token> cached;
 
     ~Runtime() {
         if (context) llama_free(context);
@@ -180,6 +182,58 @@ bool Decode(llama_context* ctx, llama_token* tokens, int count, std::string* err
 
 } // namespace
 
+// KVキャッシュとの共通プレフィックスを差し引き、続きのトークンだけを評価する。
+// 同一プロンプトのn-best分岐は1トークン、読みが伸びるだけの再変換は数トークンの
+// 評価で済む（従来は毎回プロンプト全体を再評価していた）
+bool ZenzEngine::DecodePrompt(Runtime& rt, const std::vector<int32_t>& tokens,
+                              std::string* error) {
+    llama_memory_t memory = llama_get_memory(rt.context);
+    // IROHA_KV_REUSE=0 で再利用を無効化（A/B比較・切り分け用）。
+    // 増分デコードは一括評価と浮動小数点の丸めがわずかに変わり、
+    // 僅差の候補が入れ替わることがある（出力の妥当性は同等）
+    static const bool reuseEnabled = [] {
+        const char* env = std::getenv("IROHA_KV_REUSE");
+        return !(env && std::atoi(env) == 0);
+    }();
+    size_t common = 0;
+    if (reuseEnabled) {
+        while (common < rt.cached.size() && common < tokens.size() &&
+               rt.cached[common] == tokens[common]) {
+            ++common;
+        }
+    }
+    // 末尾トークンのlogitsが必要なので、完全一致でも最後の1つは評価し直す
+    if (common == tokens.size() && common > 0) --common;
+    // 共有プレフィックスが短いときはフルクリアの方が速い
+    // （部分削除はKVキャッシュを断片化させ、以後のデコードを遅くする）。
+    // n-best分岐（プロンプト全体を共有）と逐次入力の再変換だけが再利用の対象
+    constexpr size_t kMinReusePrefix = 4;
+    if (common < kMinReusePrefix) common = 0;
+
+    if (common == 0) {
+        llama_memory_clear(memory, true);
+        rt.cached.clear();
+    } else if (common < rt.cached.size()) {
+        if (llama_memory_seq_rm(memory, 0, static_cast<llama_pos>(common), -1)) {
+            rt.cached.resize(common);
+        } else {
+            // 部分削除できないメモリ実装ではフルクリアに落とす
+            llama_memory_clear(memory, true);
+            rt.cached.clear();
+            common = 0;
+        }
+    }
+
+    std::vector<llama_token> suffix(tokens.begin() + common, tokens.end());
+    if (!Decode(rt.context, suffix.data(), static_cast<int>(suffix.size()), error)) {
+        llama_memory_clear(memory, true);
+        rt.cached.clear();
+        return false;
+    }
+    rt.cached = tokens;
+    return true;
+}
+
 bool ZenzEngine::Convert(const std::u32string& reading,
                          const std::u32string& leftContext, int candidateCount,
                          std::vector<std::u32string>* results, std::string* error) {
@@ -253,12 +307,8 @@ bool ZenzEngine::Convert(const std::u32string& reading,
         std::vector<llama_token> tokens = promptTokens;
         if (forcedFirstToken) tokens.push_back(*forcedFirstToken);
 
-        // KVキャッシュを破棄してプロンプトを評価（TODO: プレフィックス再利用で増分デコード）
-        llama_memory_clear(llama_get_memory(rt.context), true);
-        if (!Decode(rt.context, tokens.data(), static_cast<int>(tokens.size()),
-                    generateError)) {
-            return false;
-        }
+        // 共通プレフィックスを再利用して評価（n-best分岐では実質1トークン）
+        if (!DecodePrompt(rt, tokens, generateError)) return false;
 
         std::string outputBytes;
         std::vector<char> pieceBuffer(128);
@@ -299,7 +349,12 @@ bool ZenzEngine::Convert(const std::u32string& reading,
                 break;
             }
 
-            if (!Decode(rt.context, &token, 1, generateError)) return false;
+            if (!Decode(rt.context, &token, 1, generateError)) {
+                llama_memory_clear(llama_get_memory(rt.context), true);
+                rt.cached.clear();
+                return false;
+            }
+            rt.cached.push_back(token);
         }
 
         auto output = Utf8ToUtf32Strict(outputBytes);
@@ -320,14 +375,7 @@ bool ZenzEngine::Convert(const std::u32string& reading,
 
     // n-best: 先頭トークンを上位候補に分岐し、それぞれ貪欲に補完する。
     // かな漢字変換では先頭の文字が同音異義語をほぼ決めるため、これで多様な候補が得られる
-    {
-        std::vector<llama_token> tokens = promptTokens;
-        llama_memory_clear(llama_get_memory(rt.context), true);
-        if (!Decode(rt.context, tokens.data(), static_cast<int>(tokens.size()),
-                    error)) {
-            return false;
-        }
-    }
+    if (!DecodePrompt(rt, promptTokens, error)) return false;
 
     const auto constraint = ReadingConstraint::Create(reading);
 

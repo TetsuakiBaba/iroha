@@ -6,7 +6,8 @@
 //   iroha-cli kana <romaji>                       : ローマ字→かな変換のみ
 //   iroha-cli convert [--context 文脈] [--n 候補数] <読み>
 //   iroha-cli segment <読み>                       : 変換 + 文節分割の検証
-//   iroha-cli bench <eval.tsv>                    : 評価（TSV: 読み\t正解）
+//   iroha-cli bench <eval.tsv> [候補数]            : 評価（TSV: 読み\t正解。候補数指定でn-best計測）
+//   iroha-cli ajimee <evaluation_items.json>      : AJIMEE-Bench評価（acc@1・MinCER）
 //   iroha-cli remote <読み>                        : 変換サーバ経由の変換（IPC検証用）
 //   iroha-cli repl                                : 対話モード
 //   環境変数 IROHA_MODEL でモデルパスを上書き可能
@@ -23,10 +24,12 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include "ipc_protocol.h"
+#include "iroha/json.h"
 #include "iroha/learning_engine.h"
 #include "iroha/learning_store.h"
 #include "iroha/reading_aligner.h"
@@ -145,7 +148,8 @@ void ConvertAndPrint(iroha::ConversionEngine& engine, const std::u32string& inpu
     std::printf("  [%.1fms]\n", ms);
 }
 
-int RunBench(iroha::ConversionEngine& engine, const std::wstring& path) {
+int RunBench(iroha::ConversionEngine& engine, const std::wstring& path,
+             int candidateCount) {
     std::ifstream file(std::filesystem::path(path), std::ios::binary);
     if (!file) {
         std::fprintf(stderr, "ファイルが読めません\n");
@@ -175,7 +179,8 @@ int RunBench(iroha::ConversionEngine& engine, const std::wstring& path) {
         const auto start = std::chrono::steady_clock::now();
         std::vector<std::u32string> candidates;
         std::u32string result = reading;
-        if (ConvertOnce(engine, reading, U"", 1, &candidates) && !candidates.empty()) {
+        if (ConvertOnce(engine, reading, U"", candidateCount, &candidates) &&
+            !candidates.empty()) {
             result = candidates.front();
         }
         totalMilliseconds += MillisecondsSince(start);
@@ -198,6 +203,110 @@ int RunBench(iroha::ConversionEngine& engine, const std::wstring& path) {
     std::printf("件数: %zu  完全一致: %d (%.1f%%)  CER: %.2f%%  平均: %.1fms/変換\n",
                 pairs.size(), exactMatches, accuracy, cer,
                 totalMilliseconds / pairs.size());
+    return 0;
+}
+
+// AJIMEE-Bench (azooKey/AJIMEE-Bench) 評価。
+// zenzaiと同じ方式: グリーディ変換1候補を許容解リストと照合し、
+// acc@1（許容解のいずれかに完全一致）と MinCER（許容解との最小CERの平均）を報告する。
+// 移植元: macos/Sources/iroha-cli/main.swift の ajimee コマンド
+int RunAjimee(iroha::ConversionEngine& engine, const std::wstring& path) {
+    std::ifstream file(std::filesystem::path(path), std::ios::binary);
+    if (!file) {
+        std::fprintf(stderr,
+                     "JSONが読めません（windows\\scripts\\fetch-ajimee.ps1 で取得できます）\n");
+        return 1;
+    }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    iroha::json::Value root;
+    if (!iroha::json::Parse(buffer.str(), &root) ||
+        root.type != iroha::json::Value::Type::Array) {
+        std::fprintf(stderr, "JSONの解析に失敗しました\n");
+        return 1;
+    }
+
+    struct Tally {
+        int count = 0;
+        int accAt1 = 0;
+        double minCerSum = 0.0;
+        std::string Summary() const {
+            char buf[128];
+            std::snprintf(buf, sizeof(buf), "acc@1 %d/%d (%.1f%%)  MinCER %.2f%%",
+                          accAt1, count, 100.0 * accAt1 / std::max(count, 1),
+                          100.0 * minCerSum / std::max(count, 1));
+            return buf;
+        }
+    };
+    Tally withContext;
+    Tally withoutContext;
+    double totalMilliseconds = 0.0;
+
+    // ウォームアップ（モデルロードを計測から除外）
+    {
+        std::vector<std::u32string> ignored;
+        ConvertOnce(engine, U"うぉーむあっぷ", U"", 1, &ignored);
+    }
+
+    for (const iroha::json::Value& item : root.array) {
+        const iroha::json::Value* indexValue = item.Find("index");
+        const iroha::json::Value* contextValue = item.Find("context_text");
+        const iroha::json::Value* inputValue = item.Find("input");
+        const iroha::json::Value* expectedValue = item.Find("expected_output");
+        if (!inputValue || !expectedValue ||
+            expectedValue->type != iroha::json::Value::Type::Array) {
+            continue;
+        }
+        const std::u32string input = Utf8ToUtf32(inputValue->AsString());
+        const std::u32string context =
+            contextValue ? Utf8ToUtf32(contextValue->AsString()) : U"";
+
+        const auto start = std::chrono::steady_clock::now();
+        std::vector<std::u32string> candidates;
+        std::u32string result = input;
+        if (ConvertOnce(engine, input, context, 1, &candidates) && !candidates.empty()) {
+            result = candidates.front();
+        }
+        totalMilliseconds += MillisecondsSince(start);
+
+        bool hit = false;
+        double minCer = 1.0;
+        for (const iroha::json::Value& reference : expectedValue->array) {
+            const std::u32string expected = Utf8ToUtf32(reference.AsString());
+            if (result == expected) hit = true;
+            const double cer =
+                static_cast<double>(EditDistance(result, expected)) /
+                std::max<size_t>(expected.size(), 1);
+            minCer = std::min(minCer, cer);
+        }
+        Tally& tally = context.empty() ? withoutContext : withContext;
+        ++tally.count;
+        if (hit) ++tally.accAt1;
+        tally.minCerSum += minCer;
+
+        if (!hit) {
+            PrintUtf8("  \xE2\x9C\x97 [");
+            PrintUtf8(indexValue ? indexValue->AsString() : "?");
+            PrintUtf8("] ");
+            Print32(input);
+            PrintUtf8(" -> ");
+            Print32(result);
+            PrintUtf8("\n");
+        }
+    }
+
+    if (withoutContext.count > 0) {
+        std::printf("文脈なし: %s\n", withoutContext.Summary().c_str());
+    }
+    if (withContext.count > 0) {
+        std::printf("文脈あり: %s\n", withContext.Summary().c_str());
+    }
+    Tally total;
+    total.count = withContext.count + withoutContext.count;
+    total.accAt1 = withContext.accAt1 + withoutContext.accAt1;
+    total.minCerSum = withContext.minCerSum + withoutContext.minCerSum;
+    std::printf("全体: %s  平均 %.1fms/変換\n", total.Summary().c_str(),
+                totalMilliseconds / std::max(total.count, 1));
     return 0;
 }
 
@@ -296,7 +405,15 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     if (command == U"bench" && args.size() >= 3) {
-        return RunBench(engine, Utf32ToUtf16(args[2]));
+        int candidateCount = 1;
+        if (args.size() >= 4) {
+            candidateCount = std::max(1, std::atoi(Utf32ToUtf8(args[3]).c_str()));
+        }
+        return RunBench(engine, Utf32ToUtf16(args[2]), candidateCount);
+    }
+
+    if (command == U"ajimee" && args.size() >= 3) {
+        return RunAjimee(engine, Utf32ToUtf16(args[2]));
     }
 
     // repl
