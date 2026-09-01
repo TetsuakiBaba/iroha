@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.21)
 project(iroha-tip LANGUAGES CXX)
 
 add_library(iroha-tip SHARED
+    src/CandidateWindow.cpp
     src/Composition.cpp
     src/ConvertClient.cpp
     src/DisplayAttribute.cpp

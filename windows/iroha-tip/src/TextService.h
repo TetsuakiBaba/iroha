@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 
+#include "CandidateWindow.h"
 #include "Globals.h"
 #include "iroha/romaji_composer.h"
 
@@ -57,12 +58,16 @@ private:
         Convert,         // 変換サーバに問い合わせて候補表示へ
         NextCandidate,   // 次候補
         PrevCandidate,   // 前候補
+        SelectCandidate, // 数字キーで候補を直接選択
         BackToComposing, // 候補表示をやめて読みに戻る
         CommitThenInput, // 現候補を確定して新しい入力を始める
     };
     KeyAction DecideKeyAction(WPARAM wParam, LPARAM lParam, wchar_t* outChar) const;
     HRESULT HandleKey(ITfContext* context, KeyAction action, wchar_t character);
     HRESULT StartConversion(ITfContext* context);
+    HRESULT ShowCurrentCandidate(ITfContext* context); // インライン表示+候補ウィンドウ更新
+    HRESULT UpdateCandidateWindow(ITfContext* context);
+    std::u32string ReadLeftContext(ITfContext* context); // コンポジション直前の文書テキスト
 
     // コンポジション操作（Composition.cpp）
     HRESULT ShowText(ITfContext* context, const std::wstring& text);
@@ -89,4 +94,5 @@ private:
     bool converting_ = false;
     std::vector<std::u32string> candidates_;
     size_t candidateIndex_ = 0;
+    CandidateWindow candidateWindow_;
 };

@@ -66,7 +66,8 @@ windows\build\iroha-cli\iroha-cli.exe bench testdata\eval.tsv
 - [x] M3: コンポジション表示（RomajiComposer移植、下線、Enter確定/Esc破棄）
 - [x] M4a: 変換サーバ接続（iroha-server + パイプIPC。Spaceで変換、Space/↑↓で候補送り、
       Esc/Backspaceで読みに戻る、TIP有効化時にサーバ自動起動+モデルプリロード）
-- [ ] M4b: 自前候補ウィンドウ（GetTextExt座標、ページング、数字キー選択）と左文脈の伝搬
+- [x] M4b: 自前候補ウィンドウ（GetTextExt座標に表示、数字キー1-9で選択、
+      EVENT_OBJECT_IME_*発火、フォーカス非奪取）と左文脈の伝搬（コンポジション直前40文字）
 - [ ] M5: 互換性強化（UIlessモード、ストアアプリ/AppContainer、通知領域アイコン）
 - [ ] M6: 製品化（インストーラ、Authenticode署名、学習・ユーザ辞書、UIA対応）
 

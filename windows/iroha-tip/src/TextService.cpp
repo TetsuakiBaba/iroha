@@ -4,6 +4,7 @@
 
 #include "ConvertClient.h"
 #include "DisplayAttribute.h"
+#include "EditSession.h"
 #include "iroha/unicode.h"
 
 TextService::TextService() : refCount_(1) { DllAddRef(); }
@@ -169,6 +170,10 @@ TextService::KeyAction TextService::DecideKeyAction(WPARAM wParam, LPARAM lParam
     }
     const wchar_t c = CharFromKey(wParam, lParam);
     if (c == 0) return KeyAction::None;
+    if (converting && c >= L'1' && c <= L'9') {
+        *outChar = c;
+        return KeyAction::SelectCandidate;
+    }
     const bool isLetter = (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z');
     const bool isDigit = (c >= L'0' && c <= L'9');
     if (isLetter || IsComposerSymbol(c) || (composing && !converting && isDigit)) {
@@ -211,13 +216,19 @@ HRESULT TextService::HandleKey(ITfContext* context, KeyAction action,
                 candidateIndex_ =
                     (candidateIndex_ + candidates_.size() - 1) % candidates_.size();
             }
-            return ShowText(context,
-                            iroha::Utf32ToUtf16(candidates_[candidateIndex_]));
+            return ShowCurrentCandidate(context);
+        }
+        case KeyAction::SelectCandidate: {
+            const size_t index = static_cast<size_t>(character - L'1');
+            if (index >= candidates_.size()) return S_OK;
+            candidateIndex_ = index;
+            return ShowCurrentCandidate(context);
         }
         case KeyAction::BackToComposing:
             converting_ = false;
             candidates_.clear();
             candidateIndex_ = 0;
+            candidateWindow_.Hide();
             return UpdateComposition(context);
         case KeyAction::CommitThenInput: {
             std::wstring text;
@@ -240,9 +251,12 @@ HRESULT TextService::StartConversion(ITfContext* context) {
     const std::u32string reading = composer_.Display(); // Flush後は確定かなのみ
     if (reading.empty()) return CancelComposition(context);
 
-    // TODO(M4.5): 直前の確定文字列を左文脈として渡す（macOS版と同じ挙動にする）
+    // コンポジション直前の文書テキストを左文脈として渡す
+    // （macOS版の「直前に確定した文字列」に相当。zenz側で末尾40文字に切り詰められる）
+    const std::u32string leftContext = ReadLeftContext(context);
     std::vector<std::u32string> candidates;
-    if (!ConvertClient::Convert(reading, U"", 9, &candidates) || candidates.empty()) {
+    if (!ConvertClient::Convert(reading, leftContext, 9, &candidates) ||
+        candidates.empty()) {
         // サーバ不調時は読みのまま表示を続ける（Enterでかな確定できる）
         IrohaLog(L"StartConversion: server unavailable");
         return UpdateComposition(context);
@@ -250,7 +264,67 @@ HRESULT TextService::StartConversion(ITfContext* context) {
     candidates_ = std::move(candidates);
     candidateIndex_ = 0;
     converting_ = true;
-    return ShowText(context, iroha::Utf32ToUtf16(candidates_[candidateIndex_]));
+    return ShowCurrentCandidate(context);
+}
+
+HRESULT TextService::ShowCurrentCandidate(ITfContext* context) {
+    if (candidateIndex_ >= candidates_.size()) return S_OK;
+    const HRESULT hr =
+        ShowText(context, iroha::Utf32ToUtf16(candidates_[candidateIndex_]));
+    if (FAILED(hr)) return hr;
+    return UpdateCandidateWindow(context);
+}
+
+HRESULT TextService::UpdateCandidateWindow(ITfContext* context) {
+    if (!composition_ || candidates_.empty()) return S_OK;
+    return RequestSyncEditSession(
+        context, clientId_,
+        [this, context](TfEditCookie ec) -> HRESULT {
+            ITfContextView* view = nullptr;
+            if (FAILED(context->GetActiveView(&view)) || !view) return S_OK;
+            HWND owner = nullptr;
+            view->GetWnd(&owner);
+            if (!owner) owner = GetFocus();
+            ITfRange* range = nullptr;
+            if (composition_ && SUCCEEDED(composition_->GetRange(&range))) {
+                RECT rect = {};
+                BOOL clipped = FALSE;
+                if (SUCCEEDED(view->GetTextExt(ec, range, &rect, &clipped))) {
+                    candidateWindow_.Show(owner, rect, candidates_, candidateIndex_);
+                }
+                range->Release();
+            }
+            view->Release();
+            return S_OK;
+        },
+        TF_ES_SYNC | TF_ES_READ);
+}
+
+std::u32string TextService::ReadLeftContext(ITfContext* context) {
+    std::u32string leftContext;
+    if (!composition_) return leftContext;
+    RequestSyncEditSession(
+        context, clientId_,
+        [this, &leftContext](TfEditCookie ec) -> HRESULT {
+            ITfRange* range = nullptr;
+            if (!composition_ || FAILED(composition_->GetRange(&range))) return S_OK;
+            ITfRange* left = nullptr;
+            if (SUCCEEDED(range->Clone(&left))) {
+                left->Collapse(ec, TF_ANCHOR_START);
+                LONG shifted = 0;
+                left->ShiftStart(ec, -40, &shifted, nullptr);
+                WCHAR buffer[64];
+                ULONG got = 0;
+                if (SUCCEEDED(left->GetText(ec, 0, buffer, ARRAYSIZE(buffer), &got))) {
+                    leftContext = iroha::Utf16ToUtf32(std::wstring(buffer, got));
+                }
+                left->Release();
+            }
+            range->Release();
+            return S_OK;
+        },
+        TF_ES_SYNC | TF_ES_READ);
+    return leftContext;
 }
 
 STDMETHODIMP TextService::OnSetFocus(BOOL) {

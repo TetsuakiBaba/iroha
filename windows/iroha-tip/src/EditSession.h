@@ -48,14 +48,14 @@ private:
     Func func_;
 };
 
-// 同期の読み書きエディットセッションを要求する（キーイベント処理中は同期が許される）
+// 同期エディットセッションを要求する（キーイベント処理中は同期が許される）
 inline HRESULT RequestSyncEditSession(ITfContext* context, TfClientId clientId,
-                                      FunctionalEditSession::Func func) {
+                                      FunctionalEditSession::Func func,
+                                      DWORD flags = TF_ES_SYNC | TF_ES_READWRITE) {
     auto* session = new (std::nothrow) FunctionalEditSession(std::move(func));
     if (!session) return E_OUTOFMEMORY;
     HRESULT hrSession = E_FAIL;
-    const HRESULT hr = context->RequestEditSession(
-        clientId, session, TF_ES_SYNC | TF_ES_READWRITE, &hrSession);
+    const HRESULT hr = context->RequestEditSession(clientId, session, flags, &hrSession);
     session->Release();
     return FAILED(hr) ? hr : hrSession;
 }

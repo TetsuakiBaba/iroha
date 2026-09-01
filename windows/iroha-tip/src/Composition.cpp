@@ -66,6 +66,7 @@ void TextService::ResetState() {
     converting_ = false;
     candidates_.clear();
     candidateIndex_ = 0;
+    candidateWindow_.Hide();
 }
 
 void TextService::EndCompositionInternal(TfEditCookie ec, ITfContext* context,
