@@ -383,7 +383,7 @@ private struct AIServiceSection: View {
                 + "thinking（思考過程）は無効化されます。失敗時は通常の確定になります。"
         case "lmstudio":
             return common + "ローカルのLM Studio（\(RemoteTranslator.lmStudioEndpoint)）に接続します。"
-                + "thinking（思考過程）は出力されません。失敗時は通常の確定になります。"
+                + "thinking（思考過程）は無効化されます。失敗時は通常の確定になります。"
         default:
             return common + (TranslationService.appleAvailable
                 ? "オンデバイスAI（Apple Intelligence）で処理します。"

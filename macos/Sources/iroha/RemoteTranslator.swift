@@ -101,10 +101,16 @@ enum RemoteTranslator {
             case .lmstudio:
                 return try await streamOpenAICompatible(
                     request, endpoint: lmStudioEndpoint, model: lmStudioModel, apiKey: "",
+                    // LM Studioでthinkingを止める唯一効くフラグ（実測: qwen3で
+                    // reasoning_tokensが58→0。chat_template_kwargsもlowも効かなかった）。
+                    // 非thinkingモデルではLM Studio側が黙って無視する
+                    extraBody: ["reasoning_effort": "none"],
                     progress: progress, onPartial: onPartial)
             case .openai:
+                // reasoning_effortは送らない（OpenAI本家は "none" を受け付けず400になる）
                 return try await streamOpenAICompatible(
                     request, endpoint: openAIEndpoint, model: openAIModel, apiKey: openAIAPIKey,
+                    extraBody: [:],
                     progress: progress, onPartial: onPartial)
             }
         }
@@ -168,6 +174,7 @@ enum RemoteTranslator {
         endpoint: String,
         model: String,
         apiKey: String,
+        extraBody: [String: Any],
         progress: ProgressBox,
         onPartial: @escaping @Sendable (String) -> Void
     ) async throws -> String {
@@ -179,12 +186,14 @@ enum RemoteTranslator {
             urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         }
         urlRequest.timeoutInterval = 300
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: [
+        var body: [String: Any] = [
             "model": model,
             "messages": chatMessages(request),
             "stream": true,
             "temperature": 0.3,
-        ] as [String: Any])
+        ]
+        body.merge(extraBody) { _, new in new }
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         struct Chunk: Decodable {
             struct Choice: Decodable {
