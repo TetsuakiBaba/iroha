@@ -73,6 +73,9 @@ windows\build\iroha-cli\iroha-cli.exe bench testdata\eval.tsv
 - [x] M4d: 学習・ユーザ辞書の移植（学習→ユーザ辞書→zenzのデコレータ構成をサーバに搭載。
       確定がエンジンの第一候補と違うときだけTIPからの通知で学習を記録。
       learning.json / user-dictionary.json はmacOS版と同形式、%LOCALAPPDATA%\iroha に保存）
+- [x] M4e: 文節操作（変換後は文節モード: ←→で文節移動［選択文節は太下線］、
+      Shift+←→で区切り調整＋再変換、Space/↑↓で選択文節の候補送り、
+      候補は「文節の読み＋左側の確定済み文字列」を文脈に生成、Enterで一括確定）
 - [ ] M5: 互換性強化（UIlessモード、ストアアプリ/AppContainer、通知領域アイコン）
 - [ ] M6: 製品化（インストーラ、Authenticode署名、設定UI・辞書編集、UIA対応）
 

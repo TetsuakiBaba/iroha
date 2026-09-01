@@ -4,7 +4,10 @@
 
 // ---- DisplayAttributeInfo ----
 
-DisplayAttributeInfo::DisplayAttributeInfo() : refCount_(1) { DllAddRef(); }
+DisplayAttributeInfo::DisplayAttributeInfo(bool boldLine)
+    : refCount_(1), boldLine_(boldLine) {
+    DllAddRef();
+}
 DisplayAttributeInfo::~DisplayAttributeInfo() { DllRelease(); }
 
 STDMETHODIMP DisplayAttributeInfo::QueryInterface(REFIID riid, void** ppv) {
@@ -31,13 +34,15 @@ STDMETHODIMP_(ULONG) DisplayAttributeInfo::Release() {
 
 STDMETHODIMP DisplayAttributeInfo::GetGUID(GUID* guid) {
     if (!guid) return E_INVALIDARG;
-    *guid = GUID_IROHA_DISPLAY_ATTRIBUTE;
+    *guid = boldLine_ ? GUID_IROHA_DISPLAY_ATTRIBUTE_CURRENT
+                      : GUID_IROHA_DISPLAY_ATTRIBUTE;
     return S_OK;
 }
 
 STDMETHODIMP DisplayAttributeInfo::GetDescription(BSTR* description) {
     if (!description) return E_INVALIDARG;
-    *description = SysAllocString(L"iroha composition");
+    *description = SysAllocString(boldLine_ ? L"iroha current segment"
+                                            : L"iroha composition");
     return *description ? S_OK : E_OUTOFMEMORY;
 }
 
@@ -48,8 +53,8 @@ STDMETHODIMP DisplayAttributeInfo::GetAttributeInfo(TF_DISPLAYATTRIBUTE* attribu
     attribute->crBk.type = TF_CT_NONE;
     attribute->crLine.type = TF_CT_NONE;
     attribute->lsStyle = TF_LS_SOLID; // 実線の下線
-    attribute->fBoldLine = FALSE;
-    attribute->bAttr = TF_ATTR_INPUT;
+    attribute->fBoldLine = boldLine_ ? TRUE : FALSE;
+    attribute->bAttr = boldLine_ ? TF_ATTR_TARGET_CONVERTED : TF_ATTR_INPUT;
     return S_OK;
 }
 
@@ -104,12 +109,12 @@ STDMETHODIMP EnumDisplayAttributeInfoImpl::Next(ULONG count,
                                                 ULONG* fetched) {
     if (!info) return E_INVALIDARG;
     ULONG got = 0;
-    if (count > 0 && index_ == 0) {
-        auto* item = new (std::nothrow) DisplayAttributeInfo();
+    while (got < count && index_ < kCount) {
+        auto* item = new (std::nothrow) DisplayAttributeInfo(index_ == 1);
         if (!item) return E_OUTOFMEMORY;
-        info[0] = item;
-        got = 1;
-        index_ = 1;
+        info[got] = item;
+        ++got;
+        ++index_;
     }
     if (fetched) *fetched = got;
     return got == count ? S_OK : S_FALSE;
@@ -122,5 +127,5 @@ STDMETHODIMP EnumDisplayAttributeInfoImpl::Reset() {
 
 STDMETHODIMP EnumDisplayAttributeInfoImpl::Skip(ULONG count) {
     index_ += count;
-    return index_ <= 1 ? S_OK : S_FALSE;
+    return index_ <= kCount ? S_OK : S_FALSE;
 }

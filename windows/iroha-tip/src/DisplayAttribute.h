@@ -1,12 +1,15 @@
 #pragma once
 #include "Globals.h"
 
-// 未確定文字列の表示属性（下線）。
-// ITfDisplayAttributeProvider（TextService側で実装）がこの1件を返し、
+// 未確定文字列の表示属性。2種類を提供する:
+//   GUID_IROHA_DISPLAY_ATTRIBUTE         — 通常の下線（入力中・非選択の文節）
+//   GUID_IROHA_DISPLAY_ATTRIBUTE_CURRENT — 太い下線（選択中の文節）
+// ITfDisplayAttributeProvider（TextService側で実装）がこれらを返し、
 // アプリはこれを引いてコンポジションの見た目を描画する。
 class DisplayAttributeInfo : public ITfDisplayAttributeInfo {
 public:
-    DisplayAttributeInfo();
+    // boldLine: 太下線（選択中の文節用）にするか
+    explicit DisplayAttributeInfo(bool boldLine);
 
     // IUnknown
     STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
@@ -23,9 +26,10 @@ public:
 private:
     virtual ~DisplayAttributeInfo();
     LONG refCount_;
+    bool boldLine_;
 };
 
-// 表示属性1件だけを列挙するIEnumTfDisplayAttributeInfo
+// 表示属性2件を列挙するIEnumTfDisplayAttributeInfo
 class EnumDisplayAttributeInfoImpl : public IEnumTfDisplayAttributeInfo {
 public:
     EnumDisplayAttributeInfoImpl();
@@ -42,6 +46,7 @@ public:
     STDMETHODIMP Skip(ULONG count) override;
 
 private:
+    static constexpr ULONG kCount = 2;
     virtual ~EnumDisplayAttributeInfoImpl();
     LONG refCount_;
     ULONG index_ = 0;

@@ -5,6 +5,7 @@
 #include "ConvertClient.h"
 #include "DisplayAttribute.h"
 #include "EditSession.h"
+#include "iroha/reading_aligner.h"
 #include "iroha/unicode.h"
 
 TextService::TextService() : refCount_(1) { DllAddRef(); }
@@ -85,6 +86,8 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* threadMgr, TfClientId clientI
     if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
                                    IID_PPV_ARGS(&categoryMgr)))) {
         categoryMgr->RegisterGUID(GUID_IROHA_DISPLAY_ATTRIBUTE, &displayAttributeAtom_);
+        categoryMgr->RegisterGUID(GUID_IROHA_DISPLAY_ATTRIBUTE_CURRENT,
+                                  &displayAttributeCurrentAtom_);
         categoryMgr->Release();
     }
 
@@ -167,40 +170,45 @@ TextService::KeyAction TextService::DecideKeyAction(WPARAM wParam, LPARAM lParam
         return KeyAction::None;
     }
     const bool composing = composition_ != nullptr;
-    const bool converting = converting_;
     const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     switch (wParam) {
         case VK_RETURN:
             return composing ? KeyAction::Commit : KeyAction::None;
         case VK_ESCAPE:
-            if (converting) return KeyAction::BackToComposing;
+            if (segmented_) return KeyAction::BackToComposing;
             return composing ? KeyAction::Cancel : KeyAction::None;
         case VK_BACK:
-            if (converting) return KeyAction::BackToComposing;
+            if (segmented_) return KeyAction::BackToComposing;
             return composing ? KeyAction::Backspace : KeyAction::None;
         case VK_SPACE:
-            if (converting) {
+            if (segmented_) {
                 return shift ? KeyAction::PrevCandidate : KeyAction::NextCandidate;
             }
             return composing ? KeyAction::Convert : KeyAction::None;
         case VK_DOWN:
-            return converting ? KeyAction::NextCandidate : KeyAction::None;
+            return segmented_ ? KeyAction::NextCandidate : KeyAction::None;
         case VK_UP:
-            return converting ? KeyAction::PrevCandidate : KeyAction::None;
+            return segmented_ ? KeyAction::PrevCandidate : KeyAction::None;
+        case VK_LEFT:
+            if (!segmented_) return KeyAction::None;
+            return shift ? KeyAction::ShrinkSegment : KeyAction::MoveSegmentLeft;
+        case VK_RIGHT:
+            if (!segmented_) return KeyAction::None;
+            return shift ? KeyAction::ExtendSegment : KeyAction::MoveSegmentRight;
         default:
             break;
     }
     const wchar_t c = CharFromKey(wParam, lParam);
     if (c == 0) return KeyAction::None;
-    if (converting && c >= L'1' && c <= L'9') {
+    if (segmented_ && candidateListOpen_ && c >= L'1' && c <= L'9') {
         *outChar = c;
         return KeyAction::SelectCandidate;
     }
     const bool isLetter = (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z');
     const bool isDigit = (c >= L'0' && c <= L'9');
-    if (isLetter || IsComposerSymbol(c) || (composing && !converting && isDigit)) {
+    if (isLetter || IsComposerSymbol(c) || (composing && !segmented_ && isDigit)) {
         *outChar = c;
-        return converting ? KeyAction::CommitThenInput : KeyAction::Input;
+        return segmented_ ? KeyAction::CommitThenInput : KeyAction::Input;
     }
     return KeyAction::None;
 }
@@ -222,26 +230,25 @@ HRESULT TextService::HandleKey(ITfContext* context, KeyAction action,
         case KeyAction::Convert:
             return StartConversion(context);
         case KeyAction::NextCandidate:
-        case KeyAction::PrevCandidate: {
-            if (candidates_.empty()) return S_OK;
-            if (action == KeyAction::NextCandidate) {
-                candidateIndex_ = (candidateIndex_ + 1) % candidates_.size();
-            } else {
-                candidateIndex_ =
-                    (candidateIndex_ + candidates_.size() - 1) % candidates_.size();
-            }
-            return ShowCurrentCandidate(context);
-        }
-        case KeyAction::SelectCandidate: {
-            const size_t index = static_cast<size_t>(character - L'1');
-            if (index >= candidates_.size()) return S_OK;
-            candidateIndex_ = index;
-            return ShowCurrentCandidate(context);
-        }
+            return CycleCandidate(context, +1);
+        case KeyAction::PrevCandidate:
+            return CycleCandidate(context, -1);
+        case KeyAction::SelectCandidate:
+            return SelectCandidateIndex(context,
+                                        static_cast<size_t>(character - L'1'));
+        case KeyAction::MoveSegmentLeft:
+            return MoveSegment(context, -1);
+        case KeyAction::MoveSegmentRight:
+            return MoveSegment(context, +1);
+        case KeyAction::ShrinkSegment:
+            return ResizeSegment(context, -1);
+        case KeyAction::ExtendSegment:
+            return ResizeSegment(context, +1);
         case KeyAction::BackToComposing:
-            converting_ = false;
-            candidates_.clear();
-            candidateIndex_ = 0;
+            segmented_ = false;
+            segments_.clear();
+            currentSegment_ = 0;
+            candidateListOpen_ = false;
             candidateWindow_.Hide();
             return UpdateComposition(context);
         case KeyAction::CommitThenInput: {
@@ -286,20 +293,32 @@ HRESULT TextService::StartConversion(ITfContext* context) {
         IrohaLog(L"StartConversion: server unavailable");
         return UpdateComposition(context);
     }
-    candidates_ = std::move(candidates);
-    candidateIndex_ = 0;
-    converting_ = true;
     // 確定時の学習通知用に、読みとエンジンの第一候補を控えておく
     conversionReading_ = reading;
-    conversionBaseline_ = candidates_.front();
-    return ShowCurrentCandidate(context);
+    conversionBaseline_ = candidates.front();
+    // 第一候補を文節に分割して文節モードへ
+    segments_.clear();
+    for (const auto& segment :
+         iroha::ReadingAligner::SegmentReading(reading, candidates.front())) {
+        segments_.push_back({segment.reading, segment.conversion, {}, 0});
+    }
+    if (segments_.size() == 1) {
+        // 全体が1文節なら取得済みの候補をそのまま流用できる
+        segments_[0].candidates = std::move(candidates);
+        segments_[0].candidateIndex = 0;
+    }
+    currentSegment_ = 0;
+    segmented_ = true;
+    candidateListOpen_ = false;
+    candidateWindow_.Hide();
+    return RefreshSegmentDisplay(context);
 }
 
 HRESULT TextService::CommitCurrent(ITfContext* context) {
-    const bool wasConverting = converting_;
+    const bool wasSegmented = segmented_;
     std::u32string committed;
-    if (wasConverting && candidateIndex_ < candidates_.size()) {
-        committed = candidates_[candidateIndex_];
+    if (wasSegmented) {
+        committed = JoinedResults();
     } else {
         composer_.Flush();
         committed = composer_.Display();
@@ -308,37 +327,175 @@ HRESULT TextService::CommitCurrent(ITfContext* context) {
     const std::u32string reading = conversionReading_;
     const std::u32string baseline = conversionBaseline_;
     const HRESULT hr = CommitText(context, iroha::Utf32ToUtf16(committed));
-    if (SUCCEEDED(hr) && wasConverting && !reading.empty()) {
+    if (SUCCEEDED(hr) && wasSegmented && !reading.empty()) {
         // エンジンの第一候補と違う確定だけがサーバ側で学習される
         ConvertClient::NotifyCommit(reading, committed, baseline);
     }
     return hr;
 }
 
-HRESULT TextService::ShowCurrentCandidate(ITfContext* context) {
-    if (candidateIndex_ >= candidates_.size()) return S_OK;
-    const HRESULT hr =
-        ShowText(context, iroha::Utf32ToUtf16(candidates_[candidateIndex_]));
+std::u32string TextService::JoinedResults() const {
+    std::u32string joined;
+    for (const ConversionSegment& segment : segments_) joined += segment.result;
+    return joined;
+}
+
+std::u32string TextService::LeftResults(size_t segmentIndex) const {
+    std::u32string left;
+    for (size_t i = 0; i < segmentIndex && i < segments_.size(); ++i) {
+        left += segments_[i].result;
+    }
+    return left;
+}
+
+HRESULT TextService::EnsureSegmentCandidates(ITfContext* context,
+                                             size_t segmentIndex) {
+    if (segmentIndex >= segments_.size()) return E_FAIL;
+    ConversionSegment& segment = segments_[segmentIndex];
+    if (!segment.candidates.empty()) return S_OK;
+
+    // 文節の候補は「選択中の文節の読み + 左側の確定済み文字列を文脈」で生成する
+    const std::u32string contextText =
+        ReadLeftContext(context) + LeftResults(segmentIndex);
+    std::vector<std::u32string> candidates;
+    if (!ConvertClient::Convert(segment.reading, contextText, 9, &candidates) ||
+        candidates.empty()) {
+        IrohaLog(L"EnsureSegmentCandidates: server unavailable");
+        return E_FAIL;
+    }
+    // 現在の結果（全体変換由来）が一覧に無ければ先頭に足す
+    auto it = std::find(candidates.begin(), candidates.end(), segment.result);
+    if (it == candidates.end()) {
+        candidates.insert(candidates.begin(), segment.result);
+        it = candidates.begin();
+    }
+    segment.candidateIndex = static_cast<size_t>(it - candidates.begin());
+    segment.candidates = std::move(candidates);
+    return S_OK;
+}
+
+HRESULT TextService::CycleCandidate(ITfContext* context, int delta) {
+    if (!segmented_ || segments_.empty()) return S_OK;
+    if (FAILED(EnsureSegmentCandidates(context, currentSegment_))) return S_OK;
+    ConversionSegment& segment = segments_[currentSegment_];
+    const size_t count = segment.candidates.size();
+    segment.candidateIndex = (segment.candidateIndex + count + delta) % count;
+    segment.result = segment.candidates[segment.candidateIndex];
+    candidateListOpen_ = true;
+    const HRESULT hr = RefreshSegmentDisplay(context);
     if (FAILED(hr)) return hr;
     return UpdateCandidateWindow(context);
 }
 
+HRESULT TextService::SelectCandidateIndex(ITfContext* context, size_t index) {
+    if (!segmented_ || segments_.empty() || !candidateListOpen_) return S_OK;
+    ConversionSegment& segment = segments_[currentSegment_];
+    if (index >= segment.candidates.size()) return S_OK;
+    segment.candidateIndex = index;
+    segment.result = segment.candidates[index];
+    const HRESULT hr = RefreshSegmentDisplay(context);
+    if (FAILED(hr)) return hr;
+    return UpdateCandidateWindow(context);
+}
+
+HRESULT TextService::MoveSegment(ITfContext* context, int delta) {
+    if (!segmented_ || segments_.empty()) return S_OK;
+    const size_t last = segments_.size() - 1;
+    size_t next = currentSegment_;
+    if (delta < 0 && next > 0) --next;
+    if (delta > 0 && next < last) ++next;
+    if (next == currentSegment_) return S_OK;
+    currentSegment_ = next;
+    candidateListOpen_ = false;
+    candidateWindow_.Hide();
+    return RefreshSegmentDisplay(context);
+}
+
+HRESULT TextService::ResizeSegment(ITfContext* context, int delta) {
+    if (!segmented_ || segments_.empty()) return S_OK;
+    // 選択文節以降の読みを結合してから境界を動かす
+    std::u32string currentReading = segments_[currentSegment_].reading;
+    std::u32string remainder;
+    for (size_t i = currentSegment_ + 1; i < segments_.size(); ++i) {
+        remainder += segments_[i].reading;
+    }
+    if (delta > 0) { // 伸ばす: 次の読みの先頭1文字を取り込む
+        if (remainder.empty()) return S_OK;
+        currentReading.push_back(remainder.front());
+        remainder.erase(0, 1);
+    } else { // 縮める: 末尾1文字を残りへ返す
+        if (currentReading.size() <= 1) return S_OK;
+        remainder.insert(remainder.begin(), currentReading.back());
+        currentReading.pop_back();
+    }
+
+    const std::u32string docContext = ReadLeftContext(context);
+    const std::u32string left = LeftResults(currentSegment_);
+    std::vector<std::u32string> converted;
+    if (!ConvertClient::Convert(currentReading, docContext + left, 1, &converted) ||
+        converted.empty()) {
+        return S_OK; // サーバ不調時は何もしない
+    }
+
+    std::vector<ConversionSegment> rebuilt(segments_.begin(),
+                                           segments_.begin() + currentSegment_);
+    rebuilt.push_back({currentReading, converted.front(), {}, 0});
+    if (!remainder.empty()) {
+        // 残りを変換し直して文節分割もやり直す
+        std::vector<std::u32string> rest;
+        if (ConvertClient::Convert(remainder, docContext + left + converted.front(), 1,
+                                   &rest) &&
+            !rest.empty()) {
+            for (const auto& segment :
+                 iroha::ReadingAligner::SegmentReading(remainder, rest.front())) {
+                rebuilt.push_back({segment.reading, segment.conversion, {}, 0});
+            }
+        } else {
+            rebuilt.push_back({remainder, remainder, {}, 0});
+        }
+    }
+    segments_ = std::move(rebuilt);
+    candidateListOpen_ = false;
+    candidateWindow_.Hide();
+    return RefreshSegmentDisplay(context);
+}
+
 HRESULT TextService::UpdateCandidateWindow(ITfContext* context) {
-    if (!composition_ || candidates_.empty()) return S_OK;
+    if (!composition_ || !segmented_ || segments_.empty()) return S_OK;
+    const ConversionSegment& segment = segments_[currentSegment_];
+    if (segment.candidates.empty()) return S_OK;
     return RequestSyncEditSession(
         context, clientId_,
-        [this, context](TfEditCookie ec) -> HRESULT {
+        [this, context, &segment](TfEditCookie ec) -> HRESULT {
             ITfContextView* view = nullptr;
             if (FAILED(context->GetActiveView(&view)) || !view) return S_OK;
             HWND owner = nullptr;
             view->GetWnd(&owner);
             if (!owner) owner = GetFocus();
+            // 選択中の文節のレンジを切り出してその位置に出す
             ITfRange* range = nullptr;
             if (composition_ && SUCCEEDED(composition_->GetRange(&range))) {
-                RECT rect = {};
-                BOOL clipped = FALSE;
-                if (SUCCEEDED(view->GetTextExt(ec, range, &rect, &clipped))) {
-                    candidateWindow_.Show(owner, rect, candidates_, candidateIndex_);
+                LONG start = 0;
+                LONG end = 0;
+                for (size_t i = 0; i < segments_.size(); ++i) {
+                    const LONG length = static_cast<LONG>(
+                        iroha::Utf32ToUtf16(segments_[i].result).size());
+                    if (i < currentSegment_) start += length;
+                    if (i <= currentSegment_) end += length;
+                }
+                ITfRange* segmentRange = nullptr;
+                if (SUCCEEDED(range->Clone(&segmentRange))) {
+                    segmentRange->Collapse(ec, TF_ANCHOR_START);
+                    LONG shifted = 0;
+                    segmentRange->ShiftEnd(ec, end, &shifted, nullptr);
+                    segmentRange->ShiftStart(ec, start, &shifted, nullptr);
+                    RECT rect = {};
+                    BOOL clipped = FALSE;
+                    if (SUCCEEDED(view->GetTextExt(ec, segmentRange, &rect, &clipped))) {
+                        candidateWindow_.Show(owner, rect, segment.candidates,
+                                              segment.candidateIndex);
+                    }
+                    segmentRange->Release();
                 }
                 range->Release();
             }
@@ -450,8 +607,13 @@ STDMETHODIMP TextService::GetDisplayAttributeInfo(REFGUID guid,
                                                   ITfDisplayAttributeInfo** info) {
     if (!info) return E_INVALIDARG;
     *info = nullptr;
-    if (!IsEqualGUID(guid, GUID_IROHA_DISPLAY_ATTRIBUTE)) return E_INVALIDARG;
-    auto* impl = new (std::nothrow) DisplayAttributeInfo();
+    bool boldLine = false;
+    if (IsEqualGUID(guid, GUID_IROHA_DISPLAY_ATTRIBUTE_CURRENT)) {
+        boldLine = true;
+    } else if (!IsEqualGUID(guid, GUID_IROHA_DISPLAY_ATTRIBUTE)) {
+        return E_INVALIDARG;
+    }
+    auto* impl = new (std::nothrow) DisplayAttributeInfo(boldLine);
     if (!impl) return E_OUTOFMEMORY;
     *info = impl;
     return S_OK;

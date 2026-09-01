@@ -63,9 +63,10 @@ HRESULT TextService::SetCompositionText(TfEditCookie ec, ITfContext* context,
 
 void TextService::ResetState() {
     composer_.Clear();
-    converting_ = false;
-    candidates_.clear();
-    candidateIndex_ = 0;
+    segmented_ = false;
+    segments_.clear();
+    currentSegment_ = 0;
+    candidateListOpen_ = false;
     conversionReading_.clear();
     conversionBaseline_.clear();
     candidateWindow_.Hide();
@@ -104,6 +105,89 @@ HRESULT TextService::ShowText(ITfContext* context, const std::wstring& text) {
 
 HRESULT TextService::UpdateComposition(ITfContext* context) {
     return ShowText(context, iroha::Utf32ToUtf16(composer_.Display()));
+}
+
+HRESULT TextService::RefreshSegmentDisplay(ITfContext* context) {
+    return RequestSyncEditSession(
+        context, clientId_, [this, context](TfEditCookie ec) -> HRESULT {
+            HRESULT hr = EnsureComposition(ec, context);
+            if (FAILED(hr)) {
+                ResetState();
+                return hr;
+            }
+            return SetSegmentedText(ec, context);
+        });
+}
+
+// 文節列を未確定文字列として表示する（選択中の文節は太い下線、他は細い下線）。
+// キャレットは選択中の文節の末尾に置く
+HRESULT TextService::SetSegmentedText(TfEditCookie ec, ITfContext* context) {
+    // 各文節のUTF-16長と全体文字列
+    std::wstring text;
+    std::vector<LONG> lengths;
+    for (const ConversionSegment& segment : segments_) {
+        const std::wstring piece = iroha::Utf32ToUtf16(segment.result);
+        lengths.push_back(static_cast<LONG>(piece.size()));
+        text += piece;
+    }
+
+    ITfRange* range = nullptr;
+    HRESULT hr = composition_->GetRange(&range);
+    if (FAILED(hr)) return hr;
+    hr = range->SetText(ec, 0, text.c_str(), static_cast<LONG>(text.size()));
+    if (FAILED(hr)) {
+        range->Release();
+        return hr;
+    }
+
+    // 文節ごとに表示属性を割り当てる
+    ITfProperty* property = nullptr;
+    if (SUCCEEDED(context->GetProperty(GUID_PROP_ATTRIBUTE, &property))) {
+        LONG offset = 0;
+        for (size_t i = 0; i < segments_.size(); ++i) {
+            ITfRange* segmentRange = nullptr;
+            if (SUCCEEDED(range->Clone(&segmentRange))) {
+                segmentRange->Collapse(ec, TF_ANCHOR_START);
+                LONG shifted = 0;
+                segmentRange->ShiftEnd(ec, offset + lengths[i], &shifted, nullptr);
+                segmentRange->ShiftStart(ec, offset, &shifted, nullptr);
+                const TfGuidAtom atom = (i == currentSegment_)
+                                            ? displayAttributeCurrentAtom_
+                                            : displayAttributeAtom_;
+                if (atom != TF_INVALID_GUIDATOM) {
+                    VARIANT var;
+                    VariantInit(&var);
+                    var.vt = VT_I4;
+                    var.lVal = static_cast<LONG>(atom);
+                    property->SetValue(ec, segmentRange, &var);
+                }
+                segmentRange->Release();
+            }
+            offset += lengths[i];
+        }
+        property->Release();
+    }
+
+    // キャレットを選択中の文節の末尾へ
+    LONG caret = 0;
+    for (size_t i = 0; i <= currentSegment_ && i < segments_.size(); ++i) {
+        caret += lengths[i];
+    }
+    ITfRange* caretRange = nullptr;
+    if (SUCCEEDED(range->Clone(&caretRange))) {
+        caretRange->Collapse(ec, TF_ANCHOR_START);
+        LONG shifted = 0;
+        caretRange->ShiftEnd(ec, caret, &shifted, nullptr);
+        caretRange->Collapse(ec, TF_ANCHOR_END);
+        TF_SELECTION selection;
+        selection.range = caretRange;
+        selection.style.ase = TF_AE_NONE;
+        selection.style.fInterimChar = FALSE;
+        context->SetSelection(ec, 1, &selection);
+        caretRange->Release();
+    }
+    range->Release();
+    return S_OK;
 }
 
 HRESULT TextService::CommitText(ITfContext* context, const std::wstring& text) {
