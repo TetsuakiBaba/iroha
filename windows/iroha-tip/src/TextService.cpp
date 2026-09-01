@@ -37,6 +37,8 @@ STDMETHODIMP TextService::QueryInterface(REFIID riid, void** ppv) {
         *ppv = static_cast<ITfCompositionSink*>(this);
     } else if (IsEqualIID(riid, __uuidof(ITfDisplayAttributeProvider))) {
         *ppv = static_cast<ITfDisplayAttributeProvider*>(this);
+    } else if (IsEqualIID(riid, __uuidof(ITfCompartmentEventSink))) {
+        *ppv = static_cast<ITfCompartmentEventSink*>(this);
     } else {
         return E_NOINTERFACE;
     }
@@ -103,8 +105,118 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* threadMgr, TfClientId clientI
         langBarMgr->Release();
     }
 
+    // 入力モードのコンパートメント（タスクバーの「あ/A」表示の実体）
+    InitCompartments();
+    ApplyModeToCompartments();
+
     // 変換サーバを先に起こしてモデルのプリロードを走らせておく
     ConvertClient::EnsureServer();
+    return S_OK;
+}
+
+namespace {
+
+// IMEオン（ひらがな・ローマ字入力）の変換モード値
+constexpr DWORD kKanaConversionMode =
+    TF_CONVERSIONMODE_NATIVE | TF_CONVERSIONMODE_FULLSHAPE | TF_CONVERSIONMODE_ROMAN;
+
+HRESULT SetCompartmentDword(ITfCompartment* compartment, TfClientId clientId,
+                            DWORD value) {
+    if (!compartment) return E_FAIL;
+    VARIANT var;
+    VariantInit(&var);
+    var.vt = VT_I4;
+    var.lVal = static_cast<LONG>(value);
+    return compartment->SetValue(clientId, &var);
+}
+
+DWORD GetCompartmentDword(ITfCompartment* compartment, DWORD fallback) {
+    if (!compartment) return fallback;
+    VARIANT var;
+    VariantInit(&var);
+    if (FAILED(compartment->GetValue(&var)) || var.vt != VT_I4) return fallback;
+    return static_cast<DWORD>(var.lVal);
+}
+
+} // namespace
+
+HRESULT TextService::InitCompartments() {
+    ITfCompartmentMgr* mgr = nullptr;
+    HRESULT hr = threadMgr_->QueryInterface(IID_PPV_ARGS(&mgr));
+    if (FAILED(hr)) return hr;
+    mgr->GetCompartment(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, &openCloseCompartment_);
+    mgr->GetCompartment(GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION,
+                        &conversionModeCompartment_);
+    mgr->Release();
+
+    // 外部（タスクバーの入力インジケーターのクリック等）からの変更を監視する
+    auto advise = [this](ITfCompartment* compartment, DWORD* cookie) {
+        if (!compartment) return;
+        ITfSource* source = nullptr;
+        if (SUCCEEDED(compartment->QueryInterface(IID_PPV_ARGS(&source)))) {
+            source->AdviseSink(__uuidof(ITfCompartmentEventSink),
+                               static_cast<ITfCompartmentEventSink*>(this), cookie);
+            source->Release();
+        }
+    };
+    advise(openCloseCompartment_, &openCloseCookie_);
+    advise(conversionModeCompartment_, &conversionModeCookie_);
+    return S_OK;
+}
+
+void TextService::ReleaseCompartments() {
+    auto unadvise = [](ITfCompartment* compartment, DWORD* cookie) {
+        if (!compartment) return;
+        if (*cookie != TF_INVALID_COOKIE) {
+            ITfSource* source = nullptr;
+            if (SUCCEEDED(compartment->QueryInterface(IID_PPV_ARGS(&source)))) {
+                source->UnadviseSink(*cookie);
+                source->Release();
+            }
+            *cookie = TF_INVALID_COOKIE;
+        }
+        compartment->Release();
+    };
+    unadvise(openCloseCompartment_, &openCloseCookie_);
+    unadvise(conversionModeCompartment_, &conversionModeCookie_);
+    openCloseCompartment_ = nullptr;
+    conversionModeCompartment_ = nullptr;
+}
+
+void TextService::ApplyModeToCompartments() {
+    updatingCompartments_ = true;
+    SetCompartmentDword(openCloseCompartment_, clientId_, directMode_ ? 0 : 1);
+    SetCompartmentDword(conversionModeCompartment_, clientId_,
+                        directMode_ ? TF_CONVERSIONMODE_ALPHANUMERIC
+                                    : kKanaConversionMode);
+    updatingCompartments_ = false;
+}
+
+void TextService::SetDirectModeInternal(bool direct) {
+    if (directMode_ == direct) return;
+    directMode_ = direct;
+    ApplyModeToCompartments();
+    if (langBarButton_) langBarButton_->NotifyUpdate();
+    IrohaLog(L"input mode: %s", directMode_ ? L"direct" : L"kana");
+}
+
+STDMETHODIMP TextService::OnChange(REFGUID rguid) {
+    if (updatingCompartments_) return S_OK;
+    // タスクバーの入力インジケーター等、外部からのモード変更に追従する
+    if (IsEqualGUID(rguid, GUID_COMPARTMENT_KEYBOARD_OPENCLOSE) ||
+        IsEqualGUID(rguid, GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION)) {
+        const DWORD open = GetCompartmentDword(openCloseCompartment_, 1);
+        const DWORD conversion =
+            GetCompartmentDword(conversionModeCompartment_, kKanaConversionMode);
+        const bool direct =
+            open == 0 || (conversion & TF_CONVERSIONMODE_NATIVE) == 0;
+        if (direct != directMode_) {
+            directMode_ = direct;
+            if (langBarButton_) langBarButton_->NotifyUpdate();
+            IrohaLog(L"input mode (compartment): %s",
+                     directMode_ ? L"direct" : L"kana");
+        }
+    }
     return S_OK;
 }
 
@@ -126,6 +238,7 @@ STDMETHODIMP TextService::Deactivate() {
             langBarButton_->Release();
             langBarButton_ = nullptr;
         }
+        ReleaseCompartments();
         threadMgr_->Release();
         threadMgr_ = nullptr;
     }
@@ -290,9 +403,7 @@ HRESULT TextService::HandleKey(ITfContext* context, KeyAction action,
             // 未確定文字列が残っていたら現状のまま確定してから切り替える
             HRESULT hr = S_OK;
             if (composition_) hr = CommitCurrent(context);
-            directMode_ = newDirect;
-            if (langBarButton_) langBarButton_->NotifyUpdate();
-            IrohaLog(L"input mode: %s", directMode_ ? L"direct" : L"kana");
+            SetDirectModeInternal(newDirect);
             return hr;
         }
         case KeyAction::None:
@@ -602,9 +713,7 @@ STDMETHODIMP TextService::OnPreservedKey(ITfContext*, REFGUID, BOOL* eaten) {
 
 void TextService::OnModeButtonClicked() {
     // クリックはキーイベント外なのでコンポジションには触らず、モードだけ切り替える
-    directMode_ = !directMode_;
-    if (langBarButton_) langBarButton_->NotifyUpdate();
-    IrohaLog(L"input mode (click): %s", directMode_ ? L"direct" : L"kana");
+    SetDirectModeInternal(!directMode_);
 }
 
 // ---- ITfCompositionSink ----

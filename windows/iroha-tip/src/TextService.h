@@ -15,7 +15,8 @@ class LangBarButton;
 class TextService : public ITfTextInputProcessorEx,
                     public ITfKeyEventSink,
                     public ITfCompositionSink,
-                    public ITfDisplayAttributeProvider {
+                    public ITfDisplayAttributeProvider,
+                    public ITfCompartmentEventSink {
 public:
     TextService();
     TextService(const TextService&) = delete;
@@ -48,11 +49,21 @@ public:
     STDMETHODIMP EnumDisplayAttributeInfo(IEnumTfDisplayAttributeInfo** enumInfo) override;
     STDMETHODIMP GetDisplayAttributeInfo(REFGUID guid, ITfDisplayAttributeInfo** info) override;
 
+    // ITfCompartmentEventSink（入力モードのコンパートメント変更の監視）
+    STDMETHODIMP OnChange(REFGUID rguid) override;
+
     // 通知領域のモードボタンから呼ばれる
     bool IsDirectMode() const { return directMode_; }
     void OnModeButtonClicked();
 
 private:
+    // 入力モード（かな/英数）の切替を1箇所に集約する。
+    // タスクバーの入力インジケーターはコンパートメント値を見て「あ/A」を描くため、
+    // モード変更は必ずコンパートメントにも反映する
+    void SetDirectModeInternal(bool direct);
+    void ApplyModeToCompartments();
+    HRESULT InitCompartments();
+    void ReleaseCompartments();
     ~TextService();
 
     // このキーで行う操作。OnTestKeyDownとOnKeyDownで同じ判定を使う
@@ -120,6 +131,12 @@ private:
     bool directMode_ = false;
     // 通知領域の入力モードボタン（あ/A）
     LangBarButton* langBarButton_ = nullptr;
+    // 入力モードのコンパートメント（タスクバーの入力インジケーターが参照する）
+    ITfCompartment* openCloseCompartment_ = nullptr;
+    ITfCompartment* conversionModeCompartment_ = nullptr;
+    DWORD openCloseCookie_ = TF_INVALID_COOKIE;
+    DWORD conversionModeCookie_ = TF_INVALID_COOKIE;
+    bool updatingCompartments_ = false; // 自分の書き込みによるOnChangeを無視する
 
     // 変換後の文節（Spaceで変換すると入力全体がこの列になる）
     struct ConversionSegment {
