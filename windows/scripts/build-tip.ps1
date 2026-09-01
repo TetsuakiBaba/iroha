@@ -1,10 +1,10 @@
-﻿# iroha-tip（TSFテキストサービスDLL）をビルドする。
-# 成果物: windows/iroha-tip/build/iroha-tip.dll (x64)
+﻿# Windows版iroha（iroha-core + テスト + iroha-tip）をビルドし、単体テストを実行する。
+# 成果物: windows/build/iroha-tip/iroha-tip.dll (x64)
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-$SrcDir   = Join-Path $RepoRoot "windows\iroha-tip"
+$SrcDir   = Join-Path $RepoRoot "windows"
 $BuildDir = Join-Path $SrcDir "build"
 
 # ---- MSVCツールセットの検出（build-llama.ps1と同方式） ----
@@ -73,4 +73,8 @@ Write-Host "==> ビルド"
 cmake --build $BuildDir
 if ($LASTEXITCODE -ne 0) { throw "ビルドに失敗しました" }
 
-Write-Host "==> 完了: $(Join-Path $BuildDir 'iroha-tip.dll')"
+Write-Host "==> 単体テスト"
+& (Join-Path $BuildDir "iroha-core\iroha-core-tests.exe")
+if ($LASTEXITCODE -ne 0) { throw "単体テストが失敗しました" }
+
+Write-Host "==> 完了: $(Join-Path $BuildDir 'iroha-tip\iroha-tip.dll')"

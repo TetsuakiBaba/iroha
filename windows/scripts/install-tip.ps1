@@ -16,7 +16,7 @@ if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrat
 }
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-$BuiltDll = Join-Path $RepoRoot "windows\iroha-tip\build\iroha-tip.dll"
+$BuiltDll = Join-Path $RepoRoot "windows\build\iroha-tip\iroha-tip.dll"
 $InstallDir = Join-Path $env:ProgramFiles "iroha"
 $InstalledDll = Join-Path $InstallDir "iroha-tip.dll"
 

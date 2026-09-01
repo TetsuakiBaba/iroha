@@ -29,6 +29,7 @@ constexpr wchar_t kDescription[] = L"iroha";
 // 含め、後のマイルストーンで必要になるものまでM1で登録しておく。
 const GUID* kCategories[] = {
     &GUID_TFCAT_TIP_KEYBOARD,
+    &GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
     &GUID_TFCAT_TIPCAP_UIELEMENTENABLED,
     &GUID_TFCAT_TIPCAP_SECUREMODE,
     &GUID_TFCAT_TIPCAP_COMLESS,

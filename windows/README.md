@@ -53,8 +53,8 @@ powershell -ExecutionPolicy Bypass -File windows\scripts\install-tip.ps1 -Uninst
 ## マイルストーン
 
 - [x] M1: 登録できる空TIP（設定に現れWin+Spaceで選べる、Activate/Deactivateがログに出る）
-- [ ] M2: キーを食って文字を挿入（ITfKeyEventSink + エディットセッション）
-- [ ] M3: コンポジション表示（RomajiComposer移植、下線、Enter確定/Esc破棄）
+- [x] M2: キーを食って文字を挿入（ITfKeyEventSink + エディットセッション）
+- [x] M3: コンポジション表示（RomajiComposer移植、下線、Enter確定/Esc破棄。Spaceは仮確定）
 - [ ] M4: 変換サーバ接続 + 候補ウィンドウ（iroha-core + llama.cpp、名前付きパイプIPC）
 - [ ] M5: 互換性強化（UIlessモード、ストアアプリ/AppContainer、通知領域アイコン）
 - [ ] M6: 製品化（インストーラ、Authenticode署名、学習・ユーザ辞書、UIA対応）
