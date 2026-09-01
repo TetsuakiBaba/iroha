@@ -116,4 +116,39 @@ std::u32string Utf8ToUtf32(std::string_view s) {
     return out;
 }
 
+std::optional<std::u32string> Utf8ToUtf32Strict(std::string_view s) {
+    std::u32string out;
+    out.reserve(s.size());
+    size_t i = 0;
+    while (i < s.size()) {
+        const unsigned char b0 = static_cast<unsigned char>(s[i]);
+        size_t need = 0;
+        char32_t cp = 0;
+        if (b0 < 0x80) {
+            cp = b0;
+        } else if ((b0 & 0xE0) == 0xC0) {
+            need = 1;
+            cp = b0 & 0x1F;
+        } else if ((b0 & 0xF0) == 0xE0) {
+            need = 2;
+            cp = b0 & 0x0F;
+        } else if ((b0 & 0xF8) == 0xF0) {
+            need = 3;
+            cp = b0 & 0x07;
+        } else {
+            return std::nullopt;
+        }
+        if (i + need >= s.size()) return std::nullopt;
+        for (size_t k = 1; k <= need; ++k) {
+            const unsigned char b = static_cast<unsigned char>(s[i + k]);
+            if ((b & 0xC0) != 0x80) return std::nullopt;
+            cp = (cp << 6) | (b & 0x3F);
+        }
+        if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return std::nullopt;
+        out.push_back(cp);
+        i += need + 1;
+    }
+    return out;
+}
+
 } // namespace iroha

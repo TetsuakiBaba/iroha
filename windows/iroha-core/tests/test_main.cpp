@@ -4,6 +4,8 @@
 #include <string>
 
 #include "iroha/kana.h"
+#include "iroha/reading_aligner.h"
+#include "iroha/reading_constraint.h"
 #include "iroha/romaji_composer.h"
 #include "iroha/unicode.h"
 
@@ -161,6 +163,140 @@ void TestHiraganaToKatakana() {
     EXPECT_EQ(iroha::HiraganaToKatakana(U"ゔぁ"), U"ヴァ");
 }
 
+// ---- ReadingConstraint（移植元: ReadingConstraintTests.swift） ----
+
+// 出力が読みと辻褄が合うか（生成を最後まで走らせたときと同じ判定）
+bool Accepts(const std::u32string& reading, const std::u32string& output) {
+    const auto constraint = iroha::ReadingConstraint::Create(reading);
+    if (!constraint) return true;
+    const uint64_t mask = constraint->Advance(constraint->InitialMask(), output);
+    return mask != 0 && constraint->IsComplete(mask);
+}
+
+void TestAcceptsPlainConversion() {
+    EXPECT_TRUE(Accepts(U"こんにちはあかちゃん", U"こんにちは赤ちゃん"));
+    EXPECT_TRUE(Accepts(U"きょうはいいてんきですね", U"今日はいい天気ですね"));
+    EXPECT_TRUE(Accepts(U"うけたまわりました", U"承りました"));
+}
+
+// 読みにない句読点の挿入を弾く（zenzが「こんにちは。赤ちゃん」を出す問題）
+void TestRejectsInsertedPunctuation() {
+    EXPECT_TRUE(!Accepts(U"こんにちはあかちゃん", U"こんにちは。赤ちゃん"));
+    EXPECT_TRUE(Accepts(U"こんにちは、あかちゃん", U"こんにちは、赤ちゃん"));
+}
+
+void TestRejectsMismatchedKana() {
+    EXPECT_TRUE(!Accepts(U"さかなをたべる", U"魚が食べる"));
+}
+
+// 読みを使い切らない・使い切りすぎる出力を弾く
+void TestRejectsIncompleteConsumption() {
+    EXPECT_TRUE(!Accepts(U"あかちゃんがわらった", U"赤ちゃんが"));
+    EXPECT_TRUE(!Accepts(U"あかちゃん", U"赤ちゃんが笑った"));
+}
+
+// カタカナ・英数字は読みと字数が合わないことがあるので許す
+void TestAllowsLooseKatakanaAndAlphabet() {
+    EXPECT_TRUE(Accepts(U"こんぴゅーた", U"コンピューター"));
+    EXPECT_TRUE(Accepts(U"わうわうをみる", U"WOWOWを見る"));
+    EXPECT_TRUE(Accepts(U"にせんにじゅうごねん", U"2025年"));
+}
+
+// 追跡できない読み（長すぎる・空）では制約をかけない
+void TestNoConstraintForUntrackableReading() {
+    EXPECT_TRUE(!iroha::ReadingConstraint::Create(U"").has_value());
+    EXPECT_TRUE(!iroha::ReadingConstraint::Create(std::u32string(63, U'あ')).has_value());
+    EXPECT_TRUE(iroha::ReadingConstraint::Create(std::u32string(62, U'あ')).has_value());
+}
+
+void TestSpanClassification() {
+    using RC = iroha::ReadingConstraint;
+    EXPECT_TRUE(RC::SpanOf(U'あ') == RC::Span::Literal);
+    EXPECT_TRUE(RC::SpanOf(U'。') == RC::Span::Literal);
+    EXPECT_TRUE(RC::SpanOf(U'!') == RC::Span::Literal);
+    EXPECT_TRUE(RC::SpanOf(U'漢') == RC::Span::OneOrMore);
+    EXPECT_TRUE(RC::SpanOf(U'々') == RC::Span::OneOrMore);
+    EXPECT_TRUE(RC::SpanOf(U'ア') == RC::Span::ZeroOrMore);
+    EXPECT_TRUE(RC::SpanOf(U'ー') == RC::Span::ZeroOrMore);
+    EXPECT_TRUE(RC::SpanOf(U'7') == RC::Span::ZeroOrMore);
+}
+
+// ---- ReadingAligner（移植元: ReadingAlignerTests.swift） ----
+
+std::u32string JoinReadings(const std::vector<iroha::ReadingAligner::Segment>& segments,
+                            bool conversion) {
+    std::u32string out;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (i > 0) out += U"|";
+        out += conversion ? segments[i].conversion : segments[i].reading;
+    }
+    return out;
+}
+
+void TestBasicTwoSegments() {
+    const auto result =
+        iroha::ReadingAligner::SegmentReading(U"きょうはいいてんきですね", U"今日はいい天気ですね");
+    EXPECT_EQ(JoinReadings(result, false), U"きょうはいい|てんきですね");
+    EXPECT_EQ(JoinReadings(result, true), U"今日はいい|天気ですね");
+}
+
+void TestParticleAnchors() {
+    const auto result = iroha::ReadingAligner::SegmentReading(U"さかなをたべる", U"魚を食べる");
+    EXPECT_EQ(JoinReadings(result, false), U"さかなを|たべる");
+    EXPECT_EQ(JoinReadings(result, true), U"魚を|食べる");
+}
+
+void TestAllKanaIsSingleSegment() {
+    const auto result = iroha::ReadingAligner::SegmentReading(
+        U"すもももももももものうち", U"すもももももももものうち");
+    EXPECT_TRUE(result.size() == 1);
+}
+
+void TestAllKanjiIsSingleSegment() {
+    const auto result = iroha::ReadingAligner::SegmentReading(U"かんじへんかん", U"漢字変換");
+    EXPECT_TRUE(result.size() == 1);
+    EXPECT_EQ(result[0].reading, U"かんじへんかん");
+}
+
+void TestKatakanaInConversion() {
+    // カタカナ部分は読みのひらがなと対応付けられる
+    const auto result =
+        iroha::ReadingAligner::SegmentReading(U"こーひーをのむ", U"コーヒーを飲む");
+    EXPECT_EQ(JoinReadings(result, true), U"コーヒーを|飲む");
+    EXPECT_EQ(JoinReadings(result, false), U"こーひーを|のむ");
+}
+
+void TestLeadingKana() {
+    const auto result = iroha::ReadingAligner::SegmentReading(U"これはほんです", U"これは本です");
+    EXPECT_EQ(JoinReadings(result, true), U"これは|本です");
+}
+
+void TestMismatchFallsBackToWholeSegment() {
+    // 変換結果のかなが読みに現れない場合は分割を諦めて全体を返す
+    const auto result = iroha::ReadingAligner::SegmentReading(U"きょうは", U"明日も");
+    EXPECT_TRUE(result.size() == 1);
+    EXPECT_EQ(result[0].reading, U"きょうは");
+}
+
+void TestReadingRoundTrip() {
+    // 分割結果の読みを連結すると元の読みに一致する
+    const std::u32string reading = U"わたしはがっこうへいきます";
+    const auto segments =
+        iroha::ReadingAligner::SegmentReading(reading, U"私は学校へ行きます");
+    std::u32string joinedReading, joinedConversion;
+    for (const auto& segment : segments) {
+        joinedReading += segment.reading;
+        joinedConversion += segment.conversion;
+    }
+    EXPECT_EQ(joinedReading, reading);
+    EXPECT_EQ(joinedConversion, U"私は学校へ行きます");
+}
+
+void TestKatakanaToHiragana() {
+    EXPECT_EQ(iroha::KatakanaToHiragana(U"コーヒー"), U"こーひー");
+    EXPECT_EQ(iroha::KatakanaToHiragana(U"ヴァイオリン"), U"ゔぁいおりん");
+}
+
 void TestUnicodeRoundTrip() {
     const std::u32string sample = U"にほんご、ABC！𠮷野家"; // サロゲートペア含む
     EXPECT_EQ(iroha::Utf16ToUtf32(iroha::Utf32ToUtf16(sample)), sample);
@@ -184,6 +320,24 @@ int main() {
     TestPunctuationStyle();
     TestHiraganaToKatakana();
     TestUnicodeRoundTrip();
+
+    TestAcceptsPlainConversion();
+    TestRejectsInsertedPunctuation();
+    TestRejectsMismatchedKana();
+    TestRejectsIncompleteConsumption();
+    TestAllowsLooseKatakanaAndAlphabet();
+    TestNoConstraintForUntrackableReading();
+    TestSpanClassification();
+
+    TestBasicTwoSegments();
+    TestParticleAnchors();
+    TestAllKanaIsSingleSegment();
+    TestAllKanjiIsSingleSegment();
+    TestKatakanaInConversion();
+    TestLeadingKana();
+    TestMismatchFallsBackToWholeSegment();
+    TestReadingRoundTrip();
+    TestKatakanaToHiragana();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

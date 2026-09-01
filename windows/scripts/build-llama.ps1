@@ -103,6 +103,8 @@ $env:LIB = @(
 
 # ---- CMake configure ----
 # GGML_OPENMP=OFF: vcomp*.dll への依存を避ける（IMEは配布物のDLL依存を最小にしたい）
+# GGML_NATIVE=OFF + AVX2/FMA/F16C/BMI2: MSVCではNATIVEが機能せず無最適化になるため
+#   明示する（Haswell 2013年以降のCPUで動くベースライン。無指定だと変換が5倍遅い）
 # CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY: コンパイラ検査でexeリンクを行わない
 #   （静的ライブラリしか作らないので不要。不完全なVSインストールでも検査が通る）
 Write-Host "==> CMake configure"
@@ -111,6 +113,12 @@ cmake -S $LlamaDir -B $BuildDir -G Ninja `
     -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY `
     -DBUILD_SHARED_LIBS=OFF `
     -DGGML_OPENMP=OFF `
+    -DGGML_NATIVE=OFF `
+    -DGGML_AVX=ON `
+    -DGGML_AVX2=ON `
+    -DGGML_FMA=ON `
+    -DGGML_F16C=ON `
+    -DGGML_BMI2=ON `
     -DLLAMA_BUILD_TESTS=OFF `
     -DLLAMA_BUILD_EXAMPLES=OFF `
     -DLLAMA_BUILD_SERVER=OFF `

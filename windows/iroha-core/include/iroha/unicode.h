@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -9,5 +10,8 @@ std::wstring Utf32ToUtf16(const std::u32string& s);
 std::u32string Utf16ToUtf32(std::wstring_view s);
 std::string Utf32ToUtf8(const std::u32string& s);
 std::u32string Utf8ToUtf32(std::string_view s);
+
+// 不正なバイト列があればnullopt（Utf8ToUtf32はU+FFFDに置換する寛容版）
+std::optional<std::u32string> Utf8ToUtf32Strict(std::string_view s);
 
 } // namespace iroha

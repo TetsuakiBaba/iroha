@@ -14,7 +14,9 @@ WindowsのIME（TSF: Text Services Framework）実装。方針（2026-09決定�
 ```
 iroha-tip/      TSFテキストサービスDLL（C++/COM。変換ロジックを持たない）
 iroha-server/   変換サーバ（llama.cpp + エンジン。今後実装）
-iroha-core/     変換エンジンのC++移植（今後実装）
+iroha-core/     変換エンジンのC++移植
+                （iroha-core=純粋ロジック / iroha-engine=ZenzEngine+llama.cpp）
+iroha-cli/      検証用CLI（kana / convert / segment / bench / repl）
 shared/         TIP/サーバ共通のIPCプロトコル定義（今後実装）
 scripts/        ビルド・インストールスクリプト
 ```
@@ -32,6 +34,13 @@ powershell -ExecutionPolicy Bypass -File windows\scripts\build-tip.ps1
 powershell -ExecutionPolicy Bypass -File windows\scripts\install-tip.ps1
 # 解除
 powershell -ExecutionPolicy Bypass -File windows\scripts\install-tip.ps1 -Uninstall
+
+# zenzモデルの取得（%LOCALAPPDATA%\iroha\models へ、約72MB）
+powershell -ExecutionPolicy Bypass -File windows\scripts\fetch-model.ps1
+
+# エンジンの検証・評価（macOS版と同じeval.tsvで数値を突き合わせる）
+windows\build\iroha-cli\iroha-cli.exe convert kyouhaiitenki
+windows\build\iroha-cli\iroha-cli.exe bench testdata\eval.tsv
 ```
 
 インストール後、設定 > 時刻と言語 > 言語と地域 > 日本語 > キーボード に
