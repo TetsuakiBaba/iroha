@@ -1,7 +1,9 @@
 ﻿# Windows版iroha（iroha-core + テスト + iroha-tip）をビルドし、単体テストを実行する。
 # 成果物: windows/build/iroha-tip/iroha-tip.dll (x64)
-
-$ErrorActionPreference = "Stop"
+#
+# EAPをContinueにする理由はbuild-llama.ps1のコメントを参照
+# （cmake等のstderr警告がリダイレクト環境でErrorRecord化するため）
+$ErrorActionPreference = "Continue"
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $SrcDir   = Join-Path $RepoRoot "windows"

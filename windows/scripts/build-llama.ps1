@@ -9,7 +9,10 @@
 #       ビルドディレクトリも build-windows に分離する（vendor/llama.cpp/build はmacOS用）。
 #       このリポジトリはDropboxでmacOSマシンと同期されているため、分離を崩すとMac環境を壊す。
 
-$ErrorActionPreference = "Stop"
+# 注意: EAPはContinueにする。stderrがリダイレクトされる環境（CI等）では
+# ネイティブコマンド（git/cmake）のstderr出力がErrorRecord化し、Stopだと
+# 警告や進捗表示だけでスクリプトが即死するため。失敗は$LASTEXITCODEで検出する
+$ErrorActionPreference = "Continue"
 
 $LlamaTag = "b10689"
 
@@ -20,26 +23,19 @@ $BuildDir = Join-Path $LlamaDir "build-windows"
 $DistDir  = Join-Path $RepoRoot "vendor\dist-windows"
 
 # ---- llama.cpp の取得（未取得の場合のみ） ----
-# gitのstderr出力はstderrリダイレクト環境（CI等）でErrorRecord化して
-# EAP=Stopだと即死するため、gitの間だけContinueに落とす
 if (-not (Test-Path $LlamaDir)) {
     Write-Host "==> llama.cpp ($LlamaTag) を取得"
-    $ErrorActionPreference = "Continue"
-    git clone --quiet --depth 1 --branch $LlamaTag https://github.com/ggml-org/llama.cpp $LlamaDir
-    $exit = $LASTEXITCODE
-    $ErrorActionPreference = "Stop"
-    if ($exit -ne 0) { throw "git clone に失敗しました" }
+    git -c advice.detachedHead=false clone --quiet --depth 1 --branch $LlamaTag `
+        https://github.com/ggml-org/llama.cpp $LlamaDir
+    if ($LASTEXITCODE -ne 0) { throw "git clone に失敗しました" }
 }
 
 # ---- zenzのpre-tokenizer名を認識させるパッチ（適用済みならスキップ） ----
 $vocabCpp = Join-Path $LlamaDir "src\llama-vocab.cpp"
 if (-not (Select-String -Path $vocabCpp -Pattern "gpt2-small-japanese-char" -Quiet)) {
     Write-Host "==> zenz対応パッチを適用"
-    $ErrorActionPreference = "Continue"
     git -C $LlamaDir apply (Join-Path $RepoRoot "patches\llama-cpp-zenz-pretokenizer.patch")
-    $exit = $LASTEXITCODE
-    $ErrorActionPreference = "Stop"
-    if ($exit -ne 0) { throw "パッチの適用に失敗しました" }
+    if ($LASTEXITCODE -ne 0) { throw "パッチの適用に失敗しました" }
 }
 
 # ---- MSVCツールセットの検出 ----
@@ -139,8 +135,8 @@ cmake --build $BuildDir --target llama
 if ($LASTEXITCODE -ne 0) { throw "ビルドに失敗しました" }
 
 Write-Host "==> vendor/dist-windows へ配置"
-New-Item -ItemType Directory -Force (Join-Path $DistDir "include") | Out-Null
-New-Item -ItemType Directory -Force (Join-Path $DistDir "lib") | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $DistDir "include") -ErrorAction Stop | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $DistDir "lib") -ErrorAction Stop | Out-Null
 $libs = @(
     "src\llama.lib",
     "ggml\src\ggml.lib",
@@ -150,9 +146,9 @@ $libs = @(
 foreach ($rel in $libs) {
     $src = Join-Path $BuildDir $rel
     if (-not (Test-Path $src)) { throw "成果物が見つかりません: $src" }
-    Copy-Item $src (Join-Path $DistDir "lib\")
+    Copy-Item $src (Join-Path $DistDir "lib\") -ErrorAction Stop
 }
-Copy-Item (Join-Path $LlamaDir "include\llama.h") (Join-Path $DistDir "include\")
-Copy-Item (Join-Path $LlamaDir "ggml\include\*.h") (Join-Path $DistDir "include\")
+Copy-Item (Join-Path $LlamaDir "include\llama.h") (Join-Path $DistDir "include\") -ErrorAction Stop
+Copy-Item (Join-Path $LlamaDir "ggml\include\*.h") (Join-Path $DistDir "include\") -ErrorAction Stop
 
 Write-Host "==> 完了: $DistDir"
