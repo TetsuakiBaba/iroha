@@ -116,6 +116,38 @@ std::u32string Utf8ToUtf32(std::string_view s) {
     return out;
 }
 
+namespace {
+bool IsTrimmableWhitespace(char32_t c) {
+    switch (c) {
+        case U' ':
+        case U'\t':
+        case U'\n':
+        case U'\r':
+        case 0x0B:
+        case 0x0C:
+        case 0x85:   // NEL
+        case 0xA0:   // NBSP
+        case 0x1680:
+        case 0x2028:
+        case 0x2029:
+        case 0x202F:
+        case 0x205F:
+        case 0x3000: // 全角空白
+            return true;
+        default:
+            return c >= 0x2000 && c <= 0x200A;
+    }
+}
+} // namespace
+
+std::u32string TrimWhitespace(const std::u32string& s) {
+    size_t begin = 0;
+    size_t end = s.size();
+    while (begin < end && IsTrimmableWhitespace(s[begin])) ++begin;
+    while (end > begin && IsTrimmableWhitespace(s[end - 1])) --end;
+    return s.substr(begin, end - begin);
+}
+
 std::optional<std::u32string> Utf8ToUtf32Strict(std::string_view s) {
     std::u32string out;
     out.reserve(s.size());

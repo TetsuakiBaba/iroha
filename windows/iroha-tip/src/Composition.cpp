@@ -66,6 +66,8 @@ void TextService::ResetState() {
     converting_ = false;
     candidates_.clear();
     candidateIndex_ = 0;
+    conversionReading_.clear();
+    conversionBaseline_.clear();
     candidateWindow_.Hide();
 }
 

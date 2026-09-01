@@ -215,16 +215,8 @@ HRESULT TextService::HandleKey(ITfContext* context, KeyAction action,
             composer_.DeleteBackward();
             if (composer_.Empty()) return CancelComposition(context);
             return UpdateComposition(context);
-        case KeyAction::Commit: {
-            std::wstring text;
-            if (converting_ && candidateIndex_ < candidates_.size()) {
-                text = iroha::Utf32ToUtf16(candidates_[candidateIndex_]);
-            } else {
-                composer_.Flush();
-                text = iroha::Utf32ToUtf16(composer_.Display());
-            }
-            return CommitText(context, text);
-        }
+        case KeyAction::Commit:
+            return CommitCurrent(context);
         case KeyAction::Cancel:
             return CancelComposition(context);
         case KeyAction::Convert:
@@ -253,11 +245,7 @@ HRESULT TextService::HandleKey(ITfContext* context, KeyAction action,
             candidateWindow_.Hide();
             return UpdateComposition(context);
         case KeyAction::CommitThenInput: {
-            std::wstring text;
-            if (candidateIndex_ < candidates_.size()) {
-                text = iroha::Utf32ToUtf16(candidates_[candidateIndex_]);
-            }
-            const HRESULT hr = CommitText(context, text);
+            const HRESULT hr = CommitCurrent(context);
             if (FAILED(hr)) return hr;
             composer_.Input(static_cast<char32_t>(character));
             return UpdateComposition(context);
@@ -272,16 +260,7 @@ HRESULT TextService::HandleKey(ITfContext* context, KeyAction action,
             if (newDirect == directMode_) return S_OK;
             // 未確定文字列が残っていたら現状のまま確定してから切り替える
             HRESULT hr = S_OK;
-            if (composition_) {
-                std::wstring text;
-                if (converting_ && candidateIndex_ < candidates_.size()) {
-                    text = iroha::Utf32ToUtf16(candidates_[candidateIndex_]);
-                } else {
-                    composer_.Flush();
-                    text = iroha::Utf32ToUtf16(composer_.Display());
-                }
-                hr = CommitText(context, text);
-            }
+            if (composition_) hr = CommitCurrent(context);
             directMode_ = newDirect;
             IrohaLog(L"input mode: %s", directMode_ ? L"direct" : L"kana");
             return hr;
@@ -310,7 +289,30 @@ HRESULT TextService::StartConversion(ITfContext* context) {
     candidates_ = std::move(candidates);
     candidateIndex_ = 0;
     converting_ = true;
+    // 確定時の学習通知用に、読みとエンジンの第一候補を控えておく
+    conversionReading_ = reading;
+    conversionBaseline_ = candidates_.front();
     return ShowCurrentCandidate(context);
+}
+
+HRESULT TextService::CommitCurrent(ITfContext* context) {
+    const bool wasConverting = converting_;
+    std::u32string committed;
+    if (wasConverting && candidateIndex_ < candidates_.size()) {
+        committed = candidates_[candidateIndex_];
+    } else {
+        composer_.Flush();
+        committed = composer_.Display();
+    }
+    // CommitTextで状態が消えるため先に退避する
+    const std::u32string reading = conversionReading_;
+    const std::u32string baseline = conversionBaseline_;
+    const HRESULT hr = CommitText(context, iroha::Utf32ToUtf16(committed));
+    if (SUCCEEDED(hr) && wasConverting && !reading.empty()) {
+        // エンジンの第一候補と違う確定だけがサーバ側で学習される
+        ConvertClient::NotifyCommit(reading, committed, baseline);
+    }
+    return hr;
 }
 
 HRESULT TextService::ShowCurrentCandidate(ITfContext* context) {

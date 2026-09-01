@@ -70,8 +70,11 @@ windows\build\iroha-cli\iroha-cli.exe bench testdata\eval.tsv
       EVENT_OBJECT_IME_*発火、フォーカス非奪取）と左文脈の伝搬（コンポジション直前40文字）
 - [x] M4c: 入力モード切替（半角/全角・Alt+`でかな⇔英数トグル、ひらがな/英数キー対応。
       モード表示アイコンはM5の通知領域対応で追加する）
+- [x] M4d: 学習・ユーザ辞書の移植（学習→ユーザ辞書→zenzのデコレータ構成をサーバに搭載。
+      確定がエンジンの第一候補と違うときだけTIPからの通知で学習を記録。
+      learning.json / user-dictionary.json はmacOS版と同形式、%LOCALAPPDATA%\iroha に保存）
 - [ ] M5: 互換性強化（UIlessモード、ストアアプリ/AppContainer、通知領域アイコン）
-- [ ] M6: 製品化（インストーラ、Authenticode署名、学習・ユーザ辞書、UIA対応）
+- [ ] M6: 製品化（インストーラ、Authenticode署名、設定UI・辞書編集、UIA対応）
 
 参考実装: CorvusSKK（構成の手本）、Microsoft textservice step01-06（チュートリアル）、
 SampleIME（登録・UIlessの正解集）、mozc `src/win32/tip/`（完成形）。

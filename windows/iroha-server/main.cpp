@@ -9,10 +9,17 @@
 #include "ipc_protocol.h"
 
 #include <cstdio>
+#include <filesystem>
 #include <string>
 #include <vector>
 
+#include "iroha/conversion_engine.h"
+#include "iroha/learning_engine.h"
+#include "iroha/learning_store.h"
+#include "iroha/reading_aligner.h"
 #include "iroha/unicode.h"
+#include "iroha/user_dictionary_engine.h"
+#include "iroha/user_dictionary_store.h"
 #include "iroha/zenz_engine.h"
 
 namespace {
@@ -22,18 +29,32 @@ void Log(const char* message) {
     OutputDebugStringA((std::string("[iroha-server] ") + message + "\n").c_str());
 }
 
+std::wstring DataDir() {
+    const wchar_t* localAppData = _wgetenv(L"LOCALAPPDATA");
+    return (localAppData ? std::wstring(localAppData) : L".") + L"\\iroha";
+}
+
 std::string DefaultModelPath() {
     if (const wchar_t* env = _wgetenv(L"IROHA_MODEL")) {
         return iroha::Utf32ToUtf8(iroha::Utf16ToUtf32(env));
     }
-    const wchar_t* localAppData = _wgetenv(L"LOCALAPPDATA");
-    const std::wstring base = localAppData ? localAppData : L".";
     return iroha::Utf32ToUtf8(
-        iroha::Utf16ToUtf32(base + L"\\iroha\\models\\zenz-v3.1-small-Q5_K_M.gguf"));
+        iroha::Utf16ToUtf32(DataDir() + L"\\models\\zenz-v3.1-small-Q5_K_M.gguf"));
 }
 
+std::filesystem::path StorePath(const wchar_t* envName, const wchar_t* fileName) {
+    if (const wchar_t* env = _wgetenv(envName)) return std::filesystem::path(env);
+    return std::filesystem::path(DataDir() + L"\\" + fileName);
+}
+
+// IME本体と同じ構成のエンジン一式: 学習 → ユーザ辞書 → zenz
+struct ServerState {
+    iroha::ConversionEngine* engine = nullptr;
+    iroha::LearningStore* learning = nullptr;
+};
+
 // 1リクエストを処理してレスポンスのバイト列を返す。shutdownならfalseを返す
-bool HandleRequest(iroha::ZenzEngine& engine, const std::vector<char>& request,
+bool HandleRequest(ServerState& state, const std::vector<char>& request,
                    std::vector<char>* response) {
     iroha::ipc::Reader reader{request.data(), request.size()};
     uint32_t version = 0;
@@ -63,10 +84,10 @@ bool HandleRequest(iroha::ZenzEngine& engine, const std::vector<char>& request,
             candidateCount = candidateCount > 32 ? 32 : candidateCount;
             std::vector<std::u32string> candidates;
             std::string error;
-            if (!engine.Convert(iroha::Utf8ToUtf32(readingUtf8),
-                                iroha::Utf8ToUtf32(contextUtf8),
-                                static_cast<int>(candidateCount), &candidates,
-                                &error)) {
+            if (!state.engine->Convert(iroha::Utf8ToUtf32(readingUtf8),
+                                       iroha::Utf8ToUtf32(contextUtf8),
+                                       static_cast<int>(candidateCount), &candidates,
+                                       &error)) {
                 Log(("convert failed: " + error).c_str());
                 *response = iroha::ipc::BuildErrorResponse(error);
                 return true;
@@ -77,6 +98,32 @@ bool HandleRequest(iroha::ZenzEngine& engine, const std::vector<char>& request,
                 utf8Candidates.push_back(iroha::Utf32ToUtf8(candidate));
             }
             *response = iroha::ipc::BuildOkResponse(utf8Candidates);
+            return true;
+        }
+        case iroha::ipc::MessageType::Record: {
+            std::string readingUtf8;
+            std::string committedUtf8;
+            std::string baselineUtf8;
+            if (!reader.String(&readingUtf8) || !reader.String(&committedUtf8) ||
+                !reader.String(&baselineUtf8)) {
+                *response = iroha::ipc::BuildErrorResponse("プロトコルが不正です");
+                return true;
+            }
+            // エンジンの出力をそのまま確定した場合は何も覚えない（macOS版と同じ）
+            if (committedUtf8 != baselineUtf8 && !committedUtf8.empty()) {
+                const std::u32string reading = iroha::Utf8ToUtf32(readingUtf8);
+                const std::u32string committed = iroha::Utf8ToUtf32(committedUtf8);
+                // 文節UIがまだないため、文節の内訳はReadingAlignerの推定で近似する
+                const auto segments =
+                    iroha::ReadingAligner::SegmentReading(reading, committed);
+                std::vector<iroha::LearningStore::SegmentPair> pairs;
+                for (const auto& segment : segments) {
+                    pairs.push_back({segment.reading, segment.conversion});
+                }
+                state.learning->Record(reading, committed, pairs);
+                Log("learned");
+            }
+            *response = iroha::ipc::BuildOkResponse({});
             return true;
         }
         default:
@@ -100,10 +147,20 @@ int wmain() {
         return 0;
     }
 
-    iroha::ZenzEngine engine(DefaultModelPath());
+    // IME本体と同じ構成でエンジンを組み立てる: 学習 → ユーザ辞書 → zenz
+    // （macOS版 iroha-cli の makeEngine と同じ。環境変数で差し替え可能）
+    iroha::ZenzEngine zenz(DefaultModelPath());
+    iroha::UserDictionaryStore userDictionary(
+        StorePath(L"IROHA_USER_DICT", L"user-dictionary.json"));
+    iroha::LearningStore learning(StorePath(L"IROHA_LEARNING", L"learning.json"));
+    iroha::UserDictionaryEngine dictionaryEngine(
+        &zenz, [&userDictionary] { return userDictionary.Current(); });
+    iroha::LearningEngine engine(&dictionaryEngine,
+                                 [&learning] { return learning.Current(); });
+    ServerState state{&engine, &learning};
     {
         std::string error;
-        if (engine.Prewarm(&error)) {
+        if (zenz.Prewarm(&error)) {
             Log("model loaded");
         } else {
             // モデル未取得でも起動は継続する（変換要求時にエラーを返す）
@@ -135,7 +192,7 @@ int wmain() {
                          &bytesRead, nullptr)) {
                 request.resize(bytesRead);
                 std::vector<char> response;
-                running = HandleRequest(engine, request, &response);
+                running = HandleRequest(state, request, &response);
                 DWORD written = 0;
                 WriteFile(pipe, response.data(), static_cast<DWORD>(response.size()),
                           &written, nullptr);

@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "iroha/conversion_engine.h"
+
 namespace iroha {
 
 // zenz-v3（GPT-2系かな漢字変換モデル）をllama.cppで動かす変換エンジン。
@@ -14,11 +16,11 @@ namespace iroha {
 // スレッドセーフではない。呼び出し側（変換サーバ）で直列化すること。
 // このクラスはllama.cppに依存するため iroha-engine ターゲットに属する
 // （TIP DLLにはリンクしないこと）。
-class ZenzEngine {
+class ZenzEngine : public ConversionEngine {
 public:
     // modelPath: GGUFファイルへのパス（UTF-8）
     explicit ZenzEngine(std::string modelPath);
-    ~ZenzEngine();
+    ~ZenzEngine() override;
     ZenzEngine(const ZenzEngine&) = delete;
     ZenzEngine& operator=(const ZenzEngine&) = delete;
 
@@ -26,13 +28,10 @@ public:
     bool Prewarm(std::string* error);
 
     // ひらがな読みを仮名漢字混じり文候補（尤度順）に変換する。
-    //   reading: ひらがなの読み（例: きょうはいいてんき）
-    //   leftContext: 直前に確定した文字列（文脈条件付け用、空でも可）
-    //   candidateCount: 候補数の上限（1ならグリーディ、2以上で先頭トークン分岐）
-    // 失敗時はfalseを返しerrorに理由を入れる。
+    // candidateCountが1ならグリーディ、2以上で先頭トークン分岐のn-best
     bool Convert(const std::u32string& reading, const std::u32string& leftContext,
                  int candidateCount, std::vector<std::u32string>* results,
-                 std::string* error);
+                 std::string* error) override;
 
     static std::u32string BuildPrompt(const std::u32string& reading,
                                       const std::u32string& leftContext,

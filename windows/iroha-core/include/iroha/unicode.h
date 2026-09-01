@@ -14,4 +14,7 @@ std::u32string Utf8ToUtf32(std::string_view s);
 // 不正なバイト列があればnullopt（Utf8ToUtf32はU+FFFDに置換する寛容版）
 std::optional<std::u32string> Utf8ToUtf32Strict(std::string_view s);
 
+// 前後の空白・改行類を落とす（Swiftの.whitespacesAndNewlines相当の主要部分）
+std::u32string TrimWhitespace(const std::u32string& s);
+
 } // namespace iroha

@@ -15,37 +15,6 @@ namespace iroha {
 
 namespace {
 
-// 出力末尾の空白・改行類を落とす（Swiftの.whitespacesAndNewlines相当の主要部分）
-bool IsTrimmable(char32_t c) {
-    switch (c) {
-        case U' ':
-        case U'\t':
-        case U'\n':
-        case U'\r':
-        case 0x0B:
-        case 0x0C:
-        case 0x85:   // NEL
-        case 0xA0:   // NBSP
-        case 0x1680:
-        case 0x2028:
-        case 0x2029:
-        case 0x202F:
-        case 0x205F:
-        case 0x3000: // 全角空白
-            return true;
-        default:
-            return c >= 0x2000 && c <= 0x200A;
-    }
-}
-
-std::u32string Trimmed(const std::u32string& s) {
-    size_t begin = 0;
-    size_t end = s.size();
-    while (begin < end && IsTrimmable(s[begin])) ++begin;
-    while (end > begin && IsTrimmable(s[end - 1])) --end;
-    return s.substr(begin, end - begin);
-}
-
 // zenzの特殊トークン（私用領域 U+EE00-U+EE0F）のUTF-8は EE B8 80-8F の3バイト
 bool EndsWithZenzSpecial(const std::string& bytes) {
     const size_t n = bytes.size();
@@ -338,7 +307,7 @@ bool ZenzEngine::Convert(const std::u32string& reading,
             if (generateError) *generateError = "推論に失敗: 出力がUTF-8として不正です";
             return false;
         }
-        *out = Trimmed(*output);
+        *out = TrimWhitespace(*output);
         return true;
     };
 

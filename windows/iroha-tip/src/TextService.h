@@ -68,6 +68,9 @@ private:
     KeyAction DecideKeyAction(WPARAM wParam, LPARAM lParam, wchar_t* outChar) const;
     HRESULT HandleKey(ITfContext* context, KeyAction action, wchar_t character);
     HRESULT StartConversion(ITfContext* context);
+    // 現在の内容（変換中なら現候補、入力中ならかな）を確定し、
+    // 変換確定ならサーバに学習用の通知を送る
+    HRESULT CommitCurrent(ITfContext* context);
     HRESULT ShowCurrentCandidate(ITfContext* context); // インライン表示+候補ウィンドウ更新
     HRESULT UpdateCandidateWindow(ITfContext* context);
     std::u32string ReadLeftContext(ITfContext* context); // コンポジション直前の文書テキスト
@@ -100,4 +103,7 @@ private:
     std::vector<std::u32string> candidates_;
     size_t candidateIndex_ = 0;
     CandidateWindow candidateWindow_;
+    // 学習用: 変換した読みとエンジンの第一候補（確定時にサーバへ通知する）
+    std::u32string conversionReading_;
+    std::u32string conversionBaseline_;
 };

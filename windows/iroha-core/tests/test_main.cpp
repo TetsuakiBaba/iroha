@@ -305,6 +305,9 @@ void TestUnicodeRoundTrip() {
 
 } // namespace
 
+// 学習・ユーザ辞書のテスト（EXPECTマクロを共有するためここで取り込む）
+#include "test_dictionaries.h"
+
 int main() {
     TestBasicGojuon();
     TestDakutenHandakuten();
@@ -338,6 +341,8 @@ int main() {
     TestMismatchFallsBackToWholeSegment();
     TestReadingRoundTrip();
     TestKatakanaToHiragana();
+
+    RunDictionaryTests();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

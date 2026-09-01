@@ -9,6 +9,7 @@
 //
 //   リクエスト:  u32 version, u32 type,
 //                type==Convert のとき u32 n, string reading, string context
+//                type==Record  のとき string reading, string committed, string baseline
 //   レスポンス:  u32 version, u32 status(0=ok),
 //                ok: u32 count, string×count / エラー: string message
 
@@ -30,6 +31,7 @@ enum class MessageType : uint32_t {
     Ping = 1,
     Convert = 2,
     Shutdown = 3,
+    Record = 4, // 確定の通知（学習用）
 };
 
 inline std::wstring PipeName() {
@@ -100,6 +102,19 @@ inline std::vector<char> BuildConvertRequest(const std::string& readingUtf8,
     PutU32(&buf, candidateCount);
     PutString(&buf, readingUtf8);
     PutString(&buf, contextUtf8);
+    return buf;
+}
+
+// 確定の通知。baselineは変換直後の第一候補（これと違う確定だけが学習される）
+inline std::vector<char> BuildRecordRequest(const std::string& readingUtf8,
+                                            const std::string& committedUtf8,
+                                            const std::string& baselineUtf8) {
+    std::vector<char> buf;
+    PutU32(&buf, kProtocolVersion);
+    PutU32(&buf, static_cast<uint32_t>(MessageType::Record));
+    PutString(&buf, readingUtf8);
+    PutString(&buf, committedUtf8);
+    PutString(&buf, baselineUtf8);
     return buf;
 }
 

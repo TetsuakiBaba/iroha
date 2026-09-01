@@ -75,4 +75,14 @@ bool Convert(const std::u32string& reading, const std::u32string& context,
     return true;
 }
 
+void NotifyCommit(const std::u32string& reading, const std::u32string& committed,
+                  const std::u32string& baseline) {
+    std::vector<char> response;
+    iroha::ipc::Call(
+        iroha::ipc::BuildRecordRequest(iroha::Utf32ToUtf8(reading),
+                                       iroha::Utf32ToUtf8(committed),
+                                       iroha::Utf32ToUtf8(baseline)),
+        &response, 2000);
+}
+
 } // namespace ConvertClient

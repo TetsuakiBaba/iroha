@@ -27,9 +27,13 @@
 #include <vector>
 
 #include "ipc_protocol.h"
+#include "iroha/learning_engine.h"
+#include "iroha/learning_store.h"
 #include "iroha/reading_aligner.h"
 #include "iroha/romaji_composer.h"
 #include "iroha/unicode.h"
+#include "iroha/user_dictionary_engine.h"
+#include "iroha/user_dictionary_store.h"
 #include "iroha/zenz_engine.h"
 
 namespace {
@@ -47,15 +51,35 @@ void Print32(const std::u32string& s) {
     PrintUtf8(Utf32ToUtf8(s));
 }
 
+std::wstring DataDir() {
+    const wchar_t* localAppData = _wgetenv(L"LOCALAPPDATA");
+    return (localAppData ? std::wstring(localAppData) : L".") + L"\\iroha";
+}
+
 std::string DefaultModelPath() {
     if (const wchar_t* env = _wgetenv(L"IROHA_MODEL")) {
         return Utf32ToUtf8(Utf16ToUtf32(env));
     }
-    const wchar_t* localAppData = _wgetenv(L"LOCALAPPDATA");
-    std::wstring base = localAppData ? localAppData : L".";
-    return Utf32ToUtf8(
-        Utf16ToUtf32(base + L"\\iroha\\models\\zenz-v3.1-small-Q5_K_M.gguf"));
+    return Utf32ToUtf8(Utf16ToUtf32(DataDir() + L"\\models\\zenz-v3.1-small-Q5_K_M.gguf"));
 }
+
+std::filesystem::path StorePath(const wchar_t* envName, const wchar_t* fileName) {
+    if (const wchar_t* env = _wgetenv(envName)) return std::filesystem::path(env);
+    return std::filesystem::path(DataDir() + L"\\" + fileName);
+}
+
+// IME本体と同じ構成（zenz + ユーザ辞書 + 学習）でエンジンを組み立てる。
+// IROHA_MODEL / IROHA_USER_DICT / IROHA_LEARNING で差し替えられる
+struct EngineStack {
+    iroha::ZenzEngine zenz{DefaultModelPath()};
+    iroha::UserDictionaryStore userDictionary{
+        StorePath(L"IROHA_USER_DICT", L"user-dictionary.json")};
+    iroha::LearningStore learning{StorePath(L"IROHA_LEARNING", L"learning.json")};
+    iroha::UserDictionaryEngine dictionaryEngine{
+        &zenz, [this] { return userDictionary.Current(); }};
+    iroha::LearningEngine engine{&dictionaryEngine,
+                                 [this] { return learning.Current(); }};
+};
 
 std::u32string RomajiToKana(const std::u32string& input) {
     // ASCII文字を含む場合のみローマ字として解釈する
@@ -92,7 +116,7 @@ double MillisecondsSince(std::chrono::steady_clock::time_point start) {
         .count();
 }
 
-bool ConvertOnce(iroha::ZenzEngine& engine, const std::u32string& reading,
+bool ConvertOnce(iroha::ConversionEngine& engine, const std::u32string& reading,
                  const std::u32string& context, int count,
                  std::vector<std::u32string>* results) {
     std::string error;
@@ -103,7 +127,7 @@ bool ConvertOnce(iroha::ZenzEngine& engine, const std::u32string& reading,
     return true;
 }
 
-void ConvertAndPrint(iroha::ZenzEngine& engine, const std::u32string& input,
+void ConvertAndPrint(iroha::ConversionEngine& engine, const std::u32string& input,
                      const std::u32string& context, int count) {
     const std::u32string kana = RomajiToKana(input);
     const auto start = std::chrono::steady_clock::now();
@@ -121,7 +145,7 @@ void ConvertAndPrint(iroha::ZenzEngine& engine, const std::u32string& input,
     std::printf("  [%.1fms]\n", ms);
 }
 
-int RunBench(iroha::ZenzEngine& engine, const std::wstring& path) {
+int RunBench(iroha::ConversionEngine& engine, const std::wstring& path) {
     std::ifstream file(std::filesystem::path(path), std::ios::binary);
     if (!file) {
         std::fprintf(stderr, "ファイルが読めません\n");
@@ -219,7 +243,8 @@ int wmain(int argc, wchar_t** argv) {
         return 0;
     }
 
-    iroha::ZenzEngine engine(DefaultModelPath());
+    EngineStack stack;
+    iroha::ConversionEngine& engine = stack.engine;
 
     if (command == U"convert") {
         std::u32string context;

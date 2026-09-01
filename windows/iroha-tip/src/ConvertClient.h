@@ -15,4 +15,9 @@ void EnsureServer();
 bool Convert(const std::u32string& reading, const std::u32string& context,
              int candidateCount, std::vector<std::u32string>* candidates);
 
+// 変換確定の通知（学習用）。baselineはエンジンの第一候補で、
+// これと違う確定だけがサーバ側で学習される。失敗は無視する
+void NotifyCommit(const std::u32string& reading, const std::u32string& committed,
+                  const std::u32string& baseline);
+
 } // namespace ConvertClient

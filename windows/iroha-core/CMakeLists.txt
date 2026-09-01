@@ -5,11 +5,18 @@ cmake_minimum_required(VERSION 3.21)
 project(iroha-core LANGUAGES CXX)
 
 add_library(iroha-core STATIC
+    src/json.cpp
     src/kana.cpp
+    src/learning_dictionary.cpp
+    src/learning_engine.cpp
+    src/learning_store.cpp
     src/reading_aligner.cpp
     src/reading_constraint.cpp
     src/romaji_composer.cpp
     src/unicode.cpp
+    src/user_dictionary.cpp
+    src/user_dictionary_engine.cpp
+    src/user_dictionary_store.cpp
 )
 target_compile_features(iroha-core PUBLIC cxx_std_17)
 target_include_directories(iroha-core PUBLIC include)
