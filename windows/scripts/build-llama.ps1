@@ -20,18 +20,26 @@ $BuildDir = Join-Path $LlamaDir "build-windows"
 $DistDir  = Join-Path $RepoRoot "vendor\dist-windows"
 
 # ---- llama.cpp の取得（未取得の場合のみ） ----
+# gitのstderr出力はstderrリダイレクト環境（CI等）でErrorRecord化して
+# EAP=Stopだと即死するため、gitの間だけContinueに落とす
 if (-not (Test-Path $LlamaDir)) {
     Write-Host "==> llama.cpp ($LlamaTag) を取得"
-    git clone --depth 1 --branch $LlamaTag https://github.com/ggml-org/llama.cpp $LlamaDir
-    if ($LASTEXITCODE -ne 0) { throw "git clone に失敗しました" }
+    $ErrorActionPreference = "Continue"
+    git clone --quiet --depth 1 --branch $LlamaTag https://github.com/ggml-org/llama.cpp $LlamaDir
+    $exit = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+    if ($exit -ne 0) { throw "git clone に失敗しました" }
 }
 
 # ---- zenzのpre-tokenizer名を認識させるパッチ（適用済みならスキップ） ----
 $vocabCpp = Join-Path $LlamaDir "src\llama-vocab.cpp"
 if (-not (Select-String -Path $vocabCpp -Pattern "gpt2-small-japanese-char" -Quiet)) {
     Write-Host "==> zenz対応パッチを適用"
+    $ErrorActionPreference = "Continue"
     git -C $LlamaDir apply (Join-Path $RepoRoot "patches\llama-cpp-zenz-pretokenizer.patch")
-    if ($LASTEXITCODE -ne 0) { throw "パッチの適用に失敗しました" }
+    $exit = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+    if ($exit -ne 0) { throw "パッチの適用に失敗しました" }
 }
 
 # ---- MSVCツールセットの検出 ----
