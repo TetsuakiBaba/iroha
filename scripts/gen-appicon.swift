@@ -1,7 +1,14 @@
 // アプリアイコン(AppIcon.icns)を生成するワンショットスクリプト。
-// macOS標準の角丸矩形（キャンバスの約80%）に「い」を描く。
+// Resources/original/appicon.png（1024x1024・全面デザイン）を
+// macOS標準の角丸矩形（キャンバスの約80%・角丸22.4%）に嵌めて各サイズを書き出す。
 // 使い方: swift scripts/gen-appicon.swift Resources/
 import AppKit
+
+let outDir = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ".")
+let sourceURL = outDir.appendingPathComponent("original/appicon.png")
+guard let source = NSImage(contentsOf: sourceURL) else {
+    fatalError("source not found: \(sourceURL.path)")
+}
 
 func renderAppIcon(pixels: Int) -> NSBitmapImageRep {
     let size = CGFloat(pixels)
@@ -13,7 +20,7 @@ func renderAppIcon(pixels: Int) -> NSBitmapImageRep {
     NSGraphicsContext.saveGraphicsState()
     let gc = NSGraphicsContext(bitmapImageRep: rep)!
     NSGraphicsContext.current = gc
-    let ctx = gc.cgContext
+    gc.imageInterpolation = .high
 
     // Big Sur以降のテンプレート: コンテンツはキャンバスの約80%、角丸は辺の約22.4%
     let margin = size * 0.1
@@ -21,36 +28,20 @@ func renderAppIcon(pixels: Int) -> NSBitmapImageRep {
     let radius = rect.width * 0.224
     let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
 
-    // 背景: 白→ごく薄いグレーのグラデーション + 細いボーダー
+    NSGraphicsContext.saveGraphicsState()
     path.addClip()
-    let gradient = NSGradient(
-        starting: NSColor(white: 1.0, alpha: 1.0),
-        ending: NSColor(white: 0.92, alpha: 1.0)
-    )!
-    gradient.draw(in: rect, angle: -90)
-    NSGraphicsContext.current = gc  // clip解除なしでボーダーを重ねる
+    source.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+    NSGraphicsContext.restoreGraphicsState()
+
+    // 背景が白のため、白い場所でも輪郭が見えるよう細いボーダーを重ねる
     NSColor(white: 0.75, alpha: 1.0).setStroke()
     path.lineWidth = max(1, size * 0.004)
     path.stroke()
 
-    // 「い」をグリフの実描画範囲で中央に配置（gen-icons.swiftと同じ手法）
-    let font = NSFont.systemFont(ofSize: rect.width * 0.62, weight: .medium)
-    let attrs: [NSAttributedString.Key: Any] = [
-        .font: font,
-        .foregroundColor: NSColor(calibratedRed: 0.15, green: 0.15, blue: 0.17, alpha: 1.0),
-    ]
-    let line = CTLineCreateWithAttributedString(NSAttributedString(string: "い", attributes: attrs))
-    let bounds = CTLineGetImageBounds(line, ctx)
-    ctx.textPosition = CGPoint(
-        x: ((size - bounds.width) / 2 - bounds.minX).rounded(),
-        y: ((size - bounds.height) / 2 - bounds.minY).rounded()
-    )
-    CTLineDraw(line, ctx)
     NSGraphicsContext.restoreGraphicsState()
     return rep
 }
 
-let outDir = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ".")
 let iconset = FileManager.default.temporaryDirectory
     .appendingPathComponent("iroha-AppIcon-\(UUID().uuidString).iconset")
 try! FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
