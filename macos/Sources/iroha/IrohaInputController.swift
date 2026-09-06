@@ -8,7 +8,7 @@ import IrohaCore
 /// - スペースキー: 文節変換モードへ（←→で文節移動、Shift+←→で伸縮、Spaceで候補ウィンドウ）
 /// - Enterで確定、Escでかな表示に戻す/取消、BSで編集
 /// - F6-F10 / Ctrl+U,I,O,P,T: ひらがな/カタカナ/半角カナ/全角英数/半角英数
-/// - Shift+英字: 英字入力（ことえり互換。打鍵をそのまま保持し、Enter/Spaceまで英字のまま）
+/// - Shift+英字: Shiftを押している間だけ英字入力（離すとその英字を固定してかな入力に戻る）
 @objc(IrohaInputController)
 final class IrohaInputController: IMKInputController {
 
@@ -106,15 +106,16 @@ final class IrohaInputController: IMKInputController {
         enum Kind {
             case display         // F6-F10 / Ctrl+U…T で指定した表示形
             case liveConversion  // Shift+英字で英字入力を始めた時点のライブ変換結果で固定したかな
+            case alphabet        // Shift+英字で入力した英字（readingも英字そのまま。かなには戻さない）
         }
         var reading: String   // 元の読み（BS・Escでかなに戻すときに使う）
         var text: String      // 固定した表示（カタカナ・英数など）
         var kind: Kind = .display
     }
     private var fixedChunks: [FixedChunk] = []
-    /// Shift+英字で始めた英字入力（合成の末尾に付く。nilなら英字入力中でない）。
-    /// ことえりと同じく、いったん英字入力に入ると続く小文字も英字のまま保持し、
-    /// Enterで確定、Spaceで大文字/小文字/全角の候補を出す。この間 composer は空
+    /// Shift+英字で入力中の英字（合成の末尾に付く。nilなら英字入力中でない）。
+    /// Shiftを押している間だけ続き、Shiftを離して小文字などを打つと `.alphabet` の固定部分になって
+    /// かな入力に戻る（「今日はAIを使う」を1回のEnterで確定できる）。この間 composer は空
     private var alphabetRun: String?
     /// 固定部分の表示文字列
     private var fixedText: String { fixedChunks.map(\.text).joined() }
@@ -444,7 +445,13 @@ final class IrohaInputController: IMKInputController {
             return true
         case kVK_Delete:
             guard isComposing else { return false }
+            if alphabetRun == nil, composer.isEmpty, fixedChunks.last?.kind == .alphabet {
+                // 直前の英字部分に戻ってきた: 英字入力として開き直してから1文字消す
+                alphabetRun = fixedChunks.removeLast().text
+            }
             if alphabetRun != nil {
+                displayOverride = nil
+                autoCommitPending = false
                 deleteAlphabetBackward(client: client)
                 return true
             }
@@ -471,18 +478,15 @@ final class IrohaInputController: IMKInputController {
                 // F6/F7等の上書き表示をやめてかなに戻す
                 displayOverride = nil
                 updateMarkedText(client: client, display: kanaDisplay)
-            } else if !fixedChunks.isEmpty {
-                // 固定した部分をかなに戻して、ふつうの入力状態にする
-                unlockFixedChunks()
+            } else if unlockFixedChunks() || lastConversion != nil {
+                // 1回目のEsc: 固定した部分をかなに戻し、変換をやめてかな表示にする
+                // （英字の固定部分はかなに戻せないのでそのまま残る）
                 cancelConversion()
                 updateMarkedText(client: client, display: kanaDisplay)
-            } else if lastConversion != nil {
-                // 1回目のEsc: 変換をやめてかな表示に戻す
-                cancelConversion()
-                updateMarkedText(client: client, display: composer.display)
             } else {
                 // 2回目のEsc: 入力自体を取り消す
                 composer = Self.makeComposer()
+                fixedChunks = []
                 updateMarkedText(client: client, display: "")
             }
             return true
@@ -506,11 +510,14 @@ final class IrohaInputController: IMKInputController {
             if isComposing { commitCurrent(client: client) }
             return false
         }
-        // Shift+英字（大文字）で英字入力を始める。英字入力中は記号・数字も含めてそのまま足す
-        if alphabetRun != nil || Self.startsAlphabetRun(first) {
+        // Shift+英字（大文字）で英字入力を始める。Shiftを押している間は記号・数字もそのまま英字に足し、
+        // Shiftを離して打った文字からはかな入力に戻る（それまでの英字は固定部分になる）
+        let shift = event.modifierFlags.contains(.shift)
+        if Self.startsAlphabetRun(first) || (alphabetRun != nil && shift) {
             inputAlphabet(first, client: client)
             return true
         }
+        finishAlphabetRun()
         lockDisplayOverride()
         composer.input(first)
         // 句読点で自動確定（ライブ変換時のみ）: 変換結果の到着を待って確定する
@@ -574,11 +581,16 @@ final class IrohaInputController: IMKInputController {
         composer.prependText(last.reading)
     }
 
-    /// 固定部分をすべて読みに戻してcomposerへ返す
-    private func unlockFixedChunks() {
-        guard !fixedChunks.isEmpty else { return }
-        composer.prependText(fixedChunks.map(\.reading).joined())
-        fixedChunks = []
+    /// 固定部分を読みに戻してcomposerへ返す。英字の固定部分はかなに戻せない（読みに英字が混ざると
+    /// エンジンの読み制約が崩れる）ので、最後の英字部分より後ろだけを戻す。戻したものがあればtrue
+    @discardableResult
+    private func unlockFixedChunks() -> Bool {
+        let start = fixedChunks.lastIndex { $0.kind == .alphabet }.map { $0 + 1 } ?? 0
+        let unlocking = fixedChunks[start...]
+        guard !unlocking.isEmpty else { return false }
+        composer.prependText(unlocking.map(\.reading).joined())
+        fixedChunks.removeSubrange(start...)
+        return true
     }
 
     // MARK: - 英字入力（Shift+英字）
@@ -589,7 +601,8 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 英字を1文字足す。英字入力中でなければ、入力中のかなをその時点の表示で固定して英字入力を始める。
-    /// 文章の途中で英単語を入れるとき、いったん確定して英数モードに切り替えなくてよいようにする
+    /// 文章の途中で英単語を入れるとき、いったん確定して英数モードに切り替えなくてよいようにする。
+    /// Shiftを離して普通の文字を打つと `finishAlphabetRun` で英字を固定部分にし、かな入力に戻る
     private func inputAlphabet(_ character: Character, client: IMKTextInput) {
         if alphabetRun == nil {
             autoCommitPending = false
@@ -623,6 +636,14 @@ final class IrohaInputController: IMKInputController {
         fixedChunks.append(FixedChunk(reading: reading, text: text, kind: .liveConversion))
         composer = Self.makeComposer()
         cancelConversion()
+    }
+
+    /// 英字入力を終えて、打った英字を固定部分にする（Shiftを離してかな入力に戻るとき）
+    private func finishAlphabetRun() {
+        guard let run = alphabetRun else { return }
+        alphabetRun = nil
+        guard !run.isEmpty else { return }
+        fixedChunks.append(FixedChunk(reading: run, text: run, kind: .alphabet))
     }
 
     /// 英字入力の末尾1文字を削除する。空になったら英字入力をやめて元のかな入力に戻る
@@ -676,7 +697,9 @@ final class IrohaInputController: IMKInputController {
             [BunsetsuSegment(reading: $0, result: $0, candidates: Self.alphabetCandidates($0))]
         } ?? []
         let fixedSegments = fixedChunks.map {
-            BunsetsuSegment(reading: $0.reading, result: $0.text, candidates: nil)
+            BunsetsuSegment(
+                reading: $0.reading, result: $0.text,
+                candidates: $0.kind == .alphabet ? Self.alphabetCandidates($0.text) : nil)
         } + alphabetSegments
         let alphabetSegmentIndex: Int? = alphabetSegments.isEmpty ? nil : fixedSegments.count - 1
         let fixedPrefix = fixedText
