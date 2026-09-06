@@ -174,6 +174,10 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
 - 生成は読みで縛る（[ReadingConstraint](macos/Sources/IrohaCore/ReadingConstraint.swift)）。
   ひらがな・句読点は読みと一致する位置でしか出せず、読みを使い切るまで終端させない。
   これがないと「こんにちはあかちゃん → こんにちは。赤ちゃん」のように読みにない文字が混ざる
+- 長い読みは区切って順に変換する（[ChunkedConversionEngine](macos/Sources/IrohaCore/ChunkedConversionEngine.swift)）。
+  zenzはおおむね80文字を超える読みで途中や末尾を飛ばし始めるため、モデルに渡す読みを50文字以下に保つ。
+  区切りは句読点の直後、なければ窓を変換して文節境界（ReadingAligner）で切り、前の区切りの結果を左文脈にする。
+  先頭側の区切りはキャッシュするので、ライブ変換で打鍵ごとに再変換されるのは末尾の区切りだけ
 - llama.cppにはzenzのpre-tokenizer名（`gpt2-small-japanese-char`）を認識させる
   [パッチ](patches/llama-cpp-zenz-pretokenizer.patch)を当てている（build-llama.shが自動適用）
 

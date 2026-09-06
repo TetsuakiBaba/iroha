@@ -39,7 +39,7 @@ func editDistance(_ a: [Character], _ b: [Character]) -> Int {
     return previous[b.count]
 }
 
-/// IME本体と同じ構成（zenz + ユーザ辞書）でエンジンを組み立てる。
+/// IME本体と同じ構成（学習 + ユーザ辞書 + 長い読みの区切り + zenz）でエンジンを組み立てる。
 /// IROHA_USER_DICT でユーザ辞書のJSONを差し替えられる（既定は本体と同じファイル）
 func makeEngine() -> any ConversionEngine {
     let zenz: ZenzEngine
@@ -61,7 +61,8 @@ func makeEngine() -> any ConversionEngine {
         learning = .shared
     }
     return LearningEngine(
-        base: UserDictionaryEngine(base: zenz, dictionary: { store.current }),
+        base: UserDictionaryEngine(
+            base: ChunkedConversionEngine(base: zenz), dictionary: { store.current }),
         dictionary: { learning.current })
 }
 

@@ -185,7 +185,10 @@ public actor ZenzEngine: ConversionEngine {
             if mask == 0 { constraint = nil }
         }
 
-        let maxNewTokens = reading.count * 3 + 8
+        // 生成上限: 読みの長さに比例させつつ、KVキャッシュ（n_ctx）を超えて
+        // llama_decodeが失敗しないように残り容量で抑える
+        let remainingContext = Int(llama_n_ctx(ctx)) - tokens.count
+        let maxNewTokens = max(0, min(reading.count * 3 + 8, remainingContext))
         generation: for _ in 0..<maxNewTokens {
             try Task.checkCancellation()
             guard let picked = selectToken(runtime: runtime, constraint: constraint, mask: mask) else { break }
@@ -206,10 +209,25 @@ public actor ZenzEngine: ConversionEngine {
             try decode(ctx: ctx, tokens: &next)
         }
 
-        guard let output = String(data: outputBytes, encoding: .utf8) else {
-            throw ConversionError.inferenceFailed("出力がUTF-8として不正です")
+        return Self.decodeUTF8DroppingFragments(outputBytes)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 生成バイト列をUTF-8として文字列化する。
+    ///
+    /// 制約なし生成ではバイト単位のトークンが選ばれることがあり、多バイト文字の途中で
+    /// 終端や生成上限に達すると末尾に不完全なバイト列が残る。これをエラーにすると
+    /// ライブ変換の表示が更新されず古い結果のまま止まるため、断片は捨てて返す
+    static func decodeUTF8DroppingFragments(_ data: Data) -> String {
+        var bytes = data
+        // 末尾の断片は最大3バイト（4バイト文字の先頭3バイト）
+        for _ in 0..<4 {
+            if let text = String(data: bytes, encoding: .utf8) { return text }
+            guard !bytes.isEmpty else { break }
+            bytes.removeLast()
         }
-        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 途中にも不正なバイトがある: 置換文字に落としてから取り除く
+        return String(decoding: data, as: UTF8.self).replacingOccurrences(of: "\u{FFFD}", with: "")
     }
 
     static func buildPrompt(reading: String, leftContext: String, maxContextLength: Int) -> String {

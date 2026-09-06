@@ -29,10 +29,11 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 変換エンジンはプロセスで1つを共有する（モデルは初回変換時にロード）。
-    /// 学習 → ユーザ辞書 → LLM の順にデコレータで包む
-    /// （どちらも空なら素通しなのでふるまいは変わらない）
+    /// 学習 → ユーザ辞書 → 長い読みの区切り → LLM の順にデコレータで包む
+    /// （学習・辞書が空で読みが短ければ素通しなのでふるまいは変わらない）
     private static let engine: any ConversionEngine = LearningEngine(
-        base: UserDictionaryEngine(base: ZenzEngine(modelPath: engineModelPath)),
+        base: UserDictionaryEngine(
+            base: ChunkedConversionEngine(base: ZenzEngine(modelPath: engineModelPath))),
         dictionary: { LearningSettings.dictionary })
 
     private enum Mode {
