@@ -8,6 +8,7 @@ import IrohaCore
 /// - スペースキー: 文節変換モードへ（←→で文節移動、Shift+←→で伸縮、Spaceで候補ウィンドウ）
 /// - Enterで確定、Escでかな表示に戻す/取消、BSで編集
 /// - F6-F10 / Ctrl+U,I,O,P,T: ひらがな/カタカナ/半角カナ/全角英数/半角英数
+/// - Shift+英字: 英字入力（ことえり互換。打鍵をそのまま保持し、Enter/Spaceまで英字のまま）
 @objc(IrohaInputController)
 final class IrohaInputController: IMKInputController {
 
@@ -102,10 +103,19 @@ final class IrohaInputController: IMKInputController {
     /// F6-F10 / Ctrl+U,I,O,P,Tで表示形を指定した部分。
     /// 指定した見た目のまま未確定文字列の先頭に残し、以降の入力ではライブ変換の対象にしない
     private struct FixedChunk {
+        enum Kind {
+            case display         // F6-F10 / Ctrl+U…T で指定した表示形
+            case liveConversion  // Shift+英字で英字入力を始めた時点のライブ変換結果で固定したかな
+        }
         var reading: String   // 元の読み（BS・Escでかなに戻すときに使う）
         var text: String      // 固定した表示（カタカナ・英数など）
+        var kind: Kind = .display
     }
     private var fixedChunks: [FixedChunk] = []
+    /// Shift+英字で始めた英字入力（合成の末尾に付く。nilなら英字入力中でない）。
+    /// ことえりと同じく、いったん英字入力に入ると続く小文字も英字のまま保持し、
+    /// Enterで確定、Spaceで大文字/小文字/全角の候補を出す。この間 composer は空
+    private var alphabetRun: String?
     /// 固定部分の表示文字列
     private var fixedText: String { fixedChunks.map(\.text).joined() }
     /// 句読点入力後、変換結果の到着を待って自動確定するフラグ
@@ -141,10 +151,10 @@ final class IrohaInputController: IMKInputController {
     private var translationSpinnerTimer: Timer?
     private static let spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-    private var isComposing: Bool { !composer.isEmpty || !fixedChunks.isEmpty }
+    private var isComposing: Bool { !composer.isEmpty || !fixedChunks.isEmpty || alphabetRun != nil }
 
     /// 変換をやめてかなで見せるときの表示（固定部分 + 入力中のかな）
-    private var kanaDisplay: String { fixedText + composer.display }
+    private var kanaDisplay: String { fixedText + composer.display + (alphabetRun ?? "") }
 
     private var candidatesPanel: IMKCandidates? {
         (NSApp.delegate as? AppDelegate)?.candidatesPanel
@@ -434,6 +444,10 @@ final class IrohaInputController: IMKInputController {
             return true
         case kVK_Delete:
             guard isComposing else { return false }
+            if alphabetRun != nil {
+                deleteAlphabetBackward(client: client)
+                return true
+            }
             displayOverride = nil
             autoCommitPending = false
             // 固定部分しか残っていないときは、直前の固定部分を読みに戻してから削除する
@@ -449,7 +463,11 @@ final class IrohaInputController: IMKInputController {
         case kVK_Escape:
             guard isComposing else { return false }
             autoCommitPending = false
-            if displayOverride != nil {
+            if alphabetRun != nil {
+                // 英字入力を取り消して、Shiftを押す前の状態（ライブ変換表示）に戻す
+                endAlphabetRun()
+                updateMarkedText(client: client, display: currentDisplay)
+            } else if displayOverride != nil {
                 // F6/F7等の上書き表示をやめてかなに戻す
                 displayOverride = nil
                 updateMarkedText(client: client, display: kanaDisplay)
@@ -487,6 +505,11 @@ final class IrohaInputController: IMKInputController {
               (0x21...0x7E).contains(scalar.value) else {
             if isComposing { commitCurrent(client: client) }
             return false
+        }
+        // Shift+英字（大文字）で英字入力を始める。英字入力中は記号・数字も含めてそのまま足す
+        if alphabetRun != nil || Self.startsAlphabetRun(first) {
+            inputAlphabet(first, client: client)
+            return true
         }
         lockDisplayOverride()
         composer.input(first)
@@ -558,6 +581,86 @@ final class IrohaInputController: IMKInputController {
         fixedChunks = []
     }
 
+    // MARK: - 英字入力（Shift+英字）
+
+    /// 大文字の英字なら英字入力を始める（Shift・Caps Lockのどちらでも）
+    private static func startsAlphabetRun(_ character: Character) -> Bool {
+        character.isASCII && character.isLetter && character.isUppercase
+    }
+
+    /// 英字を1文字足す。英字入力中でなければ、入力中のかなをその時点の表示で固定して英字入力を始める。
+    /// 文章の途中で英単語を入れるとき、いったん確定して英数モードに切り替えなくてよいようにする
+    private func inputAlphabet(_ character: Character, client: IMKTextInput) {
+        if alphabetRun == nil {
+            autoCommitPending = false
+            lockDisplayOverride()
+            lockComposerWithLiveConversion()
+            alphabetRun = ""
+        }
+        alphabetRun?.append(character)
+        updateMarkedText(client: client, display: currentDisplay)
+    }
+
+    /// 入力中のかなを、いま表示している内容（ライブ変換結果があればそれ、なければかな）で
+    /// 固定部分にする。英字は読みにならないので、以降この部分を変換し直すことはない
+    private func lockComposerWithLiveConversion() {
+        conversionTask?.cancel()
+        let readingBeforeFlush = composer.text
+        composer.flush()
+        let reading = composer.text
+        guard !reading.isEmpty else {
+            cancelConversion()
+            return
+        }
+        let text: String
+        if let lastConversion, lastConversion.reading == readingBeforeFlush {
+            text = lastConversion.result + reading.dropFirst(readingBeforeFlush.count)
+        } else if let lastConversion, readingBeforeFlush.hasPrefix(lastConversion.reading) {
+            text = lastConversion.result + reading.dropFirst(lastConversion.reading.count)
+        } else {
+            text = reading
+        }
+        fixedChunks.append(FixedChunk(reading: reading, text: text, kind: .liveConversion))
+        composer = Self.makeComposer()
+        cancelConversion()
+    }
+
+    /// 英字入力の末尾1文字を削除する。空になったら英字入力をやめて元のかな入力に戻る
+    private func deleteAlphabetBackward(client: IMKTextInput) {
+        guard var run = alphabetRun else { return }
+        if !run.isEmpty { run.removeLast() }
+        if run.isEmpty {
+            endAlphabetRun()
+        } else {
+            alphabetRun = run
+        }
+        updateMarkedText(client: client, display: currentDisplay)
+    }
+
+    /// 英字入力をやめる。英字入力を始めたときに固定したかながあれば、
+    /// そのライブ変換結果ごと元に戻す（Shiftを押す前の表示に戻る）
+    private func endAlphabetRun() {
+        alphabetRun = nil
+        guard let last = fixedChunks.last, last.kind == .liveConversion else { return }
+        fixedChunks.removeLast()
+        composer.prependText(last.reading)
+        lastConversion = (last.reading, last.text)
+    }
+
+    /// 英字入力の候補: 打鍵通り / 小文字 / 大文字 / 先頭だけ大文字 / 全角
+    private static func alphabetCandidates(_ text: String) -> [String] {
+        var variants = [text, text.lowercased(), text.uppercased()]
+        if let first = text.first {
+            variants.append(String(first).uppercased() + text.dropFirst().lowercased())
+        }
+        if let fullwidth = text.applyingTransform(.fullwidthToHalfwidth, reverse: true) {
+            variants.append(fullwidth)
+        }
+        var results: [String] = []
+        for variant in variants where !results.contains(variant) { results.append(variant) }
+        return results
+    }
+
     // MARK: - 文節変換モード
 
     /// スペース押下: 全体を変換し、文節に分割して文節変換モードに入る
@@ -568,9 +671,14 @@ final class IrohaInputController: IMKInputController {
         composer.flush()
         let reading = composer.text
         // 固定部分はそのまま先頭の文節にする（変換し直さない）
+        // 英字入力中ならその英字を末尾の固定文節にする（候補は大文字/小文字/全角の変種。エンジンは呼ばない）
+        let alphabetSegments = alphabetRun.map {
+            [BunsetsuSegment(reading: $0, result: $0, candidates: Self.alphabetCandidates($0))]
+        } ?? []
         let fixedSegments = fixedChunks.map {
             BunsetsuSegment(reading: $0.reading, result: $0.text, candidates: nil)
-        }
+        } + alphabetSegments
+        let alphabetSegmentIndex: Int? = alphabetSegments.isEmpty ? nil : fixedSegments.count - 1
         let fixedPrefix = fixedText
         guard !reading.isEmpty || !fixedSegments.isEmpty else { return }
 
@@ -584,7 +692,8 @@ final class IrohaInputController: IMKInputController {
             : [BunsetsuSegment(reading: reading, result: interim, candidates: nil)])
         let cachedConversion = (lastConversion?.reading == reading) ? lastConversion?.result : nil
         segmentBaseline = cachedConversion.map { fixedPrefix + $0 }
-        currentSegmentIndex = min(fixedSegments.count, segments.count - 1)
+        // 英字入力からSpaceで来たときは、その英字の文節を選択して候補を出せるようにする
+        currentSegmentIndex = alphabetSegmentIndex ?? min(fixedSegments.count, segments.count - 1)
         refreshSegmentDisplay(client: client)
 
         // 固定部分だけなら変換するものがない
@@ -680,8 +789,12 @@ final class IrohaInputController: IMKInputController {
                let scalar = first.unicodeScalars.first, scalar.isASCII,
                (0x21...0x7E).contains(scalar.value) {
                 commitSegments(client: client)
-                composer.input(first)
-                composerDidChange(client: client)
+                if Self.startsAlphabetRun(first) {
+                    inputAlphabet(first, client: client)
+                } else {
+                    composer.input(first)
+                    composerDidChange(client: client)
+                }
                 return true
             }
             commitSegments(client: client)
@@ -919,6 +1032,7 @@ final class IrohaInputController: IMKInputController {
     /// 使い続け、新しく増えたかなだけを末尾に足す（新しい変換結果が届いたら置き換わる）
     private var currentDisplay: String {
         let prefix = fixedText
+        if let alphabetRun { return prefix + composer.display + alphabetRun }
         if let displayOverride { return prefix + displayOverride }
         if let lastConversion {
             if lastConversion.reading == composer.text {
@@ -974,6 +1088,10 @@ final class IrohaInputController: IMKInputController {
         guard isComposing else { return nil }
         // 固定部分（F6/F7等で指定した見た目）は常にそのまま先頭に付く
         let prefix = fixedText
+        if let alphabetRun {
+            // 英字入力中: 固定部分 + 英字をそのまま確定する（composerは空）
+            return prefix + composer.display + alphabetRun
+        }
         if let displayOverride {
             // F6/F7等で上書き表示中はその内容を確定する
             return prefix + displayOverride
@@ -1109,6 +1227,7 @@ final class IrohaInputController: IMKInputController {
         cancelConversion()
         composer = Self.makeComposer()  // 設定（句読点スタイル）の変更もここで反映される
         fixedChunks = []
+        alphabetRun = nil
         segments = []
         segmentBaseline = nil
         // 候補ウィンドウを閉じる。文節変換中に文字を打って確定した場合など、
