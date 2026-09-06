@@ -126,6 +126,19 @@ private struct DictionarySettingsTab: View {
                 LabeledContent("学習した変換") {
                     HStack {
                         Text("\(learningCount) 件").foregroundStyle(.secondary)
+                        Button("Finderで表示") {
+                            // 学習ファイル（learning.json）をFinderで選択状態にして見せる。
+                            // まだ1件も学習していなくてファイルが無いときはフォルダを開く
+                            let url = LearningStore.defaultURL
+                            if FileManager.default.fileExists(atPath: url.path) {
+                                NSWorkspace.shared.activateFileViewerSelecting([url])
+                            } else {
+                                let dir = url.deletingLastPathComponent()
+                                try? FileManager.default.createDirectory(
+                                    at: dir, withIntermediateDirectories: true)
+                                NSWorkspace.shared.open(dir)
+                            }
+                        }
                         Button("リセット") { LearningStore.shared.reset() }
                             .disabled(learningCount == 0)
                     }
