@@ -200,4 +200,5 @@ git tag v0.4.0 && git push origin v0.4.0
 - 本リポジトリのコード: [MIT](LICENSE)
 - 変換モデル [zenz-v3.1](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf)（Keita Miwa氏）: CC-BY-SA-4.0
 - [llama.cpp](https://github.com/ggml-org/llama.cpp): MIT
+- アプリアイコン・メニューバーアイコンの書体 [Tsukimi Rounded](https://fonts.google.com/specimen/Tsukimi+Rounded)（Takashi Funayama氏）: SIL Open Font License 1.1
 - 設計にあたり [azooKey-Desktop](https://github.com/azooKey/azooKey-Desktop) / Zenzai の公開知見を参考にした

@@ -698,6 +698,39 @@ private struct ModelSettingsTab: View {
 
 // MARK: - 情報
 
+/// ライセンス表示の1行（名称・作者・ライセンス名と、配布元へのリンク）
+private struct LicenseRow: View {
+    var name: String
+    var holder: String
+    var license: String
+    var note: String? = nil
+    var url: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(name).fontWeight(.medium)
+                if let note {
+                    Text(note).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(license).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                Text("© \(holder)")
+                if let destination = URL(string: url) {
+                    Link(url, destination: destination)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
 private struct AboutSettingsTab: View {
     @AppStorage("autoUpdateCheck") private var autoUpdateCheck = true
     @State private var showingUninstallConfirm = false
@@ -726,9 +759,25 @@ private struct AboutSettingsTab: View {
                 LabeledContent("変換モデル") {
                     Text(IrohaInputController.engineModelDisplayName)
                 }
-                Text("既定の変換モデル zenz-v3.1（Keita Miwa氏, CC-BY-SA-4.0）/ llama.cpp（MIT）")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            }
+
+            Section("ライセンス") {
+                LicenseRow(
+                    name: "iroha", holder: "Tetsuaki Baba", license: "MIT License",
+                    url: "https://github.com/TetsuakiBaba/iroha")
+                LicenseRow(
+                    name: "zenz-v3.1", holder: "Keita Miwa", license: "CC BY-SA 4.0",
+                    note: "既定の変換モデル",
+                    url: "https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf")
+                LicenseRow(
+                    name: "llama.cpp", holder: "ggml-org", license: "MIT License",
+                    note: "変換モデルの推論エンジン",
+                    url: "https://github.com/ggml-org/llama.cpp")
+                LicenseRow(
+                    name: "Tsukimi Rounded", holder: "Takashi Funayama",
+                    license: "SIL Open Font License 1.1",
+                    note: "アプリアイコン・メニューバーアイコンの書体",
+                    url: "https://fonts.google.com/specimen/Tsukimi+Rounded")
             }
 
             Section("アンインストール") {
