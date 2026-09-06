@@ -7,6 +7,7 @@
 - **文脈対応**: 直前に確定した文字列を条件としてLLMに与え、文脈に合った変換を行う
 - **ユーザ辞書**: 固有名詞などを登録して変換に反映。macOSのユーザ辞書（システム設定 > キーボード > ユーザ辞書）から取り込める
 - **学習**: 文節変換で修正して確定した変換を覚え、次から第一候補にする。同じ読みでも文中の位置で使い分ける（「きしゃのきしゃ」→「記者の貴社」）
+- **変換ルール**: よみ（トリガー）と出力の組を登録し、一致したとき出力を候補に加える。`{{date:yyyy/MM/dd}}` `{{time:HH:mm}}` のように変換のたびに変わる動的な出力が書ける（「きょう」→ 2026/09/06）
 - **AI変換して確定**: 修飾キー+Returnで、未確定文字列をAIに渡して確定。プロンプトを3つまで登録でき、1つ目は英訳が入っている（Apple Intelligence / Ollama / LM Studio）
 - **ローカル動作**: 変換モデルは [zenz-v3.1-small](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf)（GPT-2系95M・GGUF・約70MB）を llama.cpp（Metal）で実行。実測レイテンシは1変換あたり15〜30ms程度（Apple Silicon）
 
@@ -85,7 +86,7 @@ Shift+←→でユーザがいつでも調整できる。文節の候補生成�
 | タブ | 内容 |
 |---|---|
 | 入力 | ライブ変換・句読点で自動確定・候補数・句読点スタイル（、。/ ，．） |
-| 辞書 | ユーザ辞書（編集・macOSからの取り込み）・学習（ON/OFF・リセット） |
+| 辞書 | ユーザ辞書（編集・macOSからの取り込み）・変換ルール（編集）・学習（ON/OFF・リセット） |
 | AI | AI変換して確定のプリセット3つ（名前・プロンプト・ショートカット）・AIサービスの選択 |
 | モデル | かな漢字変換モデルのパス・ダウンロード状況・再起動 |
 | 情報 | アップデート確認・バージョン・クレジット |
@@ -147,6 +148,28 @@ macOS側の辞書は変更しない。ローマ字入力では到達できない
 ASCIIショートカット）は取り込みの対象外。取り込んだ単語をirohaで編集すると
 以後の同期では上書きされない。
 
+### 変換ルール（User Rewriter）
+
+メニューの「変換ルール...」（または設定 > 辞書 > 変換ルール > 「編集...」）から、
+**トリガー（よみ）と出力**の組を登録できる。文節の読み全体がトリガーに完全一致すると、
+出力を展開した文字列が候補ウィンドウの2番目（第一候補の直後）に入る。
+ユーザ辞書と違って出力は変換のたびに計算されるので、日付や時刻のように
+動的に変わる文字列を出せる。ルールごとに有効/無効を切り替えられる。
+
+```
+きょう -> {{date:yyyy/MM/dd}}          2026/09/06
+いま   -> {{time:HH:mm}}               14:05
+ひづけ -> 本日（{{date:M月d日(E)}}）   本日（9月6日(日)）   ← 通常の文字と混在できる
+われき -> {{wareki:Gy年M月d日}}        令和8年9月6日
+```
+
+- プレースホルダは `{{名前:書式}}`。`date`（既定 `yyyy/MM/dd`）・`time`（`HH:mm`）・
+  `datetime`（`yyyy/MM/dd HH:mm`）・`wareki`（和暦、`Gy年M月d日`）。書式はICUの日付パターンで、省略可
+- 対応していないプレースホルダは書いたまま出る（編集画面のプレビューで赤く表示）
+- ライブ変換の表示や第一候補は変えない（かな漢字変換・LLMの候補はそのまま）。
+  ルールの出力を選んで確定しても学習には記録しない（日付を覚えると翌日から誤るため）
+- トリガーは今のところ完全一致のみ（正規表現・コード実行・外部通信はしない）
+
 ## 開発
 
 macOS版のSwiftパッケージは `macos/` 配下にある（Windows版は今後 `windows/` に実装予定）。
@@ -167,6 +190,10 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
   自作モデルの学習パイプライン（データ準備→学習→GGUF変換→評価）は [training/](training/README.md) を参照
 - モデルファイルは `~/Library/Application Support/iroha/models/` に置く（環境変数 `IROHA_MODEL` で上書き可）
 - 学習結果は `~/Library/Application Support/iroha/learning.json`（環境変数 `IROHA_LEARNING` で差し替え可）
+- 変換ルールは `~/Library/Application Support/iroha/user-rewrite-rules.json`
+  （[UserRewriteRule](macos/Sources/IrohaCore/UserRewriteRule.swift)。変換エンジンのデコレータ鎖には入れず、
+  コントローラが候補ウィンドウを開くときに独立した候補生成源として合流させる。
+  トリガーの一致方法は `TriggerKind`、テンプレートへ渡す値は `RewriteMatch.parameters` で拡張する）
 - ユーザ辞書は `~/Library/Application Support/iroha/user-dictionary.json`（環境変数 `IROHA_USER_DICT` で
   iroha-cli から差し替え可）。macOSのユーザ辞書の実体は `~/Library/KeyboardServices/TextReplacements.db`
   （非公開スキーマのSQLite。実データが未チェックポイントのWALにあるため db/-wal/-shm ごとコピーして読む）

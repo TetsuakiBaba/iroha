@@ -73,7 +73,13 @@ func convertAndPrint(engine: any ConversionEngine, reading: String, context: Str
         let candidates = try await engine.convert(reading: kana, context: context, candidateCount: count)
         let elapsed = start.duration(to: .now)
         let ms = Double(elapsed.components.attoseconds) / 1e15 + Double(elapsed.components.seconds) * 1e3
-        print("\(kana) -> \(candidates.joined(separator: " / "))  [\(String(format: "%.1f", ms))ms]")
+        var line = "\(kana) -> \(candidates.joined(separator: " / "))  [\(String(format: "%.1f", ms))ms]"
+        // IMEと同じく、候補を並べる場面ではユーザ定義の変換ルールの出力も添える
+        if count > 1 {
+            let rewrites = UserRewriteRuleStore.shared.current.candidates(forReading: kana)
+            if !rewrites.isEmpty { line += "  + ルール: \(rewrites.joined(separator: " / "))" }
+        }
+        print(line)
     } catch {
         FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
     }

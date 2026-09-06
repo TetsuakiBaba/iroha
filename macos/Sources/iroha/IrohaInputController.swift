@@ -46,6 +46,9 @@ final class IrohaInputController: IMKInputController {
         var reading: String         // ひらがなの読み
         var result: String          // 現在選ばれている変換結果
         var candidates: [String]?   // 取得済みの候補（キャッシュ）
+        /// 候補のうちユーザ定義の変換ルール（User Rewriter）が生成したもの。
+        /// 日付・時刻のように毎回変わる文字列なので、選んで確定しても学習には記録しない
+        var rewriteCandidates: Set<String> = []
     }
 
     private var mode: Mode = .composing
@@ -289,6 +292,14 @@ final class IrohaInputController: IMKInputController {
         dictionaryItem.target = self
         menu.addItem(dictionaryItem)
 
+        let rewriteRulesItem = NSMenuItem(
+            title: "変換ルール...",
+            action: #selector(openRewriteRules(_:)),
+            keyEquivalent: ""
+        )
+        rewriteRulesItem.target = self
+        menu.addItem(rewriteRulesItem)
+
         menu.addItem(NSMenuItem.separator())
 
         let liveItem = NSMenuItem(
@@ -360,6 +371,12 @@ final class IrohaInputController: IMKInputController {
     @MainActor
     @objc private func openUserDictionary(_ sender: Any?) {
         SettingsUIState.shared.openUserDictionary()
+        (NSApp.delegate as? AppDelegate)?.openSettingsWindow()
+    }
+
+    @MainActor
+    @objc private func openRewriteRules(_ sender: Any?) {
+        SettingsUIState.shared.openRewriteRules()
         (NSApp.delegate as? AppDelegate)?.openSettingsWindow()
     }
 
@@ -689,6 +706,12 @@ final class IrohaInputController: IMKInputController {
             do {
                 var candidates = try await Self.engine.convert(
                     reading: reading, context: context, candidateCount: count)
+                // ユーザ定義の変換ルール（User Rewriter）の出力を合流させる。
+                // エンジンとは独立した候補生成源で、第一候補（今の表示）はそのままにして
+                // その直後に置く（「きょう」→ スペース2回で日付が選べる）
+                let rewrites = UserRewriteRuleStore.shared.current.candidates(forReading: reading)
+                    .filter { !candidates.contains($0) }
+                candidates.insert(contentsOf: rewrites, at: min(1, candidates.count))
                 // 定番のフォールバック候補（ひらがな・カタカナ）を末尾に追加
                 for extra in [reading, hiraganaToKatakana(reading)] where !candidates.contains(extra) {
                     candidates.append(extra)
@@ -698,6 +721,7 @@ final class IrohaInputController: IMKInputController {
                     guard self.mode == .segmenting, generation == self.segmentGeneration,
                           self.currentSegmentIndex == index else { return }
                     self.segments[index].candidates = finalCandidates
+                    self.segments[index].rewriteCandidates = Set(rewrites)
                     self.showPanel(with: finalCandidates)
                 }
             } catch {
@@ -801,6 +825,9 @@ final class IrohaInputController: IMKInputController {
     private func learnIfCorrected(committed: String) {
         guard LearningSettings.isEnabled, !segments.isEmpty, !committed.isEmpty,
               let baseline = segmentBaseline, committed != baseline else { return }
+        // 変換ルールの出力（日付・時刻など）を選んだ確定は学習しない。
+        // 覚えると「きょう → 2026/09/06」が翌日以降も第一候補になってしまう
+        guard !segments.contains(where: { $0.rewriteCandidates.contains($0.result) }) else { return }
         let reading = segments.map(\.reading).joined()
         let pairs = segments.map { (reading: $0.reading, result: $0.result) }
         Task.detached(priority: .utility) {

@@ -18,11 +18,18 @@ final class SettingsUIState: ObservableObject {
     static let shared = SettingsUIState()
     @Published var selectedTab: SettingsTab = .input
     @Published var showingUserDictionary = false
+    @Published var showingRewriteRules = false
 
     /// メニューの「ユーザ辞書...」から呼ぶ: 辞書タブを開いて編集シートを出す
     func openUserDictionary() {
         selectedTab = .dictionary
         showingUserDictionary = true
+    }
+
+    /// メニューの「変換ルール...」から呼ぶ: 辞書タブを開いてルール編集シートを出す
+    func openRewriteRules() {
+        selectedTab = .dictionary
+        showingRewriteRules = true
     }
 }
 
@@ -53,6 +60,7 @@ struct SettingsView: View {
         // macOS 26ではタブがタイトルバーに入るため、全項目が折り畳まれない幅が要る
         .frame(minWidth: 600, idealWidth: 600, minHeight: 690, idealHeight: 690)
         .sheet(isPresented: $uiState.showingUserDictionary) { UserDictionaryView() }
+        .sheet(isPresented: $uiState.showingRewriteRules) { UserRewriteRulesView() }
     }
 }
 
@@ -102,6 +110,7 @@ private struct DictionarySettingsTab: View {
     @ObservedObject private var uiState = SettingsUIState.shared
 
     @State private var userDictionaryCount = UserDictionaryStore.shared.entries.count
+    @State private var rewriteRuleCount = UserRewriteRuleStore.shared.rules.count
     @State private var learningCount = LearningStore.shared.count
 
     var body: some View {
@@ -117,6 +126,21 @@ private struct DictionarySettingsTab: View {
                 Text("「システム設定 > キーボード > ユーザ辞書」に登録した単語を取り込みます"
                     + "（読み取りのみ。macOS側の辞書は変更しません）。"
                     + "取り込んだ単語をirohaで編集すると、以後の取り込みでは上書きされません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("変換ルール") {
+                LabeledContent("登録ルール") {
+                    HStack {
+                        Text("\(rewriteRuleCount) 件").foregroundStyle(.secondary)
+                        Button("編集...") { uiState.showingRewriteRules = true }
+                    }
+                }
+                Text("トリガー（よみ）と出力の組を登録すると、文節の読みがトリガーに一致したとき"
+                    + "出力を変換候補に加えます。出力には {{date:yyyy/MM/dd}} や {{time:HH:mm}} の"
+                    + "ようなプレースホルダを書けて、変換のたびに今の日付・時刻に置き換わります"
+                    + "（例:「きょう」→ 2026/09/06）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -155,6 +179,11 @@ private struct DictionarySettingsTab: View {
             NotificationCenter.default.publisher(for: UserDictionaryStore.didChangeNotification)
         ) { _ in
             userDictionaryCount = UserDictionaryStore.shared.entries.count
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: UserRewriteRuleStore.didChangeNotification)
+        ) { _ in
+            rewriteRuleCount = UserRewriteRuleStore.shared.rules.count
         }
         .onReceive(
             NotificationCenter.default.publisher(for: LearningStore.didChangeNotification)
