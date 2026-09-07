@@ -7,8 +7,8 @@ import Foundation
 ///   [U+EE02 + 左文脈] + U+EE00 + カタカナ読み + U+EE01 → 変換結果
 public actor ZenzEngine: ConversionEngine {
 
-    public static let defaultModelPath = NSHomeDirectory()
-        + "/Library/Application Support/iroha/models/zenz-v3.1-small-Q5_K_M.gguf"
+    /// 既定のモデルの場所（`DataDirectory` の設定に追随する）
+    public static var defaultModelPath: String { DataDirectory.defaultModelURL.path }
 
     /// llama.cppのリソース一式。deinitで確実に解放する
     private final class Runtime: @unchecked Sendable {

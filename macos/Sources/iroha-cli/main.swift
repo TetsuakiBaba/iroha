@@ -11,7 +11,20 @@ import IrohaCore
 //   iroha-cli ajimee <evaluation_items.json>      : AJIMEE-Bench評価（acc@1・MinCER）。scripts/fetch-ajimee.shで取得
 //   iroha-cli repl                                : 対話モード（1行ずつ変換、レイテンシ表示）
 //   環境変数 IROHA_MODEL でモデルパス、IROHA_USER_DICT でユーザ辞書、
-//   IROHA_LEARNING で学習結果のファイルを上書き可能
+//   IROHA_LEARNING で学習結果のファイルを上書き可能。
+//   データフォルダはIME本体の設定（保存場所の変更）に従う。IROHA_DATA_DIR で上書き可能
+
+/// IME本体と同じデータフォルダを使う（設定 > 情報 > データの保存場所 で変えた場所を追う）
+func configureDataDirectory() {
+    let env = ProcessInfo.processInfo.environment
+    if let path = env["IROHA_DATA_DIR"], !path.isEmpty {
+        DataDirectory.configure(URL(fileURLWithPath: path, isDirectory: true))
+    } else if let path = UserDefaults(suiteName: "dev.iroha.inputmethod.iroha")?
+        .string(forKey: "dataDirectory"), !path.isEmpty {
+        DataDirectory.configure(URL(fileURLWithPath: path, isDirectory: true))
+    }
+}
+configureDataDirectory()
 
 func romajiToKana(_ input: String) -> String {
     // ASCII文字を含む場合のみローマ字として解釈する

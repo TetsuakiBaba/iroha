@@ -401,9 +401,9 @@ final class IrohaInputController: IMKInputController {
     }
 
     @objc private func openModelFolder(_ sender: Any?) {
-        let dir = NSHomeDirectory() + "/Library/Application Support/iroha/models"
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        NSWorkspace.shared.open(URL(fileURLWithPath: dir))
+        let dir = DataDirectory.modelsURL
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(dir)
     }
 
     @objc private func checkForUpdates(_ sender: Any?) {

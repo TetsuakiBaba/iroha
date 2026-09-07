@@ -1,6 +1,7 @@
 import AppKit
 import Carbon
 import Foundation
+import IrohaCore
 
 /// アプリ内アンインストール（設定 > 情報 のボタンから呼ぶ）。
 /// 入力ソースの選択を英数キーボードへ移してからirohaを入力ソース一覧から無効化し、
@@ -17,10 +18,12 @@ enum Uninstaller {
         // 2. 入力ソース一覧（システム設定で「+」した項目）からirohaを外す
         disableIrohaInputSources()
 
-        // 3. データの削除（任意）: モデル・ユーザ辞書・学習・設定・APIキー
+        // 3. データの削除（任意）: モデル・ユーザ辞書・学習・設定・APIキー。
+        //    保存場所をiCloud/Dropbox等に変えている場合、そのフォルダは他のMacと共有中
+        //    なので消さない（既定の場所だけ消す）
+        let sharedDataPath = DataDirectory.isDefault ? nil : DataDirectory.url.path
         if purgeData {
-            try? FileManager.default.removeItem(
-                atPath: NSHomeDirectory() + "/Library/Application Support/iroha")
+            try? FileManager.default.removeItem(at: DataDirectory.defaultURL)
             SecretStore.set("", for: RemoteTranslator.openAIKeyAccount)
             if let bundleId = Bundle.main.bundleIdentifier {
                 UserDefaults.standard.removePersistentDomain(forName: bundleId)
@@ -45,10 +48,17 @@ enum Uninstaller {
                 + " ~/Library/Input Methods/iroha.app を削除してください。"
         } else {
             alert.messageText = "irohaをアンインストールしました"
-            alert.informativeText = (purgeData
-                ? "アプリとデータ（ユーザ辞書・学習・変換モデル・設定）を削除しました。"
-                : "アプリを削除しました。ユーザ辞書・学習・変換モデル・設定は"
-                    + " ~/Library/Application Support/iroha に残っています。")
+            let dataPath = (DataDirectory.url.path as NSString).abbreviatingWithTildeInPath
+            var dataNote: String
+            if purgeData {
+                dataNote = "アプリとデータ（ユーザ辞書・学習・変換モデル・設定）を削除しました。"
+                if sharedDataPath != nil {
+                    dataNote += "\n共有フォルダ \(dataPath) のデータは他のMacで使われている可能性があるため残しています。"
+                }
+            } else {
+                dataNote = "アプリを削除しました。ユーザ辞書・学習・変換モデル・設定は \(dataPath) に残っています。"
+            }
+            alert.informativeText = dataNote
                 + "\n\n「システム設定 > プライバシーとセキュリティ > アクセシビリティ」の"
                 + " iroha の項目は、必要に応じて手動で削除してください。"
         }

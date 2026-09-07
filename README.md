@@ -99,7 +99,7 @@ Shift+←→でユーザがいつでも調整できる。文節の候補生成�
 | 辞書 | ユーザ辞書（編集・macOSからの取り込み）・変換ルール（編集）・学習（ON/OFF・リセット） |
 | AI | AI変換して確定のプリセット3つ（名前・プロンプト・ショートカット）・AIサービスの選択 |
 | モデル | かな漢字変換モデルのパス・ダウンロード状況・再起動 |
-| 情報 | アップデート確認・バージョン・クレジット |
+| 情報 | アップデート確認・バージョン・データの保存場所（iCloud/Dropboxで共有）・クレジット |
 
 パスワード欄（Secure Input）ではmacOSがIMEをシステムレベルで無効化するため、
 iroha側の対応は不要。
@@ -180,6 +180,24 @@ ASCIIショートカット）は取り込みの対象外。取り込んだ単語
   ルールの出力を選んで確定しても学習には記録しない（日付を覚えると翌日から誤るため）
 - トリガーは今のところ完全一致のみ（正規表現・コード実行・外部通信はしない）
 
+### データの保存場所（複数のMacで共有）
+
+ユーザ辞書・学習・変換ルール・変換モデル・設定は、既定では
+`~/Library/Application Support/iroha` に保存される。
+**設定 > 情報 > データの保存場所 > 「フォルダを変更...」** でiCloud DriveやDropboxの中の
+フォルダ（例: `~/Dropbox/iroha`）を指定すると、複数のMacで同じデータを使える。
+
+- 変更時に今のデータをコピーするか選べる。移行先に既にファイルがあれば上書きしない
+  （先に別のMacが置いたデータが優先される）。変更後はirohaが自動で再起動する
+- 他のMacからの同期で辞書・学習・ルールのファイルが変わると、再起動なしで読み直す。
+  学習は両方のMacの内容をマージする（同じ読み・文脈は新しい方を採る）
+- 設定（ライブ変換・候補数・AIプリセット・選択テキストのAI処理など）はフォルダ内の
+  `settings.json` を介して同期される。保存場所そのもの・モデルの絶対パス・アップデート確認の履歴・
+  APIキー（キーチェーン）は端末ごとの値なので同期しない
+- 2台で同時に編集した場合は後に保存した方が残る（Dropboxでは「競合コピー」が残ることがある）
+- 保存場所を変えていると、アンインストール時の「データも含めて削除」は既定の場所だけを消し、
+  共有フォルダには触らない
+
 ## 開発
 
 macOS版のSwiftパッケージは `macos/` 配下にある（Windows版は今後 `windows/` に実装予定）。
@@ -198,13 +216,16 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
   [ZenzEngine](macos/Sources/IrohaCore/ZenzEngine.swift)（zenz-v3 + llama.cpp）を別モデルに差し替えられる
 - モデルの評価は `iroha-cli bench ../testdata/eval.tsv`（完全一致率・CER・レイテンシ）。
   自作モデルの学習パイプライン（データ準備→学習→GGUF変換→評価）は [training/](training/README.md) を参照
-- モデルファイルは `~/Library/Application Support/iroha/models/` に置く（環境変数 `IROHA_MODEL` で上書き可）
-- 学習結果は `~/Library/Application Support/iroha/learning.json`（環境変数 `IROHA_LEARNING` で差し替え可）
-- 変換ルールは `~/Library/Application Support/iroha/user-rewrite-rules.json`
+- データフォルダは既定で `~/Library/Application Support/iroha`（設定で変更可。
+  [DataDirectory](macos/Sources/IrohaCore/DataDirectory.swift) が唯一の参照点で、以下のパスはすべてここから導く。
+  iroha-cliはIME本体の設定に従い、環境変数 `IROHA_DATA_DIR` で上書き可）
+- モデルファイルは `<データフォルダ>/models/` に置く（環境変数 `IROHA_MODEL` で上書き可）
+- 学習結果は `<データフォルダ>/learning.json`（環境変数 `IROHA_LEARNING` で差し替え可）
+- 変換ルールは `<データフォルダ>/user-rewrite-rules.json`
   （[UserRewriteRule](macos/Sources/IrohaCore/UserRewriteRule.swift)。変換エンジンのデコレータ鎖には入れず、
   コントローラが候補ウィンドウを開くときに独立した候補生成源として合流させる。
   トリガーの一致方法は `TriggerKind`、テンプレートへ渡す値は `RewriteMatch.parameters` で拡張する）
-- ユーザ辞書は `~/Library/Application Support/iroha/user-dictionary.json`（環境変数 `IROHA_USER_DICT` で
+- ユーザ辞書は `<データフォルダ>/user-dictionary.json`（環境変数 `IROHA_USER_DICT` で
   iroha-cli から差し替え可）。macOSのユーザ辞書の実体は `~/Library/KeyboardServices/TextReplacements.db`
   （非公開スキーマのSQLite。実データが未チェックポイントのWALにあるため db/-wal/-shm ごとコピーして読む）
 - zenzのプロンプト形式: `[U+EE02 + 左文脈] + U+EE00 + カタカナ読み + U+EE01 → 変換結果`

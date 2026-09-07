@@ -8,9 +8,8 @@ public final class LearningStore: @unchecked Sendable {
 
     public static let didChangeNotification = Notification.Name("iroha.learningDidChange")
 
-    public static let defaultURL = URL(
-        fileURLWithPath: NSHomeDirectory()
-            + "/Library/Application Support/iroha/learning.json")
+    /// 既定の保存先（`DataDirectory` の設定に追随する）
+    public static var defaultURL: URL { DataDirectory.learningURL }
 
     public static let shared = LearningStore()
 
@@ -23,10 +22,55 @@ public final class LearningStore: @unchecked Sendable {
     private var cached: LearningDictionary
     /// 確定操作を待たせないよう、ファイル書き込みは直列キューで非同期に行う
     private let saveQueue = DispatchQueue(label: "iroha.learning.save", qos: .utility)
+    /// 最後に読み込み/保存したときのファイルの更新日時（外部からの変更の検出用）
+    private var loadedModificationDate: Date?
 
     public init(url: URL = LearningStore.defaultURL) {
         self.url = url
         self.cached = Self.load(from: url)
+        self.loadedModificationDate = DataDirectory.modificationDate(of: url)
+    }
+
+    /// ファイルが外部（他のMacからの同期など）で変わっていれば取り込む。
+    ///
+    /// 学習は両方のMacで増えていくので、置き換えではなくマージする（同じキーは新しい方を採る）。
+    /// マージ結果がファイルと違えば書き戻すので、往復するうちに両者は同じ内容に収束する。
+    /// - Returns: 取り込んだらtrue
+    @discardableResult
+    public func reloadIfChanged() -> Bool {
+        let date = DataDirectory.modificationDate(of: url)
+        lock.lock()
+        guard date != loadedModificationDate else {
+            lock.unlock()
+            return false
+        }
+        loadedModificationDate = date
+        // ファイルが消えたのは他のMacでのリセット。マージで復活させず、こちらも空にする
+        guard date != nil else {
+            cached = .empty
+            lock.unlock()
+            postDidChange()
+            return true
+        }
+        let external = Self.load(from: url).entries
+        let mine = cached.entries
+        lock.unlock()
+
+        let merged = Self.merged(base: external, recorded: mine)
+        lock.lock()
+        let changedLocally = merged != cached.entries
+        if changedLocally { cached = LearningDictionary(entries: merged) }
+        lock.unlock()
+        if merged != external {
+            saveQueue.async { [url] in
+                Self.save(merged, to: url)
+                self.lock.lock()
+                self.loadedModificationDate = DataDirectory.modificationDate(of: url)
+                self.lock.unlock()
+            }
+        }
+        if changedLocally { postDidChange() }
+        return true
     }
 
     public var current: LearningDictionary {
@@ -69,7 +113,12 @@ public final class LearningStore: @unchecked Sendable {
         lock.lock()
         cached = .empty
         lock.unlock()
-        saveQueue.async { [url] in try? FileManager.default.removeItem(at: url) }
+        saveQueue.async { [url] in
+            try? FileManager.default.removeItem(at: url)
+            self.lock.lock()
+            self.loadedModificationDate = nil
+            self.lock.unlock()
+        }
         postDidChange()
     }
 
@@ -77,35 +126,44 @@ public final class LearningStore: @unchecked Sendable {
 
     private func merge(_ recorded: [LearningEntry]) {
         lock.lock()
-        // 同じ (種類, 読み, 文脈) は新しいもので置き換える
+        let entries = Self.merged(base: cached.entries, recorded: recorded)
+        cached = LearningDictionary(entries: entries)
+        lock.unlock()
+
+        saveQueue.async { [url] in
+            Self.save(entries, to: url)
+            self.lock.lock()
+            self.loadedModificationDate = DataDirectory.modificationDate(of: url)
+            self.lock.unlock()
+        }
+        postDidChange()
+    }
+
+    /// `base` に `recorded` を重ねる。同じ (種類, 読み, 文脈) は新しい方（updatedAt）を採り、
+    /// 上限を超えたら古いものから捨てる
+    static func merged(base: [LearningEntry], recorded: [LearningEntry]) -> [LearningEntry] {
         var byKey: [Key: LearningEntry] = [:]
         var order: [Key] = []
-        for entry in cached.entries {
+        for entry in base + recorded {
             let key = Key(entry)
-            if byKey[key] == nil { order.append(key) }
-            byKey[key] = entry
-        }
-        for entry in recorded {
-            let key = Key(entry)
-            if byKey[key] == nil { order.append(key) }
+            if let existing = byKey[key] {
+                // ユーザの今回の修正（recorded側）は同時刻でも優先する
+                guard entry.updatedAt >= existing.updatedAt else { continue }
+            } else {
+                order.append(key)
+            }
             byKey[key] = entry
         }
 
         var sentences = order.compactMap { byKey[$0] }.filter { $0.kind == .sentence }
         var segments = order.compactMap { byKey[$0] }.filter { $0.kind == .segment }
-        // 上限を超えたら古いものから捨てる
         if sentences.count > Self.maxSentences {
             sentences = Array(sentences.sorted { $0.updatedAt > $1.updatedAt }.prefix(Self.maxSentences))
         }
         if segments.count > Self.maxSegments {
             segments = Array(segments.sorted { $0.updatedAt > $1.updatedAt }.prefix(Self.maxSegments))
         }
-        let entries = sentences + segments
-        cached = LearningDictionary(entries: entries)
-        lock.unlock()
-
-        saveQueue.async { [url] in Self.save(entries, to: url) }
-        postDidChange()
+        return sentences + segments
     }
 
     /// エントリの同一性（同じ読み・同じ文脈なら上書き）

@@ -33,6 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // データの保存場所（iCloud/Dropbox等に変更可）。各ストアの初期化より前に確定させる
+        DataDirectorySettings.applyAtLaunch()
+
         // 「英訳して確定」「AI変換して確定」が別設定だった頃の値をプリセットへ移す
         AICommitSettings.migrateIfNeeded()
 
@@ -76,6 +79,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             candidatesPanel = IMKCandidates(server: server, panelType: kIMKSingleColumnScrollingCandidatePanel)
         }
         NSLog("iroha: IMKServer 起動 connection=\(connectionName) server=\(server != nil)")
+
+        // 他のMacと共有した設定（データフォルダのsettings.json）を取り込み、以後の変更を書き出す。
+        // 設定を読む処理（辞書の自動取り込み・選択テキスト処理）より前に行う
+        PreferencesSync.shared.start()
+        // 他のMacからの同期でデータフォルダが変わったら辞書・学習・ルール・設定を読み直す
+        DataDirectoryWatcher.shared.start()
 
         // 変換モデルが無ければバックグラウンドでダウンロード開始
         ModelDownloader.shared.startIfNeeded()

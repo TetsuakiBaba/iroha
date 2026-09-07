@@ -692,19 +692,17 @@ private struct ModelSettingsTab: View {
                 }
                 HStack {
                     Button("モデルフォルダを開く") {
-                        let dir = NSHomeDirectory() + "/Library/Application Support/iroha/models"
+                        let dir = DataDirectory.modelsURL
                         try? FileManager.default.createDirectory(
-                            atPath: dir, withIntermediateDirectories: true)
-                        NSWorkspace.shared.open(URL(fileURLWithPath: dir))
+                            at: dir, withIntermediateDirectories: true)
+                        NSWorkspace.shared.open(dir)
                     }
                     Button("ファイルを選択...") {
                         let panel = NSOpenPanel()
                         panel.allowedContentTypes = []
                         panel.allowsOtherFileTypes = true
                         panel.canChooseDirectories = false
-                        panel.directoryURL = URL(
-                            fileURLWithPath: NSHomeDirectory()
-                                + "/Library/Application Support/iroha/models")
+                        panel.directoryURL = DataDirectory.modelsURL
                         if panel.runModal() == .OK, let url = panel.url {
                             modelPath = url.path
                         }
@@ -760,6 +758,92 @@ private struct LicenseRow: View {
     }
 }
 
+/// データの保存場所（設定 > 情報）。iCloud Drive / Dropbox のフォルダを指定して他のMacと共有する
+private struct DataDirectorySection: View {
+    @State private var pendingURL: URL?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Section("データの保存場所") {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("フォルダ")
+                Text(DataDirectorySettings.displayPath)
+                    .font(.callout.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+            }
+            HStack {
+                Button("フォルダを変更...") { chooseFolder() }
+                Button("既定の場所に戻す") { pendingURL = DataDirectory.defaultURL }
+                    .disabled(DataDirectory.isDefault)
+                Button("Finderで開く") {
+                    try? FileManager.default.createDirectory(
+                        at: DataDirectory.url, withIntermediateDirectories: true)
+                    NSWorkspace.shared.open(DataDirectory.url)
+                }
+            }
+            Text("ユーザ辞書・学習・変換ルール・変換モデル・設定をこのフォルダに保存します。"
+                 + "iCloud DriveやDropboxのフォルダを指定すると、複数のMacで同じデータを共有できます。"
+                 + "変更するとirohaが再起動します。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .alert(
+            "データの保存場所を変更しますか？",
+            isPresented: Binding(get: { pendingURL != nil }, set: { if !$0 { pendingURL = nil } }),
+            presenting: pendingURL
+        ) { url in
+            Button("今のデータをコピーして変更") { apply(url, copyExisting: true) }
+            Button("コピーせずに変更") { apply(url, copyExisting: false) }
+            Button("キャンセル", role: .cancel) {}
+        } message: { url in
+            let path = (url.path as NSString).abbreviatingWithTildeInPath
+            if DataDirectorySettings.hasExistingData(at: url) {
+                Text("\(path)\n\nこのフォルダには既にirohaのデータがあります。"
+                     + "「コピーして変更」では、そこに無いファイルだけを今の場所からコピーします"
+                     + "（既にあるファイルは上書きしません）。変更後にirohaを再起動します。")
+            } else {
+                Text("\(path)\n\n変更後にirohaを再起動します。")
+            }
+        }
+        .alert("保存場所を変更できませんでした", isPresented: Binding(
+            get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "このフォルダを使う"
+        panel.message = "irohaのデータを保存するフォルダを選んでください（例: iCloud DriveやDropboxの中の「iroha」フォルダ）"
+        panel.directoryURL = DataDirectory.url
+        panel.level = .modalPanel
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard url.standardizedFileURL.path != DataDirectory.url.standardizedFileURL.path else { return }
+        pendingURL = url
+    }
+
+    private func apply(_ url: URL, copyExisting: Bool) {
+        do {
+            try DataDirectorySettings.change(to: url, copyExisting: copyExisting)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        // 終了処理の詳細（_exitを使う理由等）はAppRestarterのコメントを参照
+        AppRestarter.restartInstalledApp()
+    }
+}
+
 private struct AboutSettingsTab: View {
     @AppStorage("autoUpdateCheck") private var autoUpdateCheck = true
     @State private var showingUninstallConfirm = false
@@ -789,6 +873,8 @@ private struct AboutSettingsTab: View {
                     Text(IrohaInputController.engineModelDisplayName)
                 }
             }
+
+            DataDirectorySection()
 
             Section("ライセンス") {
                 LicenseRow(
