@@ -27,3 +27,26 @@ final class ZenzEngineDecodeTests: XCTestCase {
         XCTAssertEqual(ZenzEngine.decodeUTF8DroppingFragments(bytes), "資料に")
     }
 }
+
+final class ZenzEngineScoringTests: XCTestCase {
+
+    /// logSumExp は logit を対数確率に直す正規化項。exp(logit - logZ) の和が1になる
+    func testLogSumExpNormalizesLogits() {
+        var logits: [Float] = [1, 2, 3, -100, 50]
+        logits.withUnsafeMutableBufferPointer { buffer in
+            let logZ = ZenzEngine.logSumExp(buffer.baseAddress!, count: buffer.count)
+            let total = buffer.reduce(Float(0)) { $0 + expf($1 - logZ) }
+            XCTAssertEqual(total, 1, accuracy: 1e-5)
+            // 最大のlogitに支配される（50 ≫ 他）
+            XCTAssertEqual(logZ, 50, accuracy: 1e-4)
+        }
+    }
+
+    func testLogSumExpHandlesLargeValuesWithoutOverflow() {
+        var logits: [Float] = [1000, 1000]
+        logits.withUnsafeMutableBufferPointer { buffer in
+            let logZ = ZenzEngine.logSumExp(buffer.baseAddress!, count: buffer.count)
+            XCTAssertEqual(logZ, 1000 + logf(2), accuracy: 1e-3)
+        }
+    }
+}

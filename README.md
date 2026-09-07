@@ -237,6 +237,9 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
 - 生成は読みで縛る（[ReadingConstraint](macos/Sources/IrohaCore/ReadingConstraint.swift)）。
   ひらがな・句読点は読みと一致する位置でしか出せず、読みを使い切るまで終端させない。
   これがないと「こんにちはあかちゃん → こんにちは。赤ちゃん」のように読みにない文字が混ざる
+- n-best候補は先頭トークンを上位から分岐して貪欲に補完し、系列の対数確率で並べる。
+  最良候補から8nat以上離れた候補は捨てる（読み制約は漢字・英字の読みを検証できないため、
+  これがないと「ないようを → 活用を / NIPPON」のような読みの合わない候補が埋め草として残る）
 - 長い読みは区切って順に変換する（[ChunkedConversionEngine](macos/Sources/IrohaCore/ChunkedConversionEngine.swift)）。
   zenzはおおむね80文字を超える読みで途中や末尾を飛ばし始めるため、モデルに渡す読みを50文字以下に保つ。
   区切りは句読点の直後、なければ窓を変換して文節境界（ReadingAligner）で切り、前の区切りの結果を左文脈にする。

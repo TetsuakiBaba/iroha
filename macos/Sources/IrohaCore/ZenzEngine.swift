@@ -63,56 +63,90 @@ public actor ZenzEngine: ConversionEngine {
 
         if candidateCount <= 1 {
             let result = try generate(runtime: runtime, promptTokens: promptTokens,
-                                      forcedFirstToken: nil, reading: reading)
+                                      forcedFirstToken: nil, reading: reading).text
             return [result.isEmpty ? reading : result]
         }
 
         // n-best: 先頭トークンを上位候補に分岐し、それぞれ貪欲に補完する。
-        // かな漢字変換では先頭の文字が同音異義語をほぼ決めるため、これで多様な候補が得られる
+        // かな漢字変換では先頭の文字が同音異義語をほぼ決めるため、これで多様な候補が得られる。
+        // 各候補には系列全体の対数確率を付け、最良候補から `nbestLogProbWindow` 以上
+        // 離れたものは捨てる（読み制約は漢字・英字の読みを検証できないので、
+        // 「活用を」「NIPPON」のような読みの合わない候補が探索の埋め草として通ってしまう。
+        // モデル自身の確からしさで足切りすることでそれを除く）
         var tokens = promptTokens
         llama_memory_clear(llama_get_memory(runtime.context), true)
         try decode(ctx: runtime.context, tokens: &tokens)
 
         let constraint = ReadingConstraint(reading: reading)
         let firstTokens = topTokens(runtime: runtime, count: candidateCount * 8)
-        var results: [String] = []
-        for token in firstTokens {
+        var scored: [(text: String, logProb: Float)] = []
+        var bestLogProb = -Float.infinity
+        for first in firstTokens {
             try Task.checkCancellation()
-            if llama_vocab_is_eog(runtime.vocab, token) { continue }
+            // 先頭トークンの確率だけで既に足切り線を下回るなら、続きを生成しても届かない
+            // （後続の対数確率は0以下）。先頭トークンは確率の高い順なので以降も同様
+            if first.logProb < bestLogProb - Self.nbestLogProbWindow { break }
+            if llama_vocab_is_eog(runtime.vocab, first.token) { continue }
             // 読みと辻褄の合わない先頭トークンは候補にしない
             if let constraint {
-                guard let text = runtime.tokenTexts[Int(token)],
+                guard let text = runtime.tokenTexts[Int(first.token)],
                       constraint.advance(constraint.initialMask, text: text) != 0 else { continue }
             }
-            let text = try generate(runtime: runtime, promptTokens: promptTokens,
-                                    forcedFirstToken: token, reading: reading)
-            if !text.isEmpty, !results.contains(text) {
-                results.append(text)
+            let generated = try generate(runtime: runtime, promptTokens: promptTokens,
+                                         forcedFirstToken: first, reading: reading)
+            guard !generated.text.isEmpty else { continue }
+            if let index = scored.firstIndex(where: { $0.text == generated.text }) {
+                // 同じ文字列に別のトークン列で到達した: 確率の高い方を残す
+                scored[index].logProb = max(scored[index].logProb, generated.logProb)
+            } else {
+                scored.append(generated)
             }
-            if results.count >= candidateCount { break }
+            bestLogProb = max(bestLogProb, generated.logProb)
+            if scored.count >= candidateCount { break }
         }
-        if results.isEmpty { results = [reading] }
-        return results
+        let results = scored
+            .filter { $0.logProb >= bestLogProb - Self.nbestLogProbWindow }
+            .sorted { $0.logProb > $1.logProb }
+            .map(\.text)
+        return results.isEmpty ? [reading] : results
     }
 
-    /// プロンプト評価直後のlogitsから上位トークンを返す
-    private func topTokens(runtime: Runtime, count: Int) -> [llama_token] {
+    /// n-best候補を残す対数確率の幅（最良候補との差、nat単位）。
+    /// 実測では同音異義語どうしの差は6nat以内に収まる（きしゃ: 記者 −1.3 〜 樹舎 −5.9）。
+    /// 文脈で確信が高いときは読みの合わない候補が大きく離れる
+    /// （ガイドする＋ないようを: 内容を −0.0、活用を −16.4、NIPPON −18.4）
+    static let nbestLogProbWindow: Float = 8
+
+    /// プロンプト評価直後のlogitsから上位トークンを対数確率つきで返す
+    private func topTokens(runtime: Runtime, count: Int) -> [(token: llama_token, logProb: Float)] {
         guard let logits = llama_get_logits_ith(runtime.context, -1) else { return [] }
         let vocabSize = Int(llama_vocab_n_tokens(runtime.vocab))
+        let logZ = Self.logSumExp(logits, count: vocabSize)
         var indexed: [(token: llama_token, logit: Float)] = []
         indexed.reserveCapacity(vocabSize)
         for index in 0..<vocabSize {
             indexed.append((llama_token(index), logits[index]))
         }
-        return indexed.sorted { $0.logit > $1.logit }.prefix(count).map(\.token)
+        return indexed.sorted { $0.logit > $1.logit }.prefix(count)
+            .map { (token: $0.token, logProb: $0.logit - logZ) }
+    }
+
+    /// log Σ exp(logits)（logitを対数確率に直す正規化項）
+    static func logSumExp(_ logits: UnsafeMutablePointer<Float>, count: Int) -> Float {
+        var maxLogit = -Float.infinity
+        for index in 0..<count { maxLogit = max(maxLogit, logits[index]) }
+        var sum: Float = 0
+        for index in 0..<count { sum += expf(logits[index] - maxLogit) }
+        return maxLogit + logf(sum)
     }
 
     /// 現在のlogitsから、読みの制約を満たすもっとも尤度の高いトークンを選ぶ。
     /// 制約を満たすトークンが1つもなければ制約を諦めて素の最尤トークンを返す（relaxed）
     private func selectToken(runtime: Runtime, constraint: ReadingConstraint?, mask: UInt64)
-        -> (token: llama_token, mask: UInt64, relaxed: Bool)? {
+        -> (token: llama_token, mask: UInt64, relaxed: Bool, logProb: Float)? {
         guard let logits = llama_get_logits_ith(runtime.context, -1) else { return nil }
         let vocabSize = Int(llama_vocab_n_tokens(runtime.vocab))
+        let logZ = Self.logSumExp(logits, count: vocabSize)
         var best: (index: Int, logit: Float)?
         var bestMask: UInt64 = 0
         var fallback: (index: Int, logit: Float)?
@@ -138,25 +172,28 @@ public actor ZenzEngine: ConversionEngine {
         }
 
         if let best, constraint != nil {
-            return (llama_token(best.index), bestMask, false)
+            return (llama_token(best.index), bestMask, false, best.logit - logZ)
         }
         guard let fallback else { return nil }
-        return (llama_token(fallback.index), 0, constraint != nil)
+        return (llama_token(fallback.index), 0, constraint != nil, fallback.logit - logZ)
     }
 
     /// 貪欲法で1候補を生成する。forcedFirstTokenがあれば先頭をそのトークンに固定する。
-    /// 各ステップでは読みと辻褄の合うトークンだけを選ぶ（constrained decoding）
+    /// 各ステップでは読みと辻褄の合うトークンだけを選ぶ（constrained decoding）。
+    /// - Returns: 生成した文字列と、先頭トークン・各トークン・終端まで含めた系列の対数確率
     private func generate(
         runtime: Runtime,
         promptTokens: [llama_token],
-        forcedFirstToken: llama_token?,
+        forcedFirstToken: (token: llama_token, logProb: Float)?,
         reading: String
-    ) throws -> String {
+    ) throws -> (text: String, logProb: Float) {
         let ctx = runtime.context
         let vocab = runtime.vocab
         var tokens = promptTokens
+        var logProb: Float = 0
         if let forcedFirstToken {
-            tokens.append(forcedFirstToken)
+            tokens.append(forcedFirstToken.token)
+            logProb += forcedFirstToken.logProb
         }
 
         // KVキャッシュを破棄してプロンプトを評価（TODO: プレフィックス再利用で増分デコード）
@@ -174,14 +211,14 @@ public actor ZenzEngine: ConversionEngine {
                 }
             }
         }
-        if let forcedFirstToken { appendPiece(forcedFirstToken) }
+        if let forcedFirstToken { appendPiece(forcedFirstToken.token) }
 
         // 読みの消費状況（constrained decoding用）。追跡できない読みや
         // 制約を満たすトークンが尽きた場合はnilにして素の貪欲生成に戻す
         var constraint = ReadingConstraint(reading: reading)
         var mask = constraint?.initialMask ?? 0
         if let forcedFirstToken, let active = constraint {
-            mask = active.advance(mask, text: runtime.tokenTexts[Int(forcedFirstToken)] ?? "")
+            mask = active.advance(mask, text: runtime.tokenTexts[Int(forcedFirstToken.token)] ?? "")
             if mask == 0 { constraint = nil }
         }
 
@@ -195,6 +232,7 @@ public actor ZenzEngine: ConversionEngine {
             let token = picked.token
             if picked.relaxed { constraint = nil }
             mask = picked.mask
+            logProb += picked.logProb
             if llama_vocab_is_eog(vocab, token) { break }
 
             appendPiece(token)
@@ -209,8 +247,9 @@ public actor ZenzEngine: ConversionEngine {
             try decode(ctx: ctx, tokens: &next)
         }
 
-        return Self.decodeUTF8DroppingFragments(outputBytes)
+        let text = Self.decodeUTF8DroppingFragments(outputBytes)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (text, logProb)
     }
 
     /// 生成バイト列をUTF-8として文字列化する。
