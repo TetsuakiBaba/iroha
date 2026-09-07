@@ -87,6 +87,10 @@ public struct RewriteContext: Sendable {
 /// - `{{wareki:Gy年M月d日}}`   和暦の日付（既定 `Gy年M月d日` → 令和8年9月6日）
 /// - `{{param:名前}}`          トリガーの一致で得た値（将来のパラメータ付きトリガー用）
 ///
+/// `date` / `datetime` / `wareki` は名前に `+N` / `-N` を付けてN日ずらせる
+/// （`{{date+1}}` 明日、`{{date-2:M月d日}}` 一昨日、`{{wareki+3}}` 明々後日）。
+/// 月末・年末をまたいでも暦どおりに進む。`time` にはオフセットを付けられない。
+///
 /// 引数の中の `:`（`HH:mm` など）はそのまま引数の一部になる（名前と引数は最初の `:` で分ける）。
 /// 知らないプレースホルダや閉じていない `{{` は書いたまま文字列として残す
 /// （設定画面ではプレビューでそのまま見えるので、書き損じに気づける）。
@@ -98,6 +102,21 @@ public struct RewriteTemplate: Sendable, Equatable {
     }
 
     public static let knownPlaceholders: Set<String> = ["date", "time", "datetime", "wareki", "param"]
+    /// 名前に日数オフセット（`+1` / `-1`）を付けられるプレースホルダ
+    public static let offsettablePlaceholders: Set<String> = ["date", "datetime", "wareki"]
+
+    /// プレースホルダ名を基本名と日数オフセットに分ける（`"date+1"` → `("date", 1)`）。
+    /// 対応していない名前・オフセットを付けられない名前に付いていればnil
+    public static func resolve(name: String) -> (base: String, dayOffset: Int)? {
+        if knownPlaceholders.contains(name) { return (name, 0) }
+        guard let sign = name.firstIndex(where: { $0 == "+" || $0 == "-" }) else { return nil }
+        let base = String(name[..<sign])
+        let digits = name[name.index(after: sign)...]
+        guard offsettablePlaceholders.contains(base), !digits.isEmpty,
+              digits.allSatisfy(\.isNumber), let magnitude = Int(digits)
+        else { return nil }
+        return (base, name[sign] == "-" ? -magnitude : magnitude)
+    }
 
     public let source: String
     public let segments: [Segment]
@@ -110,7 +129,7 @@ public struct RewriteTemplate: Sendable, Equatable {
     /// 展開結果が呼ぶたびに変わりうるか（日時などを含む）
     public var isDynamic: Bool {
         segments.contains {
-            if case .placeholder(let name, _) = $0 { return Self.knownPlaceholders.contains(name) }
+            if case .placeholder(let name, _) = $0 { return Self.resolve(name: name) != nil }
             return false
         }
     }
@@ -118,7 +137,7 @@ public struct RewriteTemplate: Sendable, Equatable {
     /// 対応していないプレースホルダ名（設定画面の警告用）
     public var unknownPlaceholders: [String] {
         segments.compactMap {
-            if case .placeholder(let name, _) = $0, !Self.knownPlaceholders.contains(name) { return name }
+            if case .placeholder(let name, _) = $0, Self.resolve(name: name) == nil { return name }
             return nil
         }
     }
@@ -140,17 +159,18 @@ public struct RewriteTemplate: Sendable, Equatable {
     // MARK: - 展開
 
     private static func expand(name: String, argument: String?, context: RewriteContext) -> String? {
-        switch name {
+        guard let (base, dayOffset) = resolve(name: name) else { return nil }
+        switch base {
         case "date":
-            return formatDate(argument ?? "yyyy/MM/dd", context: context)
+            return formatDate(argument ?? "yyyy/MM/dd", dayOffset: dayOffset, context: context)
         case "time":
-            return formatDate(argument ?? "HH:mm", context: context)
+            return formatDate(argument ?? "HH:mm", dayOffset: 0, context: context)
         case "datetime":
-            return formatDate(argument ?? "yyyy/MM/dd HH:mm", context: context)
+            return formatDate(argument ?? "yyyy/MM/dd HH:mm", dayOffset: dayOffset, context: context)
         case "wareki":
             var context = context
             context.calendar = Calendar(identifier: .japanese)
-            return formatDate(argument ?? "Gy年M月d日", context: context)
+            return formatDate(argument ?? "Gy年M月d日", dayOffset: dayOffset, context: context)
         case "param":
             guard let argument else { return nil }
             return context.parameters[argument]
@@ -159,13 +179,19 @@ public struct RewriteTemplate: Sendable, Equatable {
         }
     }
 
-    private static func formatDate(_ format: String, context: RewriteContext) -> String {
+    private static func formatDate(_ format: String, dayOffset: Int, context: RewriteContext) -> String {
+        var calendar = context.calendar
+        calendar.timeZone = context.timeZone
+        // 日付の加減は暦で行う（月末・年末・うるう年をまたいでも正しい日付になる）
+        let date = dayOffset == 0
+            ? context.now
+            : calendar.date(byAdding: .day, value: dayOffset, to: context.now) ?? context.now
         let formatter = DateFormatter()
-        formatter.calendar = context.calendar
+        formatter.calendar = calendar
         formatter.locale = context.locale
         formatter.timeZone = context.timeZone
         formatter.dateFormat = format
-        return formatter.string(from: context.now)
+        return formatter.string(from: date)
     }
 
     private static func literal(name: String, argument: String?) -> String {

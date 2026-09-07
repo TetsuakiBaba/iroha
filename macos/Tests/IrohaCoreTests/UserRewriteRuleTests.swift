@@ -62,6 +62,26 @@ final class UserRewriteRuleTests: XCTestCase {
         XCTAssertEqual(RewriteTemplate("{{wareki}}").render(in: fixedContext()), "令和8年9月6日")
     }
 
+    func testRenderDayOffsets() {
+        let context = fixedContext()
+        XCTAssertEqual(RewriteTemplate("{{date+1}}").render(in: context), "2026/09/07")
+        XCTAssertEqual(RewriteTemplate("{{date-2:M月d日}}").render(in: context), "9月4日")
+        XCTAssertEqual(RewriteTemplate("{{date+30}}").render(in: context), "2026/10/06")   // 月をまたぐ
+        XCTAssertEqual(RewriteTemplate("{{date+120}}").render(in: context), "2027/01/04")  // 年をまたぐ
+        XCTAssertEqual(RewriteTemplate("{{wareki+3}}").render(in: context), "令和8年9月9日")
+        XCTAssertEqual(RewriteTemplate("{{datetime-1}}").render(in: context), "2026/09/05 14:05")
+        XCTAssertTrue(RewriteTemplate("{{date+1}}").isDynamic)
+    }
+
+    func testOffsetNotAllowedOnTimeOrMalformed() {
+        // time にはオフセットを付けられず、数字でないオフセットも未対応として書いたまま残す
+        XCTAssertEqual(RewriteTemplate("{{time+1}}").render(in: fixedContext()), "{{time+1}}")
+        XCTAssertEqual(RewriteTemplate("{{time+1}}").unknownPlaceholders, ["time+1"])
+        XCTAssertEqual(RewriteTemplate("{{date+}}").unknownPlaceholders, ["date+"])
+        XCTAssertEqual(RewriteTemplate("{{date+x}}").unknownPlaceholders, ["date+x"])
+        XCTAssertEqual(RewriteTemplate("{{date+1-1}}").unknownPlaceholders, ["date+1-1"])
+    }
+
     func testRenderMixesTextAndPlaceholders() {
         let template = RewriteTemplate("本日（{{date:yyyy/MM/dd}}）{{time:HH:mm}}現在")
         XCTAssertEqual(template.render(in: fixedContext()), "本日（2026/09/06）14:05現在")
@@ -148,6 +168,29 @@ final class UserRewriteRuleTests: XCTestCase {
         XCTAssertEqual(reloaded.current.candidates(forReading: "きょう").count, 1)
         reloaded.remove(ids: [reloaded.rules[0].id])
         XCTAssertEqual(UserRewriteRuleStore(url: url).rules.map(\.trigger), ["きょう"])
+    }
+
+    func testStoreSeedsDefaultRulesOnceWithoutDuplicatingUserRules() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iroha-rewrite-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // 旧ファイル（既定ルール未投入）に、ユーザが自分で「きょう」を登録している
+        UserRewriteRuleStore(url: url).replaceAll([UserRewriteRule(trigger: "きょう", output: "{{date:M/d}}")])
+
+        let seeded = UserRewriteRuleStore(url: url, seedsDefaults: true)
+        XCTAssertEqual(seeded.rules.first?.output, "{{date:M/d}}", "ユーザのルールは上書きしない")
+        XCTAssertEqual(seeded.rules.filter { $0.trigger == "きょう" }.count, 1)
+        XCTAssertEqual(
+            Set(seeded.rules.map(\.trigger)),
+            Set(UserRewriteRuleStore.defaultRules.map(\.trigger)))
+        XCTAssertEqual(seeded.current.candidates(forReading: "あした", context: fixedContext()), ["2026/09/07"])
+        XCTAssertEqual(seeded.current.candidates(forReading: "いま", context: fixedContext()), ["14:05"])
+
+        // 既定ルールを消しても、次の起動で復活しない
+        seeded.remove(ids: Set(seeded.rules.filter { $0.trigger == "あす" }.map(\.id)))
+        let again = UserRewriteRuleStore(url: url, seedsDefaults: true)
+        XCTAssertFalse(again.rules.contains { $0.trigger == "あす" })
     }
 
     func testDecodeTolerantOfMissingOptionalFields() throws {

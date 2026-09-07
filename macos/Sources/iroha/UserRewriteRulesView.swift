@@ -138,7 +138,8 @@ struct UserRewriteRulesView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Text("{{date:yyyy/MM/dd}} 日付　{{time:HH:mm}} 時刻　{{datetime:yyyy/MM/dd HH:mm}} 日時　"
-                + "{{wareki:Gy年M月d日}} 和暦（書式は省略可）")
+                + "{{wareki:Gy年M月d日}} 和暦（書式は省略可）\n"
+                + "{{date+1}} 明日　{{date-1}} 昨日　{{wareki+2}} 明後日（+N/-N で日数をずらす）")
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
