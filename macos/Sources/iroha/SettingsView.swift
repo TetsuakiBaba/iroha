@@ -80,11 +80,14 @@ private struct InputSettingsTab: View {
                     .disabled(!liveConversion)
                 Stepper(value: $candidateCount, in: 3...16) {
                     HStack {
-                        Text("候補ウィンドウの候補数")
+                        Text("候補ウィンドウでモデルが並べる候補数")
                         Spacer()
                         Text("\(candidateCount)").foregroundStyle(.secondary)
                     }
                 }
+                Text("この数の下に、読みが一致する辞書の残りの候補（単漢字・異体字・人名など）が続きます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("句読点") {

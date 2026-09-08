@@ -62,11 +62,28 @@ public actor LatticeConverter {
 
     /// 読み全体に一致する候補（ラティスの評価順）。最大 `count` 件
     public func candidates(reading: String, count: Int) -> [String] {
-        rawCandidates(reading: reading, count: count)
-            .filter(\.isFullMatch)
-            .prefix(count)
-            .map(\.text)
+        Array(fullMatchCandidates(reading: reading, nBest: count).prefix(count))
     }
+
+    /// 読み全体に一致する候補をすべて返す（ラティスの評価順、重複なし）。
+    ///
+    /// 先頭に文全体のn-best（`nBest` 件まで）、その後ろに読みが一致する辞書エントリ
+    /// （単漢字・異体字・人名など。評価値は低いが読みは正しい）が続く。
+    /// 候補ウィンドウでスクロールして辿れるよう、上限は `maxFullMatchCandidates`
+    public func fullMatchCandidates(reading: String, nBest: Int) -> [String] {
+        var seen: Set<String> = []
+        var results: [String] = []
+        for candidate in rawCandidates(reading: reading, count: nBest) where candidate.isFullMatch {
+            guard !seen.contains(candidate.text) else { continue }
+            seen.insert(candidate.text)
+            results.append(candidate.text)
+            if results.count >= Self.maxFullMatchCandidates { break }
+        }
+        return results
+    }
+
+    /// `fullMatchCandidates` が返す候補数の上限
+    public static let maxFullMatchCandidates = 60
 
     /// ラティスの返した候補をそのまま（部分候補も含む。調査・デバッグ用）
     public func rawCandidates(reading: String, count: Int) -> [Candidate] {

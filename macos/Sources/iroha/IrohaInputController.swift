@@ -30,12 +30,13 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 変換エンジンはプロセスで1つを共有する（モデルは初回変換時にロード）。
-    /// 学習 → ユーザ辞書 → 長い読みの区切り → 辞書ラティス+zenz の順にデコレータで包む
+    /// 学習 → ユーザ辞書 → 長い読みの区切り → 異体字の補完 → 辞書ラティス+zenz の順にデコレータで包む
     /// （学習・辞書が空で読みが短ければ素通しなのでふるまいは変わらない）。
     /// 辞書ラティス（azooKey辞書）は候補ウィンドウの候補を読みが正しい語に限るために使う。
     /// 辞書がバンドルに無ければzenz単体で動く
     private static let engine: any ConversionEngine = LearningEngine(
-        base: UserDictionaryEngine(base: ChunkedConversionEngine(base: makeCoreEngine())),
+        base: UserDictionaryEngine(
+            base: ChunkedConversionEngine(base: VariantKanjiEngine(base: makeCoreEngine()))),
         dictionary: { LearningSettings.dictionary })
 
     private static func makeCoreEngine() -> any ConversionEngine {

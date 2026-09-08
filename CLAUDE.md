@@ -61,7 +61,9 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   AzooKeyKanaKanjiConverterのバージョンを上げるときは、そのタグがサブモジュールで参照する
   辞書コミットに `fetch-dictionary.sh` の `DICT_COMMIT` を合わせる。
   Zenzaiトレイトは使わない（同梱のllama.cpp xcframeworkが `vendor/dist` と衝突するため）。
-  ライブ変換の第一候補はzenz生成のまま（AJIMEE: 生成84.5% vs ラティス再採点66.5%）
+  ライブ変換の第一候補はzenz生成のまま（AJIMEE: 生成84.5% vs ラティス再採点66.5%）。
+  候補ウィンドウは「採点した上位」＋「読みが一致する残りの辞書エントリ」＋「内蔵表の異体字
+  （`VariantKanjiEngine`、髙・﨑など）」の順で、候補数の設定より多く返る
 - ユーザ辞書・学習はLLMの外側で処理する（`ConversionEngine`のデコレータを
   学習 → ユーザ辞書 → 長い読みの区切り（`ChunkedConversionEngine`、50文字超を
   句読点/文節境界で分割して逐次変換）→ LLM の順に重ね、読みを分割して一致部分を埋める）。

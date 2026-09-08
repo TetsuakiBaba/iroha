@@ -71,9 +71,23 @@ final class LatticeRescoringEngineTests: XCTestCase {
             scores: ["キシャ社": -0.5, "貴社": -1.0, "記者": -2.0, "汽車": -3.0])
         let engine = LatticeRescoringEngine(base: base, lattice: lattice)
         let result = try await engine.convert(reading: "きしゃ", context: "", candidateCount: 4)
-        XCTAssertEqual(result, ["キシャ社", "貴社", "記者", "汽車"])
+        // 採点した上位が確率順で先頭に並び、その後ろに読みが一致する残りの辞書エントリが続く
+        XCTAssertEqual(Array(result.prefix(4)), ["キシャ社", "貴社", "記者", "汽車"])
+        XCTAssertGreaterThan(result.count, 4)
         let calls = await base.scoreCalls
         XCTAssertEqual(calls, 1)
+    }
+
+    /// zenzで並べた上位の後ろに、読みが一致する残りの辞書エントリ（﨑などの異体字・単漢字）が続く
+    func testRemainingDictionaryEntriesFollowRankedCandidates() async throws {
+        let lattice = try makeLattice()
+        let base = FakeBase(generated: ["咲"], scores: ["咲": -1.0, "崎": -2.0, "先": -3.0])
+        let engine = LatticeRescoringEngine(base: base, lattice: lattice)
+        let result = try await engine.convert(reading: "さき", context: "", candidateCount: 8)
+        XCTAssertGreaterThan(result.count, 10, "採点した上位だけでなく残りの辞書候補も返す")
+        XCTAssertEqual(result.prefix(3), ["咲", "崎", "先"])
+        XCTAssertTrue(result.contains("﨑"), "辞書にある異体字が末尾側に含まれる")
+        XCTAssertEqual(Set(result).count, result.count, "重複しない")
     }
 
     /// 辞書が候補を作れない読みはzenzのn-bestにそのまま任せる

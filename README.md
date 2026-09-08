@@ -243,6 +243,10 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
   読み制約は漢字・英字の読みを検証できないため、zenzのn-bestだけだと「ないようを → 活用を / NIPPON」の
   ような読みの合わない候補が混ざる。辞書ラティスの候補は読みが保証されるので、それをモデルで順位付けする
   （Zenzaiと同じ役割分担）。zenz自身の生成結果も一緒に採点するので、辞書にない語も候補に残る。
+  候補ウィンドウには「zenzで並べた上位（候補数の設定）」の後ろに「読みが一致する残りの辞書エントリ」
+  （単漢字・異体字・人名など）が辞書の順で続き、スクロールで辿れる（azooKeyの候補一覧と同じ）。
+  さらに髙・﨑・德・濵のように単独では辞書に入っていない人名用の異体字を
+  [VariantKanjiEngine](macos/Sources/IrohaCore/VariantKanjiEngine.swift) の内蔵表から末尾に補う。
   ライブ変換（第一候補）はzenzの生成のまま: AJIMEE-Bench 200件で zenz生成 84.5%、
   ラティス候補の再採点は 66.5%（長い文では10件のn-bestに正解が入らない）。
   辞書は `macos/scripts/fetch-dictionary.sh` で `vendor/azooKey_dictionary_storage` に取得し

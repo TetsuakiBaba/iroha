@@ -11,7 +11,9 @@ public protocol CandidateScorer: Sendable {
 /// zenzの自由生成は読みの合わない語を出すことがあり、読み制約（`ReadingConstraint`）では
 /// 漢字・英字の読みを検証できない。候補ウィンドウ（`candidateCount > 1`）では候補の生成を
 /// 辞書ラティス（`LatticeConverter`）に任せ、「読みが辞書で保証された候補」とzenz自身の生成結果を
-/// zenzの対数確率で並べる。azooKey/Zenzaiと同じ「辞書で読みを保証し、モデルで順位付け」の役割分担
+/// zenzの対数確率で並べる。azooKey/Zenzaiと同じ「辞書で読みを保証し、モデルで順位付け」の役割分担。
+/// 返す候補は「zenzで並べた上位（`candidateCount` 以上）」＋「読みが一致する残りの辞書エントリ」で、
+/// `candidateCount` を超えることがある（候補ウィンドウはスクロールで辿る）
 ///
 /// 第一候補（`candidateCount == 1`、ライブ変換）は既定でzenzの生成に任せる。
 /// ラティスのn-bestは長い文で正解を含まないことが多く、AJIMEE-Bench（200件）では
@@ -45,18 +47,22 @@ public struct LatticeRescoringEngine<Base: ConversionEngine & CandidateScorer>: 
         if candidateCount <= 1, !usesLatticeForFirstCandidate {
             return try await base.convert(reading: reading, context: context, candidateCount: candidateCount)
         }
-        let latticeCandidates = await lattice.candidates(
-            reading: reading, count: max(latticeCandidateCount, candidateCount))
+        let scoredCount = max(latticeCandidateCount, candidateCount)
+        let latticeCandidates = await lattice.fullMatchCandidates(reading: reading, nBest: scoredCount)
         guard !latticeCandidates.isEmpty else {
             return try await base.convert(reading: reading, context: context, candidateCount: candidateCount)
         }
         try Task.checkCancellation()
 
+        // ラティスの評価上位だけをzenzで採点して並べる。残り（単漢字・異体字・人名など、
+        // 評価値は低いが読みは正しい辞書エントリ）は採点せず辞書の順で後ろに続ける。
+        // azooKeyの候補一覧と同じく、スクロールすれば読みの一致するエントリ全部に届く
+        var candidates = Array(latticeCandidates.prefix(scoredCount))
+        let remainder = latticeCandidates.dropFirst(scoredCount)
         // zenz自身の答え（ライブ変換で表示しているもの）も一緒に採点する。
         // 辞書にない語（固有名詞など）はここからしか候補に入らない
-        var candidates = latticeCandidates
         if let generated = try await base.convert(reading: reading, context: context, candidateCount: 1).first,
-           !generated.isEmpty, !candidates.contains(generated) {
+           !generated.isEmpty, !latticeCandidates.contains(generated) {
             candidates.append(generated)
         }
         try Task.checkCancellation()
@@ -69,6 +75,9 @@ public struct LatticeRescoringEngine<Base: ConversionEngine & CandidateScorer>: 
             .filter { $0.1 > -.infinity }
             .sorted { $0.1 > $1.1 }
             .map(\.0)
-        return Array(ranked.prefix(max(candidateCount, 1)))
+        if usesLatticeForFirstCandidate, candidateCount <= 1 {
+            return Array(ranked.prefix(1))
+        }
+        return ranked + remainder
     }
 }

@@ -88,7 +88,7 @@ func makeEngine() -> any ConversionEngine {
     }
     return LearningEngine(
         base: UserDictionaryEngine(
-            base: ChunkedConversionEngine(base: core), dictionary: { store.current }),
+            base: ChunkedConversionEngine(base: VariantKanjiEngine(base: core)), dictionary: { store.current }),
         dictionary: { learning.current })
 }
 
