@@ -889,6 +889,19 @@ private struct AboutSettingsTab: View {
                     note: "変換モデルの推論エンジン",
                     url: "https://github.com/ggml-org/llama.cpp")
                 LicenseRow(
+                    name: "AzooKeyKanaKanjiConverter", holder: "ensan (azooKey)", license: "MIT License",
+                    note: "候補ウィンドウの辞書ラティス",
+                    url: "https://github.com/azooKey/AzooKeyKanaKanjiConverter")
+                LicenseRow(
+                    name: "azooKey_dictionary_storage", holder: "azooKey", license: "Apache License 2.0",
+                    note: "辞書データ",
+                    url: "https://github.com/azooKey/azooKey_dictionary_storage")
+                LicenseRow(
+                    name: "swift-algorithms / swift-collections / swift-tokenizers",
+                    holder: "Apple, ensan", license: "Apache License 2.0",
+                    note: "AzooKeyKanaKanjiConverterの依存",
+                    url: "https://github.com/apple/swift-collections")
+                LicenseRow(
                     name: "Tsukimi Rounded", holder: "Takashi Funayama",
                     license: "SIL Open Font License 1.1",
                     note: "アプリアイコン・メニューバーアイコンの書体",

@@ -30,6 +30,10 @@ jobs:
         if: steps.llama-cache.outputs.cache-hit != 'true'
         run: ./macos/scripts/build-llama.sh
 
+      # 辞書ラティス用のazooKey辞書（約35MB、コミット固定。make-bundle.sh がバンドルへコピーする）
+      - name: Fetch azooKey dictionary
+        run: ./macos/scripts/fetch-dictionary.sh
+
       - name: Build
         working-directory: macos
         run: swift build

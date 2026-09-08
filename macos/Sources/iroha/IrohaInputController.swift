@@ -30,12 +30,22 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 変換エンジンはプロセスで1つを共有する（モデルは初回変換時にロード）。
-    /// 学習 → ユーザ辞書 → 長い読みの区切り → LLM の順にデコレータで包む
-    /// （学習・辞書が空で読みが短ければ素通しなのでふるまいは変わらない）
+    /// 学習 → ユーザ辞書 → 長い読みの区切り → 辞書ラティス+zenz の順にデコレータで包む
+    /// （学習・辞書が空で読みが短ければ素通しなのでふるまいは変わらない）。
+    /// 辞書ラティス（azooKey辞書）は候補ウィンドウの候補を読みが正しい語に限るために使う。
+    /// 辞書がバンドルに無ければzenz単体で動く
     private static let engine: any ConversionEngine = LearningEngine(
-        base: UserDictionaryEngine(
-            base: ChunkedConversionEngine(base: ZenzEngine(modelPath: engineModelPath))),
+        base: UserDictionaryEngine(base: ChunkedConversionEngine(base: makeCoreEngine())),
         dictionary: { LearningSettings.dictionary })
+
+    private static func makeCoreEngine() -> any ConversionEngine {
+        let zenz = ZenzEngine(modelPath: engineModelPath)
+        guard let dictionaryURL = LatticeConverter.defaultDictionaryURL() else {
+            NSLog("iroha: 辞書ラティスの辞書が見つかりません。zenz単体で変換します")
+            return zenz
+        }
+        return LatticeRescoringEngine(base: zenz, lattice: LatticeConverter(dictionaryURL: dictionaryURL))
+    }
 
     private enum Mode {
         case composing          // 入力・ライブ変換中
@@ -842,6 +852,13 @@ final class IrohaInputController: IMKInputController {
             do {
                 var candidates = try await Self.engine.convert(
                     reading: reading, context: context, candidateCount: count)
+                // 今表示している変換結果を先頭に置く（エンジンの並びが確率順で変わっても、
+                // 候補ウィンドウを開いた瞬間に表示が変わらないように）
+                let current = await MainActor.run { self.segments.indices.contains(index) ? self.segments[index].result : "" }
+                if !current.isEmpty {
+                    candidates.removeAll { $0 == current }
+                    candidates.insert(current, at: 0)
+                }
                 // ユーザ定義の変換ルール（User Rewriter）の出力を合流させる。
                 // エンジンとは独立した候補生成源で、第一候補（今の表示）はそのままにして
                 // その直後に置く（「きょう」→ スペース2回で日付が選べる）

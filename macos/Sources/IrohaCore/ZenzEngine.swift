@@ -5,7 +5,7 @@ import Foundation
 ///
 /// プロンプト形式（zenz-v3）:
 ///   [U+EE02 + 左文脈] + U+EE00 + カタカナ読み + U+EE01 → 変換結果
-public actor ZenzEngine: ConversionEngine {
+public actor ZenzEngine: ConversionEngine, CandidateScorer {
 
     /// 既定のモデルの場所（`DataDirectory` の設定に追随する）
     public static var defaultModelPath: String { DataDirectory.defaultModelURL.path }
@@ -137,6 +137,16 @@ public actor ZenzEngine: ConversionEngine {
         for index in 0..<count { maxLogit = max(maxLogit, logits[index]) }
         var sum: Float = 0
         for index in 0..<count { sum += expf(logits[index] - maxLogit) }
+        return maxLogit + logf(sum)
+    }
+
+    /// `included` が真のトークンだけの log Σ exp(logits)（該当なしなら -inf）
+    static func logSumExp(_ logits: UnsafeMutablePointer<Float>, count: Int, where included: [Bool]) -> Float {
+        var maxLogit = -Float.infinity
+        for index in 0..<count where included[index] { maxLogit = max(maxLogit, logits[index]) }
+        guard maxLogit > -Float.infinity else { return -.infinity }
+        var sum: Float = 0
+        for index in 0..<count where included[index] { sum += expf(logits[index] - maxLogit) }
         return maxLogit + logf(sum)
     }
 
@@ -278,6 +288,120 @@ public actor ZenzEngine: ConversionEngine {
         return prompt
     }
 
+    // MARK: - CandidateScorer
+
+    /// 一括採点で1バッチに載せる系列数の上限（llama_contextのn_seq_max）
+    static let maxScoringSequences: UInt32 = 32
+
+    /// 候補それぞれの対数確率 log P(候補 + 終端 | プロンプト) を返す。
+    ///
+    /// プロンプトを1回だけ評価してKVキャッシュを各系列へ複製し、候補のトークン列を
+    /// 系列ごとに並べた1バッチで採点する（teacher forcing）。候補数が多い・長い場合は
+    /// コンテキストに収まる範囲で分けて評価する。
+    /// 終端は「生成を終わらせるトークンのどれか」が出る確率で測る（zenzはvocabのEOSとは
+    /// 別の特殊トークンで終わるため、特定のEOSを決め打ちすると全候補が一律に不利になる）
+    public func score(candidates: [String], reading: String, context leftContext: String) async throws -> [Float] {
+        try ensureLoaded()
+        guard let runtime, !candidates.isEmpty else { return [] }
+        let prompt = Self.buildPrompt(reading: reading, leftContext: leftContext, maxContextLength: maxContextLength)
+        let promptTokens = try tokenize(prompt, addSpecial: true)
+        let tokenized = try candidates.map { try tokenize($0, addSpecial: false) }
+
+        let maxSequences = Int(llama_n_seq_max(runtime.context))
+        let capacity = Int(llama_n_ctx(runtime.context))
+        var scores = [Float](repeating: -.infinity, count: candidates.count)
+        var start = 0
+        while start < candidates.count {
+            try Task.checkCancellation()
+            var end = start
+            var used = promptTokens.count
+            while end < candidates.count, end - start < maxSequences, used + tokenized[end].count <= capacity {
+                used += tokenized[end].count
+                end += 1
+            }
+            if end == start || tokenized[start].isEmpty {
+                // 1候補だけでも収まらない長さ、または空文字列。採点不能（-inf）のまま飛ばす
+                start += 1
+                continue
+            }
+            let chunkScores = try scoreChunk(
+                runtime: runtime, promptTokens: promptTokens, sequences: Array(tokenized[start..<end]))
+            for (offset, value) in chunkScores.enumerated() { scores[start + offset] = value }
+            start = end
+        }
+        return scores
+    }
+
+    private func scoreChunk(runtime: Runtime, promptTokens: [llama_token], sequences: [[llama_token]]) throws -> [Float] {
+        let ctx = runtime.context
+        let memory = llama_get_memory(ctx)
+        let vocabSize = Int(llama_vocab_n_tokens(runtime.vocab))
+        let totalTokens = promptTokens.count + sequences.reduce(0) { $0 + $1.count }
+        var batch = llama_batch_init(Int32(totalTokens), 0, 1)
+        defer { llama_batch_free(batch) }
+
+        // 1. プロンプトを系列0で評価（最後のトークンのlogitsだけ要る）
+        llama_memory_clear(memory, true)
+        for (index, token) in promptTokens.enumerated() {
+            batch.token[index] = token
+            batch.pos[index] = Int32(index)
+            batch.n_seq_id[index] = 1
+            batch.seq_id[index]![0] = 0
+            batch.logits[index] = index == promptTokens.count - 1 ? 1 : 0
+        }
+        batch.n_tokens = Int32(promptTokens.count)
+        guard llama_decode(ctx, batch) == 0 else {
+            throw ConversionError.inferenceFailed("llama_decode(prompt) に失敗")
+        }
+        // 各候補の先頭トークンはプロンプト直後の同じ分布から出る
+        guard let promptLogits = llama_get_logits_ith(ctx, Int32(promptTokens.count - 1)) else {
+            throw ConversionError.inferenceFailed("プロンプトのlogitsが取れません")
+        }
+        let promptLogZ = Self.logSumExp(promptLogits, count: vocabSize)
+        var scores = sequences.map { promptLogits[Int($0[0])] - promptLogZ }
+
+        // 2. プロンプトのKVキャッシュを候補ごとの系列へ複製
+        for sequence in 1..<max(sequences.count, 1) {
+            llama_memory_seq_cp(memory, 0, Int32(sequence), -1, -1)
+        }
+
+        // 3. 候補のトークン列を系列ごとに並べて1バッチで評価。
+        //    位置jのlogitsは位置j+1のトークン（最後の位置では終端）を予測するので、全位置で出力を要求する
+        var count = 0
+        for (sequence, tokens) in sequences.enumerated() {
+            for (offset, token) in tokens.enumerated() {
+                batch.token[count] = token
+                batch.pos[count] = Int32(promptTokens.count + offset)
+                batch.n_seq_id[count] = 1
+                batch.seq_id[count]![0] = Int32(sequence)
+                batch.logits[count] = 1
+                count += 1
+            }
+        }
+        batch.n_tokens = Int32(count)
+        guard llama_decode(ctx, batch) == 0 else {
+            throw ConversionError.inferenceFailed("llama_decode(candidates) に失敗")
+        }
+
+        // 4. 各位置で次トークンの対数確率を足し込む。最後の位置は終端トークン群の合計確率
+        count = 0
+        for (sequence, tokens) in sequences.enumerated() {
+            for offset in tokens.indices {
+                defer { count += 1 }
+                guard let logits = llama_get_logits_ith(ctx, Int32(count)) else {
+                    throw ConversionError.inferenceFailed("候補のlogitsが取れません")
+                }
+                let logZ = Self.logSumExp(logits, count: vocabSize)
+                if offset < tokens.count - 1 {
+                    scores[sequence] += logits[Int(tokens[offset + 1])] - logZ
+                } else {
+                    scores[sequence] += Self.logSumExp(logits, count: vocabSize, where: runtime.tokenIsTerminator) - logZ
+                }
+            }
+        }
+        return scores
+    }
+
     // MARK: - llama.cpp
 
     private func ensureLoaded() throws {
@@ -301,8 +425,13 @@ public actor ZenzEngine: ConversionEngine {
         }
 
         var contextParams = llama_context_default_params()
-        contextParams.n_ctx = 512
-        contextParams.n_batch = 512
+        // 候補の一括採点（score）で複数系列を1バッチに載せるため、系列数を確保する。
+        // KVキャッシュは全系列で共有（unified）にして、プロンプト部分の複製を避ける
+        // （分割方式だと系列数ぶんn_ctxが積算されメモリが跳ねる）
+        contextParams.n_ctx = 1024
+        contextParams.n_batch = 1024
+        contextParams.n_seq_max = Self.maxScoringSequences
+        contextParams.kv_unified = true
 
         guard let createdContext = llama_init_from_model(loadedModel, contextParams) else {
             llama_model_free(loadedModel)

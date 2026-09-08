@@ -54,6 +54,14 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
 - FoundationModelsはmacOS 26+のため `#if canImport` + `@available(macOS 26.0, *)` ガード必須
   （パッケージのフロアはmacOS 14）
 - llama.cppの静的ライブラリは `./macos/scripts/build-llama.sh` で `vendor/dist` に生成（未コミット）
+- 候補ウィンドウの候補は辞書ラティス（SwiftPM依存 AzooKeyKanaKanjiConverter、MIT）で作り
+  zenzの対数確率で並べる（`LatticeRescoringEngine`）。辞書データ（Apache-2.0）は
+  `./macos/scripts/fetch-dictionary.sh` で `vendor/azooKey_dictionary_storage` に取得（未コミット、
+  コミット固定）し、`make-bundle.sh` が `Contents/Resources/Dictionary` へコピーする。
+  AzooKeyKanaKanjiConverterのバージョンを上げるときは、そのタグがサブモジュールで参照する
+  辞書コミットに `fetch-dictionary.sh` の `DICT_COMMIT` を合わせる。
+  Zenzaiトレイトは使わない（同梱のllama.cpp xcframeworkが `vendor/dist` と衝突するため）。
+  ライブ変換の第一候補はzenz生成のまま（AJIMEE: 生成84.5% vs ラティス再採点66.5%）
 - ユーザ辞書・学習はLLMの外側で処理する（`ConversionEngine`のデコレータを
   学習 → ユーザ辞書 → 長い読みの区切り（`ChunkedConversionEngine`、50文字超を
   句読点/文節境界で分割して逐次変換）→ LLM の順に重ね、読みを分割して一致部分を埋める）。
@@ -73,6 +81,8 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
 
 - WindowsのIMEはTSF（Text Services Framework）ベースで `windows/` に実装する。
   macOSのIMK部分（`macos/Sources/iroha/`）は流用不可
+- 候補ウィンドウの辞書ラティスはmacOS版ではAzooKeyKanaKanjiConverter（Swift）を使っている。
+  C++再実装では同等の辞書ラティス（azooKey辞書のLOUDS形式を読むか、別の辞書）が別途必要
 - 変換エンジンは選択肢が2つ: `macos/Sources/IrohaCore/` をSwift for Windowsで共有
   （Foundation + llama.cppのみ依存で移植可能な設計）、または別言語で再実装。
   **方針は未決定。実装前にユーザーに確認する**

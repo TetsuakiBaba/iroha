@@ -21,6 +21,20 @@ cp Resources/main.tiff Resources/en.tiff Resources/AppIcon.icns "$APP/Contents/R
 cp -R Resources/ja.lproj Resources/en.lproj "$APP/Contents/Resources/"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+# 辞書ラティス用のazooKey辞書（scripts/fetch-dictionary.sh で vendor/ に取得したもの）。
+# LatticeConverter が Contents/Resources/Dictionary から読む。無いと候補ウィンドウが
+# zenz単体の挙動に戻るので、組み立て時点で止める
+DICT="../vendor/azooKey_dictionary_storage/Dictionary"
+if [ ! -f "$DICT/mm.binary" ]; then
+  echo "error: 辞書データがありません。./macos/scripts/fetch-dictionary.sh を実行してください" >&2
+  exit 1
+fi
+cp -R "$DICT" "$APP/Contents/Resources/Dictionary"
+# SwiftPM依存パッケージのリソースバンドル（Bundle.module の解決先。存在するものだけ）
+for bundle in .build/release/*.bundle; do
+  [ -d "$bundle" ] && cp -R "$bundle" "$APP/Contents/Resources/"
+done
+
 if [ -n "${VERSION:-}" ]; then
   plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Info.plist"
 fi

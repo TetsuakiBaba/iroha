@@ -16,13 +16,21 @@ let llamaLinkerSettings: [LinkerSetting] = [
 let package = Package(
     name: "iroha",
     platforms: [.macOS(.v14)],
+    dependencies: [
+        // 辞書ラティスによるかな漢字変換（azooKey）。候補の読みを辞書で保証するために使う。
+        // 辞書データ（Apache-2.0）は vendor/azooKey_dictionary_storage から別途バンドルする
+        .package(url: "https://github.com/azooKey/AzooKeyKanaKanjiConverter", .upToNextMinor(from: "0.11.2")),
+    ],
     targets: [
         // llama.cpp C APIへのブリッジ
         .systemLibrary(name: "CLlama", path: "Sources/CLlama"),
         // 変換ロジック（ローマ字→かな、zenz変換エンジン）。IMEなしで単体テスト可能
         .target(
             name: "IrohaCore",
-            dependencies: ["CLlama"],
+            dependencies: [
+                "CLlama",
+                .product(name: "KanaKanjiConverterModule", package: "AzooKeyKanaKanjiConverter"),
+            ],
             swiftSettings: [.unsafeFlags(llamaHeaderFlags)],
             linkerSettings: llamaLinkerSettings
         ),

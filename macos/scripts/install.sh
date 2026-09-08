@@ -7,6 +7,7 @@ cd "$(dirname "$0")/.."
 
 echo "==> ビルド"
 swift build -c release --product iroha
+./scripts/fetch-dictionary.sh
 
 APP=".build/iroha.app"
 DEST="$HOME/Library/Input Methods/iroha.app"

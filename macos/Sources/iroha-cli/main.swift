@@ -10,8 +10,11 @@ import IrohaCore
 //   iroha-cli bench <eval.tsv>                    : 評価（TSV: 読み\t正解）。精度とレイテンシを報告
 //   iroha-cli ajimee <evaluation_items.json>      : AJIMEE-Bench評価（acc@1・MinCER）。scripts/fetch-ajimee.shで取得
 //   iroha-cli repl                                : 対話モード（1行ずつ変換、レイテンシ表示）
+//   iroha-cli lattice <読み>                       : 辞書ラティス（azooKey）の生の候補を表示（調査用）
 //   環境変数 IROHA_MODEL でモデルパス、IROHA_USER_DICT でユーザ辞書、
 //   IROHA_LEARNING で学習結果のファイルを上書き可能。
+//   IROHA_LATTICE=off で辞書ラティスを使わずzenz単体、IROHA_LATTICE=always で第一候補も
+//   ラティス候補の再採点で決める（既定は候補ウィンドウのみラティス。IME本体と同じ）
 //   データフォルダはIME本体の設定（保存場所の変更）に従う。IROHA_DATA_DIR で上書き可能
 
 /// IME本体と同じデータフォルダを使う（設定 > 情報 > データの保存場所 で変えた場所を追う）
@@ -73,9 +76,19 @@ func makeEngine() -> any ConversionEngine {
     } else {
         learning = .shared
     }
+    // 辞書ラティス + zenz採点（IME本体と同じ構成）。辞書が無い・OFF指定ならzenz単体
+    let core: any ConversionEngine
+    let latticeMode = ProcessInfo.processInfo.environment["IROHA_LATTICE"] ?? ""
+    if latticeMode != "off", let dictionaryURL = LatticeConverter.defaultDictionaryURL() {
+        core = LatticeRescoringEngine(
+            base: zenz, lattice: LatticeConverter(dictionaryURL: dictionaryURL),
+            usesLatticeForFirstCandidate: latticeMode == "always")
+    } else {
+        core = zenz
+    }
     return LearningEngine(
         base: UserDictionaryEngine(
-            base: ChunkedConversionEngine(base: zenz), dictionary: { store.current }),
+            base: ChunkedConversionEngine(base: core), dictionary: { store.current }),
         dictionary: { learning.current })
 }
 
@@ -228,6 +241,52 @@ case "ajimee" where arguments.count >= 3:
     total.accAt1 = withContext.accAt1 + withoutContext.accAt1
     total.minCERSum = withContext.minCERSum + withoutContext.minCERSum
     print(String(format: "全体: %@  平均 %.1fms/変換", total.summary, totalMilliseconds / Double(total.count)))
+
+case "lattice" where arguments.count >= 3:
+    // 辞書ラティス（azooKey）の生の候補を見る（調査用）。★は読み全体に一致した候補。
+    // モデルがあれば各候補のzenz採点（対数確率）と、zenzの自由生成の結果も並べる
+    //   iroha-cli lattice [--context 文脈] <読み>
+    guard let dictionaryURL = LatticeConverter.defaultDictionaryURL() else {
+        FileHandle.standardError.write("辞書が見つかりません（scripts/fetch-dictionary.sh で取得できます）\n".data(using: .utf8)!)
+        exit(1)
+    }
+    var context = ""
+    var readingArgument: String?
+    var index = 2
+    while index < arguments.count {
+        if arguments[index] == "--context", index + 1 < arguments.count {
+            context = arguments[index + 1]
+            index += 2
+        } else {
+            readingArgument = arguments[index]
+            index += 1
+        }
+    }
+    let lattice = LatticeConverter(dictionaryURL: dictionaryURL)
+    let reading = romajiToKana(readingArgument ?? "")
+    let start = ContinuousClock.now
+    let candidates = await lattice.rawCandidates(reading: reading, count: 20)
+    let elapsed = start.duration(to: .now)
+    print("\(reading)  [\(elapsed.components.attoseconds / 1_000_000_000_000_000 + elapsed.components.seconds * 1000)ms]")
+    let zenz: ZenzEngine = ProcessInfo.processInfo.environment["IROHA_MODEL"].map { ZenzEngine(modelPath: $0) } ?? ZenzEngine()
+    let full = candidates.filter(\.isFullMatch).map(\.text)
+    var scored: [String: Float] = [:]
+    var generated: String?
+    if (try? await zenz.prewarm()) != nil {
+        generated = try? await zenz.convert(reading: reading, context: context, candidateCount: 1).first
+        var toScore = full
+        if let generated, !toScore.contains(generated) { toScore.append(generated) }
+        if let scores = try? await zenz.score(candidates: toScore, reading: reading, context: context) {
+            for (text, score) in zip(toScore, scores) { scored[text] = score }
+        }
+    }
+    if let generated {
+        print(String(format: "  zenz生成: %@  (%.2f)", generated, scored[generated] ?? .nan))
+    }
+    for candidate in candidates {
+        let score = scored[candidate.text].map { String(format: "%8.2f", $0) } ?? "        "
+        print(String(format: "  %@ %8.2f %@  %@", candidate.isFullMatch ? "★" : "　", candidate.value, score, candidate.text))
+    }
 
 case "convert":
     var context = ""
