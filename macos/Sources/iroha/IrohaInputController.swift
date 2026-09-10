@@ -9,8 +9,9 @@ import IrohaCore
 /// - Enterで確定、Escでかな表示に戻す/取消、BSで編集
 /// - F6-F10 / Ctrl+U,I,O,P,T: ひらがな/カタカナ/半角カナ/全角英数/半角英数
 /// - Shift+英字: Shiftを押している間だけ英字入力（離すとその英字を固定してかな入力に戻る）
-/// - 予測変換（設定・既定OFF）: 入力の休止後に続きの文節をうすく表示、Tabで取り入れる
-/// - インライン補完（設定・既定OFF）: 確定の休止後に続きの文節をうすく表示、Tabで確定する
+/// - 予測変換（設定・既定OFF）: 入力の休止後に続きの文節をカーソル下の小窓に表示、Tabで取り入れる
+/// - インライン補完（設定・既定OFF）: 確定の休止後に続きの文節を同じ小窓に表示、Tabで確定する
+///   （どちらも `PredictionPanel`。未確定文字列には混ぜない）
 @objc(IrohaInputController)
 final class IrohaInputController: IMKInputController {
 
@@ -186,12 +187,12 @@ final class IrohaInputController: IMKInputController {
 
     // MARK: 予測変換・インライン補完の状態
 
-    /// 予測変換: 表示中の予測。`base` は予測したときの未確定文字列で、表示がこれと違えば出さない
+    /// 予測変換: 小窓に表示中の予測。`base` は予測したときの未確定文字列で、表示がこれと違えば無効
     private var prediction: (base: String, text: String)?
     private var predictionTask: Task<Void, Never>?
     private var predictionGeneration = 0
-    /// インライン補完: 確定後にうすく表示している続き（未確定文字列として出している。確定文字列ではない）
-    private var ghostCompletion: String?
+    /// インライン補完: 確定後に小窓に表示している続き（アプリのテキストにはまだ入っていない）
+    private var pendingCompletion: String?
     private var completionTask: Task<Void, Never>?
     private var completionGeneration = 0
     /// 最後にキー入力があった時刻（入力の休止時間を測る）
@@ -217,7 +218,7 @@ final class IrohaInputController: IMKInputController {
         // フォーカスが移ったら文脈をリセット
         recentCommitted = ""
         cancelPrediction()
-        dismissCompletion(client: nil)  // 表示はdeactivateServerで消えている
+        dismissCompletion()
         // モデルを事前ロード（未ロード時のみ実処理が走る）
         Task { try? await Self.engine.prewarm() }
         // 予測変換・インライン補完に別のモデルを指定している場合はそれも（同じモデルなら何もしない）
@@ -250,32 +251,25 @@ final class IrohaInputController: IMKInputController {
         let plainTab = Int(event.keyCode) == kVK_Tab
             && event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
 
-        // インライン補完（確定後のうすい表示）: Tabで確定、それ以外のキーではまず消してから通常処理へ
-        if ghostCompletion != nil {
+        // インライン補完（確定後の予測の小窓）: Tabで確定、それ以外のキーではまず閉じてから通常処理へ
+        if pendingCompletion != nil {
             if plainTab {
                 acceptCompletion(client: client)
                 return true
             }
-            dismissCompletion(client: client)
-            // Escはうすい表示を消すだけで飲み込む（アプリのダイアログ等を閉じてしまわないように）
+            dismissCompletion()
+            // Escは小窓を閉じるだけで飲み込む（アプリのダイアログ等を閉じてしまわないように）
             if Int(event.keyCode) == kVK_Escape { return true }
         } else {
             completionTask?.cancel()
             completionTask = nil
         }
 
-        // 予測変換（入力中のうすい表示）: Tabで取り入れる。それ以外のキーでは捨てる
-        if prediction != nil {
-            if plainTab, mode == .composing, acceptPrediction(client: client) {
-                return true
-            }
-            cancelPrediction()
-            if mode == .composing, isComposing {
-                updateMarkedText(client: client, display: currentDisplay)
-            }
-        } else {
-            cancelPrediction()
+        // 予測変換（入力中の予測の小窓）: Tabで取り入れる。それ以外のキーでは閉じる
+        if prediction != nil, plainTab, mode == .composing, acceptPrediction(client: client) {
+            return true
         }
+        cancelPrediction()
 
         // 選択テキスト処理のグローバルショートカットが未確定文字列と競合しないよう、
         // キー処理後の合成状態を知らせておく（IMKはメインスレッドで呼ぶ）
@@ -360,7 +354,7 @@ final class IrohaInputController: IMKInputController {
     }
 
     override func commitComposition(_ sender: Any!) {
-        // クリックやフォーカス移動による確定。うすい表示（予測・補完）は確定に含めない
+        // クリックやフォーカス移動による確定。小窓の予測・補完は確定に含めない
         commitCurrent(client: sender as? IMKTextInput, suggestsCompletion: false)
     }
 
@@ -483,7 +477,7 @@ final class IrohaInputController: IMKInputController {
     @objc private func toggleInlineCompletion(_ sender: Any?) {
         UserDefaults.standard.set(!PredictionSettings.isCompletionEnabled,
                                   forKey: PredictionSettings.completionEnabledKey)
-        if !PredictionSettings.isCompletionEnabled { dismissCompletion(client: client()) }
+        if !PredictionSettings.isCompletionEnabled { dismissCompletion() }
     }
 
     @objc private func openSettings(_ sender: Any?) {
@@ -1232,17 +1226,13 @@ final class IrohaInputController: IMKInputController {
     // MARK: - 未確定文字列の表示と確定
 
     private func updateMarkedText(client: IMKTextInput, display: String) {
-        let attributed = NSMutableAttributedString(
+        let attributed = NSAttributedString(
             string: display,
             attributes: [
                 .underlineStyle: NSUnderlineStyle.single.rawValue,
                 .underlineColor: NSColor.labelColor,
             ]
         )
-        // 予測変換: 表示の続きの予測をうすく（下線なし・薄い色）足す。カーソルは予測の手前に置く
-        if let prediction, prediction.base == display, !prediction.text.isEmpty {
-            attributed.append(Self.ghostAttributedString(prediction.text))
-        }
         client.setMarkedText(
             attributed,
             selectionRange: NSRange(location: display.utf16.count, length: 0),
@@ -1251,13 +1241,13 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 現在の表示内容（ライブ変換結果 or かな or 文節列）をそのまま確定する。
-    /// うすく表示している予測・補完は確定に含めない（Tabでだけ取り入れる）。
+    /// 小窓に出している予測・補完は確定に含めない（Tabでだけ取り入れる）。
     /// `suggestsCompletion` が偽なら確定後のインライン補完を出さない（フォーカス移動・モード切替など、
     /// ユーザが文章を続ける操作ではない確定）
     private func commitCurrent(client: IMKTextInput?, suggestsCompletion: Bool = true) {
         if mode == .segmenting { hidePanel() }
         cancelPrediction()
-        dismissCompletion(client: client)
+        dismissCompletion()
         // キー入力以外の確定（フォーカス移動等）でも合成状態の変化を知らせる
         defer { SelectionActionCoordinator.isIMEComposing = false }
         guard let text = resolveCommitText() else { return }
@@ -1406,11 +1396,7 @@ final class IrohaInputController: IMKInputController {
     /// `suggestsCompletion` が真なら、確定後の休止を待ってインライン補完を出す
     private func commitText(_ text: String, client: IMKTextInput?, suggestsCompletion: Bool = true) {
         cancelPrediction()
-        // 補完のうすい表示（未確定文字列）が残っていても insertText が置き換えるので、状態だけ消す
-        completionTask?.cancel()
-        completionTask = nil
-        completionGeneration += 1
-        ghostCompletion = nil
+        dismissCompletion()
         // どの経路の確定でも進行中の英訳を無効化する（翻訳完了からの確定も含む）
         isTranslating = false
         translationGeneration += 1
@@ -1442,8 +1428,8 @@ final class IrohaInputController: IMKInputController {
 
     // MARK: - 予測変換（確定前）
 
-    /// 予測変換: キー入力の休止（既定300ms）後に、いま表示している未確定文字列の続き（次の文節）を
-    /// 予測してうすく表示する。表示が確定していないとき（ローマ字が未解決・ライブ変換の到着待ち・
+    /// 予測変換: キー入力の休止（既定300ms、設定で変更可）後に、いま表示している未確定文字列の続き
+    /// （次の文節）を予測してカーソル下の小窓に出す。表示が確定していないとき（ローマ字が未解決・ライブ変換の到着待ち・
     /// 英字入力中・F6等の上書き中）は何もしない。ライブ変換が届いた時点でもう一度呼ばれる。
     /// 文脈はモデルに「確定済みの文字列 + 表示中の未確定文字列」として渡す
     private func schedulePrediction() {
@@ -1476,8 +1462,10 @@ final class IrohaInputController: IMKInputController {
                 await MainActor.run {
                     guard generation == self.predictionGeneration, self.mode == .composing,
                           self.currentDisplay == base, let client = self.client() else { return }
-                    self.prediction = (base, text)
-                    self.updateMarkedText(client: client, display: base)
+                    // 小窓を出せた（カーソル位置が取れた）ときだけTabで取り入れられる状態にする
+                    if self.showPredictionPanel(text, client: client, caretIndex: base.utf16.count) {
+                        self.prediction = (base, text)
+                    }
                 }
             } catch is CancellationError {
             } catch {
@@ -1486,12 +1474,15 @@ final class IrohaInputController: IMKInputController {
         }
     }
 
-    /// 進行中・表示中の予測を捨てる（表示の更新は呼び側で行う）
+    /// 進行中・表示中の予測を捨て、小窓を閉じる
     private func cancelPrediction() {
         predictionTask?.cancel()
         predictionTask = nil
         predictionGeneration += 1
-        prediction = nil
+        if prediction != nil {
+            prediction = nil
+            PredictionPanel.shared.hide()
+        }
     }
 
     /// Tab: 表示中の予測を未確定文字列に取り入れる（確定はしない）。
@@ -1527,27 +1518,34 @@ final class IrohaInputController: IMKInputController {
         return elapsed >= delay ? .zero : delay - elapsed
     }
 
-    /// うすい表示（予測・補完）の属性。下線を付けず薄い色にしてカーソルの右に置く
-    private static func ghostAttributedString(_ text: String) -> NSAttributedString {
-        NSAttributedString(
-            string: text,
-            attributes: [
-                .foregroundColor: NSColor.placeholderTextColor,
-                .underlineStyle: 0,
-            ]
-        )
+    /// 予測文をカーソル行の直下の小窓に出す。カーソル位置を教えてくれないアプリでは出さず、falseを返す
+    private func showPredictionPanel(_ text: String, client: IMKTextInput, caretIndex: Int) -> Bool {
+        guard let rect = caretRect(client: client, characterIndex: caretIndex) else { return false }
+        PredictionPanel.shared.show(text, near: rect)
+        return true
+    }
+
+    /// カーソル（未確定文字列の `characterIndex` の位置）がある行の矩形（スクリーン座標）。
+    /// 末尾の位置で取れなければ先頭で試し、それでもゼロ矩形しか返さないアプリではnil
+    private func caretRect(client: IMKTextInput, characterIndex: Int) -> NSRect? {
+        for index in Set([characterIndex, 0]).sorted(by: >) {
+            var rect = NSRect.zero
+            _ = client.attributes(forCharacterIndex: index, lineHeightRectangle: &rect)
+            if rect.height > 0 || rect.origin != .zero { return rect }
+        }
+        return nil
     }
 
     // MARK: - インライン補完（確定後）
 
-    /// インライン補完: 確定後、キー入力の休止（既定300ms）を待って確定した文章の続き（次の文節）を
-    /// 予測し、未確定文字列としてうすく表示する（カーソルはその手前）。
+    /// インライン補完: 確定後、キー入力の休止（既定300ms、設定で変更可）を待って確定した文章の続き
+    /// （次の文節）を予測し、カーソル下の小窓に出す。アプリのテキストにはTabで確定するまで触らない。
     /// 文脈は直前の確定文字列（最大40文字）。フォーカスが移ると文脈は空になるので出ない
     private func scheduleCompletion() {
         completionTask?.cancel()
         completionTask = nil
         guard PredictionSettings.isCompletionEnabled, japaneseMode, mode == .composing,
-              !isComposing, !isTranslating, ghostCompletion == nil, !recentCommitted.isEmpty
+              !isComposing, !isTranslating, pendingCompletion == nil, !recentCommitted.isEmpty
         else { return }
         let context = recentCommitted
         completionGeneration += 1
@@ -1568,14 +1566,12 @@ final class IrohaInputController: IMKInputController {
                 guard !Task.isCancelled, !text.isEmpty else { return }
                 await MainActor.run {
                     guard generation == self.completionGeneration, self.mode == .composing,
-                          !self.isComposing, !self.isTranslating, self.ghostCompletion == nil,
+                          !self.isComposing, !self.isTranslating, self.pendingCompletion == nil,
                           self.recentCommitted == context, let client = self.client() else { return }
-                    self.ghostCompletion = text
-                    client.setMarkedText(
-                        Self.ghostAttributedString(text),
-                        selectionRange: NSRange(location: 0, length: 0),
-                        replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
-                    )
+                    // 未確定文字列が無いので先頭（=挿入位置）の矩形を使う
+                    if self.showPredictionPanel(text, client: client, caretIndex: 0) {
+                        self.pendingCompletion = text
+                    }
                 }
             } catch is CancellationError {
             } catch {
@@ -1584,24 +1580,19 @@ final class IrohaInputController: IMKInputController {
         }
     }
 
-    /// うすく表示している補完を取り入れずに消す（進行中の予測も止める）
-    private func dismissCompletion(client: IMKTextInput?) {
+    /// 小窓に出している補完を取り入れずに閉じる（進行中の予測も止める）
+    private func dismissCompletion() {
         completionTask?.cancel()
         completionTask = nil
         completionGeneration += 1
-        guard ghostCompletion != nil else { return }
-        ghostCompletion = nil
-        client?.setMarkedText(
-            NSAttributedString(string: ""),
-            selectionRange: NSRange(location: 0, length: 0),
-            replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
-        )
+        guard pendingCompletion != nil else { return }
+        pendingCompletion = nil
+        PredictionPanel.shared.hide()
     }
 
-    /// Tab: うすく表示している補完を確定する（insertTextが未確定文字列の範囲を置き換える）。
-    /// 確定後はまた休止を待って次の続きを出す
+    /// Tab: 小窓に出している補完をアプリに挿入して確定する。確定後はまた休止を待って次の続きを出す
     private func acceptCompletion(client: IMKTextInput) {
-        guard let text = ghostCompletion else { return }
+        guard let text = pendingCompletion else { return }
         commitText(text, client: client)
     }
 

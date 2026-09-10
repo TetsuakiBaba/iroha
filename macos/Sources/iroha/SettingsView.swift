@@ -73,6 +73,8 @@ private struct InputSettingsTab: View {
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
     @AppStorage(PredictionSettings.predictiveEnabledKey) private var predictiveConversion = false
     @AppStorage(PredictionSettings.completionEnabledKey) private var inlineCompletion = false
+    @AppStorage(PredictionSettings.delayMillisecondsKey)
+    private var predictionDelayMs = PredictionSettings.defaultDelayMilliseconds
 
     var body: some View {
         Form {
@@ -95,15 +97,21 @@ private struct InputSettingsTab: View {
             Section("予測") {
                 Toggle("予測変換（入力中）", isOn: $predictiveConversion)
                     .disabled(!liveConversion)
-                Text("入力を止めると、変換結果の続き（次の文節）をカーソルの右にうすく表示します。"
+                Text("入力を止めると、変換結果の続き（次の文節）をカーソルの下の小さなウィンドウに表示します。"
                     + "Tabで取り入れ、そのまま入力を続けられます。取り入れた部分はBackspaceで取り消せます。"
                     + "ライブ変換がONのときだけ動きます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Toggle("インライン補完（確定後）", isOn: $inlineCompletion)
-                Text("確定したあと操作を止めると、文章の続き（次の文節）をうすく表示します。"
-                    + "Tabで確定、それ以外のキーで消えます。句読点が出たらそこまでを予測します。"
-                    + "使うモデルは「モデル」タブで変えられます。")
+                Text("確定したあと操作を止めると、文章の続き（次の文節）を同じウィンドウに表示します。"
+                    + "Tabで確定、それ以外のキーで消えます。Tabを押すまでアプリの文字は変わりません。"
+                    + "句読点が出たらそこまでを予測します。使うモデルは「モデル」タブで変えられます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                PredictionDelayRow(milliseconds: $predictionDelayMs)
+                    .disabled(!predictiveConversion && !inlineCompletion)
+                Text("キーを離してからこの時間だけ何も押さなければ予測を出します。短いほど早く出ますが、"
+                    + "入力中に頻繫に出て煩わしくなります。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -120,6 +128,34 @@ private struct InputSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// 予測を出すまでの休止時間（ミリ秒）のスライダー行
+private struct PredictionDelayRow: View {
+    @Binding var milliseconds: Int
+    private static let step = 50.0
+    private static let range = Double(PredictionSettings.delayMillisecondsRange.lowerBound)
+        ... Double(PredictionSettings.delayMillisecondsRange.upperBound)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("予測を出すまでの休止時間")
+                Spacer()
+                Text("\(milliseconds) ms")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Slider(value: sliderValue, in: Self.range, step: Self.step)
+        }
+    }
+
+    private var sliderValue: Binding<Double> {
+        Binding(
+            get: { Double(milliseconds) },
+            set: { milliseconds = Int(($0 / Self.step).rounded() * Self.step) }
+        )
     }
 }
 
