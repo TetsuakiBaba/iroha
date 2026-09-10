@@ -11,6 +11,7 @@ import IrohaCore
 //   iroha-cli ajimee <evaluation_items.json>      : AJIMEE-Bench評価（acc@1・MinCER）。scripts/fetch-ajimee.shで取得
 //   iroha-cli repl                                : 対話モード（1行ずつ変換、レイテンシ表示）
 //   iroha-cli lattice <読み>                       : 辞書ラティス（azooKey）の生の候補を表示（調査用）
+//   iroha-cli predict [--chain 回数] <左文脈>        : 予測（左文脈の続き1文節）。--chainで採用を繰り返す
 //   環境変数 IROHA_MODEL でモデルパス、IROHA_USER_DICT でユーザ辞書、
 //   IROHA_LEARNING で学習結果のファイルを上書き可能。
 //   IROHA_LATTICE=off で辞書ラティスを使わずzenz単体、IROHA_LATTICE=always で第一候補も
@@ -286,6 +287,41 @@ case "lattice" where arguments.count >= 3:
     for candidate in candidates {
         let score = scored[candidate.text].map { String(format: "%8.2f", $0) } ?? "        "
         print(String(format: "  %@ %8.2f %@  %@", candidate.isFullMatch ? "★" : "　", candidate.value, score, candidate.text))
+    }
+
+case "predict" where arguments.count >= 3:
+    // 予測変換・インライン補完の検証: 左文脈の続き（1文節）を生成する。
+    // --chain N で予測をTabで取り入れ続けた場合の見た目（N回ぶん）を出す
+    var chain = 1
+    var contextArgument: String?
+    var index = 2
+    while index < arguments.count {
+        if arguments[index] == "--chain", index + 1 < arguments.count {
+            chain = max(1, Int(arguments[index + 1]) ?? 1)
+            index += 2
+        } else {
+            contextArgument = arguments[index]
+            index += 1
+        }
+    }
+    guard var context = contextArgument else {
+        FileHandle.standardError.write("使い方: iroha-cli predict [--chain 回数] <左文脈>\n".data(using: .utf8)!)
+        exit(1)
+    }
+    let zenz: ZenzEngine = ProcessInfo.processInfo.environment["IROHA_MODEL"].map { ZenzEngine(modelPath: $0) } ?? ZenzEngine()
+    do {
+        try await zenz.prewarm()
+        for _ in 0..<chain {
+            let start = ContinuousClock.now
+            let prediction = try await zenz.predict(context: context, maxLength: 16)
+            let elapsed = start.duration(to: .now)
+            let ms = Double(elapsed.components.attoseconds) / 1e15 + Double(elapsed.components.seconds) * 1e3
+            print("\(context) -> [\(prediction)]  [\(String(format: "%.1f", ms))ms]")
+            guard !prediction.isEmpty else { break }
+            context += prediction
+        }
+    } catch {
+        FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
     }
 
 case "convert":

@@ -71,6 +71,8 @@ private struct InputSettingsTab: View {
     @AppStorage("commitOnPunctuation") private var commitOnPunctuation = false
     @AppStorage("candidateCount") private var candidateCount = 8
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
+    @AppStorage(PredictionSettings.predictiveEnabledKey) private var predictiveConversion = false
+    @AppStorage(PredictionSettings.completionEnabledKey) private var inlineCompletion = false
 
     var body: some View {
         Form {
@@ -86,6 +88,22 @@ private struct InputSettingsTab: View {
                     }
                 }
                 Text("この数の下に、読みが一致する辞書の残りの候補（単漢字・異体字・人名など）が続きます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("予測") {
+                Toggle("予測変換（入力中）", isOn: $predictiveConversion)
+                    .disabled(!liveConversion)
+                Text("入力を止めると、変換結果の続き（次の文節）をカーソルの右にうすく表示します。"
+                    + "Tabで取り入れ、そのまま入力を続けられます。取り入れた部分はBackspaceで取り消せます。"
+                    + "ライブ変換がONのときだけ動きます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("インライン補完（確定後）", isOn: $inlineCompletion)
+                Text("確定したあと操作を止めると、文章の続き（次の文節）をうすく表示します。"
+                    + "Tabで確定、それ以外のキーで消えます。句読点が出たらそこまでを予測します。"
+                    + "使うモデルは「モデル」タブで変えられます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -324,6 +342,48 @@ private struct SelectionIntroRows: View {
         Text("選択テキストの取得と置換にアクセシビリティ権限が必要です。")
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+}
+
+/// 予測変換・インライン補完に使うモデル（GGUF）のパス入力欄（空ならかな漢字変換と同じモデル）
+private struct PredictionModelPathField: View {
+    let title: String
+    let key: String
+    @State private var path: String
+
+    init(title: String, key: String) {
+        self.title = title
+        self.key = key
+        _path = State(initialValue: UserDefaults.standard.string(forKey: key) ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(PredictionSettings.modelDisplayName(forKey: key))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack {
+                TextField("", text: $path, prompt: Text("かな漢字変換と同じモデル"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: path) { _, newValue in
+                        UserDefaults.standard.set(newValue, forKey: key)
+                    }
+                Button("選択...") {
+                    let panel = NSOpenPanel()
+                    panel.allowedContentTypes = []
+                    panel.allowsOtherFileTypes = true
+                    panel.canChooseDirectories = false
+                    panel.directoryURL = DataDirectory.modelsURL
+                    if panel.runModal() == .OK, let url = panel.url {
+                        path = url.path
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -718,6 +778,18 @@ private struct ModelSettingsTab: View {
                     // 終了処理の詳細（_exitを使う理由等）はAppRestarterのコメントを参照
                     AppRestarter.restartInstalledApp()
                 }
+            }
+
+            Section("予測変換・インライン補完のモデル") {
+                Text("入力中の予測変換と確定後のインライン補完は、かな漢字変換とは別のモデルを使えます。"
+                    + "空欄ならかな漢字変換と同じモデルを共有します（zenz-v3は文章の続きも生成できます）。"
+                    + "変更はirohaの再起動後に反映されます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                PredictionModelPathField(
+                    title: "予測変換（入力中）", key: PredictionSettings.predictiveModelPathKey)
+                PredictionModelPathField(
+                    title: "インライン補完（確定後）", key: PredictionSettings.completionModelPathKey)
             }
 
             AIServiceSection()

@@ -5,7 +5,9 @@ import Foundation
 ///
 /// プロンプト形式（zenz-v3）:
 ///   [U+EE02 + 左文脈] + U+EE00 + カタカナ読み + U+EE01 → 変換結果
-public actor ZenzEngine: ConversionEngine, CandidateScorer {
+///
+/// 予測（`PredictionEngine`）にも使える: 左文脈タグの後ろに置いた文字列の続きを書かせる（下記 `predict`）
+public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
 
     /// 既定のモデルの場所（`DataDirectory` の設定に追随する）
     public static var defaultModelPath: String { DataDirectory.defaultModelURL.path }
@@ -400,6 +402,79 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer {
             }
         }
         return scores
+    }
+
+    // MARK: - PredictionEngine
+
+    /// 予測の左文脈として渡す最大文字数（かな漢字変換の左文脈と同じ）
+    private let maxPredictionContextLength = 40
+    /// 予測で生成する最大トークン数。文節境界・句読点で早く止まるので、これは保険
+    static let maxPredictionTokens = 24
+
+    /// 左文脈の続きを生成して、先頭の1文節（句読点が出たらそこまで）を返す。
+    ///
+    /// プロンプトはazooKey（Zenzai）の次文字予測と同じ `U+EE00 。 U+EE02 + 左文脈`:
+    /// 「。」だけの変換クエリの後ろに左文脈タグを置くと、モデルは左文脈の続きとして自然な日本語を
+    /// 書き続ける（zenz-v3は左文脈も含めて学習しているため）。左文脈が終わったとみなすと
+    /// 読みタグ（U+EE00）などの特殊トークンを出すので、それを生成終了の印にする。
+    /// 生成は貪欲法。直前の文字列（プロンプト＋生成済み）に出たトークンには、近いほど強い
+    /// 繰り返しペナルティをかけて「ですです」「今日は今日は」のような反復を抑える（azooKeyと同じ重み）
+    public func predict(context leftContext: String, maxLength: Int) async throws -> String {
+        let trimmedContext = String(leftContext.suffix(maxPredictionContextLength))
+        guard !trimmedContext.isEmpty, maxLength > 0 else { return "" }
+        try ensureLoaded()
+        guard let runtime else {
+            throw ConversionError.modelLoadFailed("内部状態が不正です")
+        }
+        let ctx = runtime.context
+        var tokens = try tokenize("\u{EE00}。\u{EE02}" + trimmedContext, addSpecial: true)
+        llama_memory_clear(llama_get_memory(ctx), true)
+        try decode(ctx: ctx, tokens: &tokens)
+
+        var history = tokens
+        var outputBytes = Data()
+        var pieceBuffer = [CChar](repeating: 0, count: 128)
+        let remainingContext = Int(llama_n_ctx(ctx)) - tokens.count
+        for _ in 0..<max(0, min(Self.maxPredictionTokens, remainingContext)) {
+            try Task.checkCancellation()
+            guard let token = selectPredictionToken(runtime: runtime, history: history) else { break }
+            if runtime.tokenIsTerminator[Int(token)] { break }
+            let written = llama_token_to_piece(runtime.vocab, token, &pieceBuffer, Int32(pieceBuffer.count), 0, true)
+            if written > 0 {
+                pieceBuffer.withUnsafeBytes { raw in
+                    outputBytes.append(raw.baseAddress!.assumingMemoryBound(to: UInt8.self), count: Int(written))
+                }
+            }
+            history.append(token)
+            let phrase = PredictionText.phrase(in: Self.decodeUTF8DroppingFragments(outputBytes), maxLength: maxLength)
+            if phrase.isComplete { return phrase.text }
+            var next = token
+            try decode(ctx: ctx, tokens: &next)
+        }
+        return PredictionText.phrase(in: Self.decodeUTF8DroppingFragments(outputBytes), maxLength: maxLength).text
+    }
+
+    /// 予測の次トークンを選ぶ（貪欲法 + 繰り返しペナルティ）。
+    /// 文字列にならないトークン（UTF-8の断片）は選ばない。終端トークンはそのまま返す（呼び側で止める）
+    private func selectPredictionToken(runtime: Runtime, history: [llama_token]) -> llama_token? {
+        guard let logits = llama_get_logits_ith(runtime.context, -1) else { return nil }
+        // 近いほど強いペナルティ（直前のトークンで重み2、n個前で 2/n）
+        var penaltyWeight: [llama_token: Float] = [:]
+        for (index, token) in history.enumerated() {
+            penaltyWeight[token, default: 0] += 2 / Float(history.count - index)
+        }
+        let vocabSize = Int(llama_vocab_n_tokens(runtime.vocab))
+        var best: (token: llama_token, logit: Float)?
+        for index in 0..<vocabSize {
+            guard runtime.tokenTexts[index] != nil || runtime.tokenIsTerminator[index] else { continue }
+            var logit = logits[index]
+            if let weight = penaltyWeight[llama_token(index)] {
+                let penalty = 1 + weight
+                logit = logit <= 0 ? logit * penalty : logit / penalty
+            }
+            if best == nil || logit > best!.logit { best = (llama_token(index), logit) }
+        }
+        return best?.token
     }
 
     // MARK: - llama.cpp

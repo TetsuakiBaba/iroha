@@ -9,6 +9,8 @@ import IrohaCore
 /// - Enterで確定、Escでかな表示に戻す/取消、BSで編集
 /// - F6-F10 / Ctrl+U,I,O,P,T: ひらがな/カタカナ/半角カナ/全角英数/半角英数
 /// - Shift+英字: Shiftを押している間だけ英字入力（離すとその英字を固定してかな入力に戻る）
+/// - 予測変換（設定・既定OFF）: 入力の休止後に続きの文節をうすく表示、Tabで取り入れる
+/// - インライン補完（設定・既定OFF）: 確定の休止後に続きの文節をうすく表示、Tabで確定する
 @objc(IrohaInputController)
 final class IrohaInputController: IMKInputController {
 
@@ -39,8 +41,24 @@ final class IrohaInputController: IMKInputController {
             base: ChunkedConversionEngine(base: VariantKanjiEngine(base: makeCoreEngine()))),
         dictionary: { LearningSettings.dictionary })
 
+    /// zenzモデルの実体。かな漢字変換と、同じモデルを指定した予測変換・インライン補完で共有する
+    /// （モデルを二重にロードしない）
+    private static let zenz = ZenzEngine(modelPath: engineModelPath)
+
+    /// 予測変換（確定前）とインライン補完（確定後）のエンジン。かな漢字変換とは別のモデルを
+    /// 設定できる（`PredictionSettings`）。既定はどちらもかな漢字変換のzenzを共有する
+    private static let predictionEngine: any PredictionEngine = PredictionSettings.engine(
+        forKey: PredictionSettings.predictiveModelPathKey, fallbackPath: engineModelPath,
+        sharing: [(engineModelPath, zenz)])
+    private static let completionEngine: any PredictionEngine = PredictionSettings.engine(
+        forKey: PredictionSettings.completionModelPathKey, fallbackPath: engineModelPath,
+        sharing: [
+            (engineModelPath, zenz),
+            (PredictionSettings.resolvedModelPath(
+                forKey: PredictionSettings.predictiveModelPathKey, fallback: engineModelPath), predictionEngine),
+        ])
+
     private static func makeCoreEngine() -> any ConversionEngine {
-        let zenz = ZenzEngine(modelPath: engineModelPath)
         guard let dictionaryURL = LatticeConverter.defaultDictionaryURL() else {
             NSLog("iroha: 辞書ラティスの辞書が見つかりません。zenz単体で変換します")
             return zenz
@@ -120,6 +138,7 @@ final class IrohaInputController: IMKInputController {
             case display         // F6-F10 / Ctrl+U…T で指定した表示形
             case liveConversion  // Shift+英字で英字入力を始めた時点のライブ変換結果で固定したかな
             case alphabet        // Shift+英字で入力した英字（readingも英字そのまま。かなには戻さない）
+            case prediction      // 予測変換でTabで取り入れた文節（読みは不明。readingにはtextを入れる。かなには戻さない）
         }
         var reading: String   // 元の読み（BS・Escでかなに戻すときに使う）
         var text: String      // 固定した表示（カタカナ・英数など）
@@ -165,6 +184,19 @@ final class IrohaInputController: IMKInputController {
     private var translationSpinnerTimer: Timer?
     private static let spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
+    // MARK: 予測変換・インライン補完の状態
+
+    /// 予測変換: 表示中の予測。`base` は予測したときの未確定文字列で、表示がこれと違えば出さない
+    private var prediction: (base: String, text: String)?
+    private var predictionTask: Task<Void, Never>?
+    private var predictionGeneration = 0
+    /// インライン補完: 確定後にうすく表示している続き（未確定文字列として出している。確定文字列ではない）
+    private var ghostCompletion: String?
+    private var completionTask: Task<Void, Never>?
+    private var completionGeneration = 0
+    /// 最後にキー入力があった時刻（入力の休止時間を測る）
+    private var lastKeyEventTime = ContinuousClock.now
+
     private var isComposing: Bool { !composer.isEmpty || !fixedChunks.isEmpty || alphabetRun != nil }
 
     /// 変換をやめてかなで見せるときの表示（固定部分 + 入力中のかな）
@@ -184,8 +216,13 @@ final class IrohaInputController: IMKInputController {
         super.activateServer(sender)
         // フォーカスが移ったら文脈をリセット
         recentCommitted = ""
+        cancelPrediction()
+        dismissCompletion(client: nil)  // 表示はdeactivateServerで消えている
         // モデルを事前ロード（未ロード時のみ実処理が走る）
         Task { try? await Self.engine.prewarm() }
+        // 予測変換・インライン補完に別のモデルを指定している場合はそれも（同じモデルなら何もしない）
+        if PredictionSettings.isPredictiveEnabled { Task { try? await Self.predictionEngine.prewarm() } }
+        if PredictionSettings.isCompletionEnabled { Task { try? await Self.completionEngine.prewarm() } }
         Task.detached { TranslationService.prewarm() }
         // アップデートの自動確認（1日1回まで、設定でOFF可）
         Task { await UpdateChecker.shared.autoCheckIfDue() }
@@ -198,7 +235,7 @@ final class IrohaInputController: IMKInputController {
         if let mode = value as? String, mode.hasPrefix("com.apple.inputmethod") {
             let newJapaneseMode = mode.contains("Japanese")
             if japaneseMode != newJapaneseMode {
-                commitCurrent(client: sender as? IMKTextInput)
+                commitCurrent(client: sender as? IMKTextInput, suggestsCompletion: false)
                 japaneseMode = newJapaneseMode
             }
         }
@@ -208,6 +245,37 @@ final class IrohaInputController: IMKInputController {
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
         guard let event, event.type == .keyDown,
               let client = sender as? IMKTextInput else { return false }
+
+        lastKeyEventTime = .now
+        let plainTab = Int(event.keyCode) == kVK_Tab
+            && event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
+
+        // インライン補完（確定後のうすい表示）: Tabで確定、それ以外のキーではまず消してから通常処理へ
+        if ghostCompletion != nil {
+            if plainTab {
+                acceptCompletion(client: client)
+                return true
+            }
+            dismissCompletion(client: client)
+            // Escはうすい表示を消すだけで飲み込む（アプリのダイアログ等を閉じてしまわないように）
+            if Int(event.keyCode) == kVK_Escape { return true }
+        } else {
+            completionTask?.cancel()
+            completionTask = nil
+        }
+
+        // 予測変換（入力中のうすい表示）: Tabで取り入れる。それ以外のキーでは捨てる
+        if prediction != nil {
+            if plainTab, mode == .composing, acceptPrediction(client: client) {
+                return true
+            }
+            cancelPrediction()
+            if mode == .composing, isComposing {
+                updateMarkedText(client: client, display: currentDisplay)
+            }
+        } else {
+            cancelPrediction()
+        }
 
         // 選択テキスト処理のグローバルショートカットが未確定文字列と競合しないよう、
         // キー処理後の合成状態を知らせておく（IMKはメインスレッドで呼ぶ）
@@ -228,7 +296,7 @@ final class IrohaInputController: IMKInputController {
         switch Int(event.keyCode) {
         case kVK_JIS_Eisu:
             if japaneseMode {
-                commitCurrent(client: client)
+                commitCurrent(client: client, suggestsCompletion: false)
                 client.selectMode("com.apple.inputmethod.Roman")
             }
             return true
@@ -274,7 +342,7 @@ final class IrohaInputController: IMKInputController {
 
         // Command/Control付きのキーはIMEでは扱わない（未確定文字列は確定して逃がす）
         if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.control) {
-            if isComposing { commitCurrent(client: client) }
+            if isComposing { commitCurrent(client: client, suggestsCompletion: false) }
             return false
         }
 
@@ -287,12 +355,13 @@ final class IrohaInputController: IMKInputController {
     }
 
     override func deactivateServer(_ sender: Any!) {
-        commitCurrent(client: sender as? IMKTextInput)
+        commitCurrent(client: sender as? IMKTextInput, suggestsCompletion: false)
         super.deactivateServer(sender)
     }
 
     override func commitComposition(_ sender: Any!) {
-        commitCurrent(client: sender as? IMKTextInput)
+        // クリックやフォーカス移動による確定。うすい表示（予測・補完）は確定に含めない
+        commitCurrent(client: sender as? IMKTextInput, suggestsCompletion: false)
     }
 
     // MARK: - 入力メニュー（メニューバーの入力ソースアイコンから開く）
@@ -334,6 +403,24 @@ final class IrohaInputController: IMKInputController {
         liveItem.target = self
         liveItem.state = liveConversionEnabled ? .on : .off
         menu.addItem(liveItem)
+
+        let predictiveItem = NSMenuItem(
+            title: "予測変換（入力中）",
+            action: #selector(togglePredictiveConversion(_:)),
+            keyEquivalent: ""
+        )
+        predictiveItem.target = self
+        predictiveItem.state = PredictionSettings.isPredictiveEnabled ? .on : .off
+        menu.addItem(predictiveItem)
+
+        let completionItem = NSMenuItem(
+            title: "インライン補完（確定後）",
+            action: #selector(toggleInlineCompletion(_:)),
+            keyEquivalent: ""
+        )
+        completionItem.target = self
+        completionItem.state = PredictionSettings.isCompletionEnabled ? .on : .off
+        menu.addItem(completionItem)
 
         let styleItem = NSMenuItem(
             title: "句読点スタイル: \(Self.punctuationStyle)",
@@ -385,6 +472,18 @@ final class IrohaInputController: IMKInputController {
             cancelConversion()
             updateMarkedText(client: client, display: kanaDisplay)
         }
+    }
+
+    @objc private func togglePredictiveConversion(_ sender: Any?) {
+        UserDefaults.standard.set(!PredictionSettings.isPredictiveEnabled,
+                                  forKey: PredictionSettings.predictiveEnabledKey)
+        if !PredictionSettings.isPredictiveEnabled { cancelPrediction() }
+    }
+
+    @objc private func toggleInlineCompletion(_ sender: Any?) {
+        UserDefaults.standard.set(!PredictionSettings.isCompletionEnabled,
+                                  forKey: PredictionSettings.completionEnabledKey)
+        if !PredictionSettings.isCompletionEnabled { dismissCompletion(client: client()) }
     }
 
     @objc private func openSettings(_ sender: Any?) {
@@ -458,6 +557,15 @@ final class IrohaInputController: IMKInputController {
             return true
         case kVK_Delete:
             guard isComposing else { return false }
+            if alphabetRun == nil, composer.isEmpty, fixedChunks.last?.kind == .prediction {
+                // 取り入れた予測に戻ってきた: 読みが無いので1文字ずつは消せず、予測ごと取り消す。
+                // 取り入れたときに固定したかなも入力中の状態に戻す（Tabの前の表示に戻る）
+                displayOverride = nil
+                autoCommitPending = false
+                undoLastPrediction()
+                updateMarkedText(client: client, display: currentDisplay)
+                return true
+            }
             if alphabetRun == nil, composer.isEmpty, fixedChunks.last?.kind == .alphabet {
                 // 直前の英字部分に戻ってきた: 英字入力として開き直してから1文字消す
                 alphabetRun = fixedChunks.removeLast().text
@@ -491,6 +599,10 @@ final class IrohaInputController: IMKInputController {
                 // F6/F7等の上書き表示をやめてかなに戻す
                 displayOverride = nil
                 updateMarkedText(client: client, display: kanaDisplay)
+            } else if composer.isEmpty, fixedChunks.last?.kind == .prediction {
+                // 取り入れた予測を取り消す（Backspaceと同じ。入力全体を消してしまわないように）
+                undoLastPrediction()
+                updateMarkedText(client: client, display: currentDisplay)
             } else if unlockFixedChunks() || lastConversion != nil {
                 // 1回目のEsc: 固定した部分をかなに戻し、変換をやめてかな表示にする
                 // （英字の固定部分はかなに戻せないのでそのまま残る）
@@ -520,7 +632,8 @@ final class IrohaInputController: IMKInputController {
         guard let characters = event.characters, let first = characters.first else { return false }
         guard let scalar = first.unicodeScalars.first, scalar.isASCII,
               (0x21...0x7E).contains(scalar.value) else {
-            if isComposing { commitCurrent(client: client) }
+            // キーはアプリに渡す（Tabでフォーカスが移ることもある）ので、確定後の補完は出さない
+            if isComposing { commitCurrent(client: client, suggestsCompletion: false) }
             return false
         }
         // Shift+英字（大文字）で英字入力を始める。Shiftを押している間は記号・数字もそのまま英字に足し、
@@ -595,10 +708,11 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 固定部分を読みに戻してcomposerへ返す。英字の固定部分はかなに戻せない（読みに英字が混ざると
-    /// エンジンの読み制約が崩れる）ので、最後の英字部分より後ろだけを戻す。戻したものがあればtrue
+    /// エンジンの読み制約が崩れる）し、取り入れた予測は読みが無いので、
+    /// 最後の英字・予測部分より後ろだけを戻す。戻したものがあればtrue
     @discardableResult
     private func unlockFixedChunks() -> Bool {
-        let start = fixedChunks.lastIndex { $0.kind == .alphabet }.map { $0 + 1 } ?? 0
+        let start = fixedChunks.lastIndex { $0.kind == .alphabet || $0.kind == .prediction }.map { $0 + 1 } ?? 0
         let unlocking = fixedChunks[start...]
         guard !unlocking.isEmpty else { return false }
         composer.prependText(unlocking.map(\.reading).joined())
@@ -709,10 +823,18 @@ final class IrohaInputController: IMKInputController {
         let alphabetSegments = alphabetRun.map {
             [BunsetsuSegment(reading: $0, result: $0, candidates: Self.alphabetCandidates($0))]
         } ?? []
-        let fixedSegments = fixedChunks.map {
-            BunsetsuSegment(
-                reading: $0.reading, result: $0.text,
-                candidates: $0.kind == .alphabet ? Self.alphabetCandidates($0.text) : nil)
+        let fixedSegments = fixedChunks.map { chunk -> BunsetsuSegment in
+            switch chunk.kind {
+            case .alphabet:
+                return BunsetsuSegment(reading: chunk.reading, result: chunk.text,
+                                       candidates: Self.alphabetCandidates(chunk.text))
+            case .prediction:
+                // 取り入れた予測は読みが無い: 候補はそれ自身だけ、確定しても学習しない
+                return BunsetsuSegment(reading: chunk.reading, result: chunk.text,
+                                       candidates: [chunk.text], unlearnableCandidates: [chunk.text])
+            case .display, .liveConversion:
+                return BunsetsuSegment(reading: chunk.reading, result: chunk.text, candidates: nil)
+            }
         } + alphabetSegments
         let alphabetSegmentIndex: Int? = alphabetSegments.isEmpty ? nil : fixedSegments.count - 1
         let fixedPrefix = fixedText
@@ -833,7 +955,7 @@ final class IrohaInputController: IMKInputController {
                 }
                 return true
             }
-            commitSegments(client: client)
+            commitSegments(client: client, suggestsCompletion: false)
             return false
         }
     }
@@ -975,10 +1097,10 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 全文節の変換結果を結合して確定する
-    private func commitSegments(client: IMKTextInput?) {
+    private func commitSegments(client: IMKTextInput?, suggestsCompletion: Bool = true) {
         let text = segments.map(\.result).joined()
         learnIfCorrected(committed: text)
-        commitText(text.isEmpty ? kanaDisplay : text, client: client)
+        commitText(text.isEmpty ? kanaDisplay : text, client: client, suggestsCompletion: suggestsCompletion)
     }
 
     /// 文節変換の結果がエンジンの出力と違っていたら、ユーザによる修正として学習する。
@@ -1045,8 +1167,11 @@ final class IrohaInputController: IMKInputController {
 
         let reading = composer.text
         guard liveConversionEnabled, !reading.isEmpty else { return }
-        // 変換済みの読みと同じなら再変換不要
-        if lastConversion?.reading == reading { return }
+        // 変換済みの読みと同じなら再変換不要（表示は確定しているので予測だけ待つ）
+        if lastConversion?.reading == reading {
+            schedulePrediction()
+            return
+        }
 
         // 固定部分は変換し直さず、後続の変換の文脈として渡す
         let context = recentCommitted + fixedText
@@ -1066,6 +1191,8 @@ final class IrohaInputController: IMKInputController {
                         self.commitCurrent(client: self.client())
                     } else if self.displayOverride == nil, let client = self.client() {
                         self.updateMarkedText(client: client, display: self.currentDisplay)
+                        // 表示が確定したので、入力の休止（残り時間）を待って続きを予測する
+                        self.schedulePrediction()
                     }
                 }
             } catch is CancellationError {
@@ -1105,13 +1232,17 @@ final class IrohaInputController: IMKInputController {
     // MARK: - 未確定文字列の表示と確定
 
     private func updateMarkedText(client: IMKTextInput, display: String) {
-        let attributed = NSAttributedString(
+        let attributed = NSMutableAttributedString(
             string: display,
             attributes: [
                 .underlineStyle: NSUnderlineStyle.single.rawValue,
                 .underlineColor: NSColor.labelColor,
             ]
         )
+        // 予測変換: 表示の続きの予測をうすく（下線なし・薄い色）足す。カーソルは予測の手前に置く
+        if let prediction, prediction.base == display, !prediction.text.isEmpty {
+            attributed.append(Self.ghostAttributedString(prediction.text))
+        }
         client.setMarkedText(
             attributed,
             selectionRange: NSRange(location: display.utf16.count, length: 0),
@@ -1119,13 +1250,18 @@ final class IrohaInputController: IMKInputController {
         )
     }
 
-    /// 現在の表示内容（ライブ変換結果 or かな or 文節列）をそのまま確定する
-    private func commitCurrent(client: IMKTextInput?) {
+    /// 現在の表示内容（ライブ変換結果 or かな or 文節列）をそのまま確定する。
+    /// うすく表示している予測・補完は確定に含めない（Tabでだけ取り入れる）。
+    /// `suggestsCompletion` が偽なら確定後のインライン補完を出さない（フォーカス移動・モード切替など、
+    /// ユーザが文章を続ける操作ではない確定）
+    private func commitCurrent(client: IMKTextInput?, suggestsCompletion: Bool = true) {
         if mode == .segmenting { hidePanel() }
+        cancelPrediction()
+        dismissCompletion(client: client)
         // キー入力以外の確定（フォーカス移動等）でも合成状態の変化を知らせる
         defer { SelectionActionCoordinator.isIMEComposing = false }
         guard let text = resolveCommitText() else { return }
-        commitText(text, client: client)
+        commitText(text, client: client, suggestsCompletion: suggestsCompletion)
     }
 
     /// 通常確定で挿入されるはずの文字列を解決する（composer.flushの副作用あり。
@@ -1266,8 +1402,15 @@ final class IrohaInputController: IMKInputController {
         }
     }
 
-    /// 指定文字列を確定して状態をリセットする
-    private func commitText(_ text: String, client: IMKTextInput?) {
+    /// 指定文字列を確定して状態をリセットする。
+    /// `suggestsCompletion` が真なら、確定後の休止を待ってインライン補完を出す
+    private func commitText(_ text: String, client: IMKTextInput?, suggestsCompletion: Bool = true) {
+        cancelPrediction()
+        // 補完のうすい表示（未確定文字列）が残っていても insertText が置き換えるので、状態だけ消す
+        completionTask?.cancel()
+        completionTask = nil
+        completionGeneration += 1
+        ghostCompletion = nil
         // どの経路の確定でも進行中の英訳を無効化する（翻訳完了からの確定も含む）
         isTranslating = false
         translationGeneration += 1
@@ -1294,6 +1437,172 @@ final class IrohaInputController: IMKInputController {
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )
         recentCommitted = String((recentCommitted + text).suffix(40))
+        if suggestsCompletion { scheduleCompletion() }
+    }
+
+    // MARK: - 予測変換（確定前）
+
+    /// 予測変換: キー入力の休止（既定300ms）後に、いま表示している未確定文字列の続き（次の文節）を
+    /// 予測してうすく表示する。表示が確定していないとき（ローマ字が未解決・ライブ変換の到着待ち・
+    /// 英字入力中・F6等の上書き中）は何もしない。ライブ変換が届いた時点でもう一度呼ばれる。
+    /// 文脈はモデルに「確定済みの文字列 + 表示中の未確定文字列」として渡す
+    private func schedulePrediction() {
+        predictionTask?.cancel()
+        predictionTask = nil
+        guard PredictionSettings.isPredictiveEnabled, liveConversionEnabled,
+              mode == .composing, isComposing, alphabetRun == nil, displayOverride == nil,
+              composer.pending.isEmpty,
+              composer.isEmpty || lastConversion?.reading == composer.text
+        else { return }
+        let base = currentDisplay
+        guard !base.isEmpty else { return }
+        let context = recentCommitted + base
+        predictionGeneration += 1
+        let generation = predictionGeneration
+        let delay = remainingIdleDelay()
+        predictionTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: delay)
+                // 休止中に状態が変わっていたら推論しない（ライブ変換と推論を取り合わないように）
+                let stillValid = await MainActor.run {
+                    generation == self.predictionGeneration && self.mode == .composing
+                        && self.currentDisplay == base
+                }
+                guard stillValid else { return }
+                let text = try await Self.predictionEngine.predict(
+                    context: context, maxLength: PredictionSettings.maxLength)
+                guard !Task.isCancelled, !text.isEmpty else { return }
+                await MainActor.run {
+                    guard generation == self.predictionGeneration, self.mode == .composing,
+                          self.currentDisplay == base, let client = self.client() else { return }
+                    self.prediction = (base, text)
+                    self.updateMarkedText(client: client, display: base)
+                }
+            } catch is CancellationError {
+            } catch {
+                NSLog("iroha: 予測エラー: \(error)")
+            }
+        }
+    }
+
+    /// 進行中・表示中の予測を捨てる（表示の更新は呼び側で行う）
+    private func cancelPrediction() {
+        predictionTask?.cancel()
+        predictionTask = nil
+        predictionGeneration += 1
+        prediction = nil
+    }
+
+    /// Tab: 表示中の予測を未確定文字列に取り入れる（確定はしない）。
+    /// 入力中のかなはその時点のライブ変換結果で固定し、予測は読みの無い固定部分として続ける。
+    /// 取り入れた直後からまた休止を待って次を予測するので、Tabを続けて押すと文が伸びていく
+    private func acceptPrediction(client: IMKTextInput) -> Bool {
+        guard let prediction, prediction.base == currentDisplay else { return false }
+        cancelPrediction()
+        lockComposerWithLiveConversion()
+        fixedChunks.append(FixedChunk(reading: prediction.text, text: prediction.text, kind: .prediction))
+        updateMarkedText(client: client, display: currentDisplay)
+        schedulePrediction()
+        return true
+    }
+
+    /// Backspace: 直前に取り入れた予測を取り消す。予測を取り入れたときに固定したかなが
+    /// その前にあれば入力中の状態に戻す（Tabを押す前の表示に戻る）
+    private func undoLastPrediction() {
+        guard fixedChunks.last?.kind == .prediction else { return }
+        fixedChunks.removeLast()
+        conversionTask?.cancel()
+        conversionTask = nil
+        guard let last = fixedChunks.last, last.kind == .liveConversion else { return }
+        fixedChunks.removeLast()
+        composer.prependText(last.reading)
+        lastConversion = (last.reading, last.text)
+    }
+
+    /// 最後のキー入力から休止時間が経つまでの残り
+    private func remainingIdleDelay() -> Duration {
+        let elapsed = lastKeyEventTime.duration(to: .now)
+        let delay = PredictionSettings.idleDelay
+        return elapsed >= delay ? .zero : delay - elapsed
+    }
+
+    /// うすい表示（予測・補完）の属性。下線を付けず薄い色にしてカーソルの右に置く
+    private static func ghostAttributedString(_ text: String) -> NSAttributedString {
+        NSAttributedString(
+            string: text,
+            attributes: [
+                .foregroundColor: NSColor.placeholderTextColor,
+                .underlineStyle: 0,
+            ]
+        )
+    }
+
+    // MARK: - インライン補完（確定後）
+
+    /// インライン補完: 確定後、キー入力の休止（既定300ms）を待って確定した文章の続き（次の文節）を
+    /// 予測し、未確定文字列としてうすく表示する（カーソルはその手前）。
+    /// 文脈は直前の確定文字列（最大40文字）。フォーカスが移ると文脈は空になるので出ない
+    private func scheduleCompletion() {
+        completionTask?.cancel()
+        completionTask = nil
+        guard PredictionSettings.isCompletionEnabled, japaneseMode, mode == .composing,
+              !isComposing, !isTranslating, ghostCompletion == nil, !recentCommitted.isEmpty
+        else { return }
+        let context = recentCommitted
+        completionGeneration += 1
+        let generation = completionGeneration
+        let delay = remainingIdleDelay()
+        completionTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: delay)
+                // 休止中に入力が始まっていたら推論しない
+                let stillValid = await MainActor.run {
+                    generation == self.completionGeneration && self.mode == .composing
+                        && !self.isComposing && !self.isTranslating && self.recentCommitted == context
+                }
+                guard stillValid else { return }
+                let text = try await Self.completionEngine.predict(
+                    context: context, maxLength: PredictionSettings.maxLength)
+                guard !Task.isCancelled, !text.isEmpty else { return }
+                await MainActor.run {
+                    guard generation == self.completionGeneration, self.mode == .composing,
+                          !self.isComposing, !self.isTranslating, self.ghostCompletion == nil,
+                          self.recentCommitted == context, let client = self.client() else { return }
+                    self.ghostCompletion = text
+                    client.setMarkedText(
+                        Self.ghostAttributedString(text),
+                        selectionRange: NSRange(location: 0, length: 0),
+                        replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
+                    )
+                }
+            } catch is CancellationError {
+            } catch {
+                NSLog("iroha: 補完エラー: \(error)")
+            }
+        }
+    }
+
+    /// うすく表示している補完を取り入れずに消す（進行中の予測も止める）
+    private func dismissCompletion(client: IMKTextInput?) {
+        completionTask?.cancel()
+        completionTask = nil
+        completionGeneration += 1
+        guard ghostCompletion != nil else { return }
+        ghostCompletion = nil
+        client?.setMarkedText(
+            NSAttributedString(string: ""),
+            selectionRange: NSRange(location: 0, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
+        )
+    }
+
+    /// Tab: うすく表示している補完を確定する（insertTextが未確定文字列の範囲を置き換える）。
+    /// 確定後はまた休止を待って次の続きを出す
+    private func acceptCompletion(client: IMKTextInput) {
+        guard let text = ghostCompletion else { return }
+        commitText(text, client: client)
     }
 
     /// 候補ウィンドウ操作用の合成キーイベント。
