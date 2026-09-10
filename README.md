@@ -314,6 +314,10 @@ git tag v0.4.0 && git push origin v0.4.0
   証明書を更新した場合、Team IDが変わると `UpdateChecker.swift` の `expectedTeamID` も更新が必要
   （不一致だとセルフアップデートの署名検証が通らなくなる）
 
+## コントリビューター
+
+- [shiratsumu](https://github.com/shiratsumu) — ユーザフィードバック
+
 ## ライセンスと帰属
 
 - 本リポジトリのコード: [MIT](LICENSE)
