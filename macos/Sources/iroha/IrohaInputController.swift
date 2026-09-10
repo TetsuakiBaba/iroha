@@ -1463,7 +1463,7 @@ final class IrohaInputController: IMKInputController {
                     guard generation == self.predictionGeneration, self.mode == .composing,
                           self.currentDisplay == base, let client = self.client() else { return }
                     // 小窓を出せた（カーソル位置が取れた）ときだけTabで取り入れられる状態にする
-                    if self.showPredictionPanel(text, client: client, caretIndex: base.utf16.count) {
+                    if self.showPredictionPanel(text, client: client, markedTextLength: base.utf16.count) {
                         self.prediction = (base, text)
                     }
                 }
@@ -1518,22 +1518,32 @@ final class IrohaInputController: IMKInputController {
         return elapsed >= delay ? .zero : delay - elapsed
     }
 
-    /// 予測文をカーソル行の直下の小窓に出す。カーソル位置を教えてくれないアプリでは出さず、falseを返す
-    private func showPredictionPanel(_ text: String, client: IMKTextInput, caretIndex: Int) -> Bool {
-        guard let rect = caretRect(client: client, characterIndex: caretIndex) else { return false }
+    /// 予測文をカーソル行の直下の小窓に出す。カーソル位置を教えてくれないアプリでは出さず、falseを返す。
+    /// `markedTextLength` は未確定文字列のUTF-16長（カーソルはその末尾。無ければ0）
+    private func showPredictionPanel(_ text: String, client: IMKTextInput, markedTextLength: Int) -> Bool {
+        guard let rect = caretRect(client: client, markedTextLength: markedTextLength) else { return false }
         PredictionPanel.shared.show(text, near: rect)
         return true
     }
 
-    /// カーソル（未確定文字列の `characterIndex` の位置）がある行の矩形（スクリーン座標）。
-    /// 末尾の位置で取れなければ先頭で試し、それでもゼロ矩形しか返さないアプリではnil
-    private func caretRect(client: IMKTextInput, characterIndex: Int) -> NSRect? {
-        for index in Set([characterIndex, 0]).sorted(by: >) {
+    /// カーソル（未確定文字列の末尾）の位置を表す幅0の矩形（スクリーン座標、高さは行の高さ）。
+    ///
+    /// `attributes(forCharacterIndex:lineHeightRectangle:)` は「その位置にある文字」の矩形を返し、
+    /// 末尾（文字数と同じインデックス）を渡すと先頭に丸めるアプリが多い。そこで末尾の文字（length-1）の
+    /// 矩形を取り、その右端をカーソルの位置とする。未確定文字列が無い（確定後）ときと、
+    /// 末尾の文字の矩形が取れないときは先頭（=挿入位置）の矩形の左端。ゼロ矩形しか返さないアプリではnil
+    private func caretRect(client: IMKTextInput, markedTextLength: Int) -> NSRect? {
+        if markedTextLength > 0 {
             var rect = NSRect.zero
-            _ = client.attributes(forCharacterIndex: index, lineHeightRectangle: &rect)
-            if rect.height > 0 || rect.origin != .zero { return rect }
+            _ = client.attributes(forCharacterIndex: markedTextLength - 1, lineHeightRectangle: &rect)
+            if rect.height > 0 || rect.origin != .zero {
+                return NSRect(x: rect.maxX, y: rect.minY, width: 0, height: rect.height)
+            }
         }
-        return nil
+        var rect = NSRect.zero
+        _ = client.attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)
+        guard rect.height > 0 || rect.origin != .zero else { return nil }
+        return NSRect(x: rect.minX, y: rect.minY, width: 0, height: rect.height)
     }
 
     // MARK: - インライン補完（確定後）
@@ -1569,7 +1579,7 @@ final class IrohaInputController: IMKInputController {
                           !self.isComposing, !self.isTranslating, self.pendingCompletion == nil,
                           self.recentCommitted == context, let client = self.client() else { return }
                     // 未確定文字列が無いので先頭（=挿入位置）の矩形を使う
-                    if self.showPredictionPanel(text, client: client, caretIndex: 0) {
+                    if self.showPredictionPanel(text, client: client, markedTextLength: 0) {
                         self.pendingCompletion = text
                     }
                 }
