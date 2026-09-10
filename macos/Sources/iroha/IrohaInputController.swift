@@ -58,9 +58,11 @@ final class IrohaInputController: IMKInputController {
         var reading: String         // ひらがなの読み
         var result: String          // 現在選ばれている変換結果
         var candidates: [String]?   // 取得済みの候補（キャッシュ）
-        /// 候補のうちユーザ定義の変換ルール（User Rewriter）が生成したもの。
-        /// 日付・時刻のように毎回変わる文字列なので、選んで確定しても学習には記録しない
-        var rewriteCandidates: Set<String> = []
+        /// 候補のうち、選んで確定しても学習に記録しないもの。
+        /// - ユーザ定義の変換ルール（User Rewriter）の出力: 日付・時刻のように毎回変わる
+        /// - ユーザ辞書のうち候補ウィンドウにだけ出す語（ハッシュタグ・定型文など）:
+        ///   学習が覚えるとライブ変換に戻ってきてしまう
+        var unlearnableCandidates: Set<String> = []
     }
 
     private var mode: Mode = .composing
@@ -870,12 +872,18 @@ final class IrohaInputController: IMKInputController {
                 for extra in [reading, hiraganaToKatakana(reading)] where !candidates.contains(extra) {
                     candidates.append(extra)
                 }
+                // ユーザ辞書のうちライブ変換から除外した語（候補ウィンドウ専用）を含む候補も
+                // 学習しない。部分一致で合成された候補（「#tag をつける」等）も対象
+                let candidateOnlyWords = UserDictionaryStore.shared.current.candidateOnlyWords(in: reading)
+                let unlearnable = Set(rewrites).union(candidates.filter { candidate in
+                    candidateOnlyWords.contains { candidate.contains($0) }
+                })
                 let finalCandidates = candidates
                 await MainActor.run {
                     guard self.mode == .segmenting, generation == self.segmentGeneration,
                           self.currentSegmentIndex == index else { return }
                     self.segments[index].candidates = finalCandidates
-                    self.segments[index].rewriteCandidates = Set(rewrites)
+                    self.segments[index].unlearnableCandidates = unlearnable
                     self.showPanel(with: finalCandidates)
                 }
             } catch {
@@ -979,9 +987,10 @@ final class IrohaInputController: IMKInputController {
     private func learnIfCorrected(committed: String) {
         guard LearningSettings.isEnabled, !segments.isEmpty, !committed.isEmpty,
               let baseline = segmentBaseline, committed != baseline else { return }
-        // 変換ルールの出力（日付・時刻など）を選んだ確定は学習しない。
-        // 覚えると「きょう → 2026/09/06」が翌日以降も第一候補になってしまう
-        guard !segments.contains(where: { $0.rewriteCandidates.contains($0.result) }) else { return }
+        // 変換ルールの出力（日付・時刻など）や、候補ウィンドウ専用のユーザ辞書語を選んだ確定は
+        // 学習しない。覚えると「きょう → 2026/09/06」が翌日以降も第一候補になったり、
+        // ライブ変換から除外したハッシュタグが学習経由でライブ変換に出てしまう
+        guard !segments.contains(where: { $0.unlearnableCandidates.contains($0.result) }) else { return }
         let reading = segments.map(\.reading).joined()
         let pairs = segments.map { (reading: $0.reading, result: $0.result) }
         Task.detached(priority: .utility) {

@@ -35,14 +35,20 @@ public struct UserDictionary: Sendable {
     public static let empty = UserDictionary(entries: [])
 
     public let entries: [UserDictionaryEntry]
-    /// 読み → 単語（登録順、重複なし）
+    /// 読み → 単語（登録順、重複なし）。候補ウィンドウ用の全エントリ
     private let wordsByReading: [String: [String]]
+    /// 読み → 単語のうちライブ変換にも使うもの（`isSuitableForLiveConversion` を満たす）
+    private let liveWordsByReading: [String: [String]]
+    /// 読み → 単語のうち候補ウィンドウにだけ出すもの（学習の除外判定に使う）
+    private let candidateOnlyWordsByReading: [String: [String]]
     /// 索引にある読みの最大文字数（最長一致の走査上限）
     private let maxReadingLength: Int
 
     public init(entries: [UserDictionaryEntry]) {
         self.entries = entries
         var index: [String: [String]] = [:]
+        var liveIndex: [String: [String]] = [:]
+        var candidateOnlyIndex: [String: [String]] = [:]
         var maxLength = 0
         for entry in entries {
             let reading = Self.normalizedReading(entry.reading)
@@ -51,17 +57,63 @@ public struct UserDictionary: Sendable {
             guard !words.contains(entry.word) else { continue }
             words.append(entry.word)
             index[reading] = words
+            if Self.isSuitableForLiveConversion(reading: reading, word: entry.word) {
+                liveIndex[reading, default: []].append(entry.word)
+            } else {
+                candidateOnlyIndex[reading, default: []].append(entry.word)
+            }
             maxLength = max(maxLength, reading.count)
         }
         self.wordsByReading = index
+        self.liveWordsByReading = liveIndex
+        self.candidateOnlyWordsByReading = candidateOnlyIndex
         self.maxReadingLength = maxLength
     }
 
     public var isEmpty: Bool { wordsByReading.isEmpty }
 
+    /// ライブ変換に使うエントリが1つも無いか（あれば素通しでよい）
+    public var isEmptyForLiveConversion: Bool { liveWordsByReading.isEmpty }
+
     /// 読みに完全一致する単語（登録順）
     public func words(forReading reading: String) -> [String] {
         wordsByReading[Self.normalizedReading(reading)] ?? []
+    }
+
+    /// 読みに完全一致する単語のうちライブ変換に使うもの（登録順）
+    public func liveWords(forReading reading: String) -> [String] {
+        liveWordsByReading[Self.normalizedReading(reading)] ?? []
+    }
+
+    /// 読み（文節全体）の中に一致する、候補ウィンドウにだけ出す単語。
+    ///
+    /// これらは候補から選んで確定しても学習に記録しない。学習が覚えると、
+    /// ライブ変換から除外した意味がなくなる（学習エンジンは辞書の外側にあるため）。
+    /// 部分一致は`split`と同じく`minimumMatchLength`文字以上の読みだけを見る
+    public func candidateOnlyWords(in reading: String, minimumMatchLength: Int = 2) -> [String] {
+        guard !candidateOnlyWordsByReading.isEmpty else { return [] }
+        let normalized = Self.normalizedReading(reading)
+        guard !normalized.isEmpty else { return [] }
+        var result: [String] = []
+        for (key, words) in candidateOnlyWordsByReading
+        where key == normalized || (key.count >= minimumMatchLength && normalized.contains(key)) {
+            result.append(contentsOf: words)
+        }
+        return result
+    }
+
+    /// 単語をライブ変換の結果として埋め込んでよいか。
+    ///
+    /// 出力が読みより大幅に長いエントリ（「たぐ」→「#helloworld #dummytag」、
+    /// 「めーる」→ メールアドレス、「おせわ」→ 定型文など）は文中に埋め込む語ではなく
+    /// 入力の省略記法なので、ライブ変換では使わず候補ウィンドウにだけ出す（ことえりと同じ体感）。
+    /// 漢字変換は読みより短くなるのが普通（「とうきょうと」→「東京都」）なので、
+    /// 長くなる方向だけを見る。「かぶ」→「株式会社」（2倍・差2）程度の略記は通す
+    public static func isSuitableForLiveConversion(reading: String, word: String) -> Bool {
+        let readingLength = reading.count
+        let wordLength = word.count
+        let isMuchLonger = wordLength > readingLength * 2 && wordLength - readingLength >= 3
+        return !isMuchLonger
     }
 
     /// 読み全体を、ユーザ辞書に一致する部分とそれ以外に左から最長一致で分割する。
@@ -69,8 +121,12 @@ public struct UserDictionary: Sendable {
     /// 1文字の読み（「あ」等）が文中で無差別に一致すると変換が壊れるため、
     /// 部分一致は`minimumMatchLength`文字以上のエントリだけを対象にする
     /// （完全一致は`words(forReading:)`が長さに関係なく拾う）。
-    public func split(_ reading: String, minimumMatchLength: Int = 2) -> [Chunk] {
-        guard !isEmpty, !reading.isEmpty else { return [.reading(reading)] }
+    /// `forLiveConversion` が真ならライブ変換に使うエントリだけを一致の対象にする
+    public func split(
+        _ reading: String, minimumMatchLength: Int = 2, forLiveConversion: Bool = false
+    ) -> [Chunk] {
+        let table = forLiveConversion ? liveWordsByReading : wordsByReading
+        guard !table.isEmpty, !reading.isEmpty else { return [.reading(reading)] }
         let characters = Array(reading)
         var chunks: [Chunk] = []
         var plain = ""
@@ -81,7 +137,7 @@ public struct UserDictionary: Sendable {
             var length = min(maxReadingLength, characters.count - index)
             while length >= minimumMatchLength {
                 let candidate = String(characters[index..<(index + length)])
-                if let word = wordsByReading[candidate]?.first {
+                if let word = table[candidate]?.first {
                     match = (length, word)
                     break
                 }

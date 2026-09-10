@@ -63,6 +63,63 @@ final class UserDictionaryTests: XCTestCase {
         XCTAssertEqual(dictionary.words(forReading: "あ"), ["阿"])
     }
 
+    // MARK: ライブ変換への適用可否（単語が読みより大幅に長いものは候補ウィンドウ専用）
+
+    func testLiveConversionSuitabilityLooksOnlyAtMuchLongerWords() {
+        typealias D = UserDictionary
+        // 短くなる方向（漢字変換）は常に通す
+        XCTAssertTrue(D.isSuitableForLiveConversion(reading: "とうきょうとりつだいがく", word: "東京都立大学"))
+        XCTAssertTrue(D.isSuitableForLiveConversion(reading: "しょう", word: "賞"))
+        XCTAssertTrue(D.isSuitableForLiveConversion(reading: "まる", word: "○"))
+        // 同程度の長さ・軽い略記は通す
+        XCTAssertTrue(D.isSuitableForLiveConversion(reading: "あいふぉん", word: "iPhone"))
+        XCTAssertTrue(D.isSuitableForLiveConversion(reading: "はっしゅたぐ", word: "#iroha"))
+        XCTAssertTrue(D.isSuitableForLiveConversion(reading: "かぶ", word: "株式会社"), "2倍ちょうど・差2は通す")
+        // 大幅に長い（2倍超かつ3文字以上）は除外
+        XCTAssertFalse(D.isSuitableForLiveConversion(reading: "たぐ", word: "#helloworld #dummytagu"))
+        XCTAssertFalse(D.isSuitableForLiveConversion(reading: "たぐ", word: "#hello"))
+        XCTAssertFalse(D.isSuitableForLiveConversion(reading: "めーる", word: "someone@example.com"))
+        XCTAssertFalse(D.isSuitableForLiveConversion(reading: "おせわ", word: "お世話になっております。"))
+    }
+
+    func testLiveWordsExcludeCandidateOnlyEntries() {
+        let dictionary = makeDictionary([
+            ("たぐ", "#helloworld #dummytagu"), ("たぐ", "タグ"), ("きららざか", "雲母坂"),
+        ])
+        XCTAssertEqual(dictionary.words(forReading: "たぐ"), ["#helloworld #dummytagu", "タグ"],
+                       "候補ウィンドウ用には全部残る")
+        XCTAssertEqual(dictionary.liveWords(forReading: "たぐ"), ["タグ"])
+        XCTAssertEqual(dictionary.liveWords(forReading: "きららざか"), ["雲母坂"])
+        XCTAssertFalse(dictionary.isEmptyForLiveConversion)
+    }
+
+    func testDictionaryWithOnlyCandidateOnlyEntriesIsEmptyForLiveConversion() {
+        let dictionary = makeDictionary([("たぐ", "#helloworld #dummytagu")])
+        XCTAssertFalse(dictionary.isEmpty)
+        XCTAssertTrue(dictionary.isEmptyForLiveConversion)
+        XCTAssertEqual(dictionary.liveWords(forReading: "たぐ"), [])
+    }
+
+    func testSplitForLiveConversionSkipsCandidateOnlyEntries() {
+        let dictionary = makeDictionary([("たぐ", "#helloworld #dummytagu"), ("きららざか", "雲母坂")])
+        XCTAssertEqual(dictionary.split("たぐをつける"), [.word("#helloworld #dummytagu"), .reading("をつける")])
+        XCTAssertEqual(dictionary.split("たぐをつける", forLiveConversion: true), [.reading("たぐをつける")])
+        XCTAssertEqual(dictionary.split("きららざかのたぐ", forLiveConversion: true),
+                       [.word("雲母坂"), .reading("のたぐ")])
+    }
+
+    func testCandidateOnlyWordsMatchWholeOrPartialReading() {
+        let dictionary = makeDictionary([
+            ("たぐ", "#helloworld #dummytagu"), ("きららざか", "雲母坂"), ("め", "someone@example.com"),
+        ])
+        XCTAssertEqual(dictionary.candidateOnlyWords(in: "たぐ"), ["#helloworld #dummytagu"])
+        XCTAssertEqual(dictionary.candidateOnlyWords(in: "たぐをつける"), ["#helloworld #dummytagu"])
+        XCTAssertEqual(dictionary.candidateOnlyWords(in: "きららざか"), [], "ライブ変換に使う語は含まない")
+        XCTAssertEqual(dictionary.candidateOnlyWords(in: "め"), ["someone@example.com"], "完全一致は1文字でも拾う")
+        XCTAssertEqual(dictionary.candidateOnlyWords(in: "めがね"), [], "1文字の部分一致は拾わない")
+        XCTAssertEqual(UserDictionary.empty.candidateOnlyWords(in: "たぐ"), [])
+    }
+
     func testEmptyDictionaryDoesNotSplit() {
         XCTAssertEqual(UserDictionary.empty.split("きららざか"), [.reading("きららざか")])
         XCTAssertTrue(UserDictionary.empty.isEmpty)
@@ -138,6 +195,29 @@ final class UserDictionaryEngineTests: XCTestCase {
         stub.shouldFail = true
         let result = try await engine.convert(reading: "きららざか", context: "", candidateCount: 5)
         XCTAssertEqual(result, ["雲母坂"])
+    }
+
+    func testCandidateOnlyWordIsNotUsedForLiveConversion() async throws {
+        let (engine, stub) = makeEngine([("たぐ", "#helloworld #dummytagu")])
+        let live = try await engine.convert(reading: "たぐ", context: "", candidateCount: 1)
+        XCTAssertEqual(live, ["タグ"], "ライブ変換は素通しでエンジンの結果")
+        XCTAssertEqual(stub.calls.count, 1)
+        XCTAssertEqual(stub.calls[0].reading, "たぐ")
+
+        let composed = try await engine.convert(reading: "たぐをつける", context: "", candidateCount: 1)
+        XCTAssertEqual(composed, ["タグヲツケル"], "部分一致でも埋め込まない")
+
+        let panel = try await engine.convert(reading: "たぐ", context: "", candidateCount: 3)
+        XCTAssertEqual(panel.first, "#helloworld #dummytagu", "候補ウィンドウには先頭で出る")
+        XCTAssertTrue(panel.contains("タグ"))
+    }
+
+    func testLiveConversionStillUsesShortWordsAlongsideCandidateOnlyOnes() async throws {
+        let (engine, _) = makeEngine([("たぐ", "#helloworld #dummytagu"), ("たぐ", "タグ付け"), ("きららざか", "雲母坂")])
+        let live = try await engine.convert(reading: "たぐ", context: "", candidateCount: 1)
+        XCTAssertEqual(live, ["タグ付け"], "同じ読みでも通常の語はライブ変換に使う")
+        let composed = try await engine.convert(reading: "きららざかのたぐ", context: "", candidateCount: 1)
+        XCTAssertEqual(composed, ["雲母坂ノタグ付け"])
     }
 
     func testEngineFailurePropagatesWithoutUserWords() async {

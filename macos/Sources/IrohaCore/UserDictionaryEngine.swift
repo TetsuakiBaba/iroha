@@ -34,22 +34,26 @@ public final class UserDictionaryEngine: ConversionEngine {
                 reading: reading, context: context, candidateCount: candidateCount)
         }
 
-        let exactWords = dictionary.words(forReading: reading)
-        let chunks = dictionary.split(reading)
-        let hasWordChunk = chunks.contains { if case .word = $0 { return true } else { return false } }
-
-        // ライブ変換・文節分割用（1候補）: 辞書を当てた結果をそのまま返す
+        // ライブ変換・文節分割用（1候補）: 辞書を当てた結果をそのまま返す。
+        // ただし出力が読みより大幅に長いエントリ（ハッシュタグ・定型文など）は
+        // 文中に埋め込まれると邪魔なので使わない（候補ウィンドウにだけ出す）
         if candidateCount <= 1 {
-            if let word = exactWords.first { return [word] }
-            guard hasWordChunk else {
+            guard !dictionary.isEmptyForLiveConversion else {
+                return try await base.convert(reading: reading, context: context, candidateCount: 1)
+            }
+            if let word = dictionary.liveWords(forReading: reading).first { return [word] }
+            let chunks = dictionary.split(reading, forLiveConversion: true)
+            guard Self.hasWordChunk(chunks) else {
                 return try await base.convert(reading: reading, context: context, candidateCount: 1)
             }
             return [try await compose(chunks, context: context)]
         }
 
         // 候補ウィンドウ用: ユーザ辞書の単語を先頭に、続けてエンジンの候補を並べる
+        let exactWords = dictionary.words(forReading: reading)
+        let chunks = dictionary.split(reading)
         var results = exactWords
-        if hasWordChunk, exactWords.isEmpty {
+        if Self.hasWordChunk(chunks), exactWords.isEmpty {
             results.append(try await compose(chunks, context: context))
         }
         do {
@@ -63,6 +67,10 @@ public final class UserDictionaryEngine: ConversionEngine {
             if results.isEmpty { throw error }
         }
         return results
+    }
+
+    private static func hasWordChunk(_ chunks: [UserDictionary.Chunk]) -> Bool {
+        chunks.contains { if case .word = $0 { return true } else { return false } }
     }
 
     /// 辞書一致部分はそのまま、それ以外はエンジンに変換させて連結する。
