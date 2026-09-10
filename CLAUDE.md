@@ -77,6 +77,8 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   候補生成源として合流させる（第一候補の直後に挿入。ライブ変換には影響しない）。
   出力は `{{date:…}}` 等のテンプレートで毎回展開されるため、ルール由来の候補を確定しても
   学習には記録しない（`BunsetsuSegment.unlearnableCandidates` で識別）
+- Caps Lock の日本語⇄英字切り替えはいろは自身が `flagsChanged` で処理し、IOKit で Caps Lock を OFF に戻す
+  （`CapsLockSettings`、既定ON）。ことえりの同機能はことえりのプロセス内実装なので他IMEには効かない
 - 変換・予測の左文脈は合成開始時にアプリのカーソル手前テキストを1回読む（`DocumentContextSettings.read`、
   既定ON）。読めないアプリでは `recentCommitted`（確定文字列の蓄積）に代える。合成中は読み直さない
 - 学習は「文節変換の結果がエンジンの出力と違ったら記録」。同じ読みの使い分けのため

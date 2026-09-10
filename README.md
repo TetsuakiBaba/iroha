@@ -68,6 +68,7 @@
 | 、。！？ | 自動確定（メニューでOFF可、ライブ変換時のみ） |
 | F6 / F7 / F8 | ひらがな / カタカナ / 半角カタカナ（Ctrl+U / I / O でも可） |
 | F9 / F10 | 全角英数 / 半角英数（打鍵通りの文字列、Ctrl+P / T でも可） |
+| Caps Lock | 日本語 ⇄ 英字の入力モード切り替え（設定でOFF可。切り替え後 Caps Lock は自動でオフに戻る） |
 | Shift+英字 | Shiftを押している間だけ英字入力。文章の途中でも確定せずに英字を挿入できる（下記） |
 | 修飾キー+Return（設定で変更可） | 未確定文字列をAI変換して確定（既定は ⌃Return で英訳。処理中はEscで取消） |
 | Tab | カーソル下の小窓に出た予測（予測変換・インライン補完、設定でON）を取り入れる |
@@ -254,6 +255,11 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
   iroha-cli から差し替え可）。macOSのユーザ辞書の実体は `~/Library/KeyboardServices/TextReplacements.db`
   （非公開スキーマのSQLite。実データが未チェックポイントのWALにあるため db/-wal/-shm ごとコピーして読む）
 - zenzのプロンプト形式: `[U+EE02 + 左文脈] + U+EE00 + カタカナ読み + U+EE01 → 変換結果`
+- Caps Lock でのモード切り替え（[CapsLockSettings](macos/Sources/iroha/CapsLockSettings.swift)、設定 `capsLockSwitchesMode`、既定ON）:
+  ことえりの「Caps Lockの動作: オンの時「英字」を入力」はことえり自身が処理しているため、他のIMEでは働かない。
+  いろはは `recognizedEvents` に `flagsChanged` を含めて Caps Lock の押下（オンになった瞬間）を受け取り、
+  `selectMode` で日本語 ⇄ 英字を切り替えたあと IOKit の `IOHIDSetModifierLockState` で Caps Lock を OFF に戻す
+  （LED を点けず、大文字化もしない）。OFF に戻したときの flagsChanged は無視する
 - 左文脈の取得（[DocumentContextSettings](macos/Sources/iroha/DocumentContextSettings.swift)、設定 `documentContext`、既定ON）:
   合成を始める瞬間（未確定文字列がまだ無いとき）に1回だけ、IMKの `selectedRange` / `attributedSubstring`
   でアプリのカーソル手前のテキストを読み、改行を除いた末尾40文字を文脈にする（[LeftContext](macos/Sources/IrohaCore/LeftContext.swift)）。

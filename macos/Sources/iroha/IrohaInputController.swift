@@ -216,7 +216,8 @@ final class IrohaInputController: IMKInputController {
     // MARK: - IMKInputController
 
     override func recognizedEvents(_ sender: Any!) -> Int {
-        Int(NSEvent.EventTypeMask.keyDown.rawValue)
+        // flagsChanged は Caps Lock でのモード切り替えのため（他の修飾キー単独の押下は handle で無視する）
+        Int(NSEvent.EventTypeMask.keyDown.union(.flagsChanged).rawValue)
     }
 
     override func activateServer(_ sender: Any!) {
@@ -251,8 +252,11 @@ final class IrohaInputController: IMKInputController {
     }
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-        guard let event, event.type == .keyDown,
-              let client = sender as? IMKTextInput else { return false }
+        guard let event, let client = sender as? IMKTextInput else { return false }
+        if event.type == .flagsChanged {
+            return handleFlagsChanged(event, client: client)
+        }
+        guard event.type == .keyDown else { return false }
 
         lastKeyEventTime = .now
         let plainTab = Int(event.keyCode) == kVK_Tab
@@ -353,6 +357,22 @@ final class IrohaInputController: IMKInputController {
         case .composing:
             return handleComposing(event, client: client)
         }
+    }
+
+    /// Caps Lock で日本語 ⇄ 英字を切り替える（設定でOFFにできる）。
+    /// Caps Lock が「オンになった」瞬間だけ反応し、切り替えたらすぐ Caps Lock を OFF に戻す
+    /// （OFF に戻したときにも flagsChanged が来るが、それは無視する）。他の修飾キーは扱わない
+    private func handleFlagsChanged(_ event: NSEvent, client: IMKTextInput) -> Bool {
+        guard Int(event.keyCode) == kVK_CapsLock, CapsLockSettings.isEnabled,
+              event.modifierFlags.contains(.capsLock) else { return false }
+        if japaneseMode {
+            commitCurrent(client: client, suggestsCompletion: false)
+            client.selectMode("com.apple.inputmethod.Roman")
+        } else {
+            client.selectMode("com.apple.inputmethod.Japanese")
+        }
+        CapsLockSettings.turnCapsLockOff()
+        return true
     }
 
     override func deactivateServer(_ sender: Any!) {
@@ -1657,6 +1677,7 @@ final class IrohaInputController: IMKInputController {
 
 // キーコード定数（Carbon/HIToolboxの値）
 private let kVK_Return = 0x24
+private let kVK_CapsLock = 0x39
 private let kVK_Tab = 0x30
 private let kVK_Space = 0x31
 private let kVK_Delete = 0x33
