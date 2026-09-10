@@ -157,8 +157,14 @@ final class IrohaInputController: IMKInputController {
     /// 最後に完了したライブ変換の（読み, 変換結果）
     private var lastConversion: (reading: String, result: String)?
     private var conversionTask: Task<Void, Never>?
-    /// 文脈条件付けに使う直前の確定文字列（最大40文字）
+    /// 文脈条件付けに使う直前の確定文字列（最大40文字）。
+    /// アプリのテキストを読めないときの文脈、および学習・補完の整合性チェックに使う
     private var recentCommitted = ""
+    /// 合成を始めた時点でアプリから読んだカーソル手前のテキスト（`DocumentContextSettings`）。
+    /// 設定OFF・アプリが返さないときは nil で `recentCommitted` に代える
+    private var documentContext: String?
+    /// 今の合成の変換・予測に渡す左文脈（未確定文字列の固定部分は呼び出し側で足す）
+    private var conversionContext: String { documentContext ?? recentCommitted }
 
     /// 文節変換中の状態
     private var segments: [BunsetsuSegment] = []
@@ -217,6 +223,7 @@ final class IrohaInputController: IMKInputController {
         super.activateServer(sender)
         // フォーカスが移ったら文脈をリセット
         recentCommitted = ""
+        documentContext = nil
         cancelPrediction()
         dismissCompletion()
         // モデルを事前ロード（未ロード時のみ実処理が走る）
@@ -637,6 +644,7 @@ final class IrohaInputController: IMKInputController {
             inputAlphabet(first, client: client)
             return true
         }
+        captureDocumentContextIfStarting(client: client)
         finishAlphabetRun()
         lockDisplayOverride()
         composer.input(first)
@@ -725,6 +733,7 @@ final class IrohaInputController: IMKInputController {
     /// 文章の途中で英単語を入れるとき、いったん確定して英数モードに切り替えなくてよいようにする。
     /// Shiftを離して普通の文字を打つと `finishAlphabetRun` で英字を固定部分にし、かな入力に戻る
     private func inputAlphabet(_ character: Character, client: IMKTextInput) {
+        captureDocumentContextIfStarting(client: client)
         if alphabetRun == nil {
             autoCommitPending = false
             lockDisplayOverride()
@@ -851,7 +860,7 @@ final class IrohaInputController: IMKInputController {
         // 固定部分だけなら変換するものがない
         guard !reading.isEmpty else { return }
 
-        let context = recentCommitted + fixedPrefix
+        let context = conversionContext + fixedPrefix
         conversionTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -944,6 +953,7 @@ final class IrohaInputController: IMKInputController {
                 if Self.startsAlphabetRun(first) {
                     inputAlphabet(first, client: client)
                 } else {
+                    captureDocumentContextIfStarting(client: client)
                     composer.input(first)
                     composerDidChange(client: client)
                 }
@@ -963,7 +973,7 @@ final class IrohaInputController: IMKInputController {
             return
         }
         let reading = segments[index].reading
-        let context = recentCommitted + segments[..<index].map(\.result).joined()
+        let context = conversionContext + segments[..<index].map(\.result).joined()
         let generation = segmentGeneration
         let count = candidateCount
         Task { [weak self] in
@@ -1034,7 +1044,7 @@ final class IrohaInputController: IMKInputController {
         segmentGeneration += 1
         let generation = segmentGeneration
         let index = currentSegmentIndex
-        let context = recentCommitted + segments[..<index].map(\.result).joined()
+        let context = conversionContext + segments[..<index].map(\.result).joined()
         let newCurrentReading = currentReading
         let newRemainderReading = remainderReading
 
@@ -1168,7 +1178,7 @@ final class IrohaInputController: IMKInputController {
         }
 
         // 固定部分は変換し直さず、後続の変換の文脈として渡す
-        let context = recentCommitted + fixedText
+        let context = conversionContext + fixedText
         conversionTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -1422,8 +1432,16 @@ final class IrohaInputController: IMKInputController {
             selectionRange: NSRange(location: 0, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )
-        recentCommitted = String((recentCommitted + text).suffix(40))
-        if suggestsCompletion { scheduleCompletion() }
+        recentCommitted = String((recentCommitted + text).suffix(LeftContext.maxLength))
+        documentContext = nil
+        if suggestsCompletion { scheduleCompletion(client: client, committed: text) }
+    }
+
+    /// 合成が始まる瞬間（未確定文字列がまだ無い）にアプリのカーソル手前のテキストを1回だけ読む。
+    /// 合成中は読み直さない（未確定文字列が混ざる・同期IPCが増える）
+    private func captureDocumentContextIfStarting(client: IMKTextInput) {
+        guard !isComposing else { return }
+        documentContext = DocumentContextSettings.read(from: client)
     }
 
     // MARK: - 予測変換（確定前）
@@ -1442,7 +1460,7 @@ final class IrohaInputController: IMKInputController {
         else { return }
         let base = currentDisplay
         guard !base.isEmpty else { return }
-        let context = recentCommitted + base
+        let context = conversionContext + base
         predictionGeneration += 1
         let generation = predictionGeneration
         let delay = remainingIdleDelay()
@@ -1550,14 +1568,20 @@ final class IrohaInputController: IMKInputController {
 
     /// インライン補完: 確定後、キー入力の休止（既定300ms、設定で変更可）を待って確定した文章の続き
     /// （次の文節）を予測し、カーソル下の小窓に出す。アプリのテキストにはTabで確定するまで触らない。
-    /// 文脈は直前の確定文字列（最大40文字）。フォーカスが移ると文脈は空になるので出ない
-    private func scheduleCompletion() {
+    /// 文脈はアプリのカーソル手前のテキスト（読めれば。確定した文字列で終わっていることを確認する）、
+    /// なければ直前の確定文字列（最大40文字）。フォーカスが移ると後者は空になるので出ない
+    private func scheduleCompletion(client: IMKTextInput, committed: String) {
         completionTask?.cancel()
         completionTask = nil
         guard PredictionSettings.isCompletionEnabled, japaneseMode, mode == .composing,
               !isComposing, !isTranslating, pendingCompletion == nil, !recentCommitted.isEmpty
         else { return }
-        let context = recentCommitted
+        let committedSnapshot = recentCommitted
+        var context = committedSnapshot
+        if let document = DocumentContextSettings.read(from: client),
+           document.hasSuffix(String(committed.suffix(LeftContext.maxLength / 2))) {
+            context = document
+        }
         completionGeneration += 1
         let generation = completionGeneration
         let delay = remainingIdleDelay()
@@ -1568,7 +1592,7 @@ final class IrohaInputController: IMKInputController {
                 // 休止中に入力が始まっていたら推論しない
                 let stillValid = await MainActor.run {
                     generation == self.completionGeneration && self.mode == .composing
-                        && !self.isComposing && !self.isTranslating && self.recentCommitted == context
+                        && !self.isComposing && !self.isTranslating && self.recentCommitted == committedSnapshot
                 }
                 guard stillValid else { return }
                 let text = try await Self.completionEngine.predict(
@@ -1577,7 +1601,7 @@ final class IrohaInputController: IMKInputController {
                 await MainActor.run {
                     guard generation == self.completionGeneration, self.mode == .composing,
                           !self.isComposing, !self.isTranslating, self.pendingCompletion == nil,
-                          self.recentCommitted == context, let client = self.client() else { return }
+                          self.recentCommitted == committedSnapshot, let client = self.client() else { return }
                     // 未確定文字列が無いので先頭（=挿入位置）の矩形を使う
                     if self.showPredictionPanel(text, client: client, markedTextLength: 0) {
                         self.pendingCompletion = text

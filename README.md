@@ -4,7 +4,7 @@
 
 - **ライブ変換**: ことえりのライブ変換のように、入力に追従して読みをLLMへ送り、変換結果をリアルタイム表示。Enterで確定
 - **候補変換**: スペースキーでn-best候補を候補ウィンドウに表示
-- **文脈対応**: 直前に確定した文字列を条件としてLLMに与え、文脈に合った変換を行う
+- **文脈対応**: カーソル手前にあるアプリの文章（読めないアプリでは直前に確定した文字列）を条件としてLLMに与え、文脈に合った変換を行う
 - **ユーザ辞書**: 固有名詞などを登録して変換に反映。macOSのユーザ辞書（システム設定 > キーボード > ユーザ辞書）から取り込める
 - **学習**: 文節変換で修正して確定した変換を覚え、次から第一候補にする。同じ読みでも文中の位置で使い分ける（「きしゃのきしゃ」→「記者の貴社」）
 - **変換ルール**: よみ（トリガー）と出力の組を登録し、一致したとき出力を候補に加える。`{{date:yyyy/MM/dd}}` `{{time:HH:mm}}` のように変換のたびに変わる動的な出力が書ける（「きょう」→ 2026/09/06）
@@ -254,6 +254,13 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
   iroha-cli から差し替え可）。macOSのユーザ辞書の実体は `~/Library/KeyboardServices/TextReplacements.db`
   （非公開スキーマのSQLite。実データが未チェックポイントのWALにあるため db/-wal/-shm ごとコピーして読む）
 - zenzのプロンプト形式: `[U+EE02 + 左文脈] + U+EE00 + カタカナ読み + U+EE01 → 変換結果`
+- 左文脈の取得（[DocumentContextSettings](macos/Sources/iroha/DocumentContextSettings.swift)、設定 `documentContext`、既定ON）:
+  合成を始める瞬間（未確定文字列がまだ無いとき）に1回だけ、IMKの `selectedRange` / `attributedSubstring`
+  でアプリのカーソル手前のテキストを読み、改行を除いた末尾40文字を文脈にする（[LeftContext](macos/Sources/IrohaCore/LeftContext.swift)）。
+  インライン補完は確定直後に読み直す（確定した文字列で終わっていることを確認する）。
+  カーソル位置やテキストを返さないアプリ（Electron系・ターミナル等）や設定OFFでは、
+  irohaが確定した文字列の蓄積（`recentCommitted`、フォーカス移動で空になる）に代える。
+  合成中は読み直さない（未確定文字列が混ざる・同期IPCが増える）
 - 予測変換・インライン補完は [PredictionEngine](macos/Sources/IrohaCore/PredictionEngine.swift)
   プロトコルで抽象化し、かな漢字変換とは別モデルを設定できる（既定は同じzenzインスタンスを共有）。
   zenzでの実装（`ZenzEngine.predict`）はazooKey（Zenzai）の次文字予測と同じプロンプト
@@ -263,7 +270,7 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
   表示する範囲は `PredictionText` が「先頭の1文節（かな→非かなの境界。2文字未満なら2文節目まで）、
   句読点が出たらそこまで、最大16文字」に切り出し、切り出しが決まった時点で生成を止める。
   左文脈は「確定済み文字列（最大40文字）＋表示中の未確定文字列」（予測変換）または
-  「確定済み文字列」（インライン補完）。コントローラは休止時間（設定 `predictionDelayMs`、既定300ms）を
+  「確定済み文字列」（インライン補完）。確定済み文字列は下記の左文脈の取得と同じ。コントローラは休止時間（設定 `predictionDelayMs`、既定300ms）を
   キー入力の時刻から測り、ライブ変換の到着後に残り時間だけ待ってから予測を走らせる。
   表示は [PredictionPanel](macos/Sources/iroha/PredictionPanel.swift)（フォーカスを取らない
   フローティングの `NSPanel`）で、位置は `IMKTextInput.attributes(forCharacterIndex:lineHeightRectangle:)`

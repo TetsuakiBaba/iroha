@@ -69,6 +69,7 @@ struct SettingsView: View {
 private struct InputSettingsTab: View {
     @AppStorage("liveConversion") private var liveConversion = true
     @AppStorage("commitOnPunctuation") private var commitOnPunctuation = false
+    @AppStorage(DocumentContextSettings.enabledKey) private var documentContext = true
     @AppStorage("candidateCount") private var candidateCount = 8
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
     @AppStorage(PredictionSettings.predictiveEnabledKey) private var predictiveConversion = false
@@ -90,6 +91,12 @@ private struct InputSettingsTab: View {
                     }
                 }
                 Text("この数の下に、読みが一致する辞書の残りの候補（単漢字・異体字・人名など）が続きます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("アプリの文章を文脈に使う", isOn: $documentContext)
+                Text("入力を始めた位置の手前にある文章（最大40文字）をアプリから読み取り、変換と予測の文脈にします。"
+                    + "文章の途中に書き足すときや、別のアプリに移った直後でも前後に合った変換になります。"
+                    + "文章を返さないアプリでは、irohaで直前に確定した文字列を文脈にします。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
