@@ -70,7 +70,6 @@ private struct InputSettingsTab: View {
     @AppStorage("liveConversion") private var liveConversion = true
     @AppStorage("commitOnPunctuation") private var commitOnPunctuation = false
     @AppStorage(DocumentContextSettings.enabledKey) private var documentContext = true
-    @AppStorage(CapsLockSettings.enabledKey) private var capsLockSwitchesMode = true
     @AppStorage("candidateCount") private var candidateCount = 8
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
     @AppStorage(PredictionSettings.predictiveEnabledKey) private var predictiveConversion = false
@@ -120,15 +119,6 @@ private struct InputSettingsTab: View {
                     .disabled(!predictiveConversion && !inlineCompletion)
                 Text("キーを離してからこの時間だけ何も押さなければ予測を出します。短いほど早く出ますが、"
                     + "入力中に頻繫に出て煩わしくなります。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Caps Lock") {
-                Toggle("Caps Lockで日本語と英字を切り替える", isOn: $capsLockSwitchesMode)
-                Text("ことえりの「Caps Lockの動作: オンの時「英字」を入力」に相当します。切り替えたあと Caps Lock は"
-                    + "自動でオフに戻るので、英字が大文字になることはありません。"
-                    + "大文字入力に Caps Lock を使う場合はオフにしてください。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
