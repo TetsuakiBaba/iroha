@@ -18,27 +18,8 @@ enum CapsLockSettings {
         UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true
     }
 
-    /// Caps Lock の状態を OFF に戻す。
-    ///
-    /// flagsChanged が IME に届いた時点では HID 側の Caps Lock 状態がまだ確定していないことがあり、
-    /// その場で OFF にしても後から ON が上書きされる（実機で LED が点いたまま残った）。
-    /// そのため少し待ってから状態を読み、ON なら OFF にする。それでも残る場合に備えて数回繰り返す
+    /// Caps Lock の状態を OFF にする（IOKit HID）。失敗しても何もしない
     static func turnCapsLockOff() {
-        let delays: [TimeInterval] = [0.05, 0.15, 0.3, 0.6]
-        for delay in delays {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                withHIDSystem { connect in
-                    var state = false
-                    guard IOHIDGetModifierLockState(connect, Int32(kIOHIDCapsLockState), &state) == KERN_SUCCESS,
-                          state else { return }
-                    IOHIDSetModifierLockState(connect, Int32(kIOHIDCapsLockState), false)
-                }
-            }
-        }
-    }
-
-    /// IOHIDSystem への接続を開いて `body` を実行する（失敗したら何もしない）
-    private static func withHIDSystem(_ body: (io_connect_t) -> Void) {
         var iterator: io_iterator_t = 0
         guard IOServiceGetMatchingServices(
             kIOMainPortDefault, IOServiceMatching("IOHIDSystem"), &iterator) == KERN_SUCCESS
@@ -51,6 +32,6 @@ enum CapsLockSettings {
         guard IOServiceOpen(service, mach_task_self_, UInt32(kIOHIDParamConnectType), &connect) == KERN_SUCCESS
         else { return }
         defer { IOServiceClose(connect) }
-        body(connect)
+        IOHIDSetModifierLockState(connect, Int32(kIOHIDCapsLockState), false)
     }
 }
