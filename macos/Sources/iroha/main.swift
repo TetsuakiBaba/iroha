@@ -69,6 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // セルフインストールして終了する（zipを解凍してダブルクリックするだけで導入できる）
         if SelfInstaller.installIfNeeded() { return }  // installIfNeededは戻らない（_exit）
 
+        // 起動・終了の記録（データフォルダの logs/）。前回が正常終了していなければここで分かる
+        LaunchLogger.recordLaunch()
+
         guard let connectionName = Bundle.main.infoDictionary?["InputMethodConnectionName"] as? String else {
             NSLog("iroha: InputMethodConnectionName がInfo.plistにありません")
             return
@@ -96,6 +99,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 設定でOFF（既定）の間はホットキー登録も監視もしない
         SelectionActionCoordinator.shared.start()
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        LaunchLogger.recordExit(reason: "terminate")
+    }
 }
 
 /// プロセスを終了し、インストール済みのirohaを即座に再起動する。
@@ -106,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// Metal解放処理でabortすることがあるため（SettingsViewの再起動ボタンと同じ理由）
 enum AppRestarter {
     static func restartInstalledApp() -> Never {
+        LaunchLogger.recordExit(reason: "restart")
         UserDefaults.standard.synchronize()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")

@@ -221,6 +221,9 @@ ASCIIショートカット）は取り込みの対象外。取り込んだ単語
 - 2台で同時に編集した場合は後に保存した方が残る（Dropboxでは「競合コピー」が残ることがある）
 - 保存場所を変えていると、アンインストール時の「データも含めて削除」は既定の場所だけを消し、
   共有フォルダには触らない
+- フォルダ内の `logs/launch-<ホスト名>.log` に起動・終了の記録が残る（1起動あたり数行のテキスト。
+  前回が正常終了していなければ `unclean-exit`、macOSがクラッシュレポートを残していれば
+  `crash-report` の行が起動時に書かれる）。irohaが勝手に再起動していないか調べるときに見る
 
 ## 開発
 
@@ -250,6 +253,10 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
   （[UserRewriteRule](macos/Sources/IrohaCore/UserRewriteRule.swift)。変換エンジンのデコレータ鎖には入れず、
   コントローラが候補ウィンドウを開くときに独立した候補生成源として合流させる。
   トリガーの一致方法は `TriggerKind`、テンプレートへ渡す値は `RewriteMatch.parameters` で拡張する）
+- 起動・終了の記録は `<データフォルダ>/logs/launch-<ホスト名>.log`（[LaunchLog](macos/Sources/IrohaCore/LaunchLog.swift)。
+  端末ごとにファイルを分けるので共有フォルダでも競合しない。`state-<ホスト名>.json` が直前の起動の記録で、
+  起動時に終了時刻が入っていなければ前回は正常終了していない。NSLogはユニファイドログに残らないことがあるため、
+  終了の調査はまずこのログと `~/Library/Logs/DiagnosticReports/iroha-*.ips` を見る）
 - ユーザ辞書は `<データフォルダ>/user-dictionary.json`（環境変数 `IROHA_USER_DICT` で
   iroha-cli から差し替え可）。macOSのユーザ辞書の実体は `~/Library/KeyboardServices/TextReplacements.db`
   （非公開スキーマのSQLite。実データが未チェックポイントのWALにあるため db/-wal/-shm ごとコピーして読む）

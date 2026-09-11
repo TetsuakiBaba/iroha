@@ -11,6 +11,9 @@ enum Uninstaller {
 
     /// 実行して戻らない（完了・失敗いずれも案内を出してプロセスを終了する）
     static func run(purgeData: Bool) -> Never {
+        // 終了の記録（データを消す前に書く。消す場合はログも一緒に消える）
+        LaunchLogger.recordExit(reason: "uninstall")
+
         // 1. 選択中の入力ソースがirohaのままだとシステムが再起動を試みるので、
         //    先にABCキーボードへ切り替えて選択を外す
         selectABCKeyboard()

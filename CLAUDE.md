@@ -36,6 +36,8 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
 - `log` はzshの組み込みと衝突するため必ず `/usr/bin/log` をフルパスで呼ぶ
 - NSLogはこの環境ではユニファイドログに残らない。IMEの実行時調査は
   /tmpへのファイル直書きヘルパーを一時的に仕込む（調査後に削除）
+- 起動・終了・異常終了の履歴は `<データフォルダ>/logs/launch-<ホスト名>.log`（`LaunchLog`）。
+  予期しない再起動やクラッシュの調査はまずここと `~/Library/Logs/DiagnosticReports/iroha-*.ips` を見る
 
 ## プロジェクト構成の要点
 

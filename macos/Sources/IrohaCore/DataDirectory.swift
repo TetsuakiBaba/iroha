@@ -63,6 +63,8 @@ public enum DataDirectory {
     public static var userRewriteRulesURL: URL { url.appendingPathComponent("user-rewrite-rules.json") }
     /// UserDefaultsの設定を他のMacと共有するためのスナップショット
     public static var preferencesURL: URL { url.appendingPathComponent("settings.json") }
+    /// 起動・終了の記録（`LaunchLog`）。端末ごとのファイルなので `portableItems` には含めない
+    public static var logsURL: URL { url.appendingPathComponent("logs", isDirectory: true) }
 
     /// 保存場所を移すときにコピーする対象（フォルダ直下の相対パス）
     public static let portableItems = [
