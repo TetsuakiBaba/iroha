@@ -16,6 +16,7 @@ import IrohaCore
 //   IROHA_LEARNING で学習結果のファイルを上書き可能。
 //   IROHA_LATTICE=off で辞書ラティスを使わずzenz単体、IROHA_LATTICE=always で第一候補も
 //   ラティス候補の再採点で決める（既定は候補ウィンドウのみラティス。IME本体と同じ）
+//   IROHA_NO_LATIN=1 で読みにラテン文字がないときの英字出力を禁じる（実験用。USB等も出なくなる）
 //   データフォルダはIME本体の設定（保存場所の変更）に従う。IROHA_DATA_DIR で上書き可能
 
 /// IME本体と同じデータフォルダを使う（設定 > 情報 > データの保存場所 で変えた場所を追う）
@@ -60,10 +61,12 @@ func editDistance(_ a: [Character], _ b: [Character]) -> Int {
 /// IROHA_USER_DICT でユーザ辞書のJSONを差し替えられる（既定は本体と同じファイル）
 func makeEngine() -> any ConversionEngine {
     let zenz: ZenzEngine
+    // IROHA_NO_LATIN=1: 読みにラテン文字がなければ出力の英字を禁じる（英語語彙の多いモデルの評価用）
+    let restrictLatin = ProcessInfo.processInfo.environment["IROHA_NO_LATIN"] == "1"
     if let path = ProcessInfo.processInfo.environment["IROHA_MODEL"] {
-        zenz = ZenzEngine(modelPath: path)
+        zenz = ZenzEngine(modelPath: path, restrictLatinToReading: restrictLatin)
     } else {
-        zenz = ZenzEngine()
+        zenz = ZenzEngine(restrictLatinToReading: restrictLatin)
     }
     let store: UserDictionaryStore
     if let path = ProcessInfo.processInfo.environment["IROHA_USER_DICT"] {

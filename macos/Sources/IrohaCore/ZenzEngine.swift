@@ -6,6 +6,11 @@ import Foundation
 /// プロンプト形式（zenz-v3）:
 ///   [U+EE02 + 左文脈] + U+EE00 + カタカナ読み + U+EE01 → 変換結果
 ///
+/// エンコーダ・デコーダ型のモデル（training/t5/ で学習する自作モデル。GGUFの t5 アーキテクチャ）も
+/// 同じプロンプト形式で動かす: プロンプト全体（+ </s>）をエンコーダに1回通し、デコーダは
+/// 開始トークンから変換結果を生成する。読み制約・n-best・採点はデコーダ専用モデルと共通。
+/// 予測（`predict`）はデコーダ専用モデルの自由生成に依存するため、エンコーダ・デコーダ型では空を返す
+///
 /// 予測（`PredictionEngine`）にも使える: 左文脈タグの後ろに置いた文字列の続きを書かせる（下記 `predict`）
 public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
 
@@ -21,14 +26,21 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         let tokenTexts: [String?]
         /// トークンID → 生成終了とみなすトークンか（EOG・zenzの特殊トークン）
         let tokenIsTerminator: [Bool]
+        /// エンコーダ・デコーダ型か（T5系）。真ならプロンプトは `llama_encode` で読み、
+        /// デコーダは `decoderStartToken` から生成する
+        let isEncoderDecoder: Bool
+        let decoderStartToken: llama_token
 
         init(model: OpaquePointer, context: OpaquePointer, vocab: OpaquePointer,
-             tokenTexts: [String?], tokenIsTerminator: [Bool]) {
+             tokenTexts: [String?], tokenIsTerminator: [Bool],
+             isEncoderDecoder: Bool, decoderStartToken: llama_token) {
             self.model = model
             self.context = context
             self.vocab = vocab
             self.tokenTexts = tokenTexts
             self.tokenIsTerminator = tokenIsTerminator
+            self.isEncoderDecoder = isEncoderDecoder
+            self.decoderStartToken = decoderStartToken
         }
 
         deinit {
@@ -43,8 +55,12 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
     /// 左文脈として与える最大文字数（zenz-v3の学習設定に合わせる）
     private let maxContextLength = 40
 
-    public init(modelPath: String = ZenzEngine.defaultModelPath) {
+    /// 読みにラテン文字がないとき出力の英字を禁じる（`ReadingConstraint` 参照。既定は許す）
+    private let restrictLatinToReading: Bool
+
+    public init(modelPath: String = ZenzEngine.defaultModelPath, restrictLatinToReading: Bool = false) {
         self.modelPath = modelPath
+        self.restrictLatinToReading = restrictLatinToReading
     }
 
     /// モデルを事前にロードしておく（初回変換のもたつき防止）
@@ -61,7 +77,7 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         }
 
         let prompt = Self.buildPrompt(reading: reading, leftContext: leftContext, maxContextLength: maxContextLength)
-        let promptTokens = try tokenize(prompt, addSpecial: true)
+        let promptTokens = try tokenizePrompt(prompt, runtime: runtime)
 
         if candidateCount <= 1 {
             let result = try generate(runtime: runtime, promptTokens: promptTokens,
@@ -75,11 +91,9 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         // 離れたものは捨てる（読み制約は漢字・英字の読みを検証できないので、
         // 「活用を」「NIPPON」のような読みの合わない候補が探索の埋め草として通ってしまう。
         // モデル自身の確からしさで足切りすることでそれを除く）
-        var tokens = promptTokens
-        llama_memory_clear(llama_get_memory(runtime.context), true)
-        try decode(ctx: runtime.context, tokens: &tokens)
+        _ = try primePrompt(runtime: runtime, promptTokens: promptTokens)
 
-        let constraint = ReadingConstraint(reading: reading)
+        let constraint = ReadingConstraint(reading: reading, restrictLatinToReading: restrictLatinToReading)
         let firstTokens = topTokens(runtime: runtime, count: candidateCount * 8)
         var scored: [(text: String, logProb: Float)] = []
         var bestLogProb = -Float.infinity
@@ -201,16 +215,15 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
     ) throws -> (text: String, logProb: Float) {
         let ctx = runtime.context
         let vocab = runtime.vocab
-        var tokens = promptTokens
+        // プロンプトを評価して生成開始状態にする（TODO: プレフィックス再利用で増分デコード）
+        var tokens = try primePrompt(runtime: runtime, promptTokens: promptTokens)
         var logProb: Float = 0
         if let forcedFirstToken {
-            tokens.append(forcedFirstToken.token)
+            var first = forcedFirstToken.token
+            try decode(ctx: ctx, tokens: &first)
+            tokens.append(first)
             logProb += forcedFirstToken.logProb
         }
-
-        // KVキャッシュを破棄してプロンプトを評価（TODO: プレフィックス再利用で増分デコード）
-        llama_memory_clear(llama_get_memory(ctx), true)
-        try decode(ctx: ctx, tokens: &tokens)
 
         var outputBytes = Data()
         var pieceBuffer = [CChar](repeating: 0, count: 128)
@@ -227,7 +240,7 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
 
         // 読みの消費状況（constrained decoding用）。追跡できない読みや
         // 制約を満たすトークンが尽きた場合はnilにして素の貪欲生成に戻す
-        var constraint = ReadingConstraint(reading: reading)
+        var constraint = ReadingConstraint(reading: reading, restrictLatinToReading: restrictLatinToReading)
         var mask = constraint?.initialMask ?? 0
         if let forcedFirstToken, let active = constraint {
             mask = active.advance(mask, text: runtime.tokenTexts[Int(forcedFirstToken.token)] ?? "")
@@ -290,6 +303,34 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         return prompt
     }
 
+    /// プロンプトをトークン化する。エンコーダ・デコーダ型は特殊トークンを自動で付けず、
+    /// 末尾に </s> を明示的に置く（学習側 train_t5.py と同じ形。llama.cppの既定に依存しない）
+    private func tokenizePrompt(_ prompt: String, runtime: Runtime) throws -> [llama_token] {
+        guard runtime.isEncoderDecoder else { return try tokenize(prompt, addSpecial: true) }
+        return try tokenize(prompt, addSpecial: false) + [llama_vocab_eos(runtime.vocab)]
+    }
+
+    /// KVキャッシュを空にしてプロンプトを評価し、次トークンのlogitsが読める状態にする。
+    /// - Returns: デコーダ側に投入済みのトークン列（デコーダ専用モデルならプロンプトそのもの、
+    ///   エンコーダ・デコーダ型なら開始トークン1つ）。以降の位置はこの長さから続ける
+    private func primePrompt(runtime: Runtime, promptTokens: [llama_token]) throws -> [llama_token] {
+        let ctx = runtime.context
+        llama_memory_clear(llama_get_memory(ctx), true)
+        if runtime.isEncoderDecoder {
+            var encoderTokens = promptTokens
+            let result = encoderTokens.withUnsafeMutableBufferPointer { buffer in
+                llama_encode(ctx, llama_batch_get_one(buffer.baseAddress, Int32(buffer.count)))
+            }
+            guard result == 0 else { throw ConversionError.inferenceFailed("llama_encode=\(result)") }
+            var start = [runtime.decoderStartToken]
+            try decode(ctx: ctx, tokens: &start)
+            return start
+        }
+        var tokens = promptTokens
+        try decode(ctx: ctx, tokens: &tokens)
+        return tokens
+    }
+
     // MARK: - CandidateScorer
 
     /// 一括採点で1バッチに載せる系列数の上限（llama_contextのn_seq_max）
@@ -306,7 +347,7 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         try ensureLoaded()
         guard let runtime, !candidates.isEmpty else { return [] }
         let prompt = Self.buildPrompt(reading: reading, leftContext: leftContext, maxContextLength: maxContextLength)
-        let promptTokens = try tokenize(prompt, addSpecial: true)
+        let promptTokens = try tokenizePrompt(prompt, runtime: runtime)
         let tokenized = try candidates.map { try tokenize($0, addSpecial: false) }
 
         let maxSequences = Int(llama_n_seq_max(runtime.context))
@@ -338,25 +379,15 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         let ctx = runtime.context
         let memory = llama_get_memory(ctx)
         let vocabSize = Int(llama_vocab_n_tokens(runtime.vocab))
-        let totalTokens = promptTokens.count + sequences.reduce(0) { $0 + $1.count }
-        var batch = llama_batch_init(Int32(totalTokens), 0, 1)
+        let totalTokens = sequences.reduce(0) { $0 + $1.count }
+        var batch = llama_batch_init(Int32(max(totalTokens, 1)), 0, 1)
         defer { llama_batch_free(batch) }
 
-        // 1. プロンプトを系列0で評価（最後のトークンのlogitsだけ要る）
-        llama_memory_clear(memory, true)
-        for (index, token) in promptTokens.enumerated() {
-            batch.token[index] = token
-            batch.pos[index] = Int32(index)
-            batch.n_seq_id[index] = 1
-            batch.seq_id[index]![0] = 0
-            batch.logits[index] = index == promptTokens.count - 1 ? 1 : 0
-        }
-        batch.n_tokens = Int32(promptTokens.count)
-        guard llama_decode(ctx, batch) == 0 else {
-            throw ConversionError.inferenceFailed("llama_decode(prompt) に失敗")
-        }
+        // 1. プロンプトを系列0で評価（最後のトークンのlogitsだけ要る）。
+        //    候補の位置は投入済みトークン列の続きから始める
+        let primed = try primePrompt(runtime: runtime, promptTokens: promptTokens)
         // 各候補の先頭トークンはプロンプト直後の同じ分布から出る
-        guard let promptLogits = llama_get_logits_ith(ctx, Int32(promptTokens.count - 1)) else {
+        guard let promptLogits = llama_get_logits_ith(ctx, -1) else {
             throw ConversionError.inferenceFailed("プロンプトのlogitsが取れません")
         }
         let promptLogZ = Self.logSumExp(promptLogits, count: vocabSize)
@@ -373,7 +404,7 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         for (sequence, tokens) in sequences.enumerated() {
             for (offset, token) in tokens.enumerated() {
                 batch.token[count] = token
-                batch.pos[count] = Int32(promptTokens.count + offset)
+                batch.pos[count] = Int32(primed.count + offset)
                 batch.n_seq_id[count] = 1
                 batch.seq_id[count]![0] = Int32(sequence)
                 batch.logits[count] = 1
@@ -426,6 +457,8 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         guard let runtime else {
             throw ConversionError.modelLoadFailed("内部状態が不正です")
         }
+        // エンコーダ・デコーダ型は「左文脈の続きを書く」自由生成ができない（変換専用）
+        guard !runtime.isEncoderDecoder else { return "" }
         let ctx = runtime.context
         var tokens = try tokenize("\u{EE00}。\u{EE02}" + trimmedContext, addSpecial: true)
         llama_memory_clear(llama_get_memory(ctx), true)
@@ -521,8 +554,13 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
 
         let (tokenTexts, tokenIsTerminator) = Self.buildTokenTable(vocab: vocab)
 
+        let isEncoderDecoder = llama_model_has_encoder(loadedModel) && llama_model_has_decoder(loadedModel)
+        var decoderStart = llama_model_decoder_start_token(loadedModel)
+        if decoderStart == LLAMA_TOKEN_NULL { decoderStart = llama_vocab_bos(vocab) }
+
         self.runtime = Runtime(model: loadedModel, context: createdContext, vocab: vocab,
-                               tokenTexts: tokenTexts, tokenIsTerminator: tokenIsTerminator)
+                               tokenTexts: tokenTexts, tokenIsTerminator: tokenIsTerminator,
+                               isEncoderDecoder: isEncoderDecoder, decoderStartToken: decoderStart)
     }
 
     /// 語彙全体の出力文字列を1度だけ取り出しておく（制約判定を毎トークン安く行うため）
@@ -548,6 +586,9 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
                 terminators[index] = true
                 continue
             }
+            // 制御・未知トークン（T5系の <pad> <unk> など）は文字列として出さない
+            let attr = llama_vocab_get_attr(vocab, token)
+            if attr.rawValue & (LLAMA_TOKEN_ATTR_CONTROL.rawValue | LLAMA_TOKEN_ATTR_UNKNOWN.rawValue) != 0 { continue }
             texts[index] = text
         }
         return (texts, terminators)

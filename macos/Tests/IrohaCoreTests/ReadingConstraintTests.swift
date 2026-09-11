@@ -46,6 +46,21 @@ final class ReadingConstraintTests: XCTestCase {
         XCTAssertNotNil(ReadingConstraint(reading: String(repeating: "あ", count: 62)))
     }
 
+    /// ラテン文字の制限: 読みにラテン文字がなければ出力の英字を弾く（既定では従来どおり許す）
+    func testRestrictsLatinToReading() {
+        func acceptsStrict(_ reading: String, _ output: String) -> Bool {
+            guard let constraint = ReadingConstraint(reading: reading, restrictLatinToReading: true) else { return true }
+            let mask = constraint.advance(constraint.initialMask, text: output)
+            return mask != 0 && constraint.isComplete(mask)
+        }
+        XCTAssertFalse(acceptsStrict("グループニワカレテ", "groupに分かれて"))
+        XCTAssertTrue(acceptsStrict("グループニワカレテ", "グループに分かれて"))
+        XCTAssertFalse(acceptsStrict("わうわうをみる", "WOWOWを見る"))   // 代償として弾かれる
+        XCTAssertTrue(acceptsStrict("USBめもり", "USBメモリ"))           // 読みに英字があれば許す
+        XCTAssertTrue(acceptsStrict("にせんにじゅうごねん", "2025年"))      // 数字は対象外
+        XCTAssertTrue(accepts("わうわうをみる", "WOWOWを見る"))            // 既定は従来どおり
+    }
+
     func testSpanClassification() {
         XCTAssertEqual(ReadingConstraint.span(of: "あ"), .literal)
         XCTAssertEqual(ReadingConstraint.span(of: "。"), .literal)

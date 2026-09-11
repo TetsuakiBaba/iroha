@@ -23,12 +23,18 @@ struct ReadingConstraint {
     private let readingLength: Int
     /// 文字 → その文字が読みのどの位置に現れるか（bit p = reading[p]がその文字）
     private let literalPositions: [Character: UInt64]
+    /// 出力にラテン文字（A-Z/a-z・全角含む）を許すか。
+    /// `restrictLatinToReading` が真のとき、読みにラテン文字が1つもなければ偽になる
+    /// （英語語彙の多いモデルが「グループ→group」のように英単語へ逸れるのを防ぐ。
+    /// 代償として「ゆーえすびー→USB」のようなかな読みからの英字変換も出せなくなる）
+    private let allowsLatin: Bool
 
     /// 読みが空、または長すぎて追跡できない場合はnil（制約なしで生成する）
-    init?(reading: String) {
+    init?(reading: String, restrictLatinToReading: Bool = false) {
         let characters = Array(katakanaToHiragana(reading))
         guard !characters.isEmpty, characters.count <= Self.maxReadingLength else { return nil }
         readingLength = characters.count
+        allowsLatin = !restrictLatinToReading || characters.contains(where: Self.isLatinLetter)
         var positions: [Character: UInt64] = [:]
         for (index, character) in characters.enumerated() {
             positions[character, default: 0] |= UInt64(1) << UInt64(index)
@@ -55,6 +61,7 @@ struct ReadingConstraint {
     }
 
     func advance(_ mask: UInt64, character: Character) -> UInt64 {
+        if !allowsLatin, Self.isLatinLetter(character) { return 0 }
         let normalized = Character(katakanaToHiragana(String(character)))
         // 読みの同じ文字に重なる位置は1文字進める
         var next = (mask & (literalPositions[normalized] ?? 0)) << 1
@@ -82,6 +89,15 @@ struct ReadingConstraint {
         case oneOrMore
         /// 読みを消費しないこともある（カタカナ・英数字。長音や頭字語で字数が合わない）
         case zeroOrMore
+    }
+
+    /// ASCII・全角のラテン文字（アルファベット）か
+    static func isLatinLetter(_ character: Character) -> Bool {
+        guard let scalar = character.unicodeScalars.first else { return false }
+        switch scalar.value {
+        case 0x41...0x5A, 0x61...0x7A, 0xFF21...0xFF3A, 0xFF41...0xFF5A: return true
+        default: return false
+        }
     }
 
     static func span(of character: Character) -> Span {
