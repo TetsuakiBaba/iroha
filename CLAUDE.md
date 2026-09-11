@@ -106,3 +106,24 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   プラットフォーム非依存でそのまま使う。`training/` は学習作業中のことがあるので
   **明示的な指示なしに変更しない**
 - リリースは上記「両プラットフォームのリリース方針」に従う（単一タグ・単一Release）
+
+## 自作変換モデル（文字単位T5）の学習（training/t5/、2026-09-11設計）
+
+「T5の学習を始めて」「パイロットを回して」等の指示があったときの手順。詳細・設計根拠・
+判断の目安は `training/t5/README.md` が正。
+
+- 学習は **GPUマシン上**で行う（このMacはMPSで疎通確認のみ）。学習用venvは GPU側の
+  `/home/baba/venvs/imellm-training`、リポジトリは `/data1/Dropbox/project/iroha`（Dropbox同期）。
+  Mac側のClaudeから直接は起動できないので、実行コマンドをユーザーに渡す（または GPU側の
+  Claude に指示する）形になる
+- 前提: llm-jp の full ラン（`training/iroha-llmjp-150m-full/`）が終わっていること
+  （同居させるかは要確認。`ls training/iroha-llmjp-150m-full/` の checkpoint 更新が止まっていれば終了）
+- 順序: ① `train-10m.txt` でパイロット（本番形状 enc12/dec2×768、1エポック）→
+  ② AJIMEE で zenz-xsmall（68.5%）を超えたら `train-full.txt` で本番 → ③ 途中チェックポイントも
+  `training/convert-gguf.sh <ckptディレクトリ>`（`tokenizer.model` と `config.json` を添える）で
+  GGUF化し `macos/scripts/bench-compare.sh` で zenz-small と比較
+- 評価で見るもの: 学習損失・eval loss・AJIMEE acc@1 の三つを並べる（llm-jp では損失が下がっても
+  AJIMEE が横ばいだった。200件のノイズ幅は±5pt）。レイテンシは bench の平均。30ms を超えるなら
+  データや幅より先にデコーダ 1 層を試す
+- 学習データ（`train-*.txt`）・`prepare_data.py`・`train.py` は llm-jp 側と共有。**変更しない**。
+  T5 側の変更は `training/t5/` の中だけで行う
