@@ -115,7 +115,7 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
                 // 同じ文字列に別のトークン列で到達した: 確率の高い方を残す
                 scored[index].logProb = max(scored[index].logProb, generated.logProb)
             } else {
-                scored.append(generated)
+                scored.append((generated.text, generated.logProb))
             }
             bestLogProb = max(bestLogProb, generated.logProb)
             if scored.count >= candidateCount { break }
@@ -125,6 +125,26 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
             .sorted { $0.logProb > $1.logProb }
             .map(\.text)
         return results.isEmpty ? [reading] : results
+    }
+
+    /// 貪欲変換の第一候補を、文字ごとの自信度（`CharacterConfidence`）つきで返す。
+    /// 生成の過程で得られる情報だけを使うので `convert(candidateCount: 1)` と同じコスト
+    public func convertWithConfidence(reading: String, context leftContext: String) async throws -> ScoredConversion {
+        try ensureLoaded()
+        guard let runtime else {
+            throw ConversionError.modelLoadFailed("内部状態が不正です")
+        }
+        let prompt = Self.buildPrompt(reading: reading, leftContext: leftContext, maxContextLength: maxContextLength)
+        let promptTokens = try tokenizePrompt(prompt, runtime: runtime)
+        let generated = try generate(runtime: runtime, promptTokens: promptTokens,
+                                     forcedFirstToken: nil, reading: reading)
+        guard !generated.text.isEmpty else {
+            // 何も生成できなかった: 読みをそのまま返す（自信は無いものとして扱う）
+            let confidences = Array(repeating: CharacterConfidence(logProb: -.infinity, margin: 0, relaxed: true),
+                                    count: reading.count)
+            return ScoredConversion(text: reading, logProb: -.infinity, confidences: confidences)
+        }
+        return generated
     }
 
     /// n-best候補を残す対数確率の幅（最良候補との差、nat単位）。
@@ -167,52 +187,67 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
     }
 
     /// 現在のlogitsから、読みの制約を満たすもっとも尤度の高いトークンを選ぶ。
-    /// 制約を満たすトークンが1つもなければ制約を諦めて素の最尤トークンを返す（relaxed）
+    /// 制約を満たすトークンが1つもなければ制約を諦めて素の最尤トークンを返す（relaxed）。
+    /// `margin` は選んだトークンと、同じく制約を満たす2位のトークンとの対数確率の差
+    /// （同音異義語で迷っているほど小さい。競合が無ければ +inf。自信度の表示に使う）
     private func selectToken(runtime: Runtime, constraint: ReadingConstraint?, mask: UInt64)
-        -> (token: llama_token, mask: UInt64, relaxed: Bool, logProb: Float)? {
+        -> (token: llama_token, mask: UInt64, relaxed: Bool, logProb: Float, margin: Float)? {
         guard let logits = llama_get_logits_ith(runtime.context, -1) else { return nil }
         let vocabSize = Int(llama_vocab_n_tokens(runtime.vocab))
         let logZ = Self.logSumExp(logits, count: vocabSize)
         var best: (index: Int, logit: Float)?
+        var second: Float = -.infinity
         var bestMask: UInt64 = 0
         var fallback: (index: Int, logit: Float)?
+        var fallbackSecond: Float = -.infinity
 
         for index in 0..<vocabSize {
             let logit = logits[index]
-            if fallback == nil || logit > fallback!.logit { fallback = (index, logit) }
+            if fallback == nil || logit > fallback!.logit {
+                fallbackSecond = fallback?.logit ?? -.infinity
+                fallback = (index, logit)
+            } else if logit > fallbackSecond {
+                fallbackSecond = logit
+            }
             guard let constraint else { continue }
-            // 現在の最良より低いトークンは制約を調べるまでもない
-            if let best, logit <= best.logit { continue }
+            // 現在の2位より低いトークンは制約を調べるまでもない
+            if logit <= second { continue }
+            let nextMask: UInt64
             if runtime.tokenIsTerminator[index] {
                 // 読みを使い切っていなければ終端は許さない（食い残し防止）
                 guard constraint.isComplete(mask) else { continue }
-                best = (index, logit)
-                bestMask = mask
+                nextMask = mask
             } else {
                 guard let text = runtime.tokenTexts[index] else { continue }
-                let next = constraint.advance(mask, text: text)
-                guard next != 0 else { continue }
+                nextMask = constraint.advance(mask, text: text)
+                guard nextMask != 0 else { continue }
+            }
+            if let current = best, logit <= current.logit {
+                second = logit
+            } else {
+                second = best?.logit ?? -.infinity
                 best = (index, logit)
-                bestMask = next
+                bestMask = nextMask
             }
         }
 
         if let best, constraint != nil {
-            return (llama_token(best.index), bestMask, false, best.logit - logZ)
+            return (llama_token(best.index), bestMask, false, best.logit - logZ, best.logit - second)
         }
         guard let fallback else { return nil }
-        return (llama_token(fallback.index), 0, constraint != nil, fallback.logit - logZ)
+        return (llama_token(fallback.index), 0, constraint != nil, fallback.logit - logZ, fallback.logit - fallbackSecond)
     }
 
     /// 貪欲法で1候補を生成する。forcedFirstTokenがあれば先頭をそのトークンに固定する。
     /// 各ステップでは読みと辻褄の合うトークンだけを選ぶ（constrained decoding）。
-    /// - Returns: 生成した文字列と、先頭トークン・各トークン・終端まで含めた系列の対数確率
+    /// - Returns: 生成した文字列と、先頭トークン・各トークン・終端まで含めた系列の対数確率、
+    ///   および文字ごとの自信度（先頭を固定した候補では先頭トークンのマージンは +inf）
     private func generate(
         runtime: Runtime,
         promptTokens: [llama_token],
         forcedFirstToken: (token: llama_token, logProb: Float)?,
         reading: String
-    ) throws -> (text: String, logProb: Float) {
+    ) throws -> ScoredConversion {
         let ctx = runtime.context
         let vocab = runtime.vocab
         // プロンプトを評価して生成開始状態にする（TODO: プレフィックス再利用で増分デコード）
@@ -227,16 +262,23 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
 
         var outputBytes = Data()
         var pieceBuffer = [CChar](repeating: 0, count: 128)
+        var aligner = ConfidenceAligner()
 
-        func appendPiece(_ token: llama_token) {
+        /// トークンの文字列断片を出力に足す。戻り値はその断片（自信度の対応づけ用）
+        func appendPiece(_ token: llama_token) -> Data {
             let written = llama_token_to_piece(vocab, token, &pieceBuffer, Int32(pieceBuffer.count), 0, true)
-            if written > 0 {
-                pieceBuffer.withUnsafeBytes { raw in
-                    outputBytes.append(raw.baseAddress!.assumingMemoryBound(to: UInt8.self), count: Int(written))
-                }
+            guard written > 0 else { return Data() }
+            let piece = pieceBuffer.withUnsafeBytes { raw in
+                Data(bytes: raw.baseAddress!, count: Int(written))
             }
+            outputBytes.append(piece)
+            return piece
         }
-        if let forcedFirstToken { appendPiece(forcedFirstToken.token) }
+        if let forcedFirstToken {
+            let piece = appendPiece(forcedFirstToken.token)
+            aligner.append(piece, confidence: CharacterConfidence(
+                logProb: forcedFirstToken.logProb, margin: .infinity, relaxed: false))
+        }
 
         // 読みの消費状況（constrained decoding用）。追跡できない読みや
         // 制約を満たすトークンが尽きた場合はnilにして素の貪欲生成に戻す
@@ -260,21 +302,25 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
             logProb += picked.logProb
             if llama_vocab_is_eog(vocab, token) { break }
 
-            appendPiece(token)
+            let piece = appendPiece(token)
             // zenzの特殊トークン（私用領域 U+EE00-U+EE0F）が出たら終了
             if let text = String(data: outputBytes, encoding: .utf8),
                let last = text.unicodeScalars.last, (0xEE00...0xEE0F).contains(last.value) {
                 outputBytes = Data(String(text.unicodeScalars.dropLast()).utf8)
                 break generation
             }
+            aligner.append(piece, confidence: CharacterConfidence(
+                logProb: picked.logProb, margin: picked.margin, relaxed: picked.relaxed))
 
             var next = token
             try decode(ctx: ctx, tokens: &next)
         }
 
-        let text = Self.decodeUTF8DroppingFragments(outputBytes)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return (text, logProb)
+        let untrimmed = Self.decodeUTF8DroppingFragments(outputBytes)
+        let text = untrimmed.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ScoredConversion(
+            text: text, logProb: logProb,
+            confidences: aligner.aligned(untrimmed: untrimmed, trimmed: text))
     }
 
     /// 生成バイト列をUTF-8として文字列化する。

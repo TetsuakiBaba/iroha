@@ -9,6 +9,9 @@ import IrohaCore
 //   iroha-cli segment <読み>                       : 変換 + 文節分割の検証
 //   iroha-cli bench <eval.tsv>                    : 評価（TSV: 読み\t正解）。精度とレイテンシを報告
 //   iroha-cli ajimee <evaluation_items.json>      : AJIMEE-Bench評価（acc@1・MinCER）。scripts/fetch-ajimee.shで取得
+//   iroha-cli confidence <evaluation_items.json> [--margin 閾値] [--examples 件数]
+//                                                 : 自信度（文字ごとのマージン）と誤変換箇所の対応を
+//                                                   AJIMEE-Benchで評価（zenz単体。誤変換検出の閾値設計用）
 //   iroha-cli repl                                : 対話モード（1行ずつ変換、レイテンシ表示）
 //   iroha-cli lattice <読み>                       : 辞書ラティス（azooKey）の生の候補を表示（調査用）
 //   iroha-cli predict [--chain 回数] <左文脈>        : 予測（左文脈の続き1文節）。--chainで採用を繰り返す
@@ -245,6 +248,224 @@ case "ajimee" where arguments.count >= 3:
     total.accAt1 = withContext.accAt1 + withoutContext.accAt1
     total.minCERSum = withContext.minCERSum + withoutContext.minCERSum
     print(String(format: "全体: %@  平均 %.1fms/変換", total.summary, totalMilliseconds / Double(total.count)))
+
+case "confidence" where arguments.count >= 3:
+    // 自信度の評価: 貪欲変換の各文字に付くマージン（読み制約を満たす1位と2位の対数確率差）が
+    // 実際の誤変換箇所をどれだけ言い当てるかを AJIMEE-Bench で測る。
+    // 文レベル（誤変換を含む文を光らせられるか）と文字レベル（光った文字が誤りか）の両方を出す。
+    // 誤変換箇所は出力と最も近い許容解との編集距離の経路から求める（置換・挿入された出力文字。
+    // 欠落は直後の出力文字に印を付ける）。
+    struct AjimeeItem: Decodable {
+        let index: String
+        let contextText: String
+        let input: String
+        let expectedOutput: [String]
+        enum CodingKeys: String, CodingKey {
+            case index
+            case contextText = "context_text"
+            case input
+            case expectedOutput = "expected_output"
+        }
+    }
+    guard let data = FileManager.default.contents(atPath: arguments[2]),
+          let items = try? JSONDecoder().decode([AjimeeItem].self, from: data) else {
+        FileHandle.standardError.write("JSONが読めません: \(arguments[2])（scripts/fetch-ajimee.sh で取得できます）\n".data(using: .utf8)!)
+        exit(1)
+    }
+    var exampleThreshold: Float = 1.0
+    var exampleCount = 12
+    var optionIndex = 3
+    while optionIndex + 1 < arguments.count {
+        switch arguments[optionIndex] {
+        case "--margin": exampleThreshold = Float(arguments[optionIndex + 1]) ?? exampleThreshold
+        case "--examples": exampleCount = Int(arguments[optionIndex + 1]) ?? exampleCount
+        default: break
+        }
+        optionIndex += 2
+    }
+
+    let zenz: ZenzEngine
+    if let path = ProcessInfo.processInfo.environment["IROHA_MODEL"] {
+        zenz = ZenzEngine(modelPath: path)
+    } else {
+        zenz = ZenzEngine()
+    }
+    _ = try? await zenz.convertWithConfidence(reading: "うぉーむあっぷ", context: "")
+
+    /// 出力の各文字が誤りか（最も近い許容解との編集距離の経路で判定）
+    func errorMask(output: [Character], references: [String]) -> [Bool] {
+        var best: (distance: Int, mask: [Bool])?
+        for reference in references {
+            let ref = Array(reference)
+            let n = output.count, m = ref.count
+            var table = [[Int]](repeating: [Int](repeating: 0, count: m + 1), count: n + 1)
+            for i in 0...n { table[i][0] = i }
+            for j in 0...m { table[0][j] = j }
+            for i in stride(from: 1, through: n, by: 1) where n > 0 {
+                for j in stride(from: 1, through: m, by: 1) where m > 0 {
+                    let substitution = table[i - 1][j - 1] + (output[i - 1] == ref[j - 1] ? 0 : 1)
+                    table[i][j] = min(table[i - 1][j] + 1, table[i][j - 1] + 1, substitution)
+                }
+            }
+            let distance = table[n][m]
+            if let best, distance >= best.distance { continue }
+            // 経路を逆にたどる
+            var mask = [Bool](repeating: false, count: n)
+            var i = n, j = m
+            while i > 0 || j > 0 {
+                if i > 0, j > 0, table[i][j] == table[i - 1][j - 1] + (output[i - 1] == ref[j - 1] ? 0 : 1) {
+                    if output[i - 1] != ref[j - 1] { mask[i - 1] = true }
+                    i -= 1; j -= 1
+                } else if i > 0, table[i][j] == table[i - 1][j] + 1 {
+                    mask[i - 1] = true  // 余計な出力文字
+                    i -= 1
+                } else {
+                    // 欠落: 直後の出力文字（末尾なら直前）に印
+                    if i < n { mask[i] = true } else if n > 0 { mask[n - 1] = true }
+                    j -= 1
+                }
+            }
+            best = (distance, mask)
+        }
+        return best?.mask ?? [Bool](repeating: true, count: output.count)
+    }
+
+    /// AUROC（順位統計。同値は0.5）: score が大きいほど陽性らしいとみなす
+    func auroc(positives: [Float], negatives: [Float]) -> Double {
+        guard !positives.isEmpty, !negatives.isEmpty else { return .nan }
+        var sum = 0.0
+        for p in positives {
+            for n in negatives {
+                if p > n { sum += 1 } else if p == n { sum += 0.5 }
+            }
+        }
+        return sum / Double(positives.count * negatives.count)
+    }
+
+    struct CharRecord { let isError: Bool; let margin: Float; let logProb: Float; let relaxed: Bool }
+    struct ItemRecord {
+        let index: String; let reading: String; let output: String; let references: [String]
+        let hit: Bool; let mask: [Bool]; let confidences: [CharacterConfidence]
+        var minMargin: Float { confidences.map(\.margin).min() ?? .infinity }
+        var minLogProb: Float { confidences.map(\.logProb).min() ?? 0 }
+        var relaxed: Bool { confidences.contains { $0.relaxed } }
+    }
+    var records: [ItemRecord] = []
+    var chars: [CharRecord] = []
+    var totalMilliseconds = 0.0
+    var misaligned = 0
+    for item in items {
+        let start = ContinuousClock.now
+        guard let result = try? await zenz.convertWithConfidence(reading: item.input, context: item.contextText) else { continue }
+        let elapsed = start.duration(to: .now)
+        totalMilliseconds += Double(elapsed.components.attoseconds) / 1e15 + Double(elapsed.components.seconds) * 1e3
+        let output = Array(result.text)
+        if result.confidences.count != output.count { misaligned += 1 }
+        let mask = errorMask(output: output, references: item.expectedOutput)
+        let hit = item.expectedOutput.contains(result.text)
+        records.append(ItemRecord(index: item.index, reading: item.input, output: result.text,
+                                  references: item.expectedOutput, hit: hit, mask: mask,
+                                  confidences: result.confidences))
+        for (offset, confidence) in result.confidences.enumerated() where offset < mask.count {
+            chars.append(CharRecord(isError: mask[offset], margin: confidence.margin,
+                                    logProb: confidence.logProb, relaxed: confidence.relaxed))
+        }
+    }
+
+    let errorItems = records.filter { !$0.hit }
+    let correctItems = records.filter(\.hit)
+    print("件数: \(records.count)  acc@1: \(correctItems.count)  誤変換: \(errorItems.count)  " +
+          String(format: "平均 %.1fms/変換", totalMilliseconds / Double(max(records.count, 1))) +
+          (misaligned > 0 ? "  ⚠ 文字数不一致 \(misaligned)件" : ""))
+    let errorChars = chars.filter(\.isError), correctChars = chars.filter { !$0.isError }
+    print("文字数: \(chars.count)  誤り文字: \(errorChars.count)")
+    print("読み制約を緩めた文: \(records.filter(\.relaxed).count)件（うち誤変換 \(errorItems.filter(\.relaxed).count)件）")
+    print()
+    print(String(format: "AUROC（文レベル: 最小マージンで誤変換文を見分ける）: %.3f",
+                 auroc(positives: errorItems.map { -$0.minMargin }, negatives: correctItems.map { -$0.minMargin })))
+    print(String(format: "AUROC（文レベル: 最小対数確率）: %.3f",
+                 auroc(positives: errorItems.map { -$0.minLogProb }, negatives: correctItems.map { -$0.minLogProb })))
+    print(String(format: "AUROC（文字レベル: マージンで誤り文字を見分ける）: %.3f",
+                 auroc(positives: errorChars.map { -$0.margin }, negatives: correctChars.map { -$0.margin })))
+    print(String(format: "AUROC（文字レベル: 対数確率）: %.3f",
+                 auroc(positives: errorChars.map { -$0.logProb }, negatives: correctChars.map { -$0.logProb })))
+    print()
+
+    func percent(_ numerator: Int, _ denominator: Int) -> String {
+        denominator == 0 ? "-" : String(format: "%.0f%%", Double(numerator) / Double(denominator) * 100)
+    }
+    print("## 閾値ごとの検出性能（マージン < 閾値 の文字を光らせる）")
+    print()
+    print("| 閾値 | 誤変換文の検出率 | 正しい文の誤警報率 | 光った文のうち誤変換 | 誤り文字の検出率 | 正しい文字の誤警報率 | 光った文字のうち誤り | 光る文字の割合 |")
+    print("|---|---|---|---|---|---|---|---|")
+    for threshold: Float in [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0] {
+        let flaggedError = errorItems.filter { $0.minMargin < threshold }.count
+        let flaggedCorrect = correctItems.filter { $0.minMargin < threshold }.count
+        let flaggedErrorChars = errorChars.filter { $0.margin < threshold }.count
+        let flaggedCorrectChars = correctChars.filter { $0.margin < threshold }.count
+        print("| \(threshold) | \(percent(flaggedError, errorItems.count)) | \(percent(flaggedCorrect, correctItems.count)) | " +
+              "\(percent(flaggedError, flaggedError + flaggedCorrect)) | \(percent(flaggedErrorChars, errorChars.count)) | " +
+              "\(percent(flaggedCorrectChars, correctChars.count)) | \(percent(flaggedErrorChars, flaggedErrorChars + flaggedCorrectChars)) | " +
+              "\(percent(flaggedErrorChars + flaggedCorrectChars, chars.count)) |")
+    }
+    print()
+    print("## 閾値ごとの検出性能（対数確率 < 閾値 の文字を光らせる）")
+    print()
+    print("| 閾値 | 誤変換文の検出率 | 正しい文の誤警報率 | 光った文のうち誤変換 | 誤り文字の検出率 | 正しい文字の誤警報率 | 光った文字のうち誤り | 光る文字の割合 |")
+    print("|---|---|---|---|---|---|---|---|")
+    for threshold: Float in [-0.25, -0.5, -0.75, -1.0, -1.5, -2.0, -3.0, -4.0] {
+        let flaggedError = errorItems.filter { $0.minLogProb < threshold }.count
+        let flaggedCorrect = correctItems.filter { $0.minLogProb < threshold }.count
+        let flaggedErrorChars = errorChars.filter { $0.logProb < threshold }.count
+        let flaggedCorrectChars = correctChars.filter { $0.logProb < threshold }.count
+        print("| \(threshold) | \(percent(flaggedError, errorItems.count)) | \(percent(flaggedCorrect, correctItems.count)) | " +
+              "\(percent(flaggedError, flaggedError + flaggedCorrect)) | \(percent(flaggedErrorChars, errorChars.count)) | " +
+              "\(percent(flaggedCorrectChars, correctChars.count)) | \(percent(flaggedErrorChars, flaggedErrorChars + flaggedCorrectChars)) | " +
+              "\(percent(flaggedErrorChars + flaggedCorrectChars, chars.count)) |")
+    }
+    print()
+
+    // 誤変換文のうち、光った箇所が実際の誤り箇所に重なる割合（局所化の精度）
+    print("## 局所化（誤変換文で、光った文字のいずれかが誤り文字の±1文字以内にあるか）")
+    print()
+    print("| 閾値 | 光った誤変換文 | うち誤り箇所に重なる |")
+    print("|---|---|---|")
+    for threshold: Float in [0.5, 1.0, 1.5, 2.0, 3.0] {
+        var flagged = 0, localized = 0
+        for item in errorItems {
+            let lit = item.confidences.enumerated().filter { $0.element.margin < threshold }.map(\.offset)
+            guard !lit.isEmpty else { continue }
+            flagged += 1
+            let errors = item.mask.enumerated().filter(\.element).map(\.offset)
+            if lit.contains(where: { l in errors.contains { abs($0 - l) <= 1 } }) { localized += 1 }
+        }
+        print("| \(threshold) | \(flagged) | \(percent(localized, flagged)) |")
+    }
+    print()
+
+    // 例: 誤変換文と正しい文をそれぞれ数件、閾値で光る文字を【】で囲んで示す
+    func marked(_ item: ItemRecord, threshold: Float) -> String {
+        var result = ""
+        var inside = false
+        for (character, confidence) in zip(item.output, item.confidences) {
+            let lit = confidence.margin < threshold
+            if lit != inside { result += lit ? "【" : "】"; inside = lit }
+            result.append(character)
+        }
+        if inside { result += "】" }
+        return result
+    }
+    print("## 例（マージン < \(exampleThreshold) を【】で囲む）")
+    print()
+    print("誤変換文:")
+    for item in errorItems.prefix(exampleCount) {
+        print("  [\(item.index)] \(marked(item, threshold: exampleThreshold))")
+        print("        正解: \(item.references.joined(separator: " / "))")
+    }
+    print("正しい文:")
+    for item in correctItems.prefix(exampleCount) {
+        print("  [\(item.index)] \(marked(item, threshold: exampleThreshold))")
+    }
 
 case "lattice" where arguments.count >= 3:
     // 辞書ラティス（azooKey）の生の候補を見る（調査用）。★は読み全体に一致した候補。
