@@ -76,8 +76,6 @@ private struct InputSettingsTab: View {
     @AppStorage(PredictionSettings.completionEnabledKey) private var inlineCompletion = false
     @AppStorage(PredictionSettings.delayMillisecondsKey)
     private var predictionDelayMs = PredictionSettings.defaultDelayMilliseconds
-    @AppStorage(LowConfidenceSettings.enabledKey) private var lowConfidenceHighlight = false
-    @AppStorage(LowConfidenceSettings.sensitivityKey) private var lowConfidenceSensitivity = "medium"
 
     var body: some View {
         Form {
@@ -99,21 +97,6 @@ private struct InputSettingsTab: View {
                 Text("入力を始めた位置の手前にある文章（最大40文字）をアプリから読み取り、変換と予測の文脈にします。"
                     + "文章の途中に書き足すときや、別のアプリに移った直後でも前後に合った変換になります。"
                     + "文章を返さないアプリでは、irohaで直前に確定した文字列を文脈にします。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Toggle("誤変換らしい箇所を強調する（試験機能）", isOn: $lowConfidenceHighlight)
-                    .disabled(!liveConversion)
-                Picker("感度", selection: $lowConfidenceSensitivity) {
-                    ForEach(LowConfidenceSettings.Sensitivity.allCases) { sensitivity in
-                        Text(sensitivity.label).tag(sensitivity.rawValue)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .disabled(!liveConversion || !lowConfidenceHighlight)
-                Text("ライブ変換中、モデルが同音異義語で迷った文字の下線を太いオレンジにします。"
-                    + "確定前に見直す目印で、正しい変換にも付くことがあります（標準の感度で光る文字は1%程度、"
-                    + "誤変換を含む文の6割に付きます）。ユーザ辞書・学習で決まった部分には付きません。"
-                    + "下線の色を変えられないアプリでは太さだけ変わります。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

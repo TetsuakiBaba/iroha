@@ -13,19 +13,10 @@ public protocol ConversionEngine: Sendable {
 
     /// モデルの事前ロード（初回変換のもたつき防止）。必要のない実装は何もしなくてよい
     func prewarm() async throws
-
-    /// 第一候補（`convert(candidateCount: 1)` と同じもの）を文字ごとの自信度つきで返す。
-    /// 誤変換らしい箇所の強調に使う。自信度を出せない実装は既定実装（全文字を信頼済み）でよい
-    func convertScored(reading: String, context: String) async throws -> ScoredConversion
 }
 
 extension ConversionEngine {
     public func prewarm() async throws {}
-
-    public func convertScored(reading: String, context: String) async throws -> ScoredConversion {
-        let text = try await convert(reading: reading, context: context, candidateCount: 1).first ?? reading
-        return .trusted(text)
-    }
 }
 
 public enum ConversionError: Error, CustomStringConvertible {

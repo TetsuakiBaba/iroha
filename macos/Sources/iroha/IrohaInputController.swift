@@ -156,9 +156,6 @@ final class IrohaInputController: IMKInputController {
     private var autoCommitPending = false
     /// 最後に完了したライブ変換の（読み, 変換結果）
     private var lastConversion: (reading: String, result: String)?
-    /// 誤変換らしい箇所の強調（試験機能）用: 最後に届いたライブ変換結果の自信度。
-    /// `lastConversion` と読み・結果が一致するときだけ使う（固定部分から戻した結果などには付かない）
-    private var lastConversionScore: (reading: String, score: ScoredConversion)?
     private var conversionTask: Task<Void, Never>?
     /// 文脈条件付けに使う直前の確定文字列（最大40文字）。
     /// アプリのテキストを読めないときの文脈、および学習・補完の整合性チェックに使う
@@ -1200,28 +1197,14 @@ final class IrohaInputController: IMKInputController {
 
         // 固定部分は変換し直さず、後続の変換の文脈として渡す
         let context = conversionContext + fixedText
-        // 誤変換らしい箇所の強調がONなら自信度つきで変換する（コストは同じ。OFFなら従来の経路）
-        let wantsScore = LowConfidenceSettings.isEnabled
         conversionTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let best: String
-                let score: ScoredConversion?
-                if wantsScore {
-                    let scored = try await Self.engine.convertScored(reading: reading, context: context)
-                    best = scored.text
-                    score = scored
-                } else {
-                    let candidates = try await Self.engine.convert(
-                        reading: reading, context: context, candidateCount: 1)
-                    guard let first = candidates.first else { return }
-                    best = first
-                    score = nil
-                }
-                guard !Task.isCancelled else { return }
+                let candidates = try await Self.engine.convert(
+                    reading: reading, context: context, candidateCount: 1)
+                guard !Task.isCancelled, let best = candidates.first else { return }
                 await MainActor.run {
                     self.lastConversion = (reading, best)
-                    self.lastConversionScore = score.map { (reading, $0) }
                     // 変換中にさらに入力が進んでいたら表示しない（新しい変換の結果を待つ）
                     guard self.mode == .composing, self.composer.text == reading else { return }
                     if self.autoCommitPending {
@@ -1271,44 +1254,18 @@ final class IrohaInputController: IMKInputController {
     // MARK: - 未確定文字列の表示と確定
 
     private func updateMarkedText(client: IMKTextInput, display: String) {
-        let attributed = NSMutableAttributedString(
+        let attributed = NSAttributedString(
             string: display,
             attributes: [
                 .underlineStyle: NSUnderlineStyle.single.rawValue,
                 .underlineColor: NSColor.labelColor,
             ]
         )
-        // 誤変換らしい箇所の強調（試験機能）: モデルが迷った文字の下線を太いオレンジにする
-        for range in lowConfidenceUTF16Ranges(in: display) {
-            attributed.addAttributes([
-                .underlineStyle: NSUnderlineStyle.thick.rawValue,
-                .underlineColor: LowConfidenceSettings.underlineColor,
-            ], range: range)
-        }
         client.setMarkedText(
             attributed,
             selectionRange: NSRange(location: display.utf16.count, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )
-    }
-
-    /// 表示中の未確定文字列のうち、強調する文字のUTF-16範囲。
-    /// 表示が「固定部分 + 最後のライブ変換結果 (+ 追加のかな)」の形のときだけ、変換結果の部分に付ける
-    private func lowConfidenceUTF16Ranges(in display: String) -> [NSRange] {
-        guard LowConfidenceSettings.isEnabled, mode == .composing,
-              alphabetRun == nil, displayOverride == nil,
-              let (scoredReading, score) = lastConversionScore, let lastConversion,
-              score.text == lastConversion.result, scoredReading == lastConversion.reading,
-              composer.text.hasPrefix(lastConversion.reading) else { return [] }
-        let prefix = fixedText
-        guard display.hasPrefix(prefix + score.text) else { return [] }
-        let threshold = LowConfidenceSettings.sensitivity.marginThreshold
-        let offset = prefix.count
-        return score.lowConfidenceRanges(marginBelow: threshold).map { range in
-            let start = display.index(display.startIndex, offsetBy: offset + range.lowerBound)
-            let end = display.index(display.startIndex, offsetBy: offset + range.upperBound)
-            return NSRange(start..<end, in: display)
-        }
     }
 
     /// 現在の表示内容（ライブ変換結果 or かな or 文節列）をそのまま確定する。

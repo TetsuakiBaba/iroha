@@ -30,8 +30,8 @@ public actor ChunkedConversionEngine: ConversionEngine {
     /// 区切りをこれより短くはしない（句読点や文節境界が窓の先頭付近にしかないとき）
     private let minChunkLength: Int
 
-    /// 区切りの変換結果のキャッシュ（読み + 文脈 → 自信度つき変換結果）。古いものから捨てる
-    private var cache: [CacheKey: ScoredConversion] = [:]
+    /// 区切りの変換結果のキャッシュ（読み + 文脈 → 変換結果）。古いものから捨てる
+    private var cache: [CacheKey: String] = [:]
     private var cacheOrder: [CacheKey] = []
     private let cacheLimit = 64
 
@@ -52,44 +52,33 @@ public actor ChunkedConversionEngine: ConversionEngine {
     }
 
     public func convert(reading: String, context: String, candidateCount: Int) async throws -> [String] {
-        guard reading.count > maxChunkLength else {
+        let characters = Array(reading)
+        guard characters.count > maxChunkLength else {
             return try await base.convert(reading: reading, context: context, candidateCount: candidateCount)
         }
+
         // 長い読みは候補を並べる場面（文節の候補ウィンドウ）には来ないので、1候補だけ返す
-        return [try await convertChunked(reading: reading, context: context).text]
-    }
-
-    public func convertScored(reading: String, context: String) async throws -> ScoredConversion {
-        guard reading.count > maxChunkLength else {
-            return try await base.convertScored(reading: reading, context: context)
-        }
-        return try await convertChunked(reading: reading, context: context)
-    }
-
-    /// 読みを区切りながら順に変換して連結する（自信度は区切りごとの結果をそのまま並べる）
-    private func convertChunked(reading: String, context: String) async throws -> ScoredConversion {
-        let characters = Array(reading)
-        var result = ScoredConversion.trusted("")
+        var result = ""
         var context = context
         var index = 0
         while index < characters.count {
             try Task.checkCancellation()
             let remaining = characters.count - index
             if remaining <= maxChunkLength {
-                result = result.appending(try await convertCached(String(characters[index...]), context: context))
+                result += try await convertCached(String(characters[index...]), context: context)
                 break
             }
             let window = String(characters[index..<(index + maxChunkLength)])
             let (cut, converted) = try await cutWindow(window, context: context)
-            result = result.appending(converted)
-            context += converted.text
+            result += converted
+            context += converted
             index += cut
         }
-        return result
+        return [result]
     }
 
     /// 窓（maxChunkLength文字）をどこで切るかと、その区切りの変換結果を返す
-    private func cutWindow(_ window: String, context: String) async throws -> (cut: Int, converted: ScoredConversion) {
+    private func cutWindow(_ window: String, context: String) async throws -> (cut: Int, converted: String) {
         // 1. 句読点の直後で切る（次の区切りを文の頭から始められる）
         if let cut = Self.punctuationCut(window, minimum: minChunkLength) {
             let chunk = String(window.prefix(cut))
@@ -98,13 +87,12 @@ public actor ChunkedConversionEngine: ConversionEngine {
 
         // 2. 窓を変換して文節境界で切る。最後の文節は語の途中で切れているかもしれないので次へ回す
         let converted = try await convertCached(window, context: context)
-        let segments = ReadingAligner.segmentReading(window, conversion: converted.text)
+        let segments = ReadingAligner.segmentReading(window, conversion: converted)
         if segments.count >= 2 {
             let head = segments.dropLast()
             let cut = head.reduce(0) { $0 + $1.reading.count }
             if cut >= minChunkLength {
-                // 文節の変換を連ねたものは変換結果の接頭辞なので、自信度もその長さで切る
-                return (cut, converted.prefix(head.map(\.conversion).joined().count))
+                return (cut, head.map(\.conversion).joined())
             }
         }
 
@@ -126,10 +114,10 @@ public actor ChunkedConversionEngine: ConversionEngine {
         return nil
     }
 
-    private func convertCached(_ reading: String, context: String) async throws -> ScoredConversion {
+    private func convertCached(_ reading: String, context: String) async throws -> String {
         let key = CacheKey(reading: reading, context: context)
         if let cached = cache[key] { return cached }
-        let converted = try await base.convertScored(reading: reading, context: context)
+        let converted = try await base.convert(reading: reading, context: context, candidateCount: 1).first ?? reading
         if cache[key] == nil {
             cacheOrder.append(key)
             if cacheOrder.count > cacheLimit {

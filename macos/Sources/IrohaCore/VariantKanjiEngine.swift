@@ -19,10 +19,6 @@ public struct VariantKanjiEngine: ConversionEngine {
         try await base.prewarm()
     }
 
-    public func convertScored(reading: String, context: String) async throws -> ScoredConversion {
-        try await base.convertScored(reading: reading, context: context)
-    }
-
     public func convert(reading: String, context: String, candidateCount: Int) async throws -> [String] {
         let candidates = try await base.convert(reading: reading, context: context, candidateCount: candidateCount)
         guard candidateCount > 1 else { return candidates }
