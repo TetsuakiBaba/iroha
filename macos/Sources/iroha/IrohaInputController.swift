@@ -226,6 +226,10 @@ final class IrohaInputController: IMKInputController {
         documentContext = nil
         cancelPrediction()
         dismissCompletion()
+        // 他アプリでのクリック・スクロール・アプリ切替の合図はアクティブなコントローラ（自分）が受ける
+        PointerActivityMonitor.shared.handler = { [weak self] event in
+            self?.dismissFloatingWindows(for: event)
+        }
         // モデルを事前ロード（未ロード時のみ実処理が走る）
         Task { try? await Self.engine.prewarm() }
         // 予測変換・インライン補完に別のモデルを指定している場合はそれも（同じモデルなら何もしない）
@@ -363,6 +367,20 @@ final class IrohaInputController: IMKInputController {
     override func commitComposition(_ sender: Any!) {
         // クリックやフォーカス移動による確定。小窓の予測・補完は確定に含めない
         commitCurrent(client: sender as? IMKTextInput, suggestsCompletion: false)
+    }
+
+    /// 他アプリでのクリック・スクロール・アプリ切替（`PointerActivityMonitor`）: カーソル位置に出している
+    /// 窓を閉じる。未確定文字列・文節選択の状態は触らず、確定はアプリからの commitComposition に任せる
+    /// （マウスイベントがアプリに届く前後どちらで呼ばれるか決まっておらず、ここで確定すると
+    /// 移動後のカーソル位置に文字列が入りかねない）。
+    /// 補完・予測は進行中の推論も止める（カーソルが動いて文脈が変わっているため）。
+    /// スクロールでは候補ウィンドウは閉じない（候補を選んでいる途中の小さなスクロールで消えると煩わしい）
+    private func dismissFloatingWindows(for event: PointerActivityMonitor.Event) {
+        dismissCompletion()
+        cancelPrediction()
+        if event != .scroll, panelVisible {
+            hidePanel()
+        }
     }
 
     // MARK: - 入力メニュー（メニューバーの入力ソースアイコンから開く）

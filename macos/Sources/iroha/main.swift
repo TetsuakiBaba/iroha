@@ -82,6 +82,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             candidatesPanel = IMKCandidates(server: server, panelType: kIMKSingleColumnScrollingCandidatePanel)
         }
         NSLog("iroha: IMKServer 起動 connection=\(connectionName) server=\(server != nil)")
+        // 他アプリでのクリック・スクロール・アプリ切替で候補ウィンドウ・予測の小窓を閉じる
+        PointerActivityMonitor.shared.start()
 
         // 他のMacと共有した設定（データフォルダのsettings.json）を取り込み、以後の変更を書き出す。
         // 設定を読む処理（辞書の自動取り込み・選択テキスト処理）より前に行う
