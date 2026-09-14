@@ -127,6 +127,10 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         return results.isEmpty ? [reading] : results
     }
 
+    public func convertScored(reading: String, context: String) async throws -> ScoredConversion {
+        try await convertWithConfidence(reading: reading, context: context)
+    }
+
     /// 貪欲変換の第一候補を、文字ごとの自信度（`CharacterConfidence`）つきで返す。
     /// 生成の過程で得られる情報だけを使うので `convert(candidateCount: 1)` と同じコスト
     public func convertWithConfidence(reading: String, context leftContext: String) async throws -> ScoredConversion {

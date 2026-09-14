@@ -75,3 +75,43 @@ struct ConfidenceAligner {
         return Array(result.dropFirst(leading).prefix(trimmed.count))
     }
 }
+
+extension CharacterConfidence {
+    /// LLMの外側（ユーザ辞書・学習・変換ルール）で決まった文字の自信度。強調の対象にしない
+    public static let trusted = CharacterConfidence(logProb: 0, margin: .infinity, relaxed: false)
+}
+
+extension ScoredConversion {
+    /// 全文字を信頼済みとした結果（自信度を出せない経路・辞書で埋めた部分）
+    public static func trusted(_ text: String) -> ScoredConversion {
+        ScoredConversion(text: text, logProb: 0,
+                         confidences: Array(repeating: .trusted, count: text.count))
+    }
+
+    /// 後ろに別の結果を連結する（対数確率は足す）
+    public func appending(_ other: ScoredConversion) -> ScoredConversion {
+        ScoredConversion(text: text + other.text, logProb: logProb + other.logProb,
+                         confidences: confidences + other.confidences)
+    }
+
+    /// 先頭 `count` 文字ぶんに切り詰める（区切りの変換で末尾の文節を次へ回すとき）
+    public func prefix(_ count: Int) -> ScoredConversion {
+        ScoredConversion(text: String(text.prefix(count)), logProb: logProb,
+                         confidences: Array(confidences.prefix(count)))
+    }
+
+    /// `margin` が閾値未満の文字の範囲（Character オフセット）。隣り合う文字はひとつにまとめる。
+    /// 制約を緩めた文字も含める
+    public func lowConfidenceRanges(marginBelow threshold: Float) -> [Range<Int>] {
+        var ranges: [Range<Int>] = []
+        for (offset, confidence) in confidences.enumerated()
+        where confidence.margin < threshold || confidence.relaxed {
+            if let last = ranges.last, last.upperBound == offset {
+                ranges[ranges.count - 1] = last.lowerBound..<(offset + 1)
+            } else {
+                ranges.append(offset..<(offset + 1))
+            }
+        }
+        return ranges
+    }
+}

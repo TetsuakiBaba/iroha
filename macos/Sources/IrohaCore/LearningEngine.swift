@@ -36,9 +36,7 @@ public final class LearningEngine: ConversionEngine {
         }
 
         if candidateCount <= 1 {
-            // 入力全体を過去に確定していればそれをそのまま返す（エンジンを呼ばない）
-            if let sentence = dictionary.sentence(forReading: reading) { return [sentence] }
-            return [try await compose(reading: reading, context: context, dictionary: dictionary)]
+            return [try await convertScored(reading: reading, context: context).text]
         }
 
         // 候補ウィンドウ: この読みで学習済みの変換を先頭に、続けてエンジンの候補
@@ -55,27 +53,38 @@ public final class LearningEngine: ConversionEngine {
         return results
     }
 
+    /// 1候補の変換を自信度つきで返す。学習結果で埋めた部分は信頼済み
+    public func convertScored(reading: String, context: String) async throws -> ScoredConversion {
+        let dictionary = dictionaryProvider()
+        guard !dictionary.isEmpty else {
+            return try await base.convertScored(reading: reading, context: context)
+        }
+        // 入力全体を過去に確定していればそれをそのまま返す（エンジンを呼ばない）
+        if let sentence = dictionary.sentence(forReading: reading) { return .trusted(sentence) }
+        return try await compose(reading: reading, context: context, dictionary: dictionary)
+    }
+
     /// 学習済みの文節で埋めながら左から変換する。
     ///
     /// 文脈の条件を判定するには直前までの変換結果が要るので、学習済みの読みに
     /// ぶつかった時点で、そこまでの未変換部分を先にエンジンへ渡して確定させる
     private func compose(
         reading: String, context: String, dictionary: LearningDictionary
-    ) async throws -> String {
+    ) async throws -> ScoredConversion {
         let characters = Array(reading)
-        var result = ""       // 変換済みの部分（文脈にもなる）
+        var result = ScoredConversion.trusted("")  // 変換済みの部分（文脈にもなる）
         var pending = ""      // まだエンジンに渡していない読み
         var index = 0
 
         while index < characters.count {
             if dictionary.mayMatch(characters, from: index, atStart: index == 0) {
                 if !pending.isEmpty {
-                    result += try await convertChunk(pending, context: context + result)
+                    result = result.appending(try await convertChunk(pending, context: context + result.text))
                     pending = ""
                 }
                 if let match = dictionary.bestMatch(
-                    characters, from: index, leftContext: result, atStart: index == 0) {
-                    result += match.result
+                    characters, from: index, leftContext: result.text, atStart: index == 0) {
+                    result = result.appending(.trusted(match.result))
                     index += match.reading.count
                     continue
                 }
@@ -84,12 +93,12 @@ public final class LearningEngine: ConversionEngine {
             index += 1
         }
         if !pending.isEmpty {
-            result += try await convertChunk(pending, context: context + result)
+            result = result.appending(try await convertChunk(pending, context: context + result.text))
         }
         return result
     }
 
-    private func convertChunk(_ reading: String, context: String) async throws -> String {
-        try await base.convert(reading: reading, context: context, candidateCount: 1).first ?? reading
+    private func convertChunk(_ reading: String, context: String) async throws -> ScoredConversion {
+        try await base.convertScored(reading: reading, context: context)
     }
 }

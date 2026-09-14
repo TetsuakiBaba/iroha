@@ -26,6 +26,7 @@ final class PreferencesSync {
             PredictionSettings.predictiveEnabledKey, PredictionSettings.completionEnabledKey,
             PredictionSettings.delayMillisecondsKey,
             LearningSettings.enabledKey, UserDictionarySync.autoSyncKey,
+            LowConfidenceSettings.enabledKey, LowConfidenceSettings.sensitivityKey,
             SelectionSettings.enabledKey, SelectionSettings.triggerModeKey,
             SelectionSettings.onDemandHotkeyKey, SelectionSettings.excludedBundleIdsKey,
             SelectionSettings.characterCountKey,

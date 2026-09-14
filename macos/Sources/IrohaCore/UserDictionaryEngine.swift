@@ -27,6 +27,22 @@ public final class UserDictionaryEngine: ConversionEngine {
         try await base.prewarm()
     }
 
+    /// ライブ変換・文節分割用（1候補）: 辞書を当てた結果を自信度つきで返す。辞書で埋めた部分は信頼済み。
+    /// 出力が読みより大幅に長いエントリ（ハッシュタグ・定型文など）は文中に埋め込まれると
+    /// 邪魔なので使わない（候補ウィンドウにだけ出す）
+    public func convertScored(reading: String, context: String) async throws -> ScoredConversion {
+        let dictionary = dictionaryProvider()
+        guard !dictionary.isEmpty, !dictionary.isEmptyForLiveConversion else {
+            return try await base.convertScored(reading: reading, context: context)
+        }
+        if let word = dictionary.liveWords(forReading: reading).first { return .trusted(word) }
+        let chunks = dictionary.split(reading, forLiveConversion: true)
+        guard Self.hasWordChunk(chunks) else {
+            return try await base.convertScored(reading: reading, context: context)
+        }
+        return try await compose(chunks, context: context)
+    }
+
     public func convert(reading: String, context: String, candidateCount: Int) async throws -> [String] {
         let dictionary = dictionaryProvider()
         guard !dictionary.isEmpty else {
@@ -34,19 +50,8 @@ public final class UserDictionaryEngine: ConversionEngine {
                 reading: reading, context: context, candidateCount: candidateCount)
         }
 
-        // ライブ変換・文節分割用（1候補）: 辞書を当てた結果をそのまま返す。
-        // ただし出力が読みより大幅に長いエントリ（ハッシュタグ・定型文など）は
-        // 文中に埋め込まれると邪魔なので使わない（候補ウィンドウにだけ出す）
         if candidateCount <= 1 {
-            guard !dictionary.isEmptyForLiveConversion else {
-                return try await base.convert(reading: reading, context: context, candidateCount: 1)
-            }
-            if let word = dictionary.liveWords(forReading: reading).first { return [word] }
-            let chunks = dictionary.split(reading, forLiveConversion: true)
-            guard Self.hasWordChunk(chunks) else {
-                return try await base.convert(reading: reading, context: context, candidateCount: 1)
-            }
-            return [try await compose(chunks, context: context)]
+            return [try await convertScored(reading: reading, context: context).text]
         }
 
         // 候補ウィンドウ用: ユーザ辞書の単語を先頭に、続けてエンジンの候補を並べる
@@ -54,7 +59,7 @@ public final class UserDictionaryEngine: ConversionEngine {
         let chunks = dictionary.split(reading)
         var results = exactWords
         if Self.hasWordChunk(chunks), exactWords.isEmpty {
-            results.append(try await compose(chunks, context: context))
+            results.append(try await compose(chunks, context: context).text)
         }
         do {
             let baseCandidates = try await base.convert(
@@ -75,19 +80,18 @@ public final class UserDictionaryEngine: ConversionEngine {
 
     /// 辞書一致部分はそのまま、それ以外はエンジンに変換させて連結する。
     /// 直前までの変換結果を次のチャンクの文脈として渡す
-    private func compose(_ chunks: [UserDictionary.Chunk], context: String) async throws -> String {
-        var result = ""
+    private func compose(_ chunks: [UserDictionary.Chunk], context: String) async throws -> ScoredConversion {
+        var result = ScoredConversion.trusted("")
         var context = context
         for chunk in chunks {
             switch chunk {
             case .word(let word):
-                result += word
+                result = result.appending(.trusted(word))
                 context += word
             case .reading(let reading):
-                let converted = try await base.convert(
-                    reading: reading, context: context, candidateCount: 1).first ?? reading
-                result += converted
-                context += converted
+                let converted = try await base.convertScored(reading: reading, context: context)
+                result = result.appending(converted)
+                context += converted.text
             }
         }
         return result

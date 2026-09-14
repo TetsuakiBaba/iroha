@@ -43,6 +43,15 @@ public struct LatticeRescoringEngine<Base: ConversionEngine & CandidateScorer>: 
         _ = await lattice.candidates(reading: "うぉーむあっぷ", count: 1)
     }
 
+    public func convertScored(reading: String, context: String) async throws -> ScoredConversion {
+        // 第一候補はzenzの生成そのもの（既定）なので自信度もそこから取る。
+        // ラティス再採点で決める設定では採点値しか無いので信頼済み扱い
+        guard usesLatticeForFirstCandidate else {
+            return try await base.convertScored(reading: reading, context: context)
+        }
+        return .trusted(try await convert(reading: reading, context: context, candidateCount: 1).first ?? reading)
+    }
+
     public func convert(reading: String, context: String, candidateCount: Int) async throws -> [String] {
         if candidateCount <= 1, !usesLatticeForFirstCandidate {
             return try await base.convert(reading: reading, context: context, candidateCount: candidateCount)
