@@ -57,9 +57,15 @@ enum SelectionSettings {
     static let triggerModeKey = "selectionTriggerMode"            // マウストリガーの出し方
     static let onDemandHotkeyKey = "selectionOnDemandHotkey"      // その場でプロンプト入力
     static let excludedBundleIdsKey = "selectionExcludedBundleIds"  // 除外アプリ（カンマ/改行区切り）
+    static let characterCountKey = "selectionCharacterCount"       // 選択した文字数の表示（既定OFF）
 
     static var isEnabled: Bool {
         UserDefaults.standard.bool(forKey: enabledKey)
+    }
+
+    /// マウスで選択したときに文字数を出す。AI編集のON/OFFとは独立（アクセシビリティ権限は同じく必要）
+    static var isCharacterCountEnabled: Bool {
+        UserDefaults.standard.bool(forKey: characterCountKey)
     }
 
     static var triggerMode: SelectionTriggerMode {

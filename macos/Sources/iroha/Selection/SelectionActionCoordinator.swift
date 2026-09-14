@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import IrohaCore
 
 /// 選択テキストのAI処理の中核。
 /// グローバルショートカットとマウス選択トリガーを束ね、
@@ -65,7 +66,11 @@ final class SelectionActionCoordinator {
         mouseMonitor.stop()
         bubbleController.dismiss()
 
-        guard SelectionSettings.isEnabled else { return }
+        // 文字数の表示はAI編集がOFFでも使える（マウス監視だけ動かす）
+        guard SelectionSettings.isEnabled else {
+            if SelectionSettings.isCharacterCountEnabled { startMouseMonitor() }
+            return
+        }
 
         // 同じショートカットが複数の枠に入っていたら先勝ちにする（二重発火を防ぐ）
         var registered = Set<String>()
@@ -83,7 +88,7 @@ final class SelectionActionCoordinator {
             }
         }
 
-        if SelectionSettings.triggerMode != .off {
+        if SelectionSettings.triggerMode != .off || SelectionSettings.isCharacterCountEnabled {
             startMouseMonitor()
         }
     }
@@ -151,11 +156,21 @@ final class SelectionActionCoordinator {
         }
     }
 
-    private func handleMouseSelectionGesture(at location: NSPoint, modifiers: NSEvent.ModifierFlags) {
-        guard SelectionSettings.isEnabled, !running, !panelController.isVisible else { return }
+    /// マウス選択のジェスチャでAI編集のトリガー（バブル/メニュー）を出すか。
+    /// 設定がOFF・⌥が要るのに押されていない場合はnil
+    private func aiTriggerMode(modifiers: NSEvent.ModifierFlags) -> SelectionTriggerMode? {
+        guard SelectionSettings.isEnabled else { return nil }
         let mode = SelectionSettings.triggerMode
-        guard mode != .off else { return }
-        if mode == .optionMenu, !modifiers.contains(.option) { return }
+        if mode == .off { return nil }
+        if mode == .optionMenu, !modifiers.contains(.option) { return nil }
+        return mode
+    }
+
+    private func handleMouseSelectionGesture(at location: NSPoint, modifiers: NSEvent.ModifierFlags) {
+        guard !running, !panelController.isVisible else { return }
+        let aiMode = aiTriggerMode(modifiers: modifiers)
+        let showsCount = SelectionSettings.isCharacterCountEnabled
+        guard aiMode != nil || showsCount else { return }
 
         guard selectionService.ensureAccessibilityPermission(prompt: false) else {
             if !hasPromptedPermission {
@@ -171,11 +186,12 @@ final class SelectionActionCoordinator {
             try? await Task.sleep(nanoseconds: 160_000_000)
             guard !Task.isCancelled, let self else { return }
             self.captureTask = nil
-            self.presentSelectionAction(at: location)
+            self.presentSelectionAction(at: location, aiMode: aiMode, showsCount: showsCount)
         }
     }
 
-    private func presentSelectionAction(at location: NSPoint) {
+    /// 選択範囲を取って、AI編集のトリガー（`aiMode`）と文字数（`showsCount`）を出す
+    private func presentSelectionAction(at location: NSPoint, aiMode: SelectionTriggerMode?, showsCount: Bool) {
         guard !isExcluded(NSWorkspace.shared.frontmostApplication?.bundleIdentifier) else { return }
         guard
             let capture = selectionService.captureAccessibleSelectedText(),
@@ -198,20 +214,23 @@ final class SelectionActionCoordinator {
         lastFingerprint = fingerprint
         lastFingerprintDate = now
 
-        switch SelectionSettings.triggerMode {
+        let countLabel = showsCount ? CharacterCount(of: selectedText).summary : nil
+        switch aiMode {
         case .bubble:
-            bubbleController.present(at: location) { [weak self] in
+            bubbleController.present(at: location, label: countLabel) { [weak self] in
                 self?.presentMenu(for: capture, at: location)
             }
         case .immediateMenu, .optionMenu:
-            presentMenu(for: capture, at: location)
-        case .off:
-            break
+            // 文字数はメニューの脇に表示専用で出しておく（メニューを閉じるクリックで消える）
+            bubbleController.present(at: location, label: countLabel, action: nil)
+            presentMenu(for: capture, at: location, keepsBubble: true)
+        case .off, nil:
+            bubbleController.present(at: location, label: countLabel, action: nil)
         }
     }
 
-    private func presentMenu(for capture: SelectionCaptureResult, at location: NSPoint) {
-        bubbleController.dismiss()
+    private func presentMenu(for capture: SelectionCaptureResult, at location: NSPoint, keepsBubble: Bool = false) {
+        if !keepsBubble { bubbleController.dismiss() }
         menuController.present(at: location, presets: SelectionSettings.presets) { [weak self] choice in
             self?.handleMenuChoice(choice, capture: capture)
         }

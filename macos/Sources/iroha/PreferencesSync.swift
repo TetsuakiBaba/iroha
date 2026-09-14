@@ -28,6 +28,7 @@ final class PreferencesSync {
             LearningSettings.enabledKey, UserDictionarySync.autoSyncKey,
             SelectionSettings.enabledKey, SelectionSettings.triggerModeKey,
             SelectionSettings.onDemandHotkeyKey, SelectionSettings.excludedBundleIdsKey,
+            SelectionSettings.characterCountKey,
             TranslationBackend.userDefaultsKey,
             "ollamaModel", "lmStudioModel", "openAIModel", "openAIEndpoint",
             "ollamaEndpoint", "lmStudioEndpoint",

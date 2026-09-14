@@ -265,6 +265,7 @@ private struct AISettingsTab: View {
     @AppStorage(SelectionSettings.triggerModeKey) private var triggerMode = "bubble"
     @AppStorage(SelectionSettings.onDemandHotkeyKey) private var onDemandHotkey = "Ctrl+0"
     @AppStorage(SelectionSettings.excludedBundleIdsKey) private var excludedBundleIds = ""
+    @AppStorage(SelectionSettings.characterCountKey) private var characterCount = false
 
     var body: some View {
         Form {
@@ -325,6 +326,23 @@ private struct AISettingsTab: View {
                     .foregroundStyle(.secondary)
             } header: {
                 Label("選択テキストのAI編集", systemImage: "cursorarrow.rays")
+                    .font(.headline)
+                    .padding(.top, 24)
+            }
+            .headerProminence(.increased)
+
+            // グループ3: マウスで選択した文字数を選択範囲の近くに出す（AI編集とは独立）
+            Section {
+                Toggle("選択した文字数を表示する", isOn: $characterCount)
+                Text("マウスで選択（ドラッグ・ダブルクリック）すると、選択範囲の近くに文字数を数秒表示します"
+                    + "（改行は数えず、空白があれば空白を除いた数も併記）。"
+                    + "AI編集がONのときはアイコンに添えて表示します。"
+                    + "アクセシビリティ権限が必要で、除外するアプリの設定も共通です。"
+                    + "キーボードでの選択（Shift+矢印・⌘A）には反応しません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Label("選択した文字数の表示", systemImage: "textformat.123")
                     .font(.headline)
                     .padding(.top, 24)
             }

@@ -8,11 +8,14 @@ enum SelectionMenuChoice {
 }
 
 /// マウス選択の直後に選択範囲の近くへ出す丸ボタン（GenGoのバブルを移植）。
-/// クリックするとプリセットメニューを開く
+/// クリックするとプリセットメニューを開く。
+/// 選択した文字数の表示（設定でON）が有効なときは「12文字」のラベルを添えたピル型になり、
+/// AI編集がOFFなら文字数だけを出す（クリックしても何もしない）
 @MainActor
 final class SelectionBubbleController: NSWindowController {
     private var dismissTask: Task<Void, Never>?
     private var action: (() -> Void)?
+    private let hostingView: NSHostingView<SelectionBubbleView>
 
     init() {
         let panel = NSPanel(
@@ -33,13 +36,9 @@ final class SelectionBubbleController: NSWindowController {
         panel.becomesKeyOnlyIfNeeded = true
         panel.isReleasedWhenClosed = false
 
+        hostingView = NSHostingView(rootView: SelectionBubbleView(label: nil, showsIcon: true, action: nil))
         super.init(window: panel)
-
-        panel.contentView = NSHostingView(
-            rootView: SelectionBubbleView { [weak self] in
-                self?.performAction()
-            }
-        )
+        panel.contentView = hostingView
     }
 
     @available(*, unavailable)
@@ -47,13 +46,21 @@ final class SelectionBubbleController: NSWindowController {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func present(at mouseLocation: NSPoint, action: @escaping () -> Void) {
-        guard let window else { return }
+    /// `label` は文字数などの添え書き（nilなら丸いアイコンだけ）。`action` がnilならクリックできない表示専用。
+    /// 両方nilなら何も出さない
+    func present(at mouseLocation: NSPoint, label: String? = nil, action: (() -> Void)?) {
+        guard let window, label != nil || action != nil else { return }
 
         dismissTask?.cancel()
         self.action = action
 
-        let size = window.frame.size
+        hostingView.rootView = SelectionBubbleView(
+            label: label,
+            showsIcon: action != nil,
+            action: action == nil ? nil : { [weak self] in self?.performAction() }
+        )
+        let size = hostingView.fittingSize
+        window.setContentSize(size)
         let screen = NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) } ?? NSScreen.main
         let visibleFrame = screen?.visibleFrame ?? .zero
         var origin = NSPoint(x: mouseLocation.x + 10, y: mouseLocation.y - size.height - 10)
@@ -86,26 +93,48 @@ final class SelectionBubbleController: NSWindowController {
 }
 
 private struct SelectionBubbleView: View {
-    let action: () -> Void
+    /// 添え書き（選択した文字数など）。nilならアイコンだけの丸
+    let label: String?
+    let showsIcon: Bool
+    /// nilなら表示専用（クリックで何も起きない）
+    let action: (() -> Void)?
 
     var body: some View {
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.97))
+        Group {
+            if let action {
+                Button(action: action) { content }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("iroha")
+            } else {
+                content
+            }
+        }
+        .padding(2)
+    }
+
+    private var content: some View {
+        HStack(spacing: 6) {
+            if showsIcon {
                 Image(systemName: "sparkles")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
             }
-            .frame(width: 34, height: 34)
-            .overlay(
-                Circle()
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-            )
+            if let label {
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("iroha")
-        .padding(2)
+        .frame(minWidth: 34, minHeight: 34)
+        .padding(.horizontal, label == nil ? 0 : 10)
+        .background(
+            Capsule().fill(Color(nsColor: .windowBackgroundColor).opacity(0.97))
+        )
+        .overlay(
+            Capsule().stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
     }
 }
 
