@@ -101,7 +101,9 @@ scripts/bench-compare.sh \
 
 - ユーザ辞書・学習は `iroha-cli bench / ajimee` の既定で**空**になる（IME本体のデータを混ぜると
   学習ファイルの成長で数値が変わり再現できない）。混ぜて測るときだけ `IROHA_WITH_USER_DATA=1`
-- 量子化は Q5_K_M で揃える（f16 と混ぜない）
+- 量子化は混ぜない。**開発中の自作モデルは f16 で比較**する（量子化の損失はモデルで違う: llm-jp は
+  Q5_K_M で −3.5pt、zenz はほぼ 0）。Q5_K_M は配布判断のときに別枝で測る。zenz の参照値は配布版の
+  Q5_K_M（f16 を用意できたら併記）
 - 「NNのみ」がモデルの素の力、「辞書 + NN」が辞書に助けられた実力。両者の差が
   「辞書で補えている弱点の大きさ」を表す（zenz small −1pt / xsmall +1.5pt、自作モデル +2pt）
 - `scripts/bench-compare.sh` がこの2条件を1行に並べた表を出す（eval.tsv は NNのみ）:

@@ -3,14 +3,21 @@
 llm-jp-3-150m のファインチューン（`../train.py`）が zenz に届かなかった原因分析を受けて、
 **推論 30ms 以内**を制約に iroha 用に設計し直したモデルの学習パイプライン。
 
-## 設計判断（2026-09-11）
+## 設計判断（2026-09-11、数値は 2026-09-16 に訂正）
 
-llm-jp 系が負けた主因は「ネットワーク」ではなく**トークナイザと語彙配分**だった:
+> **訂正（2026-09-16）**: 設計時に前提にした llm-jp の AJIMEE 60〜66% は、Mac 側推論の
+> `ReadingConstraint` が SentencePiece の語頭スペース「▁」を弾いていたバグ（コミット d1f0e4f で修正）と
+> ユーザ辞書込みの計測による過小評価だった。修正後・標準条件では llm-jp full 最終が **f16 72.0%**
+> （Q5_K_M 68.5%）で、zenz-small 84.5% との差は 12.5pt。下記の「語彙配分が主因」は差の全部ではなく
+> 一部の説明になる。語彙の寄与の大きさは `EXPERIMENT-PLAN.md` §3 の統制実験で確認する。
+
+llm-jp 系が zenz に届かない要因として、「ネットワーク」より**トークナイザと語彙配分**を疑っている:
 
 - SentencePiece がカタカナ読みを形態素と無関係に割る（ジ/シン/ガナ/カッ/タ/タメ ↔ 自信/がなかった/ため）。
   同じ読みが文脈次第で別のピース列になり、学習例が分散する
 - 語彙 99,584 の埋め込み＋出力層が 102M で、150M のうち変換を考える本体は 50M（zenz-small は本体 86M）
-- 英語語彙の混入は主因ではない（読みにラテン文字が無ければ英字を禁じる実験で +0.5pt のみ）
+- 英語語彙の混入は主因ではない（読みにラテン文字が無ければ英字を禁じる実験で +0.5pt のみ。
+  当時目立った「グループ→group」型の英字誤答は上記バグの症状で、修正後は出ない）
 
 M1 Max 上でランダム重みの GPT-2 形状を `llama-bench` で較正した結果（f16、入力64トークン、生成32）:
 
@@ -49,20 +56,23 @@ Windows 移植でも llama.cpp の範囲に収まる）
 | 事前学習 | gpt2-small-japanese-char（Wikipedia＋CC-100、文字単位） | llm-jp-3（2.1T トークン、サブワード） | なし（変換データのみでフルスクラッチ） |
 | 読み→出力の対応 | 文字対文字、単調 | ピース対ピース、形態素と噛み合わない | 文字対文字、単調。エンコーダは読み全体を双方向に見る |
 | 生成 1 ステップの深さ | 12 層 | 12 層 | **2 層**（＋エンコーダ出力へのクロスアテンション） |
-| 実測レイテンシ（AJIMEE 平均, M1 Max） | 49.5ms | 43.6ms（f16） | 較正上の見込み 約 40ms（デコード 30 × 約 1.1ms ＋ エンコード 7ms） |
-| AJIMEE acc@1 | 84.5% | 60.5〜66.0%（学習途中） | 未学習 |
+| 実測レイテンシ（AJIMEE 平均, M1 Max, NNのみ） | 44.7ms（Q5_K_M） | 39.5ms（f16）／ 35.6ms（Q5_K_M） | 較正上の見込み 約 40ms（デコード 30 × 約 1.1ms ＋ エンコード 7ms） |
+| AJIMEE acc@1（NNのみ） | 84.5%（Q5_K_M） | **72.0%（f16、full 最終）**／ 68.5%（Q5_K_M） | 未学習 |
+| 同 10m データ（パイロット比較用） | — | 62.0%（f16、微調整 2 エポック） | パイロットの比較対象 |
 
 読み方:
 
-- **zenz と llm-jp の差**は、トークン単位と語彙配分にある。llm-jp は「150M」でも変換を考える本体は
-  zenz の 6 割で、しかも読みが形態素と無関係に割れる。Llama 系の RoPE / SwiGLU / RMSNorm 自体は
-  この規模では不利要因ではない
+- **zenz と llm-jp の差（12.5pt）**の説明候補は、トークン単位と語彙配分。llm-jp は「150M」でも変換を
+  考える本体は zenz の 6 割で、しかも読みが形態素と無関係に割れる。Llama 系の RoPE / SwiGLU / RMSNorm
+  自体はこの規模では不利要因ではないと見ている。どれだけが語彙由来かは統制実験（EXPERIMENT-PLAN §3）で測る
 - **iroha T5 と zenz の差**は、同じ文字単位のまま「毎ステップ 12 層を通す」自己回帰をやめ、
   12 層はエンコーダとして 1 回だけ使い、生成は 2 層で行うこと。本体パラメータは zenz-small より多い
   （104M 対 86M）のに、30 文字生成の見込み時間は zenz-small の 8 割程度になる。
   代償は事前学習の不在で、文脈理解が足りなければ span corruption の事前学習を挟む（「未決・今後」参照）
-- llm-jp の数値は `iroha-llmjp-150m-full/checkpoint-478000`（2026-09-11 時点、epoch 0.65）の実測。
-  zenz の数値は Q5_K_M 量子化での実測。T5 の数値は GGUF 較正と設計値で、学習後に実測へ差し替える
+- llm-jp の数値は full ラン最終 `checkpoint-736891` を 2026-09-16 に修正後ビルド・標準条件
+  （ユーザ辞書・学習なし、`IROHA_LATTICE=off`）で測った実測。zenz は配布版 Q5_K_M の実測。
+  T5 の数値は GGUF 較正と設計値で、学習後に実測へ差し替える。比較は f16 同士で行う
+  （量子化の損失はモデルで違う: llm-jp は Q5 で −3.5pt、zenz はほぼ 0）
 
 ## ファイル
 
@@ -99,18 +109,28 @@ python3 train_t5.py --data ../train-10m.txt --out ./iroha-t5-e12d2-10m \
 python3 train_t5.py --data ../train-full.txt --out ./iroha-t5-e12d2-full （形状は 3 と同じ）
 
 # 5. GGUF 化と評価（チェックポイント途中でも可: tokenizer.model と config.json を添える）
+#    評価は標準条件（ユーザ辞書・学習は空、NNのみ／辞書+NN）。bench-compare.sh が両条件を 1 表に出す
 ../convert-gguf.sh ./iroha-t5-e12d2-10m        # → ~/Library/Application Support/iroha/models/iroha-t5-e12d2-10m-f16.gguf
-../../macos/scripts/bench-compare.sh ~/Library/Application\ Support/iroha/models/zenz-v3.1-small-Q5_K_M.gguf \
-    ~/Library/Application\ Support/iroha/models/iroha-t5-e12d2-10m-f16.gguf
+cd ../../macos
+#    新語彙なので最初に読み制約の損失が無いことを確認（差が 1〜2 件以内なら OK）
+IROHA_MODEL=<t5.gguf> IROHA_LATTICE=off                      .build/release/iroha-cli ajimee ../testdata/ajimee/evaluation_items.json | tail -1
+IROHA_MODEL=<t5.gguf> IROHA_LATTICE=off IROHA_NO_CONSTRAINT=1 .build/release/iroha-cli ajimee ../testdata/ajimee/evaluation_items.json | tail -1
+scripts/bench-compare.sh ../training/zenz-v3.1-small-Q5_K_M.gguf ../training/zenz-v3.1-xsmall-Q5_K_M.gguf \
+    ../training/iroha-llmjp-150m-10m-f16.gguf <t5.gguf>
 ```
 
 ## 判断の目安
 
-- パイロット（1,000 万件）で AJIMEE acc@1 が zenz-xsmall（68.5%）を超えれば本番へ。
-  llm-jp の 10m ランや full ランの途中値（60〜66%）を超えられないなら、デコーダ層数（1/3 層）と
-  エンコーダ幅の前に、データ量ではなく学習率（5e-4 → 1e-3）と warmup を疑う
-- eval loss と AJIMEE を並べて見る（llm-jp の full ランでは損失が下がり続けているのに
-  AJIMEE が横ばい／悪化した。200 件のノイズ幅は ±5pt）
+- パイロット（1,000 万件）は、同じデータ量の llm-jp 10m（f16 **62.0%**）を **5pt 以上**上回れば本番へ
+  （zenz-xsmall Q5 67.5% も超えていれば文句なし）。62.0% を超えるが 5pt に届かないなら学習率
+  （5e-4 → 1e-3）と warmup を 1 本だけ試す。62.0% を下回るなら、デコーダ層数（1/3 層）とエンコーダ幅の
+  前に学習率と warmup を疑う。詳細な判定は `EXPERIMENT-PLAN.md` §4.3
+- 本番（1.89 億件）の最終判定は llm-jp full（f16 **72.0%**）超え。超えなければ llm-jp full の方が良い
+  モデルなので、T5 路線を見直す。目標は zenz-small 84.5%
+- eval loss と AJIMEE を並べて見る（200 件のノイズ幅は ±5pt。1〜3pt の判断は held-out 1 万件で）。
+  eval.tsv（40 文）は llm-jp 10m・full とも 92.5% で飽和しているので精度判定には使わない
+- 数値は必ず 2026-09-16 の `ReadingConstraint` 修正後のビルドで、ユーザ辞書・学習を空にして取る
+  （`iroha-cli bench / ajimee` の既定）。新しい語彙では `IROHA_NO_CONSTRAINT=1` との一致を先に確認する
 - レイテンシは `bench` の平均で見る。較正上は AJIMEE 平均（出力約 30 文字）で
   エンコード 7ms ＋ 30×約1.1ms（デコーダ 2 層＋クロスアテンション）≒ 40ms、
   eval.tsv やライブ変換の文節長では 30ms を切る見込み。超えるならデコーダを 1 層にする
