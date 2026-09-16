@@ -17,6 +17,9 @@ import IrohaCore
 //   iroha-cli predict [--chain 回数] <左文脈>        : 予測（左文脈の続き1文節）。--chainで採用を繰り返す
 //   環境変数 IROHA_MODEL でモデルパス、IROHA_USER_DICT でユーザ辞書、
 //   IROHA_LEARNING で学習結果のファイルを上書き可能。
+//   bench / ajimee はモデルの素の力を測るため、既定でユーザ辞書・学習を空にする
+//   （IROHA_WITH_USER_DATA=1 でIME本体のデータを使う。IROHA_USER_DICT / IROHA_LEARNING の
+//   明示指定はそのまま使う）。convert / segment / repl はIME本体と同じデータを使う
 //   IROHA_LATTICE=off で辞書ラティスを使わずzenz単体、IROHA_LATTICE=always で第一候補も
 //   ラティス候補の再採点で決める（既定は候補ウィンドウのみラティス。IME本体と同じ）
 //   IROHA_NO_LATIN=1 で読みにラテン文字がないときの英字出力を禁じる（実験用。USB等も出なくなる）
@@ -60,9 +63,23 @@ func editDistance(_ a: [Character], _ b: [Character]) -> Int {
     return previous[b.count]
 }
 
+/// ユーザ辞書・学習の扱い。評価（bench / ajimee）はモデル単体の力を測るので既定で空にする。
+/// 実データを混ぜると学習ファイルの成長で同じモデルでも数値が変わり、再現性がなくなる
+enum UserDataMode {
+    /// IME本体と同じファイル（IROHA_USER_DICT / IROHA_LEARNING で差し替え可）
+    case ime
+    /// 空。IROHA_WITH_USER_DATA=1 なら `.ime` と同じ、IROHA_USER_DICT / IROHA_LEARNING の明示指定は使う
+    case evaluation
+}
+
 /// IME本体と同じ構成（学習 + ユーザ辞書 + 長い読みの区切り + zenz）でエンジンを組み立てる。
 /// IROHA_USER_DICT でユーザ辞書のJSONを差し替えられる（既定は本体と同じファイル）
-func makeEngine() -> any ConversionEngine {
+func makeEngine(userData: UserDataMode = .ime) -> any ConversionEngine {
+    let env = ProcessInfo.processInfo.environment
+    let usesIMEData = userData == .ime || env["IROHA_WITH_USER_DATA"] == "1"
+    // 存在しないファイルを指すストアは空として振る舞う（評価では書き込みも起きない）
+    let emptyURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("iroha-cli-empty-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
     let zenz: ZenzEngine
     // IROHA_NO_LATIN=1: 読みにラテン文字がなければ出力の英字を禁じる（英語語彙の多いモデルの評価用）
     let restrictLatin = ProcessInfo.processInfo.environment["IROHA_NO_LATIN"] == "1"
@@ -72,16 +89,25 @@ func makeEngine() -> any ConversionEngine {
         zenz = ZenzEngine(restrictLatinToReading: restrictLatin)
     }
     let store: UserDictionaryStore
-    if let path = ProcessInfo.processInfo.environment["IROHA_USER_DICT"] {
+    if let path = env["IROHA_USER_DICT"] {
         store = UserDictionaryStore(url: URL(fileURLWithPath: path))
-    } else {
+    } else if usesIMEData {
         store = .shared
+    } else {
+        store = UserDictionaryStore(url: emptyURL.appendingPathComponent("user-dictionary.json"))
     }
     let learning: LearningStore
-    if let path = ProcessInfo.processInfo.environment["IROHA_LEARNING"] {
+    if let path = env["IROHA_LEARNING"] {
         learning = LearningStore(url: URL(fileURLWithPath: path))
-    } else {
+    } else if usesIMEData {
         learning = .shared
+    } else {
+        learning = LearningStore(url: emptyURL.appendingPathComponent("learning.json"))
+    }
+    if userData == .evaluation {
+        let note = usesIMEData ? "IME本体のユーザ辞書・学習を使用（IROHA_WITH_USER_DATA=1）"
+            : "ユーザ辞書・学習は空（IME本体のデータを使うなら IROHA_WITH_USER_DATA=1）"
+        FileHandle.standardError.write("\(note)\n".data(using: .utf8)!)
     }
     // 辞書ラティス + zenz採点（IME本体と同じ構成）。辞書が無い・OFF指定ならzenz単体
     let core: any ConversionEngine
@@ -149,7 +175,7 @@ case "bench" where arguments.count >= 3:
             guard parts.count >= 2 else { return nil }
             return (String(parts[0]), String(parts[1]))
         }
-    let engine = makeEngine()
+    let engine = makeEngine(userData: .evaluation)
     // ウォームアップ（モデルロードを計測から除外）
     _ = try? await engine.convert(reading: "うぉーむあっぷ", context: "", candidateCount: 1)
 
@@ -199,7 +225,7 @@ case "ajimee" where arguments.count >= 3:
         FileHandle.standardError.write("JSONが読めません: \(arguments[2])（scripts/fetch-ajimee.sh で取得できます）\n".data(using: .utf8)!)
         exit(1)
     }
-    let engine = makeEngine()
+    let engine = makeEngine(userData: .evaluation)
     _ = try? await engine.convert(reading: "うぉーむあっぷ", context: "", candidateCount: 1)
 
     struct Tally {

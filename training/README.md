@@ -12,7 +12,8 @@ irohaの変換エンジンは [ConversionEngine](../Sources/IrohaCore/Conversion
 | zenz-v3.1-small (95M, Q5_K_M) | 70MB | 90.0% | 4.5% | 85.5% (171/200) | 1.71% | 70.4ms |
 | zenz-v3.1-xsmall (Q5_K_M) | 20MB | 90.0% | 4.2% | 68.5% (137/200) | 5.01% | 21.9ms |
 
-（AJIMEEの平均レイテンシは入力が長いためeval.tsvより大きく出る）
+（AJIMEEの平均レイテンシは入力が長いためeval.tsvより大きく出る。この表と2026-09-16より前の計測は
+IME本体のユーザ辞書・学習が乗った状態の値。以後は空にして測る。下記「比較の標準条件」）
 
 ## 自作モデルの学習パイプライン（基盤: llm-jp-3-150m）
 
@@ -87,6 +88,73 @@ scripts/bench-compare.sh \
   ~/Library/Application\ Support/iroha/models/zenz-v3.1-small-Q5_K_M.gguf \
   training/iroha-llmjp-150m/iroha-llmjp-150m-f16.gguf
 ```
+
+### 比較の標準条件（2026-09-16以降。学習したモデル vs zenz small / xsmall）
+
+今後、学習させたモデルは **zenz-v3.1-small と zenz-v3.1-xsmall（いずれも Q5_K_M）** を
+基準にして、AJIMEE-Bench を次の **2条件で分けて**比較する。1条件だけの数値は載せない。
+
+| 条件 | 環境変数 | 意味 |
+|---|---|---|
+| NNのみ | `IROHA_LATTICE=off` | モデルの貪欲生成そのもの。ライブ変換の第一候補と同じ経路 |
+| 辞書ラティス + NN再採点 | `IROHA_LATTICE=always` | azooKey辞書ラティスのn-best 10件 + モデル自身の生成1件をモデルの対数確率で並べ、1位を答えにする |
+
+- ユーザ辞書・学習は `iroha-cli bench / ajimee` の既定で**空**になる（IME本体のデータを混ぜると
+  学習ファイルの成長で数値が変わり再現できない）。混ぜて測るときだけ `IROHA_WITH_USER_DATA=1`
+- 量子化は Q5_K_M で揃える（f16 と混ぜない）
+- 「NNのみ」がモデルの素の力、「辞書 + NN」が辞書に助けられた実力。両者の差が
+  「辞書で補えている弱点の大きさ」を表す（zenz small −1pt / xsmall +1.5pt、自作モデルは +13pt）
+- `scripts/bench-compare.sh` がこの2条件を1行に並べた表を出す（eval.tsv は NNのみ）:
+
+```bash
+scripts/bench-compare.sh \
+  ../training/zenz-v3.1-small-Q5_K_M.gguf ../training/zenz-v3.1-xsmall-Q5_K_M.gguf <学習済み.gguf>
+# 単体で回すとき（誤答リストを見る）
+IROHA_MODEL=<gguf> IROHA_LATTICE=off    .build/release/iroha-cli ajimee ../testdata/ajimee/evaluation_items.json
+IROHA_MODEL=<gguf> IROHA_LATTICE=always .build/release/iroha-cli ajimee ../testdata/ajimee/evaluation_items.json
+```
+
+基準値（2026-09-16、M1 Max、`scripts/bench-compare.sh` の出力。ユーザ辞書・学習は空）:
+
+| モデル | eval.tsv 完全一致 | eval.tsv CER | AJIMEE acc@1 (NNのみ) | MinCER | ms | AJIMEE acc@1 (辞書+NN) | MinCER | ms |
+|---|---|---|---|---|---|---|---|---|
+| zenz-v3.1-small-Q5_K_M | 90.0% | 4.47% | 84.5% (169/200) | 1.57% | 44.7ms | 83.5% (167/200) | 1.68% | 79.1ms |
+| zenz-v3.1-xsmall-Q5_K_M | 90.0% | 4.22% | 67.5% (135/200) | 5.05% | 23.8ms | 69.0% (138/200) | 4.77% | 46.0ms |
+| iroha-llmjp-150m-full-Q5_K_M | 67.5% | 10.42% | 59.0% (118/200) | 7.36% | 39.0ms | 72.0% (144/200) | 3.75% | 93.6ms |
+
+- 文脈なし/あり（各100件）の内訳: small NNのみ 89/80、辞書+NN 87/80。xsmall NNのみ 70/65、辞書+NN 71/67。
+  llmjp-full NNのみ 60/58、辞書+NN 76/68
+- レイテンシは同時に動いている処理で±30ms程度ぶれる。モデル間の相対比較にだけ使う
+- eval.tsv は自分の文なので学習データが乗ると上振れする（llmjp-full は学習込みの旧計測 72.5% →
+  空にすると 67.5%）。2026-09-16 より前の eval.tsv の値は比較に使わない
+- zenz は辞書を足してもほぼ変わらない（small は2件落ち: 名付けた/名づけた、後10年→50年。xsmall は3件直り0件悪化）。
+  自作モデルは27件直り1件悪化で、生成の語彙選択の弱さ（group/解説→開設）を辞書が補っている
+- 上の `always` は現在の `LatticeRescoringEngine` の実装（モデル生成候補も一緒に採点）での値。
+  CLAUDE.md や同ファイルのコメントにある「ラティス再採点 66.5%」は生成候補を混ぜる前の旧計測
+- zenzai 公式の AJIMEE 報告は「Zenzai (small) 80.0 / (medium) 86.5」のようにシステム単位で、
+  モデル単体と辞書込みを分けていない（Zenzai は辞書をドラフトにした投機的デコーディングなので
+  報告値は常に辞書込み）。この2条件分けは iroha 独自の見方
+
+#### 「NNのみ」はまだ ReadingConstraint の影響を含む（2026-09-16 判明）
+
+`IROHA_LATTICE=off` でも `ZenzEngine.generate` は `ReadingConstraint` で
+トークンをマスクするため、純粋な貪欲生成ではない（200件中177件で制約が有効）。
+学習マシン側で llama-cpp-python から直接・制約なしで同じ200件を測ると:
+
+| モデル（Q5_K_M、文脈40字に切り詰め） | 制約なし acc@1 | iroha「NNのみ」 | 差 |
+|---|---|---|---|
+| zenz-v3.1-small | 84.0% | 84.5% | −0.5 |
+| zenz-v3.1-xsmall | 67.5% | 67.5% | ±0 |
+| iroha-llmjp-150m-full | **70.5%** | **59.0%** | **+11.5** |
+
+zenz（文字単位・語彙6000）では両者が一致するのに、自作モデル（サブワード・語彙99,574）
+だけ11.5ポイント下がる。ReadingConstraint は「文字の読み位置」をビットマスクで
+追う設計なので、1トークンが複数文字にまたがるサブワード語彙と噛み合っていない可能性が高い。
+確認するには制約を丸ごと切る実験フラグが要る（`IROHA_NO_LATIN` はラテン文字の
+サブルールだけで、制約自体は常に有効）。直れば自作モデルは無料で+11ポイント見込める。
+
+計測コード: llama-cpp-python で `U+EE02+文脈 / U+EE00+読み / U+EE01` を組み、
+temperature=0 で生成して `expected_output` と完全一致を数えるだけ（辞書・制約なし）。
 
 チェックポイント途中評価の例（学習の継続判断に使う）。チェックポイントには
 トークナイザが保存されないため、基盤/出力先からコピーしてからGGUF化する:

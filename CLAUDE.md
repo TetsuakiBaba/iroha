@@ -122,6 +122,11 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   ② AJIMEE で zenz-xsmall（68.5%）を超えたら `train-full.txt` で本番 → ③ 途中チェックポイントも
   `training/convert-gguf.sh <ckptディレクトリ>`（`tokenizer.model` と `config.json` を添える）で
   GGUF化し `macos/scripts/bench-compare.sh` で zenz-small と比較
+- **学習したモデルと zenz の比較は必ず2条件で分けて報告する**: 「NNのみ」（`IROHA_LATTICE=off`）と
+  「辞書ラティス + NN再採点」（`IROHA_LATTICE=always`）。`macos/scripts/bench-compare.sh` が両条件を
+  1表に出す。基準は zenz-v3.1-small / xsmall（Q5_K_M）。`iroha-cli bench / ajimee` はユーザ辞書・学習を
+  既定で空にする（`IROHA_WITH_USER_DATA=1` で本体データ）。手順と基準値は `training/README.md` の
+  「比較の標準条件」が正
 - 評価で見るもの: 学習損失・eval loss・AJIMEE acc@1 の三つを並べる（llm-jp では損失が下がっても
   AJIMEE が横ばいだった。200件のノイズ幅は±5pt）。レイテンシは bench の平均。30ms を超えるなら
   データや幅より先にデコーダ 1 層を試す
