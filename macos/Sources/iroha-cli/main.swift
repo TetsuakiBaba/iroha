@@ -23,6 +23,8 @@ import IrohaCore
 //   IROHA_LATTICE=off で辞書ラティスを使わずzenz単体、IROHA_LATTICE=always で第一候補も
 //   ラティス候補の再採点で決める（既定は候補ウィンドウのみラティス。IME本体と同じ）
 //   IROHA_NO_LATIN=1 で読みにラテン文字がないときの英字出力を禁じる（実験用。USB等も出なくなる）
+//   IROHA_NO_CONSTRAINT=1 で読み制約（constrained decoding）を丸ごと切り素の貪欲生成にする
+//   （実験用。Python側の制約なし計測と突き合わせるとき）
 //   データフォルダはIME本体の設定（保存場所の変更）に従う。IROHA_DATA_DIR で上書き可能
 
 /// IME本体と同じデータフォルダを使う（設定 > 情報 > データの保存場所 で変えた場所を追う）
@@ -83,10 +85,15 @@ func makeEngine(userData: UserDataMode = .ime) -> any ConversionEngine {
     let zenz: ZenzEngine
     // IROHA_NO_LATIN=1: 読みにラテン文字がなければ出力の英字を禁じる（英語語彙の多いモデルの評価用）
     let restrictLatin = ProcessInfo.processInfo.environment["IROHA_NO_LATIN"] == "1"
+    // IROHA_NO_CONSTRAINT=1: 読み制約を切って素の貪欲生成にする（制約なし計測との突き合わせ用）
+    let usesConstraint = ProcessInfo.processInfo.environment["IROHA_NO_CONSTRAINT"] != "1"
     if let path = ProcessInfo.processInfo.environment["IROHA_MODEL"] {
-        zenz = ZenzEngine(modelPath: path, restrictLatinToReading: restrictLatin)
+        zenz = ZenzEngine(modelPath: path, restrictLatinToReading: restrictLatin, usesReadingConstraint: usesConstraint)
     } else {
-        zenz = ZenzEngine(restrictLatinToReading: restrictLatin)
+        zenz = ZenzEngine(restrictLatinToReading: restrictLatin, usesReadingConstraint: usesConstraint)
+    }
+    if !usesConstraint {
+        FileHandle.standardError.write("読み制約なし（IROHA_NO_CONSTRAINT=1）\n".data(using: .utf8)!)
     }
     let store: UserDictionaryStore
     if let path = env["IROHA_USER_DICT"] {

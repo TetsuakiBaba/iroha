@@ -127,6 +127,9 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   1表に出す。基準は zenz-v3.1-small / xsmall（Q5_K_M）。`iroha-cli bench / ajimee` はユーザ辞書・学習を
   既定で空にする（`IROHA_WITH_USER_DATA=1` で本体データ）。手順と基準値は `training/README.md` の
   「比較の標準条件」が正
+- 新しい語彙（トークナイザ）のモデルを評価するときは、`IROHA_NO_CONSTRAINT=1`（読み制約なし）と既定を
+  比べて制約の損失がないことを先に確認する（2026-09-16: llm-jp の語頭「▁」スペースを制約が弾いて
+  約10pt失っていた。`training/README.md` 参照）
 - 評価で見るもの: 学習損失・eval loss・AJIMEE acc@1 の三つを並べる（llm-jp では損失が下がっても
   AJIMEE が横ばいだった。200件のノイズ幅は±5pt）。レイテンシは bench の平均。30ms を超えるなら
   データや幅より先にデコーダ 1 層を試す

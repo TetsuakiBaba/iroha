@@ -9,6 +9,9 @@ import Foundation
 ///
 /// - ひらがな・句読点・記号は読みにそのまま現れるはずなので、その位置と一致しなければ不許可
 /// - 漢字・カタカナ・英数（読みが不定の文字）は読みを1〜maxSpan文字消費したものとみなす
+/// - 空白は読みの同じ位置にあれば消費し、なければ消費なしで通す。SentencePiece系の語彙
+///   （llm-jp など）は語頭マーカー「▁」がスペースになって出てくるため、空白を読みと突き合わせると
+///   語頭トークン（語彙の4割強）が全部弾かれてしまう（AJIMEE で −10pt）
 /// - 終端は読みを使い切ったときのみ許可する
 ///
 /// 消費位置は「ありうる位置の集合」をビットマスクで持つ（bit p = 読みをp文字消費した状態）。
@@ -62,6 +65,12 @@ struct ReadingConstraint {
 
     func advance(_ mask: UInt64, character: Character) -> UInt64 {
         if !allowsLatin, Self.isLatinLetter(character) { return 0 }
+        // 読みの長さを超えた位置は捨てる
+        let overflow = UInt64.max << UInt64(readingLength + 1)
+        if Self.isWhitespace(character) {
+            // 読みに空白があればその位置で消費し、なければ消費せずに通す（語頭マーカー由来の空白）
+            return (((mask & (literalPositions[character] ?? 0)) << 1) | mask) & ~overflow
+        }
         let normalized = Character(katakanaToHiragana(String(character)))
         // 読みの同じ文字に重なる位置は1文字進める
         var next = (mask & (literalPositions[normalized] ?? 0)) << 1
@@ -76,8 +85,6 @@ struct ReadingConstraint {
             // 英数字とカタカナは読みを消費しないこともある（WOWOW←わうわう、コンピューター←こんぴゅーた）
             if span == .zeroOrMore { next |= mask }
         }
-        // 読みの長さを超えた位置は捨てる
-        let overflow = UInt64.max << UInt64(readingLength + 1)
         return next & ~overflow
     }
 
@@ -89,6 +96,15 @@ struct ReadingConstraint {
         case oneOrMore
         /// 読みを消費しないこともある（カタカナ・英数字。長音や頭字語で字数が合わない）
         case zeroOrMore
+    }
+
+    /// 空白（半角・全角スペース、タブ・改行、SentencePieceの語頭マーカー ▁ U+2581）か
+    static func isWhitespace(_ character: Character) -> Bool {
+        guard let scalar = character.unicodeScalars.first else { return false }
+        switch scalar.value {
+        case 0x20, 0x09, 0x0A, 0x0D, 0x3000, 0x2581: return true
+        default: return false
+        }
     }
 
     /// ASCII・全角のラテン文字（アルファベット）か

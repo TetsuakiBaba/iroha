@@ -39,6 +39,18 @@ final class ReadingConstraintTests: XCTestCase {
         XCTAssertTrue(accepts("にせんにじゅうごねん", "2025年"))
     }
 
+    /// 空白は読みになければ消費なしで通す（SentencePiece語彙の語頭マーカー「▁」がスペースになって出る。
+    /// llm-jp系の自作モデルでは「 グループ」のような語頭トークンが弾かれて group に逸れていた）
+    func testAllowsWordBoundarySpaces() {
+        XCTAssertTrue(accepts("ぐるーぷにわかれて", " グループに分かれて"))
+        XCTAssertTrue(accepts("ぐるーぷにわかれて", " グループに 分かれて"))
+        XCTAssertTrue(accepts("ぐるーぷにわかれて", "\u{2581}グループに分かれて"))
+        // 読みに空白があればその位置で消費できる
+        XCTAssertTrue(accepts("こんにちは せかい", "こんにちは 世界"))
+        // 空白を通しても他の制約は緩まない
+        XCTAssertFalse(accepts("ぐるーぷにわかれて", " グループに。分かれて"))
+    }
+
     /// 追跡できない読み（長すぎる・空）では制約をかけない
     func testNoConstraintForUntrackableReading() {
         XCTAssertNil(ReadingConstraint(reading: ""))

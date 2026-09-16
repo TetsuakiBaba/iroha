@@ -57,8 +57,13 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
 
     /// 読みにラテン文字がないとき出力の英字を禁じる（`ReadingConstraint` 参照。既定は許す）
     private let restrictLatinToReading: Bool
+    /// 読み制約（constrained decoding）を使うか。偽なら素の貪欲生成（実験・計測用。
+    /// 読みにない句読点の挿入や食い残しを防げなくなるので、IME本体では常に真）
+    private let usesReadingConstraint: Bool
 
-    public init(modelPath: String = ZenzEngine.defaultModelPath, restrictLatinToReading: Bool = false) {
+    public init(modelPath: String = ZenzEngine.defaultModelPath, restrictLatinToReading: Bool = false,
+                usesReadingConstraint: Bool = true) {
+        self.usesReadingConstraint = usesReadingConstraint
         self.modelPath = modelPath
         self.restrictLatinToReading = restrictLatinToReading
     }
@@ -93,7 +98,7 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         // モデル自身の確からしさで足切りすることでそれを除く）
         _ = try primePrompt(runtime: runtime, promptTokens: promptTokens)
 
-        let constraint = ReadingConstraint(reading: reading, restrictLatinToReading: restrictLatinToReading)
+        let constraint = makeReadingConstraint(reading: reading)
         let firstTokens = topTokens(runtime: runtime, count: candidateCount * 8)
         var scored: [(text: String, logProb: Float)] = []
         var bestLogProb = -Float.infinity
@@ -282,7 +287,7 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
 
         // 読みの消費状況（constrained decoding用）。追跡できない読みや
         // 制約を満たすトークンが尽きた場合はnilにして素の貪欲生成に戻す
-        var constraint = ReadingConstraint(reading: reading, restrictLatinToReading: restrictLatinToReading)
+        var constraint = makeReadingConstraint(reading: reading)
         var mask = constraint?.initialMask ?? 0
         if let forcedFirstToken, let active = constraint {
             mask = active.advance(mask, text: runtime.tokenTexts[Int(forcedFirstToken.token)] ?? "")
@@ -338,6 +343,12 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         }
         // 途中にも不正なバイトがある: 置換文字に落としてから取り除く
         return String(decoding: data, as: UTF8.self).replacingOccurrences(of: "\u{FFFD}", with: "")
+    }
+
+    /// 読み制約を作る。`usesReadingConstraint` が偽、または読みが追跡できない長さならnil（制約なし）
+    private func makeReadingConstraint(reading: String) -> ReadingConstraint? {
+        guard usesReadingConstraint else { return nil }
+        return ReadingConstraint(reading: reading, restrictLatinToReading: restrictLatinToReading)
     }
 
     static func buildPrompt(reading: String, leftContext: String, maxContextLength: Int) -> String {
