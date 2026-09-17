@@ -16,6 +16,14 @@ echo "==> .appバンドル組み立て"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/iroha "$APP/Contents/MacOS/iroha"
+# 追加学習ヘルパー（設定画面が Process で起動する）。MLX の Metal カーネルは
+# .build/release/mlx-swift_Cmlx.bundle/default.metallib にあり、下の *.bundle コピーで Resources に入る
+if [ ! -f .build/release/iroha-train ] || [ ! -f .build/release/mlx-swift_Cmlx.bundle/default.metallib ]; then
+  echo "error: iroha-train か mlx.metallib がありません。swift build -c release --product iroha-train と" >&2
+  echo "       ./scripts/build-mlx-metallib.sh release を実行してください" >&2
+  exit 1
+fi
+cp .build/release/iroha-train "$APP/Contents/MacOS/iroha-train"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/main.tiff Resources/en.tiff Resources/AppIcon.icns "$APP/Contents/Resources/"
 cp -R Resources/ja.lproj Resources/en.lproj "$APP/Contents/Resources/"
@@ -42,11 +50,14 @@ if [ -n "${BUILD_NUMBER:-}" ]; then
   plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$APP/Contents/Info.plist"
 fi
 
+# ネストした実行ファイル（iroha-train）は外側の署名に含まれないので先に個別に署名する
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 if [ "$SIGN_IDENTITY" = "-" ]; then
   echo "==> 署名 (ad-hoc)"
+  codesign --force --sign - "$APP/Contents/MacOS/iroha-train"
   codesign --force --sign - "$APP"
 else
   echo "==> 署名 (Developer ID, hardened runtime)"
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/iroha-train"
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
 fi

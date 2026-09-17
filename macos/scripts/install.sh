@@ -7,6 +7,9 @@ cd "$(dirname "$0")/.."
 
 echo "==> ビルド"
 swift build -c release --product iroha
+# 追加学習ヘルパー（MLX）。Metal カーネルは swift build では作れないので専用スクリプトで生成する
+swift build -c release --product iroha-train
+./scripts/build-mlx-metallib.sh release
 ./scripts/fetch-dictionary.sh
 
 APP=".build/iroha.app"

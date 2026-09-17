@@ -106,6 +106,10 @@ scripts/bench-compare.sh \
   Q5_K_M（f16 を用意できたら併記）
 - 「NNのみ」がモデルの素の力、「辞書 + NN」が辞書に助けられた実力。両者の差が
   「辞書で補えている弱点の大きさ」を表す（zenz small −1pt / xsmall +1.5pt、自作モデル +2pt）
+- 追加学習（LoRA アダプタ、`iroha-train` の出力）を測るときは **ベース単体とベース+アダプタを同じ表に並べる**。
+  `scripts/bench-compare.sh zenz.gguf zenz.gguf:<adapter.gguf>`（`:` 区切り。CLI 単体では `IROHA_LORA=<adapter.gguf>`）。
+  AJIMEE の低下幅が忘却の指標（個人データ数百件なら ≤1pt を許容）。held-out（記録の末尾1割、
+  `<adapter>.heldout.tsv`）は `iroha-cli bench <tsv>` で同じ数値を再現できる（3列目の左文脈を使う）
 - `scripts/bench-compare.sh` がこの2条件を1行に並べた表を出す（eval.tsv は NNのみ）:
 
 ```bash

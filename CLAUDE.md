@@ -86,6 +86,15 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
 - 学習用データの記録（`ConversionLog`、既定OFF・設定は同期しない）は `learning.json` とは別の追記専用JSONL
   （`<データフォルダ>/logs/conversions/`）。修正なしの確定も含めて、モデルに渡した左文脈・読み・提示・確定を残す。
   `learning.json` は辞書なので上書き・上限・マージがあり、学習データ用途にはそのまま使えない
+- 変換記録からの追加学習（LoRA）は `macos/Sources/IrohaTrain/`（MLX Swift、mlx-swift **0.31.4 固定**）と
+  実行ファイル `iroha-train`（`Contents/MacOS/`、IME 本体は MLX をリンクしない）。学習した LoRA は llama.cpp の
+  アダプタ形式 GGUF（`LoraAdapterWriter`）に書き、`ZenzEngine(adapterPath:)` が適用する（設定キー `modelAdapterPath`、
+  `modelPath` と同じく再起動で反映）。MLX の Metal カーネルは `swift build` では作れないので
+  `./macos/scripts/build-mlx-metallib.sh` が `.build/<config>/mlx-swift_Cmlx.bundle/default.metallib` を生成する
+  （install.sh / release.yml が呼ぶ。**Metal Toolchain が必要**: `xcodebuild -downloadComponent MetalToolchain`）。
+  テストは `swift test --filter IrohaTrainTests`（metallib が debug 側に無ければスキップ。
+  `./macos/scripts/build-mlx-metallib.sh debug` で作る）。MLX 実装と llama.cpp のロジット一致（`GPT2ParityTests`）を
+  崩さないこと。別アーキ（llama / T5）を足すときは `TrainableLM` の実装を追加して `TrainableModels.load` に登録する
 - バージョンはgitタグが唯一の情報源。リリースはCIがタグから、開発ビルドは
   install.shがgit describeから注入する（Info.plistのコミット値はフォールバック。
   リリース時にゆるく追随させる）。Windows版も同じ原則でCIがタグから注入すること

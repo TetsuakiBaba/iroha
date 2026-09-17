@@ -24,15 +24,28 @@ final class IrohaInputController: IMKInputController {
         return ZenzEngine.defaultModelPath
     }()
 
-    /// 学習用ログ（`ConversionLog`）に書くモデル名（ファイル名、拡張子なし）
-    static let engineModelName = URL(fileURLWithPath: engineModelPath).deletingPathExtension().lastPathComponent
+    /// 変換記録から追加学習した LoRA アダプタのパス（UserDefaults "modelAdapterPath"。空なら無し）。
+    /// `engineModelPath` と同じくプロセス起動時に確定し、変更は再起動後に反映
+    static let engineAdapterPath: String? = {
+        if let path = UserDefaults.standard.string(forKey: TrainingSettings.adapterPathKey), !path.isEmpty {
+            return path
+        }
+        return nil
+    }()
+
+    /// 学習用ログ（`ConversionLog`）に書くモデル名（ファイル名、拡張子なし。アダプタ使用中は "+アダプタ名"）
+    static let engineModelName: String = {
+        let base = URL(fileURLWithPath: engineModelPath).deletingPathExtension().lastPathComponent
+        guard let adapter = engineAdapterPath else { return base }
+        return base + "+" + URL(fileURLWithPath: adapter).deletingPathExtension().lastPathComponent
+    }()
 
     /// 表示用のモデル名（ファイル名。未取得ならその旨）
     static var engineModelDisplayName: String {
         guard FileManager.default.fileExists(atPath: engineModelPath) else {
             return "モデル未取得"
         }
-        return URL(fileURLWithPath: engineModelPath).deletingPathExtension().lastPathComponent
+        return engineModelName
     }
 
     /// 変換エンジンはプロセスで1つを共有する（モデルは初回変換時にロード）。
@@ -47,7 +60,7 @@ final class IrohaInputController: IMKInputController {
 
     /// zenzモデルの実体。かな漢字変換と、同じモデルを指定した予測変換・インライン補完で共有する
     /// （モデルを二重にロードしない）
-    private static let zenz = ZenzEngine(modelPath: engineModelPath)
+    private static let zenz = ZenzEngine(modelPath: engineModelPath, adapterPath: engineAdapterPath)
 
     /// 予測変換（確定前）とインライン補完（確定後）のエンジン。かな漢字変換とは別のモデルを
     /// 設定できる（`PredictionSettings`）。既定はどちらもかな漢字変換のzenzを共有する

@@ -883,6 +883,8 @@ private struct ModelSettingsTab: View {
                 }
             }
 
+            TrainingSection()
+
             Section("予測変換・インライン補完のモデル") {
                 Text("入力中の予測変換と確定後のインライン補完は、かな漢字変換とは別のモデルを使えます。"
                     + "空欄ならかな漢字変換と同じモデルを共有します（zenz-v3は文章の続きも生成できます）。"
@@ -898,6 +900,175 @@ private struct ModelSettingsTab: View {
             AIServiceSection()
         }
         .formStyle(.grouped)
+    }
+}
+
+// MARK: - 追加学習
+
+/// 「自分の入力で追加学習」: 変換記録（ConversionLog）から LoRA アダプタを学習し、使うアダプタを選ぶ。
+/// 学習そのものは別プロセス iroha-train（TrainingCoordinator）
+private struct TrainingSection: View {
+    @ObservedObject private var coordinator = TrainingCoordinator.shared
+    @AppStorage(TrainingSettings.adapterPathKey) private var adapterPath = ""
+    @AppStorage(ConversionLogSettings.enabledKey) private var conversionLogEnabled = false
+
+    private var basePath: String { IrohaInputController.engineModelPath }
+
+    var body: some View {
+        Section("自分の入力で追加学習") {
+            if !TrainingCoordinator.isSupportedHardware {
+                Text("追加学習は Apple Silicon の Mac で使えます。").foregroundStyle(.secondary)
+            } else if !TrainingCoordinator.isAvailable {
+                Text("学習ヘルパー（iroha-train）がこのバンドルにありません。").foregroundStyle(.secondary)
+            } else {
+                recordsRow
+                trainingRow
+            }
+            adapterField
+            Text("確定した変換の記録（辞書・学習タブの「変換記録」）を使って、使用中のモデルに LoRA アダプタを"
+                + "追加学習します。ベースのモデルは変えず、小さなアダプタファイルを models/adapters/ に作ります。"
+                + "記録の新しい 1 割は学習に使わず、学習の前後で変換が一致した数を比べるのに使います。"
+                + "学習は数十秒〜数分かかり、その間 GPU を使います。アダプタの変更は再起動後に反映されます。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .onAppear { coordinator.refreshInfo(basePath: basePath) }
+        .onReceive(NotificationCenter.default.publisher(for: ConversionLog.didChangeNotification)) { _ in
+            coordinator.refreshInfo(basePath: basePath)
+        }
+    }
+
+    @ViewBuilder private var recordsRow: some View {
+        LabeledContent("学習に使える記録") {
+            if let info = coordinator.info {
+                Text("\(info.usableEntries) 件（学習 \(info.trainCount) / 評価 \(info.heldOutCount)）")
+                    .foregroundStyle(.secondary)
+            } else if let error = coordinator.infoError {
+                Text(error).foregroundStyle(.red).font(.caption)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+        if !conversionLogEnabled {
+            Text("変換記録が OFF です。辞書・学習タブの「確定した変換を記録する」を ON にすると記録が溜まります。")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        }
+        if let info = coordinator.info, !info.supported {
+            Text("使用中のモデル（\(info.architecture.isEmpty ? "不明" : info.architecture)）は追加学習に対応していません"
+                + "（対応: gpt2 = zenz）。")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        }
+    }
+
+    private var canStart: Bool {
+        guard let info = coordinator.info else { return false }
+        return info.supported && info.usableEntries >= 20
+    }
+
+    @ViewBuilder private var trainingRow: some View {
+        switch coordinator.state {
+        case .idle:
+            HStack {
+                Button("学習を開始") { coordinator.start(basePath: basePath) }
+                    .disabled(!canStart)
+                if let info = coordinator.info, info.usableEntries < 20 {
+                    Text("記録が 20 件以上必要です").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        case .running(let stage, let epoch, let epochs, let step, let steps, let loss):
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    if steps > 0 {
+                        ProgressView(value: Double(step), total: Double(steps))
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                    Button("キャンセル") { coordinator.cancel() }
+                }
+                Text(Self.describe(stage: stage, epoch: epoch, epochs: epochs, step: step, steps: steps, loss: loss))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .done(let result):
+            VStack(alignment: .leading, spacing: 4) {
+                if result.total > 0 {
+                    Text("学習完了（\(result.trainCount) 件）。評価用 \(result.total) 件の一致: "
+                        + "学習前 \(result.before) → 学習後 \(result.after)")
+                } else {
+                    Text("学習完了（\(result.trainCount) 件）。")
+                }
+                Text(URL(fileURLWithPath: result.adapterPath).lastPathComponent)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("このアダプタを使う") { adapterPath = result.adapterPath }
+                        .disabled(adapterPath == result.adapterPath)
+                    Button("閉じる") { coordinator.reset() }
+                }
+            }
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 4) {
+                Text("学習に失敗しました: \(message)").font(.caption).foregroundStyle(.red)
+                Button("戻る") { coordinator.reset() }
+            }
+        case .cancelled:
+            HStack {
+                Text("学習を中止しました。").foregroundStyle(.secondary)
+                Button("戻る") { coordinator.reset() }
+            }
+        }
+    }
+
+    private static func describe(stage: String, epoch: Int, epochs: Int, step: Int, steps: Int, loss: Float?) -> String {
+        switch stage {
+        case "start": return "準備中…"
+        case "evaluate": return "評価中…（学習前後の変換を比べています）"
+        case "quantize": return "ベースモデルを学習用に変換中…"
+        case "load": return "モデルを読み込み中…"
+        case "export": return "アダプタを書き出し中…"
+        default:
+            var text = "学習中 \(step)/\(steps)"
+            if epochs > 0 { text += "（エポック \(epoch)/\(epochs)）" }
+            if let loss { text += String(format: "  損失 %.3f", loss) }
+            return text
+        }
+    }
+
+    @ViewBuilder private var adapterField: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("使用する LoRA アダプタ（GGUF）のパス")
+            TextField("", text: $adapterPath, prompt: Text("なし（ベースモデルのまま）"))
+                .textFieldStyle(.roundedBorder)
+        }
+        HStack {
+            Button("アダプタフォルダを開く") {
+                let dir = TrainingCoordinator.adaptersDirectory
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                NSWorkspace.shared.open(dir)
+            }
+            Button("ファイルを選択...") {
+                let panel = NSOpenPanel()
+                panel.allowedContentTypes = []
+                panel.allowsOtherFileTypes = true
+                panel.canChooseDirectories = false
+                panel.directoryURL = TrainingCoordinator.adaptersDirectory
+                if panel.runModal() == .OK, let url = panel.url {
+                    adapterPath = url.path
+                }
+            }
+            Button("使わない") { adapterPath = "" }
+                .disabled(adapterPath.isEmpty)
+        }
+        if adapterPath != (IrohaInputController.engineAdapterPath ?? "") {
+            HStack {
+                Text("アダプタの変更はirohaの再起動後に反映されます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("irohaを再起動") { AppRestarter.restartInstalledApp() }
+            }
+        }
     }
 }
 

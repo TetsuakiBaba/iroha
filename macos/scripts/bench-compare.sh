@@ -10,31 +10,50 @@
 # 標準条件・基準値は training/README.md「比較の標準条件」を参照。
 #
 # 使い方（リポジトリルートから）:
-#   macos/scripts/bench-compare.sh <model1.gguf> [model2.gguf ...]
+#   macos/scripts/bench-compare.sh <model1.gguf[:adapter.gguf]> [model2.gguf[:adapter.gguf] ...]
+#   `:adapter.gguf` を付けると追加学習の LoRA アダプタ（iroha-train の出力）を適用して測る
+#   （IROHA_LORA）。同じベースをアダプタ有無で並べれば追加学習の効果と忘却が1表で見える
 # 例（zenz と 学習済みllm-jp-3-150m の比較）:
 #   macos/scripts/bench-compare.sh \
 #     ~/Library/Application\ Support/iroha/models/zenz-v3.1-small.gguf \
 #     training/iroha-llmjp-150m/iroha-llmjp-150m-f16.gguf
+# 例（ベース vs ベース+LoRA）:
+#   macos/scripts/bench-compare.sh zenz.gguf zenz.gguf:~/Library/Application\ Support/iroha/models/adapters/x.gguf
 set -euo pipefail
 
 if [ $# -lt 1 ]; then
-    echo "使い方: $0 <model.gguf> [model.gguf ...]" >&2
+    echo "使い方: $0 <model.gguf[:adapter.gguf]> [model.gguf[:adapter.gguf] ...]" >&2
     exit 1
 fi
 
 # 相対パスは呼び出し時のカレントディレクトリ基準で絶対パス化してから
 # パッケージルート(macos/)へ移動する（cd後に解決すると別の場所を指してしまう）
-MODELS=()
-for MODEL in "$@"; do
-    case "$MODEL" in
-        /*) ;;
-        *) MODEL="$PWD/$MODEL" ;;
+absolutize() {
+    case "$1" in
+        /*) echo "$1" ;;
+        *) echo "$PWD/$1" ;;
     esac
+}
+MODELS=()
+for SPEC in "$@"; do
+    MODEL="${SPEC%%:*}"
+    ADAPTER=""
+    case "$SPEC" in *:*) ADAPTER="${SPEC#*:}" ;; esac
+    MODEL=$(absolutize "$MODEL")
     if [ ! -f "$MODEL" ]; then
         echo "エラー: モデルファイルが見つかりません: $MODEL" >&2
         exit 1
     fi
-    MODELS+=("$MODEL")
+    if [ -n "$ADAPTER" ]; then
+        ADAPTER=$(absolutize "$ADAPTER")
+        if [ ! -f "$ADAPTER" ]; then
+            echo "エラー: アダプタファイルが見つかりません: $ADAPTER" >&2
+            exit 1
+        fi
+        MODELS+=("$MODEL:$ADAPTER")
+    else
+        MODELS+=("$MODEL")
+    fi
 done
 set -- "${MODELS[@]}"
 
@@ -65,8 +84,13 @@ ajimee_columns() {
     echo "$ACC | $MINCER | $MS"
 }
 
-for MODEL in "$@"; do
+for SPEC in "$@"; do
+    MODEL="${SPEC%%:*}"
+    ADAPTER=""
+    case "$SPEC" in *:*) ADAPTER="${SPEC#*:}" ;; esac
     NAME=$(basename "$MODEL" .gguf)
+    if [ -n "$ADAPTER" ]; then NAME="$NAME+$(basename "$ADAPTER" .gguf)"; fi
+    export IROHA_LORA="$ADAPTER"
     echo "==> $NAME : eval.tsv (NNのみ)" >&2
     IROHA_MODEL="$MODEL" IROHA_LATTICE=off "$CLI" bench ../testdata/eval.tsv > "$RESULTS/$NAME.bench.txt" 2>/dev/null
     BENCH=$(tail -1 "$RESULTS/$NAME.bench.txt")
@@ -93,4 +117,4 @@ done
 echo
 echo "$TABLE"
 echo
-echo "（誤答の内訳は各モデルの実行ログ参照。再実行: IROHA_MODEL=<gguf> IROHA_LATTICE=off|always $CLI ajimee ../testdata/ajimee/evaluation_items.json）"
+echo "（誤答の内訳は各モデルの実行ログ参照。再実行: IROHA_MODEL=<gguf> [IROHA_LORA=<adapter>] IROHA_LATTICE=off|always $CLI ajimee ../testdata/ajimee/evaluation_items.json）"

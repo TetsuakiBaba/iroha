@@ -30,10 +30,12 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         /// デコーダは `decoderStartToken` から生成する
         let isEncoderDecoder: Bool
         let decoderStartToken: llama_token
+        /// 追加学習で作った LoRA アダプタ（`adapterPath` 指定時。context に適用済み）
+        let adapter: OpaquePointer?
 
         init(model: OpaquePointer, context: OpaquePointer, vocab: OpaquePointer,
              tokenTexts: [String?], tokenIsTerminator: [Bool],
-             isEncoderDecoder: Bool, decoderStartToken: llama_token) {
+             isEncoderDecoder: Bool, decoderStartToken: llama_token, adapter: OpaquePointer?) {
             self.model = model
             self.context = context
             self.vocab = vocab
@@ -41,15 +43,20 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
             self.tokenIsTerminator = tokenIsTerminator
             self.isEncoderDecoder = isEncoderDecoder
             self.decoderStartToken = decoderStartToken
+            self.adapter = adapter
         }
 
         deinit {
             llama_free(context)
+            // アダプタはモデルに属するので、モデルより先に解放する
+            if let adapter { llama_adapter_lora_free(adapter) }
             llama_model_free(model)
         }
     }
 
     private let modelPath: String
+    /// 変換記録から追加学習した LoRA アダプタ（GGUF）。nil ならベースモデルのまま
+    private let adapterPath: String?
     private var runtime: Runtime?
 
     /// 左文脈として与える最大文字数（zenz-v3の学習設定に合わせる）
@@ -61,10 +68,11 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
     /// 読みにない句読点の挿入や食い残しを防げなくなるので、IME本体では常に真）
     private let usesReadingConstraint: Bool
 
-    public init(modelPath: String = ZenzEngine.defaultModelPath, restrictLatinToReading: Bool = false,
-                usesReadingConstraint: Bool = true) {
+    public init(modelPath: String = ZenzEngine.defaultModelPath, adapterPath: String? = nil,
+                restrictLatinToReading: Bool = false, usesReadingConstraint: Bool = true) {
         self.usesReadingConstraint = usesReadingConstraint
         self.modelPath = modelPath
+        self.adapterPath = (adapterPath?.isEmpty == false) ? adapterPath : nil
         self.restrictLatinToReading = restrictLatinToReading
     }
 
@@ -609,6 +617,31 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
             throw ConversionError.modelLoadFailed("vocabの取得に失敗")
         }
 
+        // LoRA アダプタ（追加学習の成果）。読めないときは例外にする: 黙ってベースで動くと
+        // 「アダプタを使っているつもりで計測していた」事故になる
+        var adapter: OpaquePointer?
+        if let adapterPath {
+            guard FileManager.default.fileExists(atPath: adapterPath) else {
+                llama_free(createdContext)
+                llama_model_free(loadedModel)
+                throw ConversionError.modelNotFound(adapterPath)
+            }
+            guard let loadedAdapter = llama_adapter_lora_init(loadedModel, adapterPath) else {
+                llama_free(createdContext)
+                llama_model_free(loadedModel)
+                throw ConversionError.modelLoadFailed("LoRAアダプタを読めません（ベースモデルと合っていない可能性）: \(adapterPath)")
+            }
+            var adapters: [OpaquePointer?] = [loadedAdapter]
+            var scales: [Float] = [1.0]
+            guard llama_set_adapters_lora(createdContext, &adapters, 1, &scales) == 0 else {
+                llama_adapter_lora_free(loadedAdapter)
+                llama_free(createdContext)
+                llama_model_free(loadedModel)
+                throw ConversionError.modelLoadFailed("LoRAアダプタの適用に失敗: \(adapterPath)")
+            }
+            adapter = loadedAdapter
+        }
+
         let (tokenTexts, tokenIsTerminator) = Self.buildTokenTable(vocab: vocab)
 
         let isEncoderDecoder = llama_model_has_encoder(loadedModel) && llama_model_has_decoder(loadedModel)
@@ -617,7 +650,8 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
 
         self.runtime = Runtime(model: loadedModel, context: createdContext, vocab: vocab,
                                tokenTexts: tokenTexts, tokenIsTerminator: tokenIsTerminator,
-                               isEncoderDecoder: isEncoderDecoder, decoderStartToken: decoderStart)
+                               isEncoderDecoder: isEncoderDecoder, decoderStartToken: decoderStart,
+                               adapter: adapter)
     }
 
     /// 語彙全体の出力文字列を1度だけ取り出しておく（制約判定を毎トークン安く行うため）

@@ -7,7 +7,7 @@ import IrohaCore
 //   iroha-cli kana <romaji>                       : ローマ字→かな変換のみ
 //   iroha-cli convert [--context 文脈] <読み>      : かな漢字変換（読みはローマ字/ひらがなどちらでも）
 //   iroha-cli segment <読み>                       : 変換 + 文節分割の検証
-//   iroha-cli bench <eval.tsv>                    : 評価（TSV: 読み\t正解）。精度とレイテンシを報告
+//   iroha-cli bench <eval.tsv>                    : 評価（TSV: 読み\t正解[\t左文脈]）。精度とレイテンシを報告
 //   iroha-cli ajimee <evaluation_items.json>      : AJIMEE-Bench評価（acc@1・MinCER）。scripts/fetch-ajimee.shで取得
 //   iroha-cli confidence <evaluation_items.json> [--margin 閾値] [--examples 件数]
 //                                                 : 自信度（文字ごとのマージン）と誤変換箇所の対応を
@@ -15,8 +15,8 @@ import IrohaCore
 //   iroha-cli repl                                : 対話モード（1行ずつ変換、レイテンシ表示）
 //   iroha-cli lattice <読み>                       : 辞書ラティス（azooKey）の生の候補を表示（調査用）
 //   iroha-cli predict [--chain 回数] <左文脈>        : 予測（左文脈の続き1文節）。--chainで採用を繰り返す
-//   環境変数 IROHA_MODEL でモデルパス、IROHA_USER_DICT でユーザ辞書、
-//   IROHA_LEARNING で学習結果のファイルを上書き可能。
+//   環境変数 IROHA_MODEL でモデルパス、IROHA_LORA で追加学習した LoRA アダプタ（GGUF）、
+//   IROHA_USER_DICT でユーザ辞書、IROHA_LEARNING で学習結果のファイルを上書き可能。
 //   bench / ajimee はモデルの素の力を測るため、既定でユーザ辞書・学習を空にする
 //   （IROHA_WITH_USER_DATA=1 でIME本体のデータを使う。IROHA_USER_DICT / IROHA_LEARNING の
 //   明示指定はそのまま使う）。convert / segment / repl はIME本体と同じデータを使う
@@ -65,6 +65,19 @@ func editDistance(_ a: [Character], _ b: [Character]) -> Int {
     return previous[b.count]
 }
 
+
+/// IROHA_MODEL / IROHA_LORA を反映した zenz エンジン。IME本体と同じ既定（モデル未指定なら既定モデル）
+func makeZenz(restrictLatinToReading: Bool = false, usesReadingConstraint: Bool = true) -> ZenzEngine {
+    let env = ProcessInfo.processInfo.environment
+    let adapter = env["IROHA_LORA"].flatMap { $0.isEmpty ? nil : $0 }
+    if let path = env["IROHA_MODEL"], !path.isEmpty {
+        return ZenzEngine(modelPath: path, adapterPath: adapter, restrictLatinToReading: restrictLatinToReading,
+                          usesReadingConstraint: usesReadingConstraint)
+    }
+    return ZenzEngine(adapterPath: adapter, restrictLatinToReading: restrictLatinToReading,
+                      usesReadingConstraint: usesReadingConstraint)
+}
+
 /// ユーザ辞書・学習の扱い。評価（bench / ajimee）はモデル単体の力を測るので既定で空にする。
 /// 実データを混ぜると学習ファイルの成長で同じモデルでも数値が変わり、再現性がなくなる
 enum UserDataMode {
@@ -87,11 +100,7 @@ func makeEngine(userData: UserDataMode = .ime) -> any ConversionEngine {
     let restrictLatin = ProcessInfo.processInfo.environment["IROHA_NO_LATIN"] == "1"
     // IROHA_NO_CONSTRAINT=1: 読み制約を切って素の貪欲生成にする（制約なし計測との突き合わせ用）
     let usesConstraint = ProcessInfo.processInfo.environment["IROHA_NO_CONSTRAINT"] != "1"
-    if let path = ProcessInfo.processInfo.environment["IROHA_MODEL"] {
-        zenz = ZenzEngine(modelPath: path, restrictLatinToReading: restrictLatin, usesReadingConstraint: usesConstraint)
-    } else {
-        zenz = ZenzEngine(restrictLatinToReading: restrictLatin, usesReadingConstraint: usesConstraint)
-    }
+    zenz = makeZenz(restrictLatinToReading: restrictLatin, usesReadingConstraint: usesConstraint)
     if !usesConstraint {
         FileHandle.standardError.write("読み制約なし（IROHA_NO_CONSTRAINT=1）\n".data(using: .utf8)!)
     }
@@ -175,12 +184,13 @@ case "bench" where arguments.count >= 3:
         FileHandle.standardError.write("ファイルが読めません: \(arguments[2])\n".data(using: .utf8)!)
         exit(1)
     }
-    let pairs: [(reading: String, expected: String)] = content
+    // 3列目があれば左文脈（追加学習の held-out TSV。`TrainingDataBuilder.heldOutTSV`）
+    let pairs: [(reading: String, expected: String, context: String)] = content
         .split(separator: "\n")
         .compactMap { line in
-            let parts = line.split(separator: "\t")
+            let parts = line.split(separator: "\t", omittingEmptySubsequences: false)
             guard parts.count >= 2 else { return nil }
-            return (String(parts[0]), String(parts[1]))
+            return (String(parts[0]), String(parts[1]), parts.count >= 3 ? String(parts[2]) : "")
         }
     let engine = makeEngine(userData: .evaluation)
     // ウォームアップ（モデルロードを計測から除外）
@@ -190,9 +200,9 @@ case "bench" where arguments.count >= 3:
     var totalEditDistance = 0
     var totalExpectedLength = 0
     var totalMilliseconds = 0.0
-    for (reading, expected) in pairs {
+    for (reading, expected, context) in pairs {
         let start = ContinuousClock.now
-        let result = (try? await engine.convert(reading: reading, context: "", candidateCount: 1).first) ?? reading
+        let result = (try? await engine.convert(reading: reading, context: context, candidateCount: 1).first) ?? reading
         let elapsed = start.duration(to: .now)
         totalMilliseconds += Double(elapsed.components.attoseconds) / 1e15
             + Double(elapsed.components.seconds) * 1e3
@@ -317,12 +327,7 @@ case "confidence" where arguments.count >= 3:
         optionIndex += 2
     }
 
-    let zenz: ZenzEngine
-    if let path = ProcessInfo.processInfo.environment["IROHA_MODEL"] {
-        zenz = ZenzEngine(modelPath: path)
-    } else {
-        zenz = ZenzEngine()
-    }
+    let zenz = makeZenz()
     _ = try? await zenz.convertWithConfidence(reading: "うぉーむあっぷ", context: "")
 
     /// 出力の各文字が誤りか（最も近い許容解との編集距離の経路で判定）
@@ -526,7 +531,7 @@ case "lattice" where arguments.count >= 3:
     let candidates = await lattice.rawCandidates(reading: reading, count: 20)
     let elapsed = start.duration(to: .now)
     print("\(reading)  [\(elapsed.components.attoseconds / 1_000_000_000_000_000 + elapsed.components.seconds * 1000)ms]")
-    let zenz: ZenzEngine = ProcessInfo.processInfo.environment["IROHA_MODEL"].map { ZenzEngine(modelPath: $0) } ?? ZenzEngine()
+    let zenz = makeZenz()
     let full = candidates.filter(\.isFullMatch).map(\.text)
     var scored: [String: Float] = [:]
     var generated: String?
@@ -565,7 +570,7 @@ case "predict" where arguments.count >= 3:
         FileHandle.standardError.write("使い方: iroha-cli predict [--chain 回数] <左文脈>\n".data(using: .utf8)!)
         exit(1)
     }
-    let zenz: ZenzEngine = ProcessInfo.processInfo.environment["IROHA_MODEL"].map { ZenzEngine(modelPath: $0) } ?? ZenzEngine()
+    let zenz = makeZenz()
     do {
         try await zenz.prewarm()
         for _ in 0..<chain {

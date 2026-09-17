@@ -37,7 +37,8 @@
 ## ソースからのビルド
 
 - macOS 14以降（Apple Silicon推奨）
-- Xcode（Swiftツールチェーン）
+- Xcode（Swiftツールチェーン）と Metal Toolchain（Xcode 26 では別コンポーネント。
+  `xcodebuild -downloadComponent MetalToolchain`。追加学習ヘルパーのMetalカーネルのコンパイルに使用）
 - CMake（`brew install cmake`、llama.cppのビルドに使用）
 
 ```sh
@@ -177,6 +178,20 @@ F6〜F10による確定を、そのときモデルに渡した左文脈（カー
 - 上限や間引きはしない。1件は300〜400バイト程度で、毎日たくさん書いても年に数百MB以内
 - 変換ルールの出力（日付など）や候補ウィンドウ専用のユーザ辞書語、AI変換・英訳での確定は記録しない
 
+### 自分の入力で追加学習（LoRA、Apple Silicon）
+
+変換記録が溜まったら、**設定 > モデル > 自分の入力で追加学習** の「学習を開始」で、使用中の変換モデルに
+自分の入力を反映した LoRA アダプタを作れる。ベースのモデルは変えず、小さなアダプタファイル（数MB）を
+`<データフォルダ>/models/adapters/` に書き、「このアダプタを使う」→再起動で変換に適用される。
+
+- 学習はこの Mac の GPU（MLX）で行い、どこにも送信しない。記録 250 件で 20 秒ほど
+- 記録の新しい 1 割は学習に使わず評価に回し、学習の前後で変換が一致した数を並べて表示する。
+  記録の大半が「モデルの出力をそのまま確定」なら学ぶ差分が少なく、数値は改善しないこともある
+  （その場合はアダプタを使わなければよい）。効果の測り方は [training/README.md](training/README.md) の
+  「比較の標準条件」を参照
+- 対応するのは zenz（gpt2 アーキテクチャ）のモデル。記録が 20 件未満だと始められない
+- 学習は別プロセス `iroha-train`（バンドル内）で動くので、途中でキャンセルしても入力には影響しない
+
 ### ユーザ辞書
 
 メニューの「ユーザ辞書...」（または設定ウィンドウの「編集...」）から、よみと単語を登録できる。
@@ -269,6 +284,20 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
   （[ConversionLog](macos/Sources/IrohaCore/ConversionLog.swift)。`learning.json` は「次の変換で引く辞書」、
   こちらは「起きたことをそのまま積む追記専用ログ」で役割が違うので別ファイル。
   `ConversionLogEntry.trainingLine` が `training/prepare_data.py` と同じ学習用の1行を返す）
+- 追加学習（LoRA）は [macos/Sources/IrohaTrain/](macos/Sources/IrohaTrain/)（MLX Swift）と
+  ヘルパー実行ファイル `iroha-train`（`Contents/MacOS/`。設定画面が `Process` で起動し、
+  標準出力の JSON Lines = [TrainingEvent](macos/Sources/IrohaCore/TrainingEvent.swift) で進捗を受ける）。
+  流れは 記録 → `trainingLine` → ベースモデルの語彙で `llama_tokenize`（[VocabTokenizer](macos/Sources/IrohaCore/VocabTokenizer.swift)）→
+  出力部だけに損失 → MLX で LoRA 学習（[GPT2Model](macos/Sources/IrohaTrain/GPT2Model.swift) は llama.cpp の
+  `gpt2.cpp` と同じ計算で、ロジットの一致をテストで確認）→ llama.cpp の LoRA アダプタ形式の GGUF に書き出し
+  （[LoraAdapterWriter](macos/Sources/IrohaCore/LoraAdapterWriter.swift)）→ `ZenzEngine(adapterPath:)` が
+  `llama_adapter_lora_init` で適用。ベースは Q5_K_M のまま（学習用の f16 版は
+  `~/Library/Caches/iroha/models-f16/` に [ModelRequantizer](macos/Sources/IrohaCore/ModelRequantizer.swift) が作る）。
+  MLX の Metal カーネルは `swift build` では作れないので `macos/scripts/build-mlx-metallib.sh` が
+  `.build/release/mlx-swift_Cmlx.bundle/default.metallib` を生成し、make-bundle.sh が Resources へ入れる。
+  mlx-swift は 0.31.4 に固定（0.31.5 以降は swift-tools-version 6.3 が必要）。
+  CLI では `IROHA_LORA=<adapter.gguf>` でアダプタを適用でき、`scripts/bench-compare.sh model.gguf:adapter.gguf`
+  でアダプタ有無を同じ表に並べられる
 - 変換ルールは `<データフォルダ>/user-rewrite-rules.json`
   （[UserRewriteRule](macos/Sources/IrohaCore/UserRewriteRule.swift)。変換エンジンのデコレータ鎖には入れず、
   コントローラが候補ウィンドウを開くときに独立した候補生成源として合流させる。
