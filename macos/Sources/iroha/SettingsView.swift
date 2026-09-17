@@ -6,9 +6,8 @@ import IrohaCore
 enum SettingsTab: Hashable {
     case input       // 入力・変換のふるまい
     case dictionary  // ユーザ辞書・変換ルール・変換の学習・変換記録
-    case ai          // 入力中の未確定文字列のAI確定 + AIサービス
     case selection   // 他アプリの選択テキストのAI編集 + 選択した文字数の表示
-    case model       // かな漢字変換と予測に使うモデル
+    case model       // かな漢字変換・予測に使うモデルとAIサービス
     case about       // アップデートとバージョン情報
 }
 
@@ -47,9 +46,6 @@ struct SettingsView: View {
             DictionarySettingsTab()
                 .tabItem { Label("辞書・学習", systemImage: "character.book.closed") }
                 .tag(SettingsTab.dictionary)
-            AISettingsTab()
-                .tabItem { Label("AI", systemImage: "sparkles") }
-                .tag(SettingsTab.ai)
             SelectionSettingsTab()
                 .tabItem { Label("選択テキスト", systemImage: "cursorarrow.rays") }
                 .tag(SettingsTab.selection)
@@ -62,7 +58,7 @@ struct SettingsView: View {
         }
         // タブごとに高さが変わらないよう固定サイズにする（収まらない分はフォーム内でスクロール）。
         // macOS 26ではタブがタイトルバーに入るため、全項目が折り畳まれない幅が要る
-        .frame(minWidth: 700, idealWidth: 700, minHeight: 690, idealHeight: 690)
+        .frame(minWidth: 660, idealWidth: 660, minHeight: 690, idealHeight: 690)
         .sheet(isPresented: $uiState.showingUserDictionary) { UserDictionaryView() }
         .sheet(isPresented: $uiState.showingRewriteRules) { UserRewriteRulesView() }
     }
@@ -136,6 +132,17 @@ private struct InputSettingsTab: View {
                 Text("変更は次の入力から反映されます。入力中は ⌃.（control + ピリオド）でも切り替えられます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            // 未確定文字列をAIに渡して確定する（使うAIサービスは「モデル」タブで選ぶ）
+            Section("AI変換して確定") {
+                Text("修飾キー+Returnで、入力中の未確定文字列をAIに渡し、返ってきた結果を確定します。"
+                    + "使うAIサービスは「モデル」タブで選びます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                AICommitPresetEditor(index: 0)
+                AICommitPresetEditor(index: 1)
+                AICommitPresetEditor(index: 2)
             }
         }
         .formStyle(.grouped)
@@ -310,26 +317,6 @@ private struct DictionarySettingsTab: View {
     }
 }
 
-// MARK: - AI（入力中の未確定文字列のAI確定 + AIサービス）
-
-private struct AISettingsTab: View {
-    var body: some View {
-        Form {
-            Section("AI変換して確定（入力中）") {
-                Text("修飾キー+Returnで、入力中の未確定文字列をAIに渡し、返ってきた結果を確定します。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                AICommitPresetEditor(index: 0)
-                AICommitPresetEditor(index: 1)
-                AICommitPresetEditor(index: 2)
-            }
-
-            AIServiceSection()
-        }
-        .formStyle(.grouped)
-    }
-}
-
 // MARK: - 選択テキスト（他アプリの選択テキストのAI編集 + 選択した文字数の表示）
 
 private struct SelectionSettingsTab: View {
@@ -343,7 +330,7 @@ private struct SelectionSettingsTab: View {
         Form {
             Section("選択テキストのAI編集") {
                 SelectionIntroRows(selectionEnabled: $selectionEnabled)
-                Text("処理に使うAIサービス（Apple Intelligence・Ollamaなど）は「AI」タブで設定します。")
+                Text("処理に使うAIサービス（Apple Intelligence・Ollamaなど）は「モデル」タブで設定します。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -502,7 +489,8 @@ private struct PredictionModelPathField: View {
     }
 }
 
-/// AIサービス（バックエンド）の設定セクション。AI確定と選択テキストのAI編集が共通で使う
+/// AIサービス（バックエンド）の設定セクション。「モデル」タブに置き、
+/// 入力タブの「AI変換して確定」と選択テキストのAI編集が共通で使う
 private struct AIServiceSection: View {
     @AppStorage(TranslationBackend.userDefaultsKey) private var translationService = "apple"
     @AppStorage("ollamaModel") private var ollamaModel = ""
@@ -907,6 +895,7 @@ private struct ModelSettingsTab: View {
                     title: "インライン補完（確定後）", key: PredictionSettings.completionModelPathKey)
             }
 
+            AIServiceSection()
         }
         .formStyle(.grouped)
     }
