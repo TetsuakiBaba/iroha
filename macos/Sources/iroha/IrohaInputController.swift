@@ -24,6 +24,9 @@ final class IrohaInputController: IMKInputController {
         return ZenzEngine.defaultModelPath
     }()
 
+    /// 学習用ログ（`ConversionLog`）に書くモデル名（ファイル名、拡張子なし）
+    static let engineModelName = URL(fileURLWithPath: engineModelPath).deletingPathExtension().lastPathComponent
+
     /// 表示用のモデル名（ファイル名。未取得ならその旨）
     static var engineModelDisplayName: String {
         guard FileManager.default.fileExists(atPath: engineModelPath) else {
@@ -1122,6 +1125,7 @@ final class IrohaInputController: IMKInputController {
     private func commitSegments(client: IMKTextInput?, suggestsCompletion: Bool = true) {
         let text = segments.map(\.result).joined()
         learnIfCorrected(committed: text)
+        logSegmentsCommit(committed: text)
         commitText(text.isEmpty ? kanaDisplay : text, client: client, suggestsCompletion: suggestsCompletion)
     }
 
@@ -1140,6 +1144,38 @@ final class IrohaInputController: IMKInputController {
         Task.detached(priority: .utility) {
             LearningStore.shared.record(reading: reading, result: committed, segments: pairs)
         }
+    }
+
+    // MARK: - 学習用ログ（ConversionLog）
+
+    /// 文節変換での確定を学習用ログに記録する。修正の有無にかかわらず記録するが、
+    /// 学習と同じく変換ルールの出力や候補ウィンドウ専用の語（`unlearnableCandidates`）を含む確定は残さない
+    /// （毎回変わる日付や、読みと対応しない定型文は学習例にならない）
+    private func logSegmentsCommit(committed: String) {
+        guard ConversionLogSettings.isEnabled, !segments.isEmpty, !committed.isEmpty,
+              !segments.contains(where: { $0.unlearnableCandidates.contains($0.result) }) else { return }
+        logConversion(
+            mode: .segments, context: conversionContext, reading: segments.map(\.reading).joined(),
+            proposed: segmentBaseline, committed: committed,
+            segments: segments.map { ConversionLogEntry.Segment(reading: $0.reading, result: $0.result) })
+    }
+
+    /// 確定1件を学習用ログに書く（設定OFFなら何もしない。書き込みは非同期）。
+    /// - Parameters:
+    ///   - context: エンジンに渡した左文脈（文書側の文脈 ＋ 未確定文字列の固定部分）
+    ///   - reading: 確定した部分のひらがなの読み
+    ///   - proposed: エンジンが提示していた変換結果（不明なら nil）
+    ///   - committed: 実際に確定した文字列（固定部分を除く）
+    private func logConversion(
+        mode: ConversionLogEntry.Mode, context: String, reading: String, proposed: String?,
+        committed: String, segments: [ConversionLogEntry.Segment]? = nil
+    ) {
+        guard ConversionLogSettings.isEnabled, !reading.isEmpty, !committed.isEmpty else { return }
+        let source: ConversionLogEntry.ContextSource =
+            documentContext != nil ? .document : (recentCommitted.isEmpty ? .none : .committed)
+        ConversionLog.shared.record(ConversionLogEntry(
+            mode: mode, context: context, contextSource: source, reading: reading,
+            proposed: proposed, committed: committed, segments: segments, model: Self.engineModelName))
     }
 
     /// 文節列を未確定文字列として表示する（現在の文節は太い下線）
@@ -1278,13 +1314,15 @@ final class IrohaInputController: IMKInputController {
         dismissCompletion()
         // キー入力以外の確定（フォーカス移動等）でも合成状態の変化を知らせる
         defer { SelectionActionCoordinator.isIMEComposing = false }
-        guard let text = resolveCommitText() else { return }
+        guard let text = resolveCommitText(logging: true) else { return }
         commitText(text, client: client, suggestsCompletion: suggestsCompletion)
     }
 
     /// 通常確定で挿入されるはずの文字列を解決する（composer.flushの副作用あり。
-    /// 呼び出し後は必ずcommitTextするか、状態を破棄/維持したまま確定を待つこと）
-    private func resolveCommitText() -> String? {
+    /// 呼び出し後は必ずcommitTextするか、状態を破棄/維持したまま確定を待つこと）。
+    /// `logging` が真なら、解決した内容をそのまま確定するものとして学習用ログに記録する
+    /// （AI確定のように別の文字列を確定する呼び出しでは偽にする）
+    private func resolveCommitText(logging: Bool = false) -> String? {
         if mode == .segmenting {
             let text = segments.map(\.result).joined()
             return text.isEmpty ? kanaDisplay : text
@@ -1298,6 +1336,15 @@ final class IrohaInputController: IMKInputController {
         }
         if let displayOverride {
             // F6/F7等で上書き表示中はその内容を確定する
+            if logging {
+                // applyFunctionKeyConversionでflush済みなので composer.text がこの部分の読み。
+                // ライブ変換が同じ読みを変換していれば、それを退けて表示形を選んだ記録になる
+                let reading = composer.text
+                logConversion(
+                    mode: .functionKey, context: conversionContext + prefix, reading: reading,
+                    proposed: lastConversion?.reading == reading ? lastConversion?.result : nil,
+                    committed: displayOverride)
+            }
             return prefix + displayOverride
         }
         // 未解決ローマ字を確定（"n"→"ん"）。flushで増えたかなは変換結果の後ろに付ける
@@ -1305,6 +1352,13 @@ final class IrohaInputController: IMKInputController {
         composer.flush()
         let flushedSuffix = String(composer.text.dropFirst(readingBeforeFlush.count))
         if let lastConversion, lastConversion.reading == readingBeforeFlush {
+            if logging {
+                // ライブ変換の表示をそのまま確定（修正なしの例）。flushで増えたかなは読みにも結果にも付く
+                let text = lastConversion.result + flushedSuffix
+                logConversion(
+                    mode: .live, context: conversionContext + prefix, reading: composer.text,
+                    proposed: text, committed: text)
+            }
             return prefix + lastConversion.result + flushedSuffix
         }
         if let lastConversion, readingBeforeFlush.hasPrefix(lastConversion.reading) {

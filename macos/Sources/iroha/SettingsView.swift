@@ -170,12 +170,15 @@ private struct PredictionDelayRow: View {
 
 private struct DictionarySettingsTab: View {
     @AppStorage(LearningSettings.enabledKey) private var learningEnabled = true
+    @AppStorage(ConversionLogSettings.enabledKey) private var conversionLogEnabled = false
     @AppStorage(UserDictionarySync.autoSyncKey) private var syncSystemDictionary = false
     @ObservedObject private var uiState = SettingsUIState.shared
 
     @State private var userDictionaryCount = UserDictionaryStore.shared.entries.count
     @State private var rewriteRuleCount = UserRewriteRuleStore.shared.rules.count
     @State private var learningCount = LearningStore.shared.count
+    @State private var conversionLogSize = ConversionLog.shared.totalSize()
+    @State private var showingConversionLogDeleteConfirmation = false
 
     var body: some View {
         Form {
@@ -237,8 +240,44 @@ private struct DictionarySettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section("学習用データの記録") {
+                Toggle("確定した変換を学習用データとして記録する", isOn: $conversionLogEnabled)
+                LabeledContent("記録したデータ") {
+                    HStack {
+                        Text(Self.formatSize(conversionLogSize)).foregroundStyle(.secondary)
+                        Button("Finderで表示") {
+                            let dir = ConversionLog.shared.directory
+                            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                            NSWorkspace.shared.open(dir)
+                        }
+                        Button("削除...") { showingConversionLogDeleteConfirmation = true }
+                            .disabled(conversionLogSize == 0)
+                    }
+                }
+                Text("確定した変換を、そのときモデルに渡した文脈（カーソル手前の文章の末尾40文字）・読み・"
+                    + "モデルの出力・確定した文字列とともに1件ずつ記録します。将来の変換モデルの追加学習に使う"
+                    + "ためのデータで、変換の動作には影響しません。書いていた文章の一部がそのまま残るので、"
+                    + "この設定は他のMacには同期されません。記録はデータフォルダ内の logs/conversions/ に"
+                    + "このMacのファイルとして保存されます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
+        .confirmationDialog(
+            "記録した学習用データをすべて削除しますか？", isPresented: $showingConversionLogDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("削除", role: .destructive) { ConversionLog.shared.removeAll() }
+        } message: {
+            Text("logs/conversions/ 内のファイルを削除します。この操作は取り消せません。")
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: ConversionLog.didChangeNotification)
+        ) { _ in
+            conversionLogSize = ConversionLog.shared.totalSize()
+        }
         .onReceive(
             NotificationCenter.default.publisher(for: UserDictionaryStore.didChangeNotification)
         ) { _ in
@@ -254,6 +293,14 @@ private struct DictionarySettingsTab: View {
         ) { _ in
             learningCount = LearningStore.shared.count
         }
+    }
+
+    /// 学習用ログの合計サイズの表示（0なら「なし」）
+    private static func formatSize(_ bytes: Int64) -> String {
+        guard bytes > 0 else { return "なし" }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
     }
 }
 
