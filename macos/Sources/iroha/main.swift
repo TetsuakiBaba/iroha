@@ -44,7 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let index = CommandLine.arguments.firstIndex(of: "--settings") {
             switch CommandLine.arguments.count > index + 1 ? CommandLine.arguments[index + 1] : "" {
             case "dictionary": SettingsUIState.shared.selectedTab = .dictionary
-            case "ai", "selection": SettingsUIState.shared.selectedTab = .ai
+            case "ai": SettingsUIState.shared.selectedTab = .ai
+            case "selection": SettingsUIState.shared.selectedTab = .selection
             case "model": SettingsUIState.shared.selectedTab = .model
             case "about": SettingsUIState.shared.selectedTab = .about
             default: SettingsUIState.shared.selectedTab = .input

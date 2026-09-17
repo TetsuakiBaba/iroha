@@ -5,9 +5,10 @@ import IrohaCore
 /// 設定ウィンドウのタブ
 enum SettingsTab: Hashable {
     case input       // 入力・変換のふるまい
-    case dictionary  // ユーザ辞書と学習
-    case ai          // AI変換（入力中のAI確定 + 選択テキストのAI編集）
-    case model       // モデル（かな漢字変換モデル + AIサービス）
+    case dictionary  // ユーザ辞書・変換ルール・変換の学習・変換記録
+    case ai          // 入力中の未確定文字列のAI確定 + AIサービス
+    case selection   // 他アプリの選択テキストのAI編集 + 選択した文字数の表示
+    case model       // かな漢字変換と予測に使うモデル
     case about       // アップデートとバージョン情報
 }
 
@@ -20,13 +21,13 @@ final class SettingsUIState: ObservableObject {
     @Published var showingUserDictionary = false
     @Published var showingRewriteRules = false
 
-    /// メニューの「ユーザ辞書...」から呼ぶ: 辞書タブを開いて編集シートを出す
+    /// メニューの「ユーザ辞書...」から呼ぶ: 辞書・学習タブを開いて編集シートを出す
     func openUserDictionary() {
         selectedTab = .dictionary
         showingUserDictionary = true
     }
 
-    /// メニューの「変換ルール...」から呼ぶ: 辞書タブを開いてルール編集シートを出す
+    /// メニューの「変換ルール...」から呼ぶ: 辞書・学習タブを開いてルール編集シートを出す
     func openRewriteRules() {
         selectedTab = .dictionary
         showingRewriteRules = true
@@ -44,11 +45,14 @@ struct SettingsView: View {
                 .tabItem { Label("入力", systemImage: "keyboard") }
                 .tag(SettingsTab.input)
             DictionarySettingsTab()
-                .tabItem { Label("辞書", systemImage: "character.book.closed") }
+                .tabItem { Label("辞書・学習", systemImage: "character.book.closed") }
                 .tag(SettingsTab.dictionary)
             AISettingsTab()
-                .tabItem { Label("AI変換", systemImage: "sparkles") }
+                .tabItem { Label("AI", systemImage: "sparkles") }
                 .tag(SettingsTab.ai)
+            SelectionSettingsTab()
+                .tabItem { Label("選択テキスト", systemImage: "cursorarrow.rays") }
+                .tag(SettingsTab.selection)
             ModelSettingsTab()
                 .tabItem { Label("モデル", systemImage: "cube") }
                 .tag(SettingsTab.model)
@@ -58,7 +62,7 @@ struct SettingsView: View {
         }
         // タブごとに高さが変わらないよう固定サイズにする（収まらない分はフォーム内でスクロール）。
         // macOS 26ではタブがタイトルバーに入るため、全項目が折り畳まれない幅が要る
-        .frame(minWidth: 600, idealWidth: 600, minHeight: 690, idealHeight: 690)
+        .frame(minWidth: 700, idealWidth: 700, minHeight: 690, idealHeight: 690)
         .sheet(isPresented: $uiState.showingUserDictionary) { UserDictionaryView() }
         .sheet(isPresented: $uiState.showingRewriteRules) { UserRewriteRulesView() }
     }
@@ -212,7 +216,7 @@ private struct DictionarySettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("学習") {
+            Section("変換の学習") {
                 Toggle("変換の修正を学習する", isOn: $learningEnabled)
                 LabeledContent("学習した変換") {
                     HStack {
@@ -241,8 +245,8 @@ private struct DictionarySettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("学習用データの記録") {
-                Toggle("確定した変換を学習用データとして記録する", isOn: $conversionLogEnabled)
+            Section("変換記録") {
+                Toggle("確定した変換を記録する", isOn: $conversionLogEnabled)
                 LabeledContent("記録したデータ") {
                     HStack {
                         Text(Self.formatSize(conversionLogSize)).foregroundStyle(.secondary)
@@ -256,17 +260,19 @@ private struct DictionarySettingsTab: View {
                     }
                 }
                 Text("確定した変換を、そのときモデルに渡した文脈（カーソル手前の文章の末尾40文字）・読み・"
-                    + "モデルの出力・確定した文字列とともに1件ずつ記録します。将来の変換モデルの追加学習に使う"
-                    + "ためのデータで、変換の動作には影響しません。書いていた文章の一部がそのまま残るので、"
-                    + "この設定は他のMacには同期されません。記録はデータフォルダ内の logs/conversions/ に"
-                    + "このMacのファイルとして保存されます。")
+                    + "モデルの出力・確定した文字列とともに1件ずつ記録します。"
+                    + "記録はデータフォルダ内の logs/conversions/ にこのMacのファイルとして残るだけで、"
+                    + "どこにも送信されません。あとでこの記録を使って、自分の入力に合わせた変換モデルの"
+                    + "追加学習（LoRAなど）ができます。上の「変換の学習」とは別のもので、"
+                    + "記録しても変換の動作は変わりません。書いていた文章の一部がそのまま残るため、"
+                    + "この設定は他のMacには同期されません。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .confirmationDialog(
-            "記録した学習用データをすべて削除しますか？", isPresented: $showingConversionLogDeleteConfirmation,
+            "記録した変換をすべて削除しますか？", isPresented: $showingConversionLogDeleteConfirmation,
             titleVisibility: .visible
         ) {
             Button("削除", role: .destructive) { ConversionLog.shared.removeAll() }
@@ -295,7 +301,7 @@ private struct DictionarySettingsTab: View {
         }
     }
 
-    /// 学習用ログの合計サイズの表示（0なら「なし」）
+    /// 変換記録の合計サイズの表示（0なら「なし」）
     private static func formatSize(_ bytes: Int64) -> String {
         guard bytes > 0 else { return "なし" }
         let formatter = ByteCountFormatter()
@@ -304,10 +310,29 @@ private struct DictionarySettingsTab: View {
     }
 }
 
-// MARK: - AI変換（入力中のAI確定 + 選択テキストのAI編集）
+// MARK: - AI（入力中の未確定文字列のAI確定 + AIサービス）
 
 private struct AISettingsTab: View {
-    // 選択テキストのAI編集
+    var body: some View {
+        Form {
+            Section("AI変換して確定（入力中）") {
+                Text("修飾キー+Returnで、入力中の未確定文字列をAIに渡し、返ってきた結果を確定します。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                AICommitPresetEditor(index: 0)
+                AICommitPresetEditor(index: 1)
+                AICommitPresetEditor(index: 2)
+            }
+
+            AIServiceSection()
+        }
+        .formStyle(.grouped)
+    }
+}
+
+// MARK: - 選択テキスト（他アプリの選択テキストのAI編集 + 選択した文字数の表示）
+
+private struct SelectionSettingsTab: View {
     @AppStorage(SelectionSettings.enabledKey) private var selectionEnabled = false
     @AppStorage(SelectionSettings.triggerModeKey) private var triggerMode = "bubble"
     @AppStorage(SelectionSettings.onDemandHotkeyKey) private var onDemandHotkey = "Ctrl+0"
@@ -316,52 +341,43 @@ private struct AISettingsTab: View {
 
     var body: some View {
         Form {
-            // グループ1: 入力中の未確定文字列を修飾キー+ReturnでAI変換して確定。
-            // グループ全体を1つのSectionにまとめ、1枚のカードとして描画する
-            Section {
-                Text("修飾キー+Returnで、入力中の未確定文字列をAIに渡し、返ってきた結果を確定します。")
+            Section("選択テキストのAI編集") {
+                SelectionIntroRows(selectionEnabled: $selectionEnabled)
+                Text("処理に使うAIサービス（Apple Intelligence・Ollamaなど）は「AI」タブで設定します。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                AICommitPresetEditor(index: 0)
-                AICommitPresetEditor(index: 1)
-                AICommitPresetEditor(index: 2)
-            } header: {
-                Label("AI変換して確定（入力中）", systemImage: "return")
-                    .font(.headline)
             }
-            .headerProminence(.increased)
 
-            // グループ2: 画面上の選択テキストをAIで書き換える。こちらも1枚のカード
-            Section {
-                SelectionIntroRows(selectionEnabled: $selectionEnabled)
-
-                FormSubheader("マウスで選択したとき")
+            Section("マウスで選択したとき") {
                 Picker("トリガー", selection: $triggerMode) {
                     ForEach(SelectionTriggerMode.allCases) { mode in
                         Text(mode.label).tag(mode.rawValue)
                     }
                 }
                 .disabled(!selectionEnabled)
+            }
 
-                FormSubheader("その場でAIに指示")
+            Section("その場でAIに指示") {
                 HotkeyField(label: "ショートカット", hotkey: $onDemandHotkey)
                     .disabled(!selectionEnabled)
                 Text("選択テキストに自由な指示を出せます（選択なしで押すとテキスト生成になります）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
 
+            Section("プリセット") {
                 Text("プリセットのショートカットは、テキストを選択していないときに押すと"
                     + "「テキストを生成」の入力欄になり、結果をカーソル位置へ挿入します。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-
                 SelectionPresetEditor(index: 0)
                 SelectionPresetEditor(index: 1)
                 SelectionPresetEditor(index: 2)
                 SelectionPresetEditor(index: 3)
                 SelectionPresetEditor(index: 4)
+            }
 
-                FormSubheader("除外するアプリ")
+            Section("除外するアプリ") {
                 TextField(
                     "", text: $excludedBundleIds,
                     prompt: Text("com.example.app, com.example.other"))
@@ -371,15 +387,11 @@ private struct AISettingsTab: View {
                     + "（カンマまたは改行区切り）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } header: {
-                Label("選択テキストのAI編集", systemImage: "cursorarrow.rays")
-                    .font(.headline)
-                    .padding(.top, 24)
             }
-            .headerProminence(.increased)
 
-            // グループ3: マウスで選択した文字数を選択範囲の近くに出す（AI編集とは独立）
-            Section {
+            // AI編集とは独立した機能（マウスで選択した文字数を選択範囲の近くに出す）。
+            // アクセシビリティ権限と除外するアプリの設定はAI編集と共通なのでこのタブに置く
+            Section("選択した文字数の表示") {
                 Toggle("選択した文字数を表示する", isOn: $characterCount)
                 Text("マウスで選択（ドラッグ・ダブルクリック）すると、選択範囲の近くに文字数を数秒表示します"
                     + "（改行は数えず、空白があれば空白を除いた数も併記）。"
@@ -388,12 +400,7 @@ private struct AISettingsTab: View {
                     + "キーボードでの選択（Shift+矢印・⌘A）には反応しません。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } header: {
-                Label("選択した文字数の表示", systemImage: "textformat.123")
-                    .font(.headline)
-                    .padding(.top, 24)
             }
-            .headerProminence(.increased)
         }
         .formStyle(.grouped)
     }
@@ -495,7 +502,7 @@ private struct PredictionModelPathField: View {
     }
 }
 
-/// AIサービス（バックエンド）の設定セクション。「モデル」タブに置く
+/// AIサービス（バックエンド）の設定セクション。AI確定と選択テキストのAI編集が共通で使う
 private struct AIServiceSection: View {
     @AppStorage(TranslationBackend.userDefaultsKey) private var translationService = "apple"
     @AppStorage("ollamaModel") private var ollamaModel = ""
@@ -900,7 +907,6 @@ private struct ModelSettingsTab: View {
                     title: "インライン補完（確定後）", key: PredictionSettings.completionModelPathKey)
             }
 
-            AIServiceSection()
         }
         .formStyle(.grouped)
     }
@@ -967,7 +973,7 @@ private struct DataDirectorySection: View {
                     NSWorkspace.shared.open(DataDirectory.url)
                 }
             }
-            Text("ユーザ辞書・学習・変換ルール・変換モデル・設定をこのフォルダに保存します。"
+            Text("ユーザ辞書・変換ルール・学習・変換記録・変換モデル・設定をこのフォルダに保存します。"
                  + "iCloud DriveやDropboxのフォルダを指定すると、複数のMacで同じデータを共有できます。"
                  + "変更するとirohaが再起動します。")
                 .font(.caption)
@@ -1052,9 +1058,6 @@ private struct AboutSettingsTab: View {
                 LabeledContent("バージョン") {
                     Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")
                 }
-                LabeledContent("変換モデル") {
-                    Text(IrohaInputController.engineModelDisplayName)
-                }
             }
 
             DataDirectorySection()
@@ -1111,8 +1114,8 @@ private struct AboutSettingsTab: View {
             Button("キャンセル", role: .cancel) {}
         } message: {
             Text("入力ソースからirohaを外し、~/Library/Input Methods/iroha.app を削除して"
-                + "終了します。「データも含めて削除」を選ぶと、ユーザ辞書・学習・変換モデル・"
-                + "設定・APIキーも削除します。")
+                + "終了します。「データも含めて削除」を選ぶと、ユーザ辞書・変換ルール・学習・"
+                + "変換記録・変換モデル・設定・APIキーも削除します。")
         }
     }
 }
