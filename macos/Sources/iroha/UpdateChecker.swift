@@ -202,13 +202,10 @@ final class UpdateChecker {
             // 署名検証: Developer ID(Apple anchor) + Team ID一致 + Gatekeeper受理を確認してから入れ替える
             try Self.verifySignature(of: newApp)
 
-            let installedURL = SelfInstaller.installedURL
-            // 実行中バンドルの置換はinstall.shと同じ手順で安全（プロセスはマップ済みバイナリを保持する）
-            if FileManager.default.fileExists(atPath: installedURL.path) {
-                try FileManager.default.removeItem(at: installedURL)
-            }
-            try FileManager.default.copyItem(at: newApp, to: installedURL)
-            TISRegisterInputSource(installedURL as CFURL)
+            // 実行中バンドルの置換はアトミックな入れ替えで行う（プロセスはマップ済みバイナリを保持する）。
+            // 消してからコピーすると、その間irohaが入力ソース一覧から消える（SelfInstaller参照）
+            try SelfInstaller.replaceInstalledBundle(with: newApp)
+            TISRegisterInputSource(SelfInstaller.installedURL as CFURL)
 
             // 新バージョンを即座に再起動する（入力ソースメニューから消える空白時間を作らない）
             AppRestarter.restartInstalledApp()

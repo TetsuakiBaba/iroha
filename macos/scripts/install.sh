@@ -23,8 +23,21 @@ VERSION="${VERSION:-$(git describe --tags --dirty --always 2>/dev/null | sed 's/
 
 echo "==> インストール: $DEST"
 mkdir -p "$HOME/Library/Input Methods"
-rm -rf "$DEST"
-cp -R "$APP" "$DEST"
+# rm -rf → cp -R だと、コピーが終わるまでの約1.2秒バンドルが存在しない。その間システムは
+# irohaを入力ソース一覧から外し（選択はABCに落ちる）、戻しても メニューバーの入力メニューは
+# 畳まれた表示のまま残ることがある。同じ場所に「一度も欠けない」よう、隣に組み立ててから
+# rename で入れ替える（renameは瞬時なので一覧から消えない）
+STAGING="$HOME/Library/Input Methods/.iroha-staging.app"
+OLD="$HOME/Library/Input Methods/.iroha-old-$$.app"
+rm -rf "$STAGING" "$OLD"
+cp -R "$APP" "$STAGING"
+if [ -d "$DEST" ]; then
+    mv "$DEST" "$OLD"
+    mv "$STAGING" "$DEST" || { mv "$OLD" "$DEST"; exit 1; }
+    rm -rf "$OLD"
+else
+    mv "$STAGING" "$DEST"
+fi
 
 # 旧プロセスを終了（新しいバンドルは別ファイルなので、生かしたままだと旧バイナリが動き続ける）
 pkill -f "Input Methods/iroha.app/Contents/MacOS/iroha" 2>/dev/null || true

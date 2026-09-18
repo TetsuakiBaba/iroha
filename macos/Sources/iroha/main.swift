@@ -141,6 +141,34 @@ enum SelfInstaller {
     static let inputMethodsDir = NSHomeDirectory() + "/Library/Input Methods"
     static let installedURL = URL(fileURLWithPath: inputMethodsDir + "/iroha.app")
 
+    /// インストール先のバンドルを新しいものに入れ替える（アップデータとセルフインストーラで共用）。
+    ///
+    /// 消してからコピーすると、コピーが終わるまでの1秒前後バンドルが存在しない状態になる。
+    /// その間システムはirohaを入力ソース一覧から外し（選択はABCに落ちる）、戻したあとも
+    /// メニューバーの入力メニューが「入力ソースなし」の表示のまま残ることがある。
+    /// 同じ場所が一度も欠けないよう、隣にコピーしてから `replaceItemAt`（アトミックな入れ替え）で置く。
+    /// 実行中のプロセスは開いているinodeを保持するので、入れ替え自体は安全
+    static func replaceInstalledBundle(with newApp: URL) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: inputMethodsDir, withIntermediateDirectories: true)
+        guard fm.fileExists(atPath: installedURL.path) else {
+            try fm.copyItem(at: newApp, to: installedURL)
+            return
+        }
+        // replaceItemAt は同一ボリューム上の相手を要求するので、まず隣へ置く
+        // （配布zipの展開先やApp Translocation中のRO マウントは別ボリュームのことがある）
+        let staging = URL(fileURLWithPath: inputMethodsDir)
+            .appendingPathComponent(".iroha-staging-\(UUID().uuidString).app")
+        try fm.copyItem(at: newApp, to: staging)
+        do {
+            _ = try fm.replaceItemAt(installedURL, withItemAt: staging, backupItemName: nil,
+                                     options: [.usingNewMetadataOnly])
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
+        }
+    }
+
     /// インストールが必要なら実行してプロセスを終了する（戻らない）。不要ならfalse
     static func installIfNeeded() -> Bool {
         // App Translocation中はRO マウント上のパスになるが、そこからのコピーは正規の手順
@@ -150,12 +178,7 @@ enum SelfInstaller {
         do {
             // 実行中の旧irohaを終了（自分はInput Methods外から動いているのでマッチしない）
             runCommand("/usr/bin/pkill", ["-f", "Input Methods/iroha.app/Contents/MacOS/iroha"])
-            let fm = FileManager.default
-            try fm.createDirectory(atPath: inputMethodsDir, withIntermediateDirectories: true)
-            if fm.fileExists(atPath: installedURL.path) {
-                try fm.removeItem(at: installedURL)
-            }
-            try fm.copyItem(at: bundleURL, to: installedURL)
+            try replaceInstalledBundle(with: bundleURL)
             // 公証・staple済みなので不要なはずだが、二重のGatekeeper確認を避ける保険
             runCommand("/usr/bin/xattr", ["-dr", "com.apple.quarantine", installedURL.path])
             TISRegisterInputSource(installedURL as CFURL)
