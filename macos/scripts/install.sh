@@ -26,11 +26,23 @@ mkdir -p "$HOME/Library/Input Methods"
 rm -rf "$DEST"
 cp -R "$APP" "$DEST"
 
-# 旧プロセスを終了（次回入力時にシステムが新しいバイナリを起動する）
+# 旧プロセスを終了（新しいバンドルは別ファイルなので、生かしたままだと旧バイナリが動き続ける）
 pkill -f "Input Methods/iroha.app/Contents/MacOS/iroha" 2>/dev/null || true
 
 echo "==> 入力ソース登録"
 swift scripts/register-input-source.swift || true
+
+# 終了したまま放置すると、入力ソースの選択はirohaのままなのにプロセスが居ない状態になる。
+# システムは最初のキー入力で起動し直すが、起動が終わるまでの数打鍵は変換されず
+# 英字のまま入る（実測: aiueo → aiuえお）。これがデバッグ中に「入力ソースを
+# 選び直さないと直らない」ように見える正体なので、ここで先に起動しておく
+# （配布版のアップデータ・セルフインストーラも AppRestarter で同じことをしている）
+echo "==> 新しいirohaを起動"
+open "$DEST"
+for _ in $(seq 25); do
+    pgrep -f "Input Methods/iroha.app/Contents/MacOS/iroha" >/dev/null && break
+    sleep 0.2
+done
 
 echo "==> 完了"
 echo "ログ確認: log stream --predicate 'process == \"iroha\"' --style compact"
