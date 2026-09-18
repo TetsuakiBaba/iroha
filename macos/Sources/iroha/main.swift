@@ -41,9 +41,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 開発用: 設定ウィンドウだけを開く（IMEとしては接続しない）。UIの確認に使う
         //   "~/Library/Input Methods/iroha.app/Contents/MacOS/iroha" --settings [タブ名]
+        //   タブ名: input / dictionary / selection / model / about、log（変換記録の編集）、learning（学習の編集）
         if let index = CommandLine.arguments.firstIndex(of: "--settings") {
             switch CommandLine.arguments.count > index + 1 ? CommandLine.arguments[index + 1] : "" {
             case "dictionary": SettingsUIState.shared.selectedTab = .dictionary
+            // 編集シートも直接開ける（一覧の見た目を確認するため）
+            case "log":
+                SettingsUIState.shared.selectedTab = .dictionary
+                SettingsUIState.shared.showingConversionLog = true
+            case "learning":
+                SettingsUIState.shared.selectedTab = .dictionary
+                SettingsUIState.shared.showingLearning = true
             case "selection": SettingsUIState.shared.selectedTab = .selection
             case "model": SettingsUIState.shared.selectedTab = .model
             case "about": SettingsUIState.shared.selectedTab = .about

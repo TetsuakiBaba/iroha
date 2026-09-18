@@ -109,6 +109,21 @@ public final class LearningStore: @unchecked Sendable {
         merge(recorded)
     }
 
+    /// 一覧を丸ごと置き換える（設定画面の編集用）。読み・結果が空のエントリは落とす
+    public func replaceAll(_ entries: [LearningEntry]) {
+        let cleaned = entries.filter { !$0.reading.isEmpty && !$0.result.isEmpty }
+        lock.lock()
+        cached = LearningDictionary(entries: cleaned)
+        lock.unlock()
+        saveQueue.async { [url] in
+            Self.save(cleaned, to: url)
+            self.lock.lock()
+            self.loadedModificationDate = DataDirectory.modificationDate(of: url)
+            self.lock.unlock()
+        }
+        postDidChange()
+    }
+
     public func reset() {
         lock.lock()
         cached = .empty

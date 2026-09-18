@@ -19,6 +19,8 @@ final class SettingsUIState: ObservableObject {
     @Published var selectedTab: SettingsTab = .input
     @Published var showingUserDictionary = false
     @Published var showingRewriteRules = false
+    @Published var showingConversionLog = false
+    @Published var showingLearning = false
 
     /// メニューの「ユーザ辞書...」から呼ぶ: 辞書・学習タブを開いて編集シートを出す
     func openUserDictionary() {
@@ -61,6 +63,8 @@ struct SettingsView: View {
         .frame(minWidth: 660, idealWidth: 660, minHeight: 690, idealHeight: 690)
         .sheet(isPresented: $uiState.showingUserDictionary) { UserDictionaryView() }
         .sheet(isPresented: $uiState.showingRewriteRules) { UserRewriteRulesView() }
+        .sheet(isPresented: $uiState.showingConversionLog) { ConversionLogView() }
+        .sheet(isPresented: $uiState.showingLearning) { LearningView() }
     }
 }
 
@@ -190,6 +194,7 @@ private struct DictionarySettingsTab: View {
     @State private var rewriteRuleCount = UserRewriteRuleStore.shared.rules.count
     @State private var learningCount = LearningStore.shared.count
     @State private var conversionLogSize = ConversionLog.shared.totalSize()
+    @State private var conversionLogCount = ConversionLog.shared.entryCount()
     @State private var showingConversionLogDeleteConfirmation = false
 
     var body: some View {
@@ -229,6 +234,7 @@ private struct DictionarySettingsTab: View {
                 LabeledContent("学習した変換") {
                     HStack {
                         Text("\(learningCount) 件").foregroundStyle(.secondary)
+                        Button("編集...") { uiState.showingLearning = true }
                         Button("Finderで表示") {
                             // 学習ファイル（learning.json）をFinderで選択状態にして見せる。
                             // まだ1件も学習していなくてファイルが無いときはフォルダを開く
@@ -263,20 +269,19 @@ private struct DictionarySettingsTab: View {
                 .disabled(!conversionLogEnabled)
                 LabeledContent("記録したデータ") {
                     HStack {
-                        Text(Self.formatSize(conversionLogSize)).foregroundStyle(.secondary)
-                        Button("Finderで表示") {
-                            let dir = ConversionLog.shared.directory
-                            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                            NSWorkspace.shared.open(dir)
-                        }
+                        Text("\(conversionLogCount) 件（\(Self.formatSize(conversionLogSize))）")
+                            .foregroundStyle(.secondary)
+                        Button("確認・編集...") { uiState.showingConversionLog = true }
+                            .disabled(conversionLogCount == 0)
                         Button("削除...") { showingConversionLogDeleteConfirmation = true }
                             .disabled(conversionLogSize == 0)
                     }
                 }
                 Text("確定した変換を、そのときモデルに渡した文脈（カーソル手前の文章の末尾40文字）・読み・"
                     + "モデルの出力・確定した文字列とともに1件ずつ記録します。"
-                    + "追加学習の中身になるのは「直した確定」だけですが、「すべての確定」にしておくと"
-                    + "学習で元の変換が壊れていないかも測れます（モデル > 自分の入力で追加学習）。"
+                    + "追加学習は「この文脈でこの読みならこう変換する」を学ぶので、"
+                    + "左文脈のない確定（起動直後やフォーカス移動直後の1語目）は記録しません。"
+                    + "「確認・編集...」で中身を見て、打ち間違いをそのまま確定した行は直すか削除できます。"
                     + "記録はデータフォルダ内の logs/conversions/ にこのMacのファイルとして残るだけで、"
                     + "どこにも送信されません。あとでこの記録を使って、自分の入力に合わせた変換モデルの"
                     + "追加学習（LoRAなど）ができます。上の「変換の学習」とは別のもので、"
@@ -299,6 +304,7 @@ private struct DictionarySettingsTab: View {
             NotificationCenter.default.publisher(for: ConversionLog.didChangeNotification)
         ) { _ in
             conversionLogSize = ConversionLog.shared.totalSize()
+            conversionLogCount = ConversionLog.shared.entryCount()
         }
         .onReceive(
             NotificationCenter.default.publisher(for: UserDictionaryStore.didChangeNotification)

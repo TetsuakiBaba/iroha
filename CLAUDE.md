@@ -83,7 +83,12 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   既定ON）。読めないアプリでは `recentCommitted`（確定文字列の蓄積）に代える。合成中は読み直さない
 - 学習は「文節変換の結果がエンジンの出力と違ったら記録」。同じ読みの使い分けのため
   文節ごとに直前の確定文字列を文脈として持つ（文脈なしの学習は入力の先頭でしか当てない）
-- 学習用データの記録（`ConversionLog`、既定OFF・設定は同期しない）は `learning.json` とは別の追記専用JSONL
+- 学習用データの記録（`ConversionLog`、既定OFF・設定は同期しない）は**左文脈のある確定だけ**を残す
+  （`ConversionLogSettings.shouldRecord`。文脈なしの例は追加学習に使えない）。
+  記録と学習（`learning.json`）はどちらも設定画面から一覧・編集・削除できる
+  （`ConversionLogView` / `LearningView`。`ConversionLog.records()` / `replace` / `delete`、
+  `LearningStore.replaceAll`）。`ConversionLog.Record` は書き戻しの照合に `original` を使うので、
+  呼び出し側は `entry` を書き換えてそのまま渡してよい。`learning.json` とは別の追記専用JSONL
   （`<データフォルダ>/logs/conversions/`）。修正なしの確定も含めて、モデルに渡した左文脈・読み・提示・確定を残す。
   `learning.json` は辞書なので上書き・上限・マージがあり、学習データ用途にはそのまま使えない
 - 変換記録からの追加学習（LoRA）は `macos/Sources/IrohaTrain/`（MLX Swift、mlx-swift **0.31.4 固定**）と

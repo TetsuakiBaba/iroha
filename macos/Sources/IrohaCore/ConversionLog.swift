@@ -113,6 +113,112 @@ public final class ConversionLog: @unchecked Sendable {
         }
     }
 
+    /// 記録1件と、それがどのファイルの何行目かの対応（設定画面の編集用）。
+    ///
+    /// `entry` は編集用で、書き戻すときの照合には読み込んだ時点の `original` を使う
+    /// （呼び出し側は `entry` を書き換えてからそのまま `replace` に渡せる）
+    public struct Record: Identifiable, Sendable, Equatable {
+        public let id: String
+        public let file: URL
+        public let line: Int
+        /// 読み込んだ時点の内容（ファイル上の行を特定するのに使う）
+        public let original: ConversionLogEntry
+        /// 編集後の内容
+        public var entry: ConversionLogEntry
+
+        init(file: URL, line: Int, entry: ConversionLogEntry) {
+            self.id = "\(file.lastPathComponent)#\(line)"
+            self.file = file
+            self.line = line
+            self.original = entry
+            self.entry = entry
+        }
+    }
+
+    /// すべての記録を時系列（ファイル名順・行順）で返す。設定画面の一覧・編集に使う
+    public func records() -> [Record] {
+        fileURLs().flatMap { url -> [Record] in
+            Self.decodeLines(of: url).enumerated().compactMap { index, entry in
+                entry.map { Record(file: url, line: index, entry: $0) }
+            }
+        }
+    }
+
+    /// 1件を書き換える（`nil` で削除）。該当ファイルだけを読み直して書き戻す。
+    ///
+    /// 追記は末尾に起きるので既存の行番号はずれないが、スナップショットが古い場合に備えて
+    /// 行の内容が一致することを確かめ、ずれていれば同じ内容の行を探す。
+    /// 壊れて読めない行は書き戻しで落ちる（もともと参照時にも飛ばしている）
+    public func replace(_ record: Record, with entry: ConversionLogEntry?) {
+        queue.sync {
+            var entries = Self.decodeLines(of: record.file)
+            var index: Int?
+            if record.line < entries.count, entries[record.line] == record.original {
+                index = record.line
+            } else {
+                index = entries.firstIndex(of: record.original)
+            }
+            guard let target = index else { return }
+            if let entry {
+                entries[target] = entry
+            } else {
+                entries.remove(at: target)
+            }
+            Self.write(entries.compactMap { $0 }, to: record.file)
+        }
+        postDidChange()
+    }
+
+    /// 複数件をまとめて削除する（ファイルごとに1回だけ書き戻す）
+    public func delete(_ records: [Record]) {
+        guard !records.isEmpty else { return }
+        queue.sync {
+            for (file, group) in Dictionary(grouping: records, by: \.file) {
+                var entries = Self.decodeLines(of: file)
+                // 行番号の大きい方から消して、前の行の位置がずれないようにする
+                for record in group.sorted(by: { $0.line > $1.line }) {
+                    if record.line < entries.count, entries[record.line] == record.original {
+                        entries.remove(at: record.line)
+                    } else if let index = entries.firstIndex(of: record.original) {
+                        entries.remove(at: index)
+                    }
+                }
+                Self.write(entries.compactMap { $0 }, to: file)
+            }
+        }
+        postDidChange()
+    }
+
+    /// ファイルの各行（読めない行は nil のまま位置を保つ）
+    private static func decodeLines(of url: URL) -> [ConversionLogEntry?] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        let decoder = makeDecoder()
+        return text.split(separator: "\n", omittingEmptySubsequences: true).map { line in
+            guard let data = line.data(using: .utf8) else { return nil }
+            return try? decoder.decode(ConversionLogEntry.self, from: data)
+        }
+    }
+
+    private static func write(_ entries: [ConversionLogEntry], to url: URL) {
+        let encoder = makeEncoder()
+        let lines = entries.compactMap { entry -> String? in
+            guard let data = try? encoder.encode(entry) else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
+        if lines.isEmpty {
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+        let text = lines.joined(separator: "\n") + "\n"
+        try? text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func postDidChange() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
+        }
+    }
+
     /// すべてのログファイルを削除する（他のホストの分も含む。書き込み待ちがあれば先に終える）
     public func removeAll() {
         queue.async { [self] in

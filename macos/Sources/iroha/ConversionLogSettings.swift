@@ -36,11 +36,13 @@ enum ConversionLogSettings {
         Scope(rawValue: UserDefaults.standard.string(forKey: scopeKey) ?? "") ?? .all
     }
 
-    /// この確定を記録するか。`edited == false`（モデルの出力をそのまま確定した）は
-    /// 追加学習では重み 0 のアンカーにしか使わないので、記録しない選択ができる。
-    /// ただし残しておくと「学習で壊れていないか」の評価に使える（`TrainingEvaluator` の unchanged 群）
-    static func shouldRecord(edited: Bool?) -> Bool {
-        guard isEnabled else { return false }
+    /// この確定を記録するか。
+    ///
+    /// 左文脈がない確定は記録しない。追加学習は「この文脈でこの読みならこう変換する」を学ぶもので、
+    /// 文脈のない例（起動直後やフォーカス移動直後の1語目）は学習データとして役に立たないため。
+    /// `edited == false`（モデルの出力をそのまま確定した）を残すかは `scope` で選べる
+    static func shouldRecord(context: String, edited: Bool?) -> Bool {
+        guard isEnabled, !context.isEmpty else { return false }
         switch scope {
         case .all: return true
         case .corrections: return edited != false

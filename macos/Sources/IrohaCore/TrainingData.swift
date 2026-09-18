@@ -106,7 +106,11 @@ public enum TrainingDataBuilder {
         entry.edited != false
     }
 
-    /// 全ログファイルから使える記録を時系列順に集める
+    /// 全ログファイルから使える記録を時系列順に集める。
+    ///
+    /// LoRA アダプタを適用している間に記録された確定（`entry.model` にアダプタ名が入る）も
+    /// 分け隔てなく使う。記録は「ユーザがこれでよいと思って確定した結果」であり、
+    /// どのモデルがその候補を出したかは学習価値と関係ないため（モデル名は由来の記録として残す）
     public static func collect(from log: ConversionLog) -> [ConversionLogEntry] {
         log.fileURLs()
             .flatMap { log.entries(in: $0) }

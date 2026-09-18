@@ -122,4 +122,89 @@ final class ConversionLogTests: XCTestCase {
         XCTAssertEqual(log.entries(in: url).count, 1)
         XCTAssertEqual(log.entryCount(), 2)  // 行数は2
     }
+
+    // MARK: - 編集（設定画面から）
+
+    /// 編集テスト用の短い作り方（同じ月のファイルに入るよう timestamp は近い値にする）
+    private func simple(_ reading: String, _ committed: String, proposed: String? = nil,
+                        at seconds: TimeInterval = 0) -> ConversionLogEntry {
+        entry(timestamp: Date(timeIntervalSince1970: 1_789_000_000 + seconds), context: "文脈",
+              reading: reading, proposed: proposed, committed: committed)
+    }
+
+    /// records() は時系列順にファイル・行番号つきで返す
+    func testRecordsReturnsFileAndLine() throws {
+        log.record(simple("あ", "亜", at: 0))
+        log.record(simple("い", "医", at: 1))
+        log.waitUntilIdle()
+
+        let records = log.records()
+        XCTAssertEqual(records.count, 2)
+        XCTAssertEqual(records.map(\.line), [0, 1])
+        XCTAssertEqual(records.map(\.entry.committed), ["亜", "医"])
+        XCTAssertEqual(Set(records.map(\.id)).count, 2)
+    }
+
+    /// 1件を書き換えると、その行だけが変わる
+    func testReplaceUpdatesSingleLine() throws {
+        log.record(simple("あ", "亜", at: 0))
+        log.record(simple("い", "位", proposed: "医", at: 1))
+        log.record(simple("う", "雨", at: 2))
+        log.waitUntilIdle()
+
+        var target = log.records()[1]
+        target.entry.committed = "医"
+        target.entry.edited = false
+        log.replace(target, with: target.entry)
+
+        let records = log.records()
+        XCTAssertEqual(records.map(\.entry.committed), ["亜", "医", "雨"])
+        XCTAssertEqual(records[1].entry.edited, false)
+        XCTAssertEqual(records[1].entry.reading, "い")
+    }
+
+    /// nil を渡すと削除。行番号がずれても内容で探し当てる
+    func testReplaceWithNilDeletes() throws {
+        log.record(simple("あ", "亜", at: 0))
+        log.record(simple("い", "医", at: 1))
+        log.waitUntilIdle()
+
+        log.replace(log.records()[0], with: nil)
+        XCTAssertEqual(log.records().map(\.entry.committed), ["医"])
+
+        // 取得済みの古いスナップショット（行番号1）でも、内容が一致すれば消せる
+        let stale = ConversionLog.Record(file: log.fileURL(for: Date(timeIntervalSince1970: 1_789_000_001)),
+                                         line: 1, entry: simple("い", "医", at: 1))
+        log.replace(stale, with: nil)
+        XCTAssertTrue(log.records().isEmpty)
+    }
+
+    /// まとめて削除（ファイルをまたいでも1回ずつ書き戻す）
+    func testDeleteMultipleAcrossMonths() throws {
+        let september = Date(timeIntervalSince1970: 1_757_000_000)  // 2025-09
+        let october = Date(timeIntervalSince1970: 1_759_700_000)    // 2025-10
+
+        log.record(ConversionLogEntry(timestamp: september, mode: .live, context: "文脈", contextSource: .document,
+                                      reading: "あ", proposed: nil, committed: "亜", model: "test"))
+        log.record(ConversionLogEntry(timestamp: september.addingTimeInterval(60), mode: .live, context: "文脈",
+                                      contextSource: .document, reading: "い", proposed: nil, committed: "医",
+                                      model: "test"))
+        log.record(ConversionLogEntry(timestamp: october, mode: .live, context: "文脈", contextSource: .document,
+                                      reading: "う", proposed: nil, committed: "雨", model: "test"))
+        log.waitUntilIdle()
+        XCTAssertEqual(log.records().count, 3)
+
+        let records = log.records()
+        log.delete([records[0], records[2]])
+        XCTAssertEqual(log.records().map(\.entry.committed), ["医"])
+    }
+
+    /// 全部消すとファイル自体を残さない
+    func testDeletingLastEntryRemovesFile() throws {
+        log.record(simple("あ", "亜", at: 0))
+        log.waitUntilIdle()
+        let url = log.fileURLs()[0]
+        log.replace(log.records()[0], with: nil)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
 }

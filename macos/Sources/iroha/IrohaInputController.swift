@@ -1189,8 +1189,9 @@ final class IrohaInputController: IMKInputController {
         let entry = ConversionLogEntry(
             mode: mode, context: context, contextSource: source, reading: reading,
             proposed: proposed, committed: committed, segments: segments, model: Self.engineModelName)
-        // 「直した確定だけ」の設定なら、モデルの出力をそのまま確定したものは残さない
-        guard ConversionLogSettings.shouldRecord(edited: entry.edited) else { return }
+        // 左文脈のない確定は記録しない（学習は文脈つきで行うため）。
+        // 「直した確定だけ」の設定なら、モデルの出力をそのまま確定したものも残さない
+        guard ConversionLogSettings.shouldRecord(context: entry.context, edited: entry.edited) else { return }
         ConversionLog.shared.record(entry)
     }
 
