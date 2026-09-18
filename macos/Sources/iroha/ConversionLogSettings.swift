@@ -38,14 +38,17 @@ enum ConversionLogSettings {
 
     /// この確定を記録するか。
     ///
-    /// 左文脈がない確定は記録しない。追加学習は「この文脈でこの読みならこう変換する」を学ぶもので、
-    /// 文脈のない例（起動直後やフォーカス移動直後の1語目）は学習データとして役に立たないため。
+    /// 記録しないもの:
+    /// - 左文脈がない確定。追加学習は「この文脈でこの読みならこう変換する」を学ぶもので、
+    ///   文脈のない例（起動直後やフォーカス移動直後の1語目）は学習データとして役に立たない
+    /// - 読みをそのまま確定した1文字（`ConversionLogEntry.isTrivial`。「、」「の」など）
+    ///
     /// `edited == false`（モデルの出力をそのまま確定した）を残すかは `scope` で選べる
-    static func shouldRecord(context: String, edited: Bool?) -> Bool {
-        guard isEnabled, !context.isEmpty else { return false }
+    static func shouldRecord(_ entry: ConversionLogEntry) -> Bool {
+        guard isEnabled, !entry.context.isEmpty, !entry.isTrivial else { return false }
         switch scope {
         case .all: return true
-        case .corrections: return edited != false
+        case .corrections: return entry.edited != false
         }
     }
 }

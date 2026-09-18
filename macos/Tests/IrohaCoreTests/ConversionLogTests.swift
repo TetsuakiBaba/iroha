@@ -28,6 +28,20 @@ final class ConversionLogTests: XCTestCase {
             reading: reading, proposed: proposed, committed: committed, segments: segments, model: "zenz-test")
     }
 
+    /// 読みをそのまま確定した1文字（「、」「の」など）は学習例にならないので isTrivial
+    func testTrivialSingleCharacterCommits() throws {
+        XCTAssertTrue(entry(reading: "、", proposed: "、", committed: "、").isTrivial)
+        XCTAssertTrue(entry(reading: "の", proposed: "の", committed: "の").isTrivial)
+        // 1文字でも変換が起きていれば中身がある
+        XCTAssertFalse(entry(reading: "ぺーじ", proposed: "頁", committed: "頁").isTrivial)
+        // モデルは漢字を出したのにユーザがかな1文字にした＝NNの誤りなので残す
+        XCTAssertFalse(entry(reading: "の", proposed: "乃", committed: "の").isTrivial)
+        // 提示が不明（edited == nil）なら判断できないので残す
+        XCTAssertFalse(entry(reading: "の", proposed: nil, committed: "の").isTrivial)
+        // 2文字以上のかな確定は「あえて漢字にしない」例なので残す
+        XCTAssertFalse(entry(reading: "こと", proposed: "こと", committed: "こと").isTrivial)
+    }
+
     /// 1行1件のJSONで追記され、読み戻せる。月ごとのファイルに分かれる
     func testAppendsOneJSONPerLineAndReadsBack() throws {
         let first = entry()

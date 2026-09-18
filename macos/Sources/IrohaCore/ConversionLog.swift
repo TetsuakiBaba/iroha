@@ -311,6 +311,18 @@ public struct ConversionLogEntry: Codable, Sendable, Equatable {
     /// 変換モデルのファイル名（拡張子なし）
     public var model: String
 
+    /// 学習データとして中身が無い記録か。
+    ///
+    /// 読みをそのまま確定した1文字（「、」「。」「の」「を」「」」など）は、他の候補が事実上なく、
+    /// いまのモデルも必ず正解する（実測: 手元の記録 622 件のうち 79 件 = 12.7% がこれで、すべて
+    /// `edited == false`）。追加学習で変えられるのは NN の出力だけなので学習例にならない一方、
+    /// 1 件ごとに文書の左文脈 40 文字を残すことになるので、記録しない。
+    /// 2 文字以上のかな確定（「こと」「ため」「ほど」など）は「あえて漢字にしない」という
+    /// 中身のある例なので対象に含めない
+    public var isTrivial: Bool {
+        committed.count == 1 && committed == reading && edited == false
+    }
+
     public init(
         timestamp: Date = Date(), mode: Mode, context: String, contextSource: ContextSource,
         reading: String, proposed: String?, committed: String, segments: [Segment]? = nil, model: String
