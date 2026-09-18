@@ -16,6 +16,9 @@ training/imellm-llmjp-150m/
 training/iroha-*/
 testdata/ajimee/
 training/*.log
+# 候補選択モデルの実験（ラティスダンプ・チェックポイントは大きいので追跡しない）
+experiments/reranker/data/
+experiments/reranker/runs/
 
 # 助成金申請書類（非公開）
 grants/

@@ -12,6 +12,10 @@ import IrohaCore
 //   iroha-cli ajimee-dump <evaluation_items.json> <out.jsonl> [--lattice 件数]
 //                                                 : AJIMEE各項目の辞書ラティス候補・zenz生成・zenz採点をJSONLに出す
 //                                                   （experiments/jev/ の選択式判定実験の入力）
+//   iroha-cli lattice-dump <train.txt|eval.tsv> <out.jsonl> [--n 件数] [--limit 件数] [--skip 件数]
+//                                                 : 学習テキスト（U+EE02文脈 U+EE00読み U+EE01正解 の行、または
+//                                                   TSV 読み\t正解[\t文脈]）の各行に辞書ラティスの読み一致候補を付けて
+//                                                   JSONLに出す。zenzは読まない（experiments/reranker/ の学習データ）
 //   iroha-cli confidence <evaluation_items.json> [--margin 閾値] [--examples 件数]
 //                                                 : 自信度（文字ごとのマージン）と誤変換箇所の対応を
 //                                                   AJIMEE-Benchで評価（zenz単体。誤変換検出の閾値設計用）
@@ -373,6 +377,122 @@ case "ajimee-dump" where arguments.count >= 4:
     }
     try (lines.joined(separator: "\n") + "\n").write(toFile: arguments[3], atomically: true, encoding: .utf8)
     FileHandle.standardError.write("\n\(lines.count) 件を \(arguments[3]) に書き出しました\n".data(using: .utf8)!)
+
+case "lattice-dump" where arguments.count >= 4:
+    // 候補選択専用モデル（experiments/reranker/）の学習データ作り。
+    // 学習テキストの各行（読み・正解・任意の左文脈）に、辞書ラティスの読み一致候補（hard negative の源）を
+    // 付けて JSONL に書く。zenz は使わない（ラティスだけなので 1 行 10ms 前後）。
+    //   iroha-cli lattice-dump <train.txt|eval.tsv> <out.jsonl> [--n 10] [--limit N] [--skip N]
+    // 入力の行形式は 2 種類を自動判別する:
+    //   1. prepare_data.py の出力: [U+EE02 文脈]U+EE00 読み U+EE01 正解
+    //   2. TSV: 読み\t正解[\t文脈]
+    // 出力の 1 行: {"context","reading","gold","lattice":[読み一致候補（ラティス順・全件）],"goldRank":正解の位置(-1=なし),"ms"}
+    struct LatticeDumpRecord: Encodable {
+        let context: String
+        let reading: String
+        let gold: String
+        let lattice: [String]
+        let goldRank: Int
+        let ms: Double
+    }
+    var nBest = 10
+    var limit = Int.max
+    var skip = 0
+    var index = 4
+    while index < arguments.count {
+        switch arguments[index] {
+        case "--n" where index + 1 < arguments.count:
+            nBest = Int(arguments[index + 1]) ?? 10
+            index += 2
+        case "--limit" where index + 1 < arguments.count:
+            limit = Int(arguments[index + 1]) ?? Int.max
+            index += 2
+        case "--skip" where index + 1 < arguments.count:
+            skip = Int(arguments[index + 1]) ?? 0
+            index += 2
+        default:
+            FileHandle.standardError.write("不明な引数: \(arguments[index])\n".data(using: .utf8)!)
+            exit(1)
+        }
+    }
+    guard let dictionaryURL = LatticeConverter.defaultDictionaryURL() else {
+        FileHandle.standardError.write("辞書が見つかりません（scripts/fetch-dictionary.sh）\n".data(using: .utf8)!)
+        exit(1)
+    }
+    guard let input = FileHandle(forReadingAtPath: arguments[2]) else {
+        FileHandle.standardError.write("入力が読めません: \(arguments[2])\n".data(using: .utf8)!)
+        exit(1)
+    }
+    let outputPath = arguments[3]
+    guard FileManager.default.createFile(atPath: outputPath, contents: nil),
+          let output = FileHandle(forWritingAtPath: outputPath) else {
+        FileHandle.standardError.write("出力が開けません: \(outputPath)\n".data(using: .utf8)!)
+        exit(1)
+    }
+    defer { try? output.close() }
+    let lattice = LatticeConverter(dictionaryURL: dictionaryURL)
+    _ = await lattice.candidates(reading: "うぉーむあっぷ", count: 1)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.withoutEscapingSlashes]
+
+    /// 1 行を (文脈, 読み, 正解) に分ける。形式が合わなければ nil
+    func parseLine(_ line: String) -> (String, String, String)? {
+        if line.contains("\u{EE00}") {
+            guard let readingStart = line.range(of: "\u{EE00}"),
+                  let outputStart = line.range(of: "\u{EE01}", range: readingStart.upperBound..<line.endIndex) else { return nil }
+            var context = String(line[line.startIndex..<readingStart.lowerBound])
+            if context.hasPrefix("\u{EE02}") { context.removeFirst() }
+            let reading = String(line[readingStart.upperBound..<outputStart.lowerBound])
+            let gold = String(line[outputStart.upperBound...])
+            return (context, reading, gold)
+        }
+        let columns = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        guard columns.count >= 2, !columns[0].isEmpty else { return nil }
+        return (columns.count >= 3 ? columns[2] : "", columns[0], columns[1])
+    }
+
+    var lineNumber = 0
+    var written = 0
+    var skippedMalformed = 0
+    var totalMs = 0.0
+    var goldInLattice = 0
+    var goldFirst = 0
+    let started = ContinuousClock.now
+    // 大きなファイルでも全体を読まずに済むよう、行ごとに読む
+    for try await line in input.bytes.lines {
+        lineNumber += 1
+        if lineNumber <= skip { continue }
+        if written >= limit { break }
+        guard let (context, reading, gold) = parseLine(line), !reading.isEmpty, !gold.isEmpty else {
+            skippedMalformed += 1
+            continue
+        }
+        let t0 = ContinuousClock.now
+        let candidates = await lattice.fullMatchCandidates(reading: reading, nBest: nBest)
+        let d = t0.duration(to: .now)
+        let ms = Double(d.components.seconds) * 1e3 + Double(d.components.attoseconds) / 1e15
+        totalMs += ms
+        let goldRank = candidates.firstIndex(of: gold) ?? -1
+        if goldRank >= 0 { goldInLattice += 1 }
+        if goldRank == 0 { goldFirst += 1 }
+        let record = LatticeDumpRecord(context: context, reading: reading, gold: gold, lattice: candidates,
+                                       goldRank: goldRank, ms: ms)
+        guard var data = try? encoder.encode(record) else { continue }
+        data.append(0x0A)
+        output.write(data)
+        written += 1
+        if written % 1000 == 0 {
+            let elapsed = started.duration(to: .now).components.seconds
+            FileHandle.standardError.write(
+                "\(written) 件  \(elapsed)s  ラティス平均 \(String(format: "%.1f", totalMs / Double(written)))ms\n".data(using: .utf8)!)
+        }
+    }
+    let summary = String(
+        format: "%d 件を %@ に書き出しました（形式不正 %d 行）。ラティス平均 %.1fms、正解がラティス内 %d (%.1f%%)、ラティス1位が正解 %d (%.1f%%)\n",
+        written, outputPath, skippedMalformed, totalMs / Double(max(written, 1)),
+        goldInLattice, Double(goldInLattice) / Double(max(written, 1)) * 100,
+        goldFirst, Double(goldFirst) / Double(max(written, 1)) * 100)
+    FileHandle.standardError.write(summary.data(using: .utf8)!)
 
 case "confidence" where arguments.count >= 3:
     // 自信度の評価: 貪欲変換の各文字に付くマージン（読み制約を満たす1位と2位の対数確率差）が
