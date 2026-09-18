@@ -1143,8 +1143,7 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 文節変換の結果がエンジンの出力と違っていたら、ユーザによる修正として学習する。
-    /// （修正しなかった文節も、位置ごとの文脈つきで一緒に覚える。
-    /// そうしないと「きしゃのきしゃ」の後半が次回また第一候補に戻ってしまう）
+    /// 覚えるのは入力の読み全体 → 確定文字列で、次に同じ読みを丸ごと入力したときだけ再現する
     private func learnIfCorrected(committed: String) {
         guard LearningSettings.isEnabled, !segments.isEmpty, !committed.isEmpty,
               let baseline = segmentBaseline, committed != baseline else { return }
@@ -1153,9 +1152,8 @@ final class IrohaInputController: IMKInputController {
         // ライブ変換から除外したハッシュタグが学習経由でライブ変換に出てしまう
         guard !segments.contains(where: { $0.unlearnableCandidates.contains($0.result) }) else { return }
         let reading = segments.map(\.reading).joined()
-        let pairs = segments.map { (reading: $0.reading, result: $0.result) }
         Task.detached(priority: .utility) {
-            LearningStore.shared.record(reading: reading, result: committed, segments: pairs)
+            LearningStore.shared.record(reading: reading, result: committed)
         }
     }
 

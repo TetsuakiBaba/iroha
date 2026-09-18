@@ -19,11 +19,10 @@ final class LearningStoreEditingTests: XCTestCase {
     /// 置き換えた内容が変換に使われ、ファイルにも残る
     func testReplaceAllUpdatesDictionaryAndFile() throws {
         let store = LearningStore(url: url)
-        store.record(reading: "きしゃのきしゃ", result: "記者の汽車",
-                     segments: [("きしゃの", "記者の"), ("きしゃ", "汽車")])
-        XCTAssertEqual(store.current.sentence(forReading: "きしゃのきしゃ"), "記者の汽車")
+        store.record(reading: "きしゃ", result: "汽車")
+        XCTAssertEqual(store.current.result(forReading: "きしゃ"), "汽車")
 
-        // 覚え違いを直す（文節の「汽車」→「貴社」）
+        // 覚え違いを直す（「汽車」→「貴社」）
         var entries = store.current.entries
         for index in entries.indices where entries[index].result == "汽車" {
             entries[index].result = "貴社"
@@ -48,9 +47,9 @@ final class LearningStoreEditingTests: XCTestCase {
     func testReplaceAllDropsEmptyEntries() throws {
         let store = LearningStore(url: url)
         store.replaceAll([
-            LearningEntry(kind: .segment, reading: "きしゃ", result: "貴社"),
-            LearningEntry(kind: .segment, reading: "", result: "空"),
-            LearningEntry(kind: .segment, reading: "から", result: ""),
+            LearningEntry(reading: "きしゃ", result: "貴社"),
+            LearningEntry(reading: "", result: "空"),
+            LearningEntry(reading: "から", result: ""),
         ])
         XCTAssertEqual(store.current.entries.count, 1)
         XCTAssertEqual(store.current.entries.first?.result, "貴社")
@@ -59,7 +58,7 @@ final class LearningStoreEditingTests: XCTestCase {
     /// 全部消すと空になる
     func testReplaceAllWithEmptyClears() throws {
         let store = LearningStore(url: url)
-        store.replaceAll([LearningEntry(kind: .sentence, reading: "あ", result: "亜")])
+        store.replaceAll([LearningEntry(reading: "あ", result: "亜")])
         XCTAssertEqual(store.count, 1)
         store.replaceAll([])
         XCTAssertEqual(store.count, 0)

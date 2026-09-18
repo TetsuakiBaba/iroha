@@ -65,15 +65,15 @@ final class DataDirectoryTests: XCTestCase {
         let url = dir.appendingPathComponent("learning.json")
 
         let mine = LearningStore(url: url)
-        mine.record(reading: "きしゃ", result: "記者", segments: [("きしゃ", "記者")])
+        mine.record(reading: "きしゃ", result: "記者")
         Thread.sleep(forTimeInterval: 0.1)  // 非同期保存を待つ
 
         let other = LearningStore(url: url)
-        other.record(reading: "かいしゃ", result: "会社", segments: [("かいしゃ", "会社")])
+        other.record(reading: "かいしゃ", result: "会社")
         Thread.sleep(forTimeInterval: 0.1)
 
         XCTAssertTrue(mine.reloadIfChanged())
-        let readings = Set(mine.current.entries.filter { $0.kind == .sentence }.map(\.reading))
+        let readings = Set(mine.current.entries.map(\.reading))
         XCTAssertEqual(readings, ["きしゃ", "かいしゃ"])
 
         // ファイルが消えた（他のMacでリセット）ならこちらも空にする
@@ -85,8 +85,8 @@ final class DataDirectoryTests: XCTestCase {
 
     /// 同じキーは新しい方を採る
     func testLearningMergePrefersNewerEntry() {
-        let old = LearningEntry(kind: .sentence, reading: "きしゃ", result: "汽車", updatedAt: Date(timeIntervalSince1970: 1))
-        let new = LearningEntry(kind: .sentence, reading: "きしゃ", result: "記者", updatedAt: Date(timeIntervalSince1970: 2))
+        let old = LearningEntry(reading: "きしゃ", result: "汽車", updatedAt: Date(timeIntervalSince1970: 1))
+        let new = LearningEntry(reading: "きしゃ", result: "記者", updatedAt: Date(timeIntervalSince1970: 2))
         XCTAssertEqual(LearningStore.merged(base: [old], recorded: [new]).map(\.result), ["記者"])
         XCTAssertEqual(LearningStore.merged(base: [new], recorded: [old]).map(\.result), ["記者"])
     }

@@ -23,7 +23,6 @@ struct LearningView: View {
         guard !query.isEmpty else { return rows }
         return rows.filter {
             $0.entry.reading.contains(query) || $0.entry.result.contains(query)
-                || $0.entry.leftContext.contains(query)
         }
     }
 
@@ -60,7 +59,7 @@ struct LearningView: View {
             if rows.isEmpty {
                 VStack(spacing: 8) {
                     Text("学習した変換はありません").foregroundStyle(.secondary)
-                    Text("文節変換（スペースキー）で候補を選び直して確定すると、その変換を覚えます。")
+                    Text("文節変換（スペースキー）で候補を選び直して確定すると、その読み全体の変換を覚えます。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -68,9 +67,7 @@ struct LearningView: View {
             } else {
                 List {
                     HStack(spacing: 8) {
-                        Text("種類").frame(width: 44, alignment: .leading)
-                        Text("直前の文脈").frame(width: 110, alignment: .leading)
-                        Text("よみ").frame(width: 150, alignment: .leading)
+                        Text("よみ").frame(width: 220, alignment: .leading)
                         Text("変換結果").frame(maxWidth: .infinity, alignment: .leading)
                         Spacer().frame(width: 20)
                     }
@@ -88,17 +85,9 @@ struct LearningView: View {
 
     private func row(for row: Row) -> some View {
         HStack(spacing: 8) {
-            Text(row.entry.kind == .sentence ? "全体" : "文節")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 44, alignment: .leading)
-            Text(row.entry.leftContext.isEmpty ? "—" : row.entry.leftContext)
-                .lineLimit(1)
-                .foregroundStyle(.secondary)
-                .frame(width: 110, alignment: .leading)
-                .help(row.entry.kind == .sentence ? "入力全体の学習（文脈は使わない）" : row.entry.leftContext)
             TextField("よみ", text: binding(for: row.id, keyPath: \.reading))
-                .frame(width: 150)
+                .frame(width: 220)
+                .help("この読みを丸ごと入力したときに、右の変換結果を返します")
             TextField("変換結果", text: binding(for: row.id, keyPath: \.result))
                 .frame(maxWidth: .infinity)
             Button {

@@ -4,6 +4,7 @@ import Foundation
 ///
 /// 記録するのは「ユーザが文節変換で修正して確定した」ときだけで、
 /// エンジンの出力をそのまま確定した場合は何も覚えない。
+/// 1件は「入力の読み全体 → 確定文字列」（`LearningEntry`）。
 public final class LearningStore: @unchecked Sendable {
 
     public static let didChangeNotification = Notification.Name("iroha.learningDidChange")
@@ -14,8 +15,7 @@ public final class LearningStore: @unchecked Sendable {
     public static let shared = LearningStore()
 
     /// 保持する上限（超えたら古いものから捨てる）
-    public static let maxSentences = 500
-    public static let maxSegments = 2000
+    public static let maxEntries = 500
 
     private let url: URL
     private let lock = NSLock()
@@ -83,30 +83,13 @@ public final class LearningStore: @unchecked Sendable {
 
     /// ユーザの修正を記録する。
     ///
+    /// 覚えるのは入力の読み全体 → 確定文字列だけで、次に同じ読みを丸ごと入力したときに再現する。
     /// - Parameters:
     ///   - reading: 入力全体の読み（ひらがな）
     ///   - result: 確定された文字列
-    ///   - segments: 確定時の文節（読みと変換結果）。左からの並び順であること
-    public func record(
-        reading: String, result: String, segments: [(reading: String, result: String)]
-    ) {
+    public func record(reading: String, result: String) {
         guard !reading.isEmpty, !result.isEmpty else { return }
-        let now = Date()
-        var recorded: [LearningEntry] = [
-            LearningEntry(kind: .sentence, reading: reading, result: result, updatedAt: now)
-        ]
-        // 文節は「直前までに確定した文字列」を文脈として一緒に覚える。
-        // これで同じ読みでも位置によって違う変換を再現できる（記者の貴社）
-        var leftContext = ""
-        for segment in segments {
-            defer { leftContext = String((leftContext + segment.result).suffix(LearningDictionary.contextLength)) }
-            guard !segment.reading.isEmpty, !segment.result.isEmpty else { continue }
-            recorded.append(
-                LearningEntry(
-                    kind: .segment, reading: segment.reading, result: segment.result,
-                    leftContext: leftContext, updatedAt: now))
-        }
-        merge(recorded)
+        merge([LearningEntry(reading: reading, result: result)])
     }
 
     /// 一覧を丸ごと置き換える（設定画面の編集用）。読み・結果が空のエントリは落とす
@@ -154,43 +137,26 @@ public final class LearningStore: @unchecked Sendable {
         postDidChange()
     }
 
-    /// `base` に `recorded` を重ねる。同じ (種類, 読み, 文脈) は新しい方（updatedAt）を採り、
+    /// `base` に `recorded` を重ねる。同じ読みは新しい方（updatedAt）を採り、
     /// 上限を超えたら古いものから捨てる
     static func merged(base: [LearningEntry], recorded: [LearningEntry]) -> [LearningEntry] {
-        var byKey: [Key: LearningEntry] = [:]
-        var order: [Key] = []
+        var byReading: [String: LearningEntry] = [:]
+        var order: [String] = []
         for entry in base + recorded {
-            let key = Key(entry)
-            if let existing = byKey[key] {
+            if let existing = byReading[entry.reading] {
                 // ユーザの今回の修正（recorded側）は同時刻でも優先する
                 guard entry.updatedAt >= existing.updatedAt else { continue }
             } else {
-                order.append(key)
+                order.append(entry.reading)
             }
-            byKey[key] = entry
+            byReading[entry.reading] = entry
         }
 
-        var sentences = order.compactMap { byKey[$0] }.filter { $0.kind == .sentence }
-        var segments = order.compactMap { byKey[$0] }.filter { $0.kind == .segment }
-        if sentences.count > Self.maxSentences {
-            sentences = Array(sentences.sorted { $0.updatedAt > $1.updatedAt }.prefix(Self.maxSentences))
+        var entries = order.compactMap { byReading[$0] }
+        if entries.count > Self.maxEntries {
+            entries = Array(entries.sorted { $0.updatedAt > $1.updatedAt }.prefix(Self.maxEntries))
         }
-        if segments.count > Self.maxSegments {
-            segments = Array(segments.sorted { $0.updatedAt > $1.updatedAt }.prefix(Self.maxSegments))
-        }
-        return sentences + segments
-    }
-
-    /// エントリの同一性（同じ読み・同じ文脈なら上書き）
-    private struct Key: Hashable {
-        var kind: LearningEntry.Kind
-        var reading: String
-        var leftContext: String
-        init(_ entry: LearningEntry) {
-            kind = entry.kind
-            reading = entry.reading
-            leftContext = entry.kind == .sentence ? "" : entry.leftContext
-        }
+        return entries
     }
 
     private func postDidChange() {
@@ -199,9 +165,22 @@ public final class LearningStore: @unchecked Sendable {
         }
     }
 
-    private struct FileContents: Codable {
+    private struct FileContents: Decodable {
+        var version: Int
+        var entries: [StoredEntry]
+    }
+
+    private struct SavedContents: Encodable {
         var version: Int
         var entries: [LearningEntry]
+    }
+
+    /// ファイル上の1エントリ。文節の学習があった頃の `kind` を読めるようにしてある
+    private struct StoredEntry: Decodable {
+        var kind: String?
+        var reading: String
+        var result: String
+        var updatedAt: Date
     }
 
     private static func load(from url: URL) -> LearningDictionary {
@@ -210,7 +189,12 @@ public final class LearningStore: @unchecked Sendable {
         guard let data = try? Data(contentsOf: url),
               let contents = try? decoder.decode(FileContents.self, from: data)
         else { return .empty }
-        return LearningDictionary(entries: contents.entries)
+        // 旧形式の文節のエントリ（読みの一部）は捨てる。読み全体の学習として扱うと
+        // 文中の一部を覚えた語が入力全体の変換結果になってしまう
+        let entries = contents.entries.filter { $0.kind != "segment" }.map {
+            LearningEntry(reading: $0.reading, result: $0.result, updatedAt: $0.updatedAt)
+        }
+        return LearningDictionary(entries: entries)
     }
 
     private static func save(_ entries: [LearningEntry], to url: URL) {
@@ -220,7 +204,7 @@ public final class LearningStore: @unchecked Sendable {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
             encoder.dateEncodingStrategy = .iso8601
-            let data = try encoder.encode(FileContents(version: 1, entries: entries))
+            let data = try encoder.encode(SavedContents(version: 1, entries: entries))
             try data.write(to: url, options: .atomic)
         } catch {
             NSLog("iroha: 学習結果の保存に失敗: \(error)")
