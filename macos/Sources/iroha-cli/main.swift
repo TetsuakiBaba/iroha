@@ -9,6 +9,9 @@ import IrohaCore
 //   iroha-cli segment <読み>                       : 変換 + 文節分割の検証
 //   iroha-cli bench <eval.tsv>                    : 評価（TSV: 読み\t正解[\t左文脈]）。精度とレイテンシを報告
 //   iroha-cli ajimee <evaluation_items.json>      : AJIMEE-Bench評価（acc@1・MinCER）。scripts/fetch-ajimee.shで取得
+//   iroha-cli ajimee-dump <evaluation_items.json> <out.jsonl> [--lattice 件数]
+//                                                 : AJIMEE各項目の辞書ラティス候補・zenz生成・zenz採点をJSONLに出す
+//                                                   （experiments/jev/ の選択式判定実験の入力）
 //   iroha-cli confidence <evaluation_items.json> [--margin 閾値] [--examples 件数]
 //                                                 : 自信度（文字ごとのマージン）と誤変換箇所の対応を
 //                                                   AJIMEE-Benchで評価（zenz単体。誤変換検出の閾値設計用）
@@ -291,6 +294,85 @@ case "ajimee" where arguments.count >= 3:
     total.accAt1 = withContext.accAt1 + withoutContext.accAt1
     total.minCERSum = withContext.minCERSum + withoutContext.minCERSum
     print(String(format: "全体: %@  平均 %.1fms/変換", total.summary, totalMilliseconds / Double(total.count)))
+
+case "ajimee-dump" where arguments.count >= 4:
+    // jev方式（選択肢ラベルのロジット直読み）実験用のダンプ。AJIMEE-Bench の各項目について
+    // 辞書ラティスの読み一致候補（評価順）・zenz生成・zenzの対数確率を JSONL に書き出す。
+    // Python 側（experiments/jev/）がこれを読んで別のLLMに「どれが正しいか」を選ばせる。
+    //   iroha-cli ajimee-dump <evaluation_items.json> <out.jsonl> [--lattice 件数]
+    struct AjimeeItem: Decodable {
+        let index: String
+        let contextText: String
+        let input: String
+        let expectedOutput: [String]
+        enum CodingKeys: String, CodingKey {
+            case index
+            case contextText = "context_text"
+            case input
+            case expectedOutput = "expected_output"
+        }
+    }
+    struct DumpRecord: Encodable {
+        let index: String
+        let context: String
+        let reading: String
+        let expected: [String]
+        /// 辞書ラティスの読み一致候補（評価順、重複なし）
+        let lattice: [String]
+        /// zenz の貪欲生成（ライブ変換の第一候補）
+        let generated: String
+        /// `lattice` の先頭 `scored` 件 + generated（重複なら除く）に対する zenz の対数確率
+        let scoredCandidates: [String]
+        let zenzScores: [Float]
+        let latticeMs: Double
+        let generateMs: Double
+        let scoreMs: Double
+    }
+    guard let data = FileManager.default.contents(atPath: arguments[2]),
+          let items = try? JSONDecoder().decode([AjimeeItem].self, from: data) else {
+        FileHandle.standardError.write("JSONが読めません: \(arguments[2])\n".data(using: .utf8)!)
+        exit(1)
+    }
+    var latticeCount = 10
+    if let i = arguments.firstIndex(of: "--lattice"), i + 1 < arguments.count { latticeCount = Int(arguments[i + 1]) ?? 10 }
+    guard let dictionaryURL = LatticeConverter.defaultDictionaryURL() else {
+        FileHandle.standardError.write("辞書が見つかりません（scripts/fetch-dictionary.sh）\n".data(using: .utf8)!)
+        exit(1)
+    }
+    let lattice = LatticeConverter(dictionaryURL: dictionaryURL)
+    let zenz = makeZenz()
+    try await zenz.prewarm()
+    _ = await lattice.candidates(reading: "うぉーむあっぷ", count: 1)
+    func ms(_ start: ContinuousClock.Instant) -> Double {
+        let d = start.duration(to: .now)
+        return Double(d.components.seconds) * 1e3 + Double(d.components.attoseconds) / 1e15
+    }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.withoutEscapingSlashes]
+    var lines: [String] = []
+    for item in items {
+        let t0 = ContinuousClock.now
+        let latticeCandidates = await lattice.fullMatchCandidates(reading: item.input, nBest: latticeCount)
+        let latticeMs = ms(t0)
+        let t1 = ContinuousClock.now
+        let generated = (try? await zenz.convert(reading: item.input, context: item.contextText, candidateCount: 1).first) ?? ""
+        let generateMs = ms(t1)
+        var toScore = Array(latticeCandidates.prefix(latticeCount))
+        if !generated.isEmpty, !toScore.contains(generated) { toScore.append(generated) }
+        let t2 = ContinuousClock.now
+        let scores = (try? await zenz.score(candidates: toScore, reading: item.input, context: item.contextText)) ?? []
+        let scoreMs = ms(t2)
+        let record = DumpRecord(
+            index: item.index, context: item.contextText, reading: item.input, expected: item.expectedOutput,
+            lattice: latticeCandidates, generated: generated, scoredCandidates: toScore, zenzScores: scores,
+            latticeMs: latticeMs, generateMs: generateMs, scoreMs: scoreMs)
+        if let json = try? encoder.encode(record), let line = String(data: json, encoding: .utf8) {
+            lines.append(line)
+        }
+        FileHandle.standardError.write(".".data(using: .utf8)!)
+    }
+    try (lines.joined(separator: "\n") + "\n").write(toFile: arguments[3], atomically: true, encoding: .utf8)
+    FileHandle.standardError.write("\n\(lines.count) 件を \(arguments[3]) に書き出しました\n".data(using: .utf8)!)
 
 case "confidence" where arguments.count >= 3:
     // 自信度の評価: 貪欲変換の各文字に付くマージン（読み制約を満たす1位と2位の対数確率差）が

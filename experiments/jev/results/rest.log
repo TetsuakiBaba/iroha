@@ -1,0 +1,43 @@
+モデル: sarashina2.2-3b-instruct-v0.1-Q4_K_M.gguf  mode=choice  pool=lattice+gen  chat=False  shuffle=None  drop_kana=True
+件数 200  jev選択 acc@1 117/200 (58.5%)   候補内に正解あり(oracle) 177/200 (88.5%)
+参考: zenz生成 171/200 (85.5%)  zenz再採点(top10+生成) 169/200 (84.5%)
+選んだ位置の分布: A:81 B:58 C:14 D:5 E:13 F:24 G:2 H:1
+プロンプト平均 151 トークン（yesno/seqlp は候補分の合計）  1件あたり平均 155ms  中央値 148ms  最大 370ms
+
+モデル: sarashina2.2-3b-instruct-v0.1-Q4_K_M.gguf  mode=choice  pool=lattice+gen  chat=True  shuffle=None  drop_kana=True
+件数 200  jev選択 acc@1 109/200 (54.5%)   候補内に正解あり(oracle) 177/200 (88.5%)
+参考: zenz生成 171/200 (85.5%)  zenz再採点(top10+生成) 169/200 (84.5%)
+選んだ位置の分布: A:79 B:68 C:18 D:14 E:6 F:11 G:1 H:1
+プロンプト平均 206 トークン（yesno/seqlp は候補分の合計）  1件あたり平均 201ms  中央値 180ms  最大 415ms
+
+モデル: sarashina2.2-3b-instruct-v0.1-Q4_K_M.gguf  mode=seqlp  pool=lattice+gen  chat=False  shuffle=None  drop_kana=True
+件数 200  jev選択 acc@1 153/200 (76.5%)   候補内に正解あり(oracle) 177/200 (88.5%)
+参考: zenz生成 171/200 (85.5%)  zenz再採点(top10+生成) 169/200 (84.5%)
+選んだ位置の分布: A:79 B:33 C:13 D:10 E:8 F:54 H:1
+プロンプト平均 81 トークン（yesno/seqlp は候補分の合計）  1件あたり平均 292ms  中央値 282ms  最大 553ms
+
+モデル: qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf  mode=choice  pool=lattice+gen  chat=True  shuffle=None  drop_kana=True
+件数 200  jev選択 acc@1 110/200 (55.0%)   候補内に正解あり(oracle) 177/200 (88.5%)
+参考: zenz生成 171/200 (85.5%)  zenz再採点(top10+生成) 169/200 (84.5%)
+選んだ位置の分布: A:57 B:82 C:24 D:5 E:7 F:21 G:2
+プロンプト平均 227 トークン（yesno/seqlp は候補分の合計）  1件あたり平均 466ms  中央値 431ms  最大 1106ms
+
+モデル: qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf  mode=choice  pool=lattice+gen  chat=True  shuffle=1  drop_kana=True
+件数 200  jev選択 acc@1 114/200 (57.0%)   候補内に正解あり(oracle) 177/200 (88.5%)
+参考: zenz生成 171/200 (85.5%)  zenz再採点(top10+生成) 169/200 (84.5%)
+選んだ位置の分布: A:31 B:46 C:52 D:22 E:26 F:17 G:2 I:2
+プロンプト平均 227 トークン（yesno/seqlp は候補分の合計）  1件あたり平均 464ms  中央値 430ms  最大 1106ms
+
+モデル: qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf  mode=yesno  pool=lattice+gen  chat=True  shuffle=None  drop_kana=True
+件数 200  jev選択 acc@1 129/200 (64.5%)   候補内に正解あり(oracle) 177/200 (88.5%)
+参考: zenz生成 171/200 (85.5%)  zenz再採点(top10+生成) 169/200 (84.5%)
+選んだ位置の分布: A:58 B:42 C:26 D:16 E:6 F:47 G:1 H:2
+プロンプト平均 770 トークン（yesno/seqlp は候補分の合計）  1件あたり平均 1675ms  中央値 1567ms  最大 3336ms
+
+モデル: qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf  mode=seqlp  pool=lattice+gen  chat=False  shuffle=None  drop_kana=True
+件数 200  jev選択 acc@1 166/200 (83.0%)   候補内に正解あり(oracle) 177/200 (88.5%)
+参考: zenz生成 171/200 (85.5%)  zenz再採点(top10+生成) 169/200 (84.5%)
+選んだ位置の分布: A:82 B:34 C:9 D:9 E:4 F:59 H:1
+プロンプト平均 116 トークン（yesno/seqlp は候補分の合計）  1件あたり平均 605ms  中央値 538ms  最大 1539ms
+
+ALLDONE
