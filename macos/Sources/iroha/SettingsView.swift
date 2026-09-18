@@ -940,6 +940,7 @@ private struct TrainingSection: View {
                 Text("学習ヘルパー（iroha-train）がこのバンドルにありません。").foregroundStyle(.secondary)
             } else {
                 recordsRow
+                parameterRows
                 trainingRow
             }
             adapterField
@@ -996,25 +997,55 @@ private struct TrainingSection: View {
         return info.supported && info.usableEntries >= info.minimumRecords
     }
 
+    private var isIdle: Bool {
+        if case .idle = coordinator.state { return true }
+        return false
+    }
+
+    /// エポック数と学習率。常に見せる（折りたたみに隠すと見つからない）。学習中は変えられない
+    @ViewBuilder private var parameterRows: some View {
+        LabeledContent("エポック数") {
+            HStack(spacing: 4) {
+                TextField("", value: $epochs, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 56)
+                    .onChange(of: epochs) { _, value in
+                        epochs = min(max(value, TrainingSettings.epochsRange.lowerBound), TrainingSettings.epochsRange.upperBound)
+                    }
+                Stepper("", value: $epochs, in: TrainingSettings.epochsRange).labelsHidden()
+                Text("記録全体を何周学習するか（\(TrainingSettings.epochsRange.lowerBound)〜\(TrainingSettings.epochsRange.upperBound)）")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .disabled(!isIdle)
+        LabeledContent("学習率") {
+            HStack(spacing: 4) {
+                LearningRateField(learningRate: $learningRate)
+                Menu("プリセット") {
+                    ForEach(TrainingSettings.learningRateChoices, id: \.value) { choice in
+                        Button(choice.label) { learningRate = choice.value }
+                    }
+                }
+                .frame(width: 110)
+                Text("1e-4 や 0.0001 のように入力（\(TrainingSettings.format(learningRate: TrainingSettings.learningRateRange.lowerBound))"
+                    + "〜\(TrainingSettings.format(learningRate: TrainingSettings.learningRateRange.upperBound))）")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .disabled(!isIdle)
+        Text("どちらも増やすほど強く覚えますが、元からできていた変換が崩れることもあります。"
+            + "結果の「できていた変換」が減ったら弱めてください。既定はエポック \(TrainingSettings.defaultEpochs)・学習率 "
+            + "\(TrainingSettings.format(learningRate: TrainingSettings.defaultLearningRate))。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
     @ViewBuilder private var trainingRow: some View {
         switch coordinator.state {
         case .idle:
             Button("学習を開始") { coordinator.start(basePath: basePath) }
                 .disabled(!canStart)
-            DisclosureGroup("学習の設定") {
-                Stepper(value: $epochs, in: TrainingSettings.epochsRange) {
-                    LabeledContent("エポック数") { Text("\(epochs)") }
-                }
-                Picker("学習率", selection: $learningRate) {
-                    ForEach(TrainingSettings.learningRateChoices, id: \.value) { choice in
-                        Text(choice.label).tag(choice.value)
-                    }
-                }
-                Text("エポック数は記録全体を何周学習するか。増やすほど強く覚えますが、"
-                    + "元からできていた変換が崩れることもあります。まずは既定（\(TrainingSettings.defaultEpochs) / 標準）で。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         case .running(let stage, let step, let progress):
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
@@ -1099,6 +1130,32 @@ private struct TrainingSection: View {
                 Button("irohaを再起動") { AppRestarter.restartInstalledApp() }
             }
         }
+    }
+}
+
+/// 学習率の入力欄。"1e-4" のような指数表記で見せ、確定時に解釈できて範囲内なら保存、だめなら元の値に戻す
+private struct LearningRateField: View {
+    @Binding var learningRate: Double
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("", text: $text)
+            .textFieldStyle(.roundedBorder)
+            .multilineTextAlignment(.trailing)
+            .frame(width: 80)
+            .focused($focused)
+            .onAppear { text = TrainingSettings.format(learningRate: learningRate) }
+            .onChange(of: learningRate) { _, value in text = TrainingSettings.format(learningRate: value) }
+            .onSubmit(commit)
+            .onChange(of: focused) { _, isFocused in if !isFocused { commit() } }
+    }
+
+    private func commit() {
+        if let value = TrainingSettings.parse(learningRate: text) {
+            learningRate = value
+        }
+        text = TrainingSettings.format(learningRate: learningRate)
     }
 }
 
