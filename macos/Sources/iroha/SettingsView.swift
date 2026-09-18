@@ -927,6 +927,8 @@ private struct TrainingSection: View {
     @ObservedObject private var coordinator = TrainingCoordinator.shared
     @AppStorage(TrainingSettings.adapterPathKey) private var adapterPath = ""
     @AppStorage(ConversionLogSettings.enabledKey) private var conversionLogEnabled = false
+    @AppStorage(TrainingSettings.epochsKey) private var epochs = TrainingSettings.defaultEpochs
+    @AppStorage(TrainingSettings.learningRateKey) private var learningRate = TrainingSettings.defaultLearningRate
 
     private var basePath: String { IrohaInputController.engineModelPath }
 
@@ -941,12 +943,11 @@ private struct TrainingSection: View {
                 trainingRow
             }
             adapterField
-            Text("確定した変換の記録（辞書・学習タブの「変換記録」）を使って、使用中のモデルに LoRA アダプタを"
+            Text("確定した変換の記録（辞書・学習タブの「変換記録」）で、使用中のモデルに自分の文章の癖を"
                 + "追加学習します。ベースのモデルは変えず、小さなアダプタファイルを models/adapters/ に作ります。"
-                + "まず記録を1件ずつ変換し直して、いまのモデルが間違えるものを選り分け、それを重点的に学習します"
-                + "（正解できている記録は忘れ防止に少量混ぜます）。間違いの新しい方から 2 割は学習に使わず、"
-                + "学習後に「間違いが直った数」と「元から正しかった変換を保てた数」を測るのに使います。"
-                + "使った記録はアダプタと並べて .train.tsv / .mistakes.tsv に残るので、何を覚えさせたか確かめられます。"
+                + "手順は 4 つ: ① 記録を1件ずつ今のモデルで変換し直す ② 間違えたものと正しかったものの一部を"
+                + "評価用に取り分ける ③ 残りの記録すべてで学習する ④ 評価用の記録をアダプタなし／ありで変換して"
+                + "結果を並べる。使った記録は .train.tsv / .mistakes.tsv / .correct.tsv としてアダプタの隣に残ります。"
                 + "学習は数十秒〜数分かかり、その間 GPU を使います。アダプタの変更は再起動後に反映されます。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -960,14 +961,22 @@ private struct TrainingSection: View {
     @ViewBuilder private var recordsRow: some View {
         LabeledContent("記録") {
             if let info = coordinator.info {
-                // 学習対象は学習時に変換し直して選ぶので、ここでは件数の目安だけを出す
-                Text("\(info.usableEntries) 件（自分で直した確定 \(info.corrections) 件）")
-                    .foregroundStyle(.secondary)
+                Text("\(info.usableEntries) 件").foregroundStyle(.secondary)
             } else if let error = coordinator.infoError {
                 Text(error).foregroundStyle(.red).font(.caption)
             } else {
                 ProgressView().controlSize(.small)
             }
+        }
+        // 学習の質は記録の量で決まる。足りない・少ないときは「貯めましょう」を前に出す
+        if let info = coordinator.info, info.usableEntries < info.minimumRecords {
+            Text("学習には \(info.minimumRecords) 件以上の記録が必要です（あと \(info.minimumRecords - info.usableEntries) 件）。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            Text("記録が増えるほど、自分の文章に合った学習ができます。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         if !conversionLogEnabled {
             Text("変換記録が OFF です。辞書・学習タブの「確定した変換を記録する」を ON にすると記録が溜まります。")
@@ -984,20 +993,27 @@ private struct TrainingSection: View {
 
     private var canStart: Bool {
         guard let info = coordinator.info else { return false }
-        // 学習できる間違いの数は実際に変換してみるまで分からないので、ここでは記録の件数で判断する
         return info.supported && info.usableEntries >= info.minimumRecords
     }
 
     @ViewBuilder private var trainingRow: some View {
         switch coordinator.state {
         case .idle:
-            HStack {
-                Button("学習を開始") { coordinator.start(basePath: basePath) }
-                    .disabled(!canStart)
-                if let info = coordinator.info, info.usableEntries < info.minimumRecords {
-                    Text("記録が \(info.minimumRecords) 件以上必要です")
-                        .font(.caption).foregroundStyle(.secondary)
+            Button("学習を開始") { coordinator.start(basePath: basePath) }
+                .disabled(!canStart)
+            DisclosureGroup("学習の設定") {
+                Stepper(value: $epochs, in: TrainingSettings.epochsRange) {
+                    LabeledContent("エポック数") { Text("\(epochs)") }
                 }
+                Picker("学習率", selection: $learningRate) {
+                    ForEach(TrainingSettings.learningRateChoices, id: \.value) { choice in
+                        Text(choice.label).tag(choice.value)
+                    }
+                }
+                Text("エポック数は記録全体を何周学習するか。増やすほど強く覚えますが、"
+                    + "元からできていた変換が崩れることもあります。まずは既定（\(TrainingSettings.defaultEpochs) / 標準）で。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         case .running(let stage, let step, let progress):
             VStack(alignment: .leading, spacing: 4) {
@@ -1035,15 +1051,15 @@ private struct TrainingSection: View {
         switch stage {
         case "start": return "準備中…"
         case "screen":
-            guard let progress else { return "いまのモデルの出来を確認中…" }
-            return "いまのモデルの出来を確認中… \(progress.done)/\(progress.total) 件"
-        case "evaluate": return "学習後の変換を確認中…"
+            guard let progress else { return "① 記録を今のモデルで変換し直しています…" }
+            return "① 記録を今のモデルで変換し直しています… \(progress.done)/\(progress.total) 件"
+        case "evaluate": return "④ 評価用の記録をアダプタなし／ありで変換しています…"
         case "quantize": return "ベースモデルを学習用に変換中…"
         case "load": return "モデルを読み込み中…"
         case "export": return "アダプタを書き出し中…"
         default:
-            guard let step else { return "学習中…" }
-            var text = "学習中 \(step.step)/\(step.steps)"
+            guard let step else { return "③ 学習中…" }
+            var text = "③ 学習中 \(step.step)/\(step.steps)"
             if step.epochs > 0 { text += "（エポック \(step.epoch)/\(step.epochs)）" }
             text += String(format: "  損失 %.3f", step.loss)
             return text
@@ -1086,57 +1102,39 @@ private struct TrainingSection: View {
     }
 }
 
-/// 学習結果: 「直した変換が当たるようになったか」と「元から正しかった変換が壊れていないか」を並べて出す。
+/// 学習結果: 評価用の記録をアダプタなし／ありで変換した一致数を 2 群（間違えていた変換・できていた変換）で並べる。
 /// 体感では悪化の方が目立つので、効果だけでなく副作用も必ず見せる
 private struct TrainingResultView: View {
     let result: TrainingResult
     @Binding var adapterPath: String
     let onClose: () -> Void
 
-    private var mistakesDelta: Int { result.after.mistakes.exact - result.before.mistakes.exact }
-    private var correctDelta: Int { result.after.correct.exact - result.before.correct.exact }
-
-    /// 見つかった間違いの総数（学習に使った分 ＋ 効果測定に取り分けた分）
-    private var foundMistakes: Int { result.data.mistakes + result.data.heldOutMistakes }
-    /// 間違い1件を訓練データに入れた回数（`TrainingConfig.mistakeWeight`。行数から逆算する）
-    private var repeatsPerMistake: Int {
-        guard result.data.mistakes > 0 else { return 0 }
-        return max(1, (result.data.trainLines - result.data.anchors) / result.data.mistakes)
+    private var elapsedText: String {
+        let seconds = Int(result.elapsed.rounded())
+        return seconds >= 60 ? "\(seconds / 60)分\(seconds % 60)秒" : "\(seconds)秒"
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("学習が終わりました").font(.headline)
-            // 数の関係が読んで分かるように「見つけた → 学習に使った → 水増しした」の順に並べる
-            VStack(alignment: .leading, spacing: 2) {
-                Text("変換記録 \(result.data.screened) 件をいまのモデルで変換し直し、"
-                    + "間違いを \(foundMistakes) 件見つけました。")
-                if result.data.heldOutMistakes > 0 {
-                    Text("うち \(result.data.mistakes) 件を覚えさせ、残る \(result.data.heldOutMistakes) 件は"
-                        + "効果を測るために学習から外しました（下の「間違えていた変換」）。")
-                } else {
-                    Text("この \(result.data.mistakes) 件を覚えさせました。")
-                }
-                Text("覚えさせる \(result.data.mistakes) 件は数が少ないので \(repeatsPerMistake) 回ずつ繰り返し"
-                    + "（\(result.data.trainLines - result.data.anchors) 行）、"
-                    + "元から正しく変換できていた記録 \(result.data.anchors) 件を足した"
-                    + "\(result.data.trainLines) 行で学習しました"
-                    + "（正しく変換できていた記録も入れるのは、自分の文脈と言葉づかいをまとめて"
-                    + "覚えさせるためです。できていた変換が崩れるのも防げます）。")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            Text("学習が終わりました（記録 \(result.data.records) 件・\(elapsedText)）").font(.headline)
+            Text("記録のうち \(result.data.trainLines) 件で学習し、"
+                + "\(result.data.heldOutMistakes + result.data.heldOutCorrect) 件を評価用に残しました。"
+                + "評価用の記録をアダプタなし／ありで変換した結果です。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if result.after.mistakes.total > 0 {
-                scoreRow(title: "間違えていた変換", score: result.after.mistakes,
-                         before: result.before.mistakes.exact, delta: mistakesDelta)
+                scoreRow(title: "間違えていた変換", before: result.before.mistakes, after: result.after.mistakes)
+            } else {
+                Text("今のモデルは記録をすべて正しく変換できていたので、「間違いが直ったか」は測れません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             if result.after.correct.total > 0 {
-                scoreRow(title: "正しかった変換", score: result.after.correct,
-                         before: result.before.correct.exact, delta: correctDelta)
+                scoreRow(title: "できていた変換", before: result.before.correct, after: result.after.correct)
             }
             if result.after.mistakes.total > 0, result.after.mistakes.total < 10 {
                 Text("評価に回せた間違いが \(result.after.mistakes.total) 件と少ないので、この数値はぶれます。"
-                    + "記録が溜まるほど確かな目安になります。")
+                    + "記録が溜まるほど確かになります。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1151,14 +1149,16 @@ private struct TrainingResultView: View {
         }
     }
 
-    /// 「N/M 件（学習前 K 件 → +2）」の 1 行
-    @ViewBuilder private func scoreRow(title: String, score: TrainingScore, before: Int, delta: Int) -> some View {
-        LabeledContent(title) {
+    /// 「N 件   アダプタなし a 件正解 → あり b 件正解（+2）」の 1 行
+    @ViewBuilder private func scoreRow(title: String, before: TrainingScore, after: TrainingScore) -> some View {
+        let delta = after.exact - before.exact
+        LabeledContent("\(title) \(after.total) 件") {
             HStack(spacing: 6) {
-                Text("\(score.exact)/\(score.total) 件")
+                Text("アダプタなし \(before.exact) 件正解").foregroundStyle(.secondary)
+                Text("→")
+                Text("あり \(after.exact) 件正解")
                 Text(delta == 0 ? "変化なし" : (delta > 0 ? "+\(delta)" : "\(delta)"))
                     .foregroundStyle(delta == 0 ? .secondary : (delta > 0 ? Color.green : Color.orange))
-                Text("（学習前 \(before) 件）").foregroundStyle(.secondary)
             }
             .font(.callout)
         }

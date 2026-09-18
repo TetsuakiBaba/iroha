@@ -2,24 +2,24 @@ import Foundation
 
 /// 訓練データの内訳
 public struct TrainingDataSummary: Codable, Sendable, Equatable {
-    /// 重み付け・混合後の訓練行数
-    public var trainLines: Int
-    /// 確認した記録の件数
+    /// 学習に使える記録の総数（重複除去後）
+    public var records: Int
+    /// いまのモデルで変換し直した件数（新しい方から `TrainingScreener.defaultLimit` まで）
     public var screened: Int
-    /// 訓練に使う「モデルが間違えた記録」の件数
+    /// そのうち間違えた件数
     public var mistakes: Int
-    /// 訓練に混ぜたアンカー（モデルが正解できる記録）の件数
-    public var anchors: Int
+    /// 訓練に使った行数（評価用を除いた記録）
+    public var trainLines: Int
     /// 評価用の「間違えた記録」
     public var heldOutMistakes: Int
     /// 評価用の「正解できる記録」
     public var heldOutCorrect: Int
 
-    public init(trainLines: Int, screened: Int, mistakes: Int, anchors: Int, heldOutMistakes: Int, heldOutCorrect: Int) {
-        self.trainLines = trainLines
+    public init(records: Int, screened: Int, mistakes: Int, trainLines: Int, heldOutMistakes: Int, heldOutCorrect: Int) {
+        self.records = records
         self.screened = screened
         self.mistakes = mistakes
-        self.anchors = anchors
+        self.trainLines = trainLines
         self.heldOutMistakes = heldOutMistakes
         self.heldOutCorrect = heldOutCorrect
     }
@@ -54,7 +54,7 @@ public struct TrainingScore: Codable, Sendable, Equatable {
     }
 }
 
-/// 学習前 or 学習後の評価結果（2 群）
+/// アダプタなし（before）or あり（after）で評価用の記録を変換した一致数（2 群）
 public struct TrainingScores: Codable, Sendable, Equatable {
     /// モデルが間違えていた変換（学習で当たるようになってほしいもの）
     public var mistakes: TrainingScore
@@ -74,12 +74,16 @@ public struct TrainingResult: Codable, Sendable, Equatable {
     public var correctTSV: String?
     /// 学習に使った記録の TSV（何を覚えさせたかを確かめられる）
     public var trainTSV: String?
+    /// 評価用の記録をアダプタなしで変換した一致数
     public var before: TrainingScores
+    /// 同じ記録をアダプタありで変換した一致数
     public var after: TrainingScores
     public var data: TrainingDataSummary
+    /// 開始から完了までの秒数
+    public var elapsed: Double
 
     public init(adapter: String, mistakesTSV: String?, correctTSV: String?, trainTSV: String?,
-                before: TrainingScores, after: TrainingScores, data: TrainingDataSummary) {
+                before: TrainingScores, after: TrainingScores, data: TrainingDataSummary, elapsed: Double = 0) {
         self.adapter = adapter
         self.mistakesTSV = mistakesTSV
         self.correctTSV = correctTSV
@@ -87,6 +91,7 @@ public struct TrainingResult: Codable, Sendable, Equatable {
         self.before = before
         self.after = after
         self.data = data
+        self.elapsed = elapsed
     }
 }
 
@@ -99,7 +104,7 @@ public enum TrainingEvent: Codable, Sendable, Equatable {
     /// 件数で進む処理（記録の確認など）の進捗
     case progress(stage: String, done: Int, total: Int)
     case step(TrainingStep)
-    /// phase は "before" / "after"
+    /// phase は "before"（アダプタなし）/ "after"（アダプタあり）
     case eval(phase: String, scores: TrainingScores)
     case done(TrainingResult)
     case error(String)

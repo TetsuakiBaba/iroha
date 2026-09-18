@@ -2,50 +2,21 @@ import Foundation
 
 /// 追加学習（LoRA）のハイパーパラメータ。
 ///
-/// 損失は確定文字列（U+EE01 の後ろ）にしかかからず、条件はその人の左文脈と読みなので、記録 1 件は
-/// 「この人の文脈ではこう書く」という 1 サンプルになる。個人の記録はいまのモデルが既に正解できるものが
-/// 大半（実測で 96.9%）で勾配は小さいが、**その人の文脈 → 確定の分布そのもの**でもある。一方で
-/// 間違えた記録は分布の偏った尾部なので、それだけで学習すると偏りに過剰適合して分布がずれる
-/// （忘却はその現れの一つ）。そこで訓練データは**モデルが間違えた記録（`TrainingScreener`）を
-/// 重み付けして**作り、正解できる記録を**アンカー**として混ぜる（その人の言葉づかいを学ばせ、
-/// 同時に分布を保つ）
+/// 訓練データは**記録そのまま**（評価用に取り分けた分を除く全件）。損失は確定文字列（U+EE01 の後ろ）に
+/// しかかからず、条件はその人の左文脈と読みなので、記録 1 件は「この人の文脈ではこう書く」の 1 サンプルになる。
+/// 間違えた記録だけを重み付けして学ぶような細工はしない（少ない記録で効果を出そうとすると偏った尾部に
+/// 過剰適合し、できていた変換が崩れる。記録は増えていくものなので、増えた分だけ素直に効く設計にする）
 public struct TrainingConfig: Sendable, Codable, Equatable {
     public var rank = 8
     public var alpha: Float = 16
-    public var learningRate: Float = 5e-5
+    /// LoRA の一般的な既定値。設定画面から変えられる
+    public var learningRate: Float = 1e-4
     public var epochs = 3
     public var batchSize = 16
     /// LoRA を掛けるテンソル名の末尾（`blk.N.<名前>.weight`）。出力層・埋め込みは対象外
     public var targets = ["attn_qkv", "attn_output", "ffn_up", "ffn_down"]
 
-    /// モデルが間違えた記録を訓練データに入れる回数（希少なので重くする）
-    public var mistakeWeight = 8
-    /// 重み付け後の行数に対して混ぜるアンカー（モデルが正解できる記録）の比率。
-    /// 0 にすると間違えた記録だけで学習し、その人の文脈 → 確定の分布から離れて忘却しやすくなる
-    public var anchorRatio = 2.0
-
-    /// 間違えた記録のうち評価に回す割合と上限（時系列の末尾から取る）
-    public var heldOutMistakeFraction = 0.2
-    public var maxHeldOutMistakes = 25
-    /// 正解できる記録のうち評価（壊れていないかの確認）に回す上限
-    public var maxHeldOutCorrect = 40
-
     public init() {}
-
-    /// 学習対象の数に応じた既定。
-    ///
-    /// 既定は「効果より悪化を出さない」側に寄せてある（2026-09-18 実測: 記録 376 件・間違い 10 件では
-    /// どの設定でも間違いは直らず、強い設定ほど元から正しかった変換を壊した。
-    /// lr 1e-4/5 エポックで 38/40、lr 5e-5/3 エポック + アンカー 2 倍で 39/40）。
-    /// 学べる例が増えたら学習率を上げる
-    public static func recommended(forMistakeCount count: Int) -> TrainingConfig {
-        var config = TrainingConfig()
-        if count >= 50 {
-            config.learningRate = 1e-4
-            config.anchorRatio = 1.0
-        }
-        return config
-    }
 }
 
 /// 学習 1 例（トークン化済み）
@@ -66,15 +37,13 @@ public struct TrainingExample: Sendable, Equatable {
 
 /// 訓練用と評価用に振り分けた結果
 public struct TrainingSplit: Sendable {
-    /// 訓練に使う「モデルが間違えた記録」
-    public var trainMistakes: [ConversionLogEntry] = []
-    /// 訓練に混ぜるアンカー（モデルが正解できる記録）
-    public var anchors: [ConversionLogEntry] = []
-    /// 評価用の「間違えた記録」（学習で当たるようになったか。学習前は 0 件正解と分かっている）
+    /// 評価用の「間違えた記録」（学習で当たるようになったか）
     public var heldOutMistakes: [ConversionLogEntry] = []
-    /// 評価用の「正解できる記録」（壊れていないか。学習前は全件正解と分かっている）
+    /// 評価用の「正解できる記録」（壊れていないか）
     public var heldOutCorrect: [ConversionLogEntry] = []
-    /// 重み付け・混合済みの訓練行
+    /// 訓練に使う記録（評価用を除いた全件・時系列順）
+    public var train: [ConversionLogEntry] = []
+    /// `train` の学習行
     public var trainLines: [String] = []
 }
 
@@ -129,43 +98,34 @@ public enum TrainingDataBuilder {
         return entries.enumerated().filter { lastIndex[$0.element.trainingLine] == $0.offset }.map(\.element)
     }
 
-    /// 評価用を時系列の末尾から取り分けて訓練行を組み立てる（`TrainingScreener` の結果を渡す）
-    public static func stratify(_ screening: TrainingScreener.Screening, config: TrainingConfig) -> TrainingSplit {
+    /// 評価用に取り分ける上限。間違いは希少なので、効果を測るために新しい方から集める
+    public static let maxHeldOutMistakes = 25
+    /// 正解できていた記録の評価用（壊れていないかの確認）の上限
+    public static let maxHeldOutCorrect = 40
+
+    /// 評価用を時系列の末尾から取り分け、残り全件を訓練行にする。
+    ///
+    /// - Parameters:
+    ///   - entries: 学習に使える記録の全件（重複除去済み・時系列順）。変換し直しの上限（`TrainingScreener`）に
+    ///     入らなかった古い記録も訓練には使う
+    ///   - screening: `entries`（の末尾）を変換し直した結果
+    public static func stratify(entries: [ConversionLogEntry], screening: TrainingScreener.Screening) -> TrainingSplit {
         let mistakes = screening.mistakes
         let correct = screening.correct
 
-        // 評価用に取る「間違えた記録」。少ないときは 1 件でも取る（0 だと効果が測れない）。
-        // ただし 3 分の 1 を超えて取らない（学習に残す分を確保する）。1 件しかなければ学習に回す
-        let heldOutMistakeCount: Int = {
-            guard mistakes.count >= 4 else { return mistakes.count >= 2 ? 1 : 0 }
-            let target = max(2, Int((Double(mistakes.count) * config.heldOutMistakeFraction).rounded()))
-            return min(target, config.maxHeldOutMistakes, mistakes.count / 3)
-        }()
-        let heldOutCorrectCount = min(correct.count / 2, config.maxHeldOutCorrect)
+        // 間違いは 3 分の 1 まで評価に回す（学習に残す分を確保する）。2 件以上あれば 1 件は取る
+        // （0 だと効果が測れない）。1 件しかなければ学習に回す（唯一の例を評価に取られると学ぶものが無くなる）
+        let heldOutMistakeCount = min(Self.maxHeldOutMistakes, max(mistakes.count >= 2 ? 1 : 0, mistakes.count / 3))
+        let heldOutCorrectCount = min(Self.maxHeldOutCorrect, correct.count / 2)
 
         var split = TrainingSplit()
         split.heldOutMistakes = Array(mistakes.suffix(heldOutMistakeCount))
         split.heldOutCorrect = Array(correct.suffix(heldOutCorrectCount))
-        split.trainMistakes = Array(mistakes.dropLast(heldOutMistakeCount))
-
-        let remainingCorrect = Array(correct.dropLast(heldOutCorrectCount))
-        let weighted = split.trainMistakes.count * max(config.mistakeWeight, 1)
-        let anchorCount = min(remainingCorrect.count, Int(Double(weighted) * max(config.anchorRatio, 0)))
-        // アンカーは時系列全体から均等に取る（末尾に偏らせない）
-        split.anchors = sample(remainingCorrect, count: anchorCount)
-
-        split.trainLines =
-            split.trainMistakes.flatMap { Array(repeating: $0.trainingLine, count: max(config.mistakeWeight, 1)) }
-            + split.anchors.map(\.trainingLine)
+        // 記録は学習行（文脈・読み・確定）で重複除去済みなので、学習行で同一性を見てよい
+        let heldOut = Set((split.heldOutMistakes + split.heldOutCorrect).map(\.trainingLine))
+        split.train = entries.filter { !heldOut.contains($0.trainingLine) }
+        split.trainLines = split.train.map(\.trainingLine)
         return split
-    }
-
-    /// `items` から `count` 件を均等間隔で取る（決定的。同じ入力なら同じ結果）
-    static func sample<T>(_ items: [T], count: Int) -> [T] {
-        guard count > 0, !items.isEmpty else { return [] }
-        guard count < items.count else { return items }
-        let step = Double(items.count) / Double(count)
-        return (0..<count).map { items[min(items.count - 1, Int(Double($0) * step))] }
     }
 
     /// トークン化して損失位置を付ける。`outputTag` は U+EE01 のトークン列（`VocabTokenizer.outputTagTokens`。

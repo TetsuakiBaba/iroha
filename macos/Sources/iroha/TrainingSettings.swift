@@ -9,4 +9,26 @@ enum TrainingSettings {
         let value = UserDefaults.standard.string(forKey: adapterPathKey) ?? ""
         return value.isEmpty ? nil : value
     }
+
+    /// 学習のエポック数（既定 3）。この Mac の GPU 向けの調整なので同期しない
+    static let epochsKey = "trainingEpochs"
+    static let defaultEpochs = 3
+    static let epochsRange = 1...10
+
+    /// 学習率（既定 1e-4）。選択肢は `learningRateChoices`
+    static let learningRateKey = "trainingLearningRate"
+    static let defaultLearningRate = 1e-4
+    static let learningRateChoices: [(label: String, value: Double)] = [
+        ("弱め（5e-5）", 5e-5), ("標準（1e-4）", 1e-4), ("強め（2e-4）", 2e-4),
+    ]
+
+    static var epochs: Int {
+        let value = UserDefaults.standard.integer(forKey: epochsKey)
+        return epochsRange.contains(value) ? value : defaultEpochs
+    }
+
+    static var learningRate: Double {
+        let value = UserDefaults.standard.double(forKey: learningRateKey)
+        return value > 0 ? value : defaultLearningRate
+    }
 }

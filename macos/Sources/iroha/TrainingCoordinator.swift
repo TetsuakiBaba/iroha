@@ -11,12 +11,9 @@ final class TrainingCoordinator: ObservableObject {
     struct Info: Codable, Equatable {
         var totalEntries: Int
         var usableEntries: Int
-        /// ユーザがエンジンの提示を直した確定（目安。学習対象は学習時に実際に変換して選び直す）
-        var corrections: Int
         var architecture: String
         var supported: Bool
         var minimumRecords: Int
-        var minimumMistakes: Int
     }
 
     /// 件数で進む処理（記録の確認）の進み具合
@@ -113,7 +110,10 @@ final class TrainingCoordinator: ObservableObject {
 
         let process = Process()
         process.executableURL = helper
-        process.arguments = ["train", "--base", basePath, "--out", outputURL.path]
+        // エポック・学習率は設定画面の値（`TrainingSettings`）。それ以外は `TrainingConfig` の既定
+        process.arguments = ["train", "--base", basePath, "--out", outputURL.path,
+                             "--epochs", String(TrainingSettings.epochs),
+                             "--lr", String(format: "%g", TrainingSettings.learningRate)]
         process.environment = Self.environment()
         let output = Pipe()
         process.standardOutput = output

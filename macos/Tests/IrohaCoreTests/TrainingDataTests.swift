@@ -47,63 +47,69 @@ final class TrainingDataTests: XCTestCase {
         XCTAssertTrue(TrainingDataBuilder.isCorrection(entry("ない", "ない", proposed: nil)))
     }
 
-    private func screening(mistakes: Int, correct: Int) -> TrainingScreener.Screening {
-        var result = TrainingScreener.Screening()
-        result.correct = (0..<correct).map { unchanged("せいかい\($0)", "正解\($0)", at: TimeInterval($0)) }
-        result.mistakes = (0..<mistakes).map {
+    /// 正解 `correct` 件 → 間違い `mistakes` 件の順に並んだ記録と、その変換し直し結果
+    private func records(mistakes: Int, correct: Int) -> (entries: [ConversionLogEntry], screening: TrainingScreener.Screening) {
+        var screening = TrainingScreener.Screening()
+        screening.correct = (0..<correct).map { unchanged("せいかい\($0)", "正解\($0)", at: TimeInterval($0)) }
+        screening.mistakes = (0..<mistakes).map {
             correction("まちがい\($0)", proposed: "間違\($0)", committed: "真違\($0)", at: TimeInterval(1000 + $0))
         }
-        return result
+        return (screening.correct + screening.mistakes, screening)
     }
 
-    /// モデルが間違えた記録を重み付けし、正解できた記録はアンカーとして混ぜる。評価用は時系列の末尾から取る
-    func testStratifyWeightsMistakesAndMixesAnchors() {
-        var config = TrainingConfig()
-        config.mistakeWeight = 8
-        config.anchorRatio = 1.0
-        let split = TrainingDataBuilder.stratify(screening(mistakes: 10, correct: 100), config: config)
+    /// 評価用は時系列の末尾から取り、残り全件が訓練データになる（重み付けや混合はしない）
+    func testStratifyHoldsOutTailAndTrainsOnTheRest() {
+        let (entries, screening) = records(mistakes: 12, correct: 100)
+        let split = TrainingDataBuilder.stratify(entries: entries, screening: screening)
 
-        // 間違い 10 件のうち 2 割 = 2 件を評価に回す（新しい方から）
-        XCTAssertEqual(split.heldOutMistakes.count, 2)
-        XCTAssertEqual(split.heldOutMistakes.map(\.reading), ["まちがい8", "まちがい9"])
-        XCTAssertEqual(split.trainMistakes.count, 8)
+        // 間違い 12 件のうち 3 分の 1 = 4 件を評価に回す（新しい方から）
+        XCTAssertEqual(split.heldOutMistakes.map(\.reading), ["まちがい8", "まちがい9", "まちがい10", "まちがい11"])
         // 正解できた記録は上限 40 件まで評価（壊れていないかの確認）に回す
         XCTAssertEqual(split.heldOutCorrect.count, 40)
-        // アンカーは「間違い 8 件 × 重み 8 = 64 行」に合わせたいが、評価に 40 件回した残りは 60 件なので 60 件
-        XCTAssertEqual(split.anchors.count, 60)
-        XCTAssertEqual(split.trainLines.count, 8 * 8 + 60)
-        // アンカーは評価に回した末尾 40 件を含まない
-        XCTAssertTrue(split.anchors.allSatisfy { !split.heldOutCorrect.contains($0) })
-        // アンカーは時系列全体から取る（末尾だけに偏らない）
-        XCTAssertEqual(split.anchors.first?.reading, "せいかい0")
+        XCTAssertEqual(split.heldOutCorrect.first?.reading, "せいかい60")
+        // 訓練は残り全件・時系列順・重複なし
+        XCTAssertEqual(split.train.count, 112 - 4 - 40)
+        XCTAssertEqual(split.trainLines.count, split.train.count)
+        XCTAssertEqual(split.train.first?.reading, "せいかい0")
+        XCTAssertEqual(split.train.last?.reading, "まちがい7")
+        XCTAssertTrue(split.train.allSatisfy { !split.heldOutMistakes.contains($0) && !split.heldOutCorrect.contains($0) })
+    }
+
+    /// 変換し直しの上限に入らなかった古い記録も訓練には使う
+    func testStratifyTrainsOnUnscreenedEntriesToo() {
+        let (entries, screening) = records(mistakes: 6, correct: 10)
+        let old = [unchanged("ふるい", "古い", at: -100)]
+        let split = TrainingDataBuilder.stratify(entries: old + entries, screening: screening)
+        XCTAssertEqual(split.train.first?.reading, "ふるい")
+        XCTAssertEqual(split.train.count, 1 + 16 - 2 - 5)
     }
 
     /// 間違いが少ないときも 1 件は評価に取り分ける（0 だと効果が測れない）
     func testStratifyWithFewMistakes() {
-        let split = TrainingDataBuilder.stratify(screening(mistakes: 3, correct: 20), config: TrainingConfig())
+        let (entries, screening) = records(mistakes: 3, correct: 20)
+        let split = TrainingDataBuilder.stratify(entries: entries, screening: screening)
         XCTAssertEqual(split.heldOutMistakes.count, 1)
-        XCTAssertEqual(split.trainMistakes.count, 2)
 
         // 間違いが 1 件だけなら評価には回さず学習に使う（唯一の例を評価に取られると学ぶものが無くなる）
-        let single = TrainingDataBuilder.stratify(screening(mistakes: 1, correct: 20), config: TrainingConfig())
-        XCTAssertTrue(single.heldOutMistakes.isEmpty)
-        XCTAssertEqual(single.trainMistakes.count, 1)
+        let (single, singleScreening) = records(mistakes: 1, correct: 20)
+        let singleSplit = TrainingDataBuilder.stratify(entries: single, screening: singleScreening)
+        XCTAssertTrue(singleSplit.heldOutMistakes.isEmpty)
+        XCTAssertTrue(singleSplit.train.contains { $0.reading == "まちがい0" })
+
+        // 間違いが 0 件でも学習はできる（効果は測れないが、その人の文章は学べる）
+        let (none, noneScreening) = records(mistakes: 0, correct: 20)
+        let noneSplit = TrainingDataBuilder.stratify(entries: none, screening: noneScreening)
+        XCTAssertTrue(noneSplit.heldOutMistakes.isEmpty)
+        XCTAssertEqual(noneSplit.train.count, 10)
     }
 
-    /// アンカーを 0 にすると間違いだけで学習する
-    func testStratifyWithoutAnchors() {
-        var config = TrainingConfig()
-        config.anchorRatio = 0
-        config.mistakeWeight = 4
-        let split = TrainingDataBuilder.stratify(screening(mistakes: 10, correct: 50), config: config)
-        XCTAssertTrue(split.anchors.isEmpty)
-        XCTAssertEqual(split.trainLines.count, split.trainMistakes.count * 4)
-    }
-
-    func testSampleSpreadsEvenly() {
-        XCTAssertEqual(TrainingDataBuilder.sample(Array(0..<10), count: 5), [0, 2, 4, 6, 8])
-        XCTAssertEqual(TrainingDataBuilder.sample(Array(0..<3), count: 10), [0, 1, 2])
-        XCTAssertTrue(TrainingDataBuilder.sample(Array(0..<10), count: 0).isEmpty)
+    /// 評価用の上限（間違い 25 件・正解 40 件）
+    func testStratifyCapsHeldOut() {
+        let (entries, screening) = records(mistakes: 300, correct: 1000)
+        let split = TrainingDataBuilder.stratify(entries: entries, screening: screening)
+        XCTAssertEqual(split.heldOutMistakes.count, TrainingDataBuilder.maxHeldOutMistakes)
+        XCTAssertEqual(split.heldOutCorrect.count, TrainingDataBuilder.maxHeldOutCorrect)
+        XCTAssertEqual(split.train.count, 1300 - 25 - 40)
     }
 
     func testEncodeSetsLossFromAtOutputTag() throws {
@@ -144,20 +150,10 @@ final class TrainingDataTests: XCTestCase {
         XCTAssertEqual(TrainingDataBuilder.heldOutTSV([]), "")
     }
 
-    /// 学べる例が少ないうちは弱い設定（悪化を出さない側）、増えたら学習率を上げる
-    func testRecommendedConfigIsGentleWhenMistakesAreFew() {
-        let few = TrainingConfig.recommended(forMistakeCount: 10)
-        XCTAssertEqual(few.learningRate, 5e-5)
-        XCTAssertEqual(few.anchorRatio, 2.0)
-        let many = TrainingConfig.recommended(forMistakeCount: 200)
-        XCTAssertEqual(many.learningRate, 1e-4)
-        XCTAssertEqual(many.anchorRatio, 1.0)
-    }
-
     /// JSON Lines の往復（ヘルパー → 設定画面）
     func testTrainingEventRoundTrip() throws {
         let events: [TrainingEvent] = [
-            .data(TrainingDataSummary(trainLines: 128, screened: 385, mistakes: 8, anchors: 64, heldOutMistakes: 2,
+            .data(TrainingDataSummary(records: 400, screened: 385, mistakes: 12, trainLines: 356, heldOutMistakes: 4,
                                       heldOutCorrect: 40)),
             .stage("train"),
             .progress(stage: "screen", done: 120, total: 385),
@@ -166,8 +162,9 @@ final class TrainingDataTests: XCTestCase {
                                                           correct: TrainingScore(exact: 40, total: 40))),
             .done(TrainingResult(adapter: "/tmp/a.gguf", mistakesTSV: "/tmp/a.mistakes.tsv", correctTSV: nil,
                                  trainTSV: nil, before: TrainingScores(), after: TrainingScores(),
-                                 data: TrainingDataSummary(trainLines: 1, screened: 1, mistakes: 1, anchors: 0,
-                                                           heldOutMistakes: 0, heldOutCorrect: 0))),
+                                 data: TrainingDataSummary(records: 1, screened: 1, mistakes: 1, trainLines: 1,
+                                                           heldOutMistakes: 0, heldOutCorrect: 0),
+                                 elapsed: 42.5)),
             .error("失敗"),
         ]
         for event in events {

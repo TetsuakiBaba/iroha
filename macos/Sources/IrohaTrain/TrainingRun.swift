@@ -2,7 +2,13 @@ import Foundation
 import MLX
 import IrohaCore
 
-/// 追加学習の一連の流れ（データ準備 → 学習前評価 → 学習 → アダプタ書き出し → 学習後評価）。
+/// 追加学習の一連の流れ。
+///
+/// 1. 記録をいまのモデル（アダプタなし）で変換し直し、間違いを見つける
+/// 2. 間違いの一部と正解の一部を評価用に取り分け、残り全件を訓練データにする
+/// 3. LoRA を学習してアダプタを書き出す
+/// 4. 評価用の記録をアダプタなし／ありで変換して結果を並べる
+///
 /// 進捗は `TrainingEvent` で通知する（`iroha-train` は JSON Lines にして標準出力へ流す）
 public enum TrainingRun {
 
@@ -12,7 +18,7 @@ public enum TrainingRun {
         /// 出力するアダプタ（GGUF）のパス
         public var outputPath: String
         public var config: TrainingConfig?
-        /// 学習前後の held-out 評価を省く（学習ループだけを見たいとき）
+        /// 学習後のアダプタなし／あり評価を省く（学習ループだけを見たいとき）
         public var skipEvaluation = false
         public var log: ConversionLog = .shared
 
@@ -25,54 +31,41 @@ public enum TrainingRun {
 
     public enum RunError: Error, CustomStringConvertible {
         case notEnoughRecords(Int)
-        case notEnoughMistakes(screened: Int, mistakes: Int)
         case cancelled
         public var description: String {
             switch self {
             case .notEnoughRecords(let count):
                 return "記録が \(count) 件しかありません（\(minimumRecords) 件以上必要）"
-            case .notEnoughMistakes(let screened, let mistakes):
-                return "いまのモデルは記録 \(screened) 件のうち \(screened - mistakes) 件を既に正解しており、"
-                    + "学習できる間違いは \(mistakes) 件だけでした（\(minimumMistakes) 件以上必要）。"
-                    + "誤変換を直した確定が溜まってから学習してください"
             case .cancelled: return "中止されました"
             }
         }
     }
 
-    /// `info` 用の集計（モデルを読まない軽い処理。学習できる間違いの数は実際に変換してみないと
-    /// 分からないので、ここでは記録の件数と「ユーザが直した確定」の件数だけを返す）
+    /// `info` 用の集計（モデルを読まない軽い処理。記録の件数と対応可否だけを返す）
     public struct Summary: Sendable, Codable {
         public var totalEntries: Int
         public var usableEntries: Int
-        /// ユーザがエンジンの提示を直した確定（目安。学習対象は実際に変換して選び直す）
-        public var corrections: Int
         public var architecture: String
         public var supported: Bool
         public var minimumRecords: Int
-        public var minimumMistakes: Int
     }
 
     /// 学習を始めるのに必要な記録の数
     public static let minimumRecords = 30
-    /// 学習に必要な「モデルが間違えた記録」の数（評価用に取り分けたうえで学習に残る数を確保する）
-    public static let minimumMistakes = 5
 
     public static func summarize(basePath: String, log: ConversionLog = .shared) throws -> Summary {
         let all = log.fileURLs().flatMap { log.entries(in: $0) }
         let usable = TrainingDataBuilder.dedupe(TrainingDataBuilder.collect(from: log))
-        let corrections = usable.filter(TrainingDataBuilder.isCorrection).count
         let architecture = (try? GGUFFile(path: basePath))?.architecture ?? ""
-        return Summary(totalEntries: all.count, usableEntries: usable.count, corrections: corrections,
-                       architecture: architecture,
+        return Summary(totalEntries: all.count, usableEntries: usable.count, architecture: architecture,
                        supported: TrainableModels.supportedArchitectures.contains(architecture),
-                       minimumRecords: minimumRecords, minimumMistakes: minimumMistakes)
+                       minimumRecords: minimumRecords)
     }
 
     public static func run(_ options: Options, emit: @escaping @Sendable (TrainingEvent) -> Void,
                            shouldStop: @escaping @Sendable () -> Bool = { false }) async throws {
-        // 1. 記録を集め、いまのモデルが間違えるものを選り分ける。
-        // これが学習前の評価そのものになる（間違えた群は 0 件正解・正解群は全件正解）
+        let started = Date()
+        // 1. 記録を集め、いまのモデル（アダプタなし）で変換し直して間違いを見つける
         let entries = TrainingDataBuilder.dedupe(TrainingDataBuilder.collect(from: options.log))
         guard entries.count >= minimumRecords else { throw RunError.notEnoughRecords(entries.count) }
 
@@ -81,19 +74,17 @@ public enum TrainingRun {
             // 流しすぎないよう間引く
             if done % 10 == 0 || done == total { emit(.progress(stage: "screen", done: done, total: total)) }
         }
-        let screened = screening.mistakes.count + screening.correct.count
-        guard screening.mistakes.count >= minimumMistakes else {
-            throw RunError.notEnoughMistakes(screened: screened, mistakes: screening.mistakes.count)
-        }
         if shouldStop() { throw RunError.cancelled }
 
-        let config = options.config ?? TrainingConfig.recommended(forMistakeCount: screening.mistakes.count)
-        let split = TrainingDataBuilder.stratify(screening, config: config)
+        // 2. 評価用を取り分け、残り全件を訓練データにする
+        let config = options.config ?? TrainingConfig()
+        let split = TrainingDataBuilder.stratify(entries: entries, screening: screening)
         let tokenizer = try VocabTokenizer(modelPath: options.basePath)
         let examples = try TrainingDataBuilder.encode(lines: split.trainLines, tokenize: { tokenizer.tokenize($0) },
                                                       eos: tokenizer.terminator, outputTag: tokenizer.outputTagTokens)
-        let summary = TrainingDataSummary(trainLines: examples.count, screened: screened,
-                                          mistakes: split.trainMistakes.count, anchors: split.anchors.count,
+        let summary = TrainingDataSummary(records: entries.count,
+                                          screened: screening.mistakes.count + screening.correct.count,
+                                          mistakes: screening.mistakes.count, trainLines: examples.count,
                                           heldOutMistakes: split.heldOutMistakes.count,
                                           heldOutCorrect: split.heldOutCorrect.count)
         emit(.data(summary))
@@ -102,15 +93,9 @@ public enum TrainingRun {
         // 何を覚えさせたかも確かめられる）
         let mistakesTSV = writeTSV(split.heldOutMistakes, to: options.outputPath + ".mistakes.tsv")
         let correctTSV = writeTSV(split.heldOutCorrect, to: options.outputPath + ".correct.tsv")
-        let trainTSV = writeTSV(split.trainMistakes, to: options.outputPath + ".train.tsv")
+        let trainTSV = writeTSV(split.train, to: options.outputPath + ".train.tsv")
 
-        // 2. 学習前の一致数は選り分けの結果そのもの（改めて変換しなくても分かる）
-        let before = TrainingScores(
-            mistakes: TrainingScore(exact: 0, total: split.heldOutMistakes.count),
-            correct: TrainingScore(exact: split.heldOutCorrect.count, total: split.heldOutCorrect.count))
-        emit(.eval(phase: "before", scores: before))
-
-        // 3. f16 ベース → MLX へ
+        // 3. f16 ベース → MLX へ → 学習 → アダプタ書き出し
         emit(.stage("quantize"))
         let f16 = try ModelRequantizer.ensureF16(basePath: options.basePath)
         emit(.stage("load"))
@@ -118,24 +103,32 @@ public enum TrainingRun {
         let model = try TrainableModels.load(gguf: gguf, lora: LoRASpec(config))
         guard !model.loraLayers.isEmpty else { throw TrainableLMError.missingTensor("LoRA 対象の層が見つかりません") }
 
-        // 4. 学習
         emit(.stage("train"))
         try trainAndExport(model: model, examples: examples, config: config, padToken: tokenizer.terminator,
                            architecture: gguf.architecture ?? "", outputPath: options.outputPath, emit: emit,
                            shouldStop: shouldStop)
 
-        // 5. 学習後の評価（同じ 2 群を、同じ量子化ベース + アダプタで測る）
+        // 4. 評価用の記録を、同じ量子化ベースでアダプタなし／ありの両方で変換して並べる。
+        // 「なし」は変換し直しの結果（間違い 0 件・正解は全件）と同じになるはずだが、
+        // 見せる数字は実際に測ったものにする
+        var before = TrainingScores()
         var after = TrainingScores()
         if !options.skipEvaluation {
             emit(.stage("evaluate"))
-            let result = try await TrainingEvaluator.evaluate(
+            let base = try await TrainingEvaluator.evaluate(
+                mistakes: split.heldOutMistakes, correct: split.heldOutCorrect,
+                modelPath: options.basePath, adapterPath: nil)
+            before = TrainingScores(mistakes: base.mistakes.score, correct: base.correct.score)
+            emit(.eval(phase: "before", scores: before))
+            let adapted = try await TrainingEvaluator.evaluate(
                 mistakes: split.heldOutMistakes, correct: split.heldOutCorrect,
                 modelPath: options.basePath, adapterPath: options.outputPath)
-            after = TrainingScores(mistakes: result.mistakes.score, correct: result.correct.score)
+            after = TrainingScores(mistakes: adapted.mistakes.score, correct: adapted.correct.score)
             emit(.eval(phase: "after", scores: after))
         }
         emit(.done(TrainingResult(adapter: options.outputPath, mistakesTSV: mistakesTSV, correctTSV: correctTSV,
-                                  trainTSV: trainTSV, before: before, after: after, data: summary)))
+                                  trainTSV: trainTSV, before: before, after: after, data: summary,
+                                  elapsed: Date().timeIntervalSince(started))))
     }
 
     private static func writeTSV(_ entries: [ConversionLogEntry], to path: String) -> String? {
