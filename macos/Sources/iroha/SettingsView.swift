@@ -1121,7 +1121,8 @@ private struct TrainingResultView: View {
                     + "（\(result.data.trainLines - result.data.anchors) 行）、"
                     + "元から正しく変換できていた記録 \(result.data.anchors) 件を足した"
                     + "\(result.data.trainLines) 行で学習しました"
-                    + "（正しい変換を混ぜるのは、できていた変換を忘れないためです）。")
+                    + "（正しく変換できていた記録も入れるのは、自分の文脈と言葉づかいをまとめて"
+                    + "覚えさせるためです。できていた変換が崩れるのも防げます）。")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
