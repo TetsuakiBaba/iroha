@@ -9,7 +9,8 @@ import IrohaTrain
 // 使い方:
 //   iroha-train info  --base <model.gguf>                       : 記録の件数・対応可否を JSON で出す（MLX に触らない）
 //   iroha-train train --base <model.gguf> --out <adapter.gguf>  : 学習して GGUF アダプタを書く
-//               [--epochs N] [--rank N] [--alpha F] [--lr F] [--batch N] [--no-eval] [--json]
+//               [--epochs N] [--rank N] [--alpha F] [--lr F] [--batch N]
+//               [--mistake-weight N] [--anchor-ratio F] [--no-eval]
 //   環境変数 IROHA_DATA_DIR でデータフォルダ（記録の場所）を上書き。無ければ IME 本体の設定に従う
 //
 // MLX の Metal カーネル（mlx-swift_Cmlx.bundle/default.metallib）は実行ファイルと同じ場所か
@@ -42,7 +43,8 @@ func usage() -> Never {
     FileHandle.standardError.write("""
     使い方:
       iroha-train info  --base <model.gguf>
-      iroha-train train --base <model.gguf> --out <adapter.gguf> [--epochs N] [--rank N] [--alpha F] [--lr F] [--batch N] [--no-eval]
+      iroha-train train --base <model.gguf> --out <adapter.gguf> [--epochs N] [--rank N] [--alpha F] [--lr F]
+                        [--batch N] [--mistake-weight N] [--anchor-ratio F] [--no-eval]
 
     """.data(using: .utf8)!)
     exit(2)
@@ -97,13 +99,16 @@ case "train":
     guard let outputPath = arguments.options["out"] else { usage() }
     var options = TrainingRun.Options(basePath: basePath, outputPath: outputPath)
     options.skipEvaluation = arguments.flags.contains("no-eval")
-    if arguments.options.keys.contains(where: { ["epochs", "rank", "alpha", "lr", "batch"].contains($0) }) {
-        var config = TrainingConfig.recommended(forExampleCount: (try? TrainingRun.summarize(basePath: basePath).usableEntries) ?? 0)
+    let tunables = ["epochs", "rank", "alpha", "lr", "batch", "mistake-weight", "anchor-ratio"]
+    if arguments.options.keys.contains(where: tunables.contains) {
+        var config = TrainingConfig()
         if let value = arguments.int("epochs") { config.epochs = value }
         if let value = arguments.int("rank") { config.rank = value }
         if let value = arguments.float("alpha") { config.alpha = value }
         if let value = arguments.float("lr") { config.learningRate = value }
         if let value = arguments.int("batch") { config.batchSize = value }
+        if let value = arguments.int("mistake-weight") { config.mistakeWeight = value }
+        if let value = arguments.float("anchor-ratio") { config.anchorRatio = Double(value) }
         options.config = config
     }
 

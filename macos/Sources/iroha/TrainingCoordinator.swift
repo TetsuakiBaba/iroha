@@ -11,26 +11,24 @@ final class TrainingCoordinator: ObservableObject {
     struct Info: Codable, Equatable {
         var totalEntries: Int
         var usableEntries: Int
-        var trainCount: Int
-        var heldOutCount: Int
+        /// ユーザがエンジンの提示を直した確定（目安。学習対象は学習時に実際に変換して選び直す）
+        var corrections: Int
         var architecture: String
         var supported: Bool
-        var recommendedEpochs: Int
+        var minimumRecords: Int
+        var minimumMistakes: Int
     }
 
-    struct Result: Equatable {
-        var adapterPath: String
-        var heldOutTSV: String?
-        var before: Int
-        var after: Int
+    /// 件数で進む処理（記録の確認）の進み具合
+    struct Progress: Equatable {
+        var done: Int
         var total: Int
-        var trainCount: Int
     }
 
     enum State: Equatable {
         case idle
-        case running(stage: String, epoch: Int, epochs: Int, step: Int, steps: Int, loss: Float?)
-        case done(Result)
+        case running(stage: String, step: TrainingStep?, progress: Progress?)
+        case done(TrainingResult)
         case failed(String)
         case cancelled
     }
@@ -151,7 +149,7 @@ final class TrainingCoordinator: ObservableObject {
                 NSLog("iroha: iroha-train 終了 status=\(process.terminationStatus)")
             }
         }
-        state = .running(stage: "start", epoch: 0, epochs: 0, step: 0, steps: 0, loss: nil)
+        state = .running(stage: "start", step: nil, progress: nil)
         do {
             try process.run()
             self.process = process
@@ -188,21 +186,16 @@ final class TrainingCoordinator: ObservableObject {
         // キャンセル後に届く進捗は無視
         if case .cancelled = state { return }
         switch event {
-        case .data:
+        case .data, .eval:
             break
         case .stage(let stage):
-            if case .running(_, let epoch, let epochs, let step, let steps, let loss) = state {
-                state = .running(stage: stage, epoch: epoch, epochs: epochs, step: step, steps: steps, loss: loss)
-            } else {
-                state = .running(stage: stage, epoch: 0, epochs: 0, step: 0, steps: 0, loss: nil)
-            }
-        case .step(let epoch, let epochs, let step, let steps, let loss, _):
-            state = .running(stage: "train", epoch: epoch, epochs: epochs, step: step, steps: steps, loss: loss)
-        case .eval:
-            break
-        case .done(let adapter, let heldOutTSV, let before, let after, let total, let trainCount):
-            state = .done(Result(adapterPath: adapter, heldOutTSV: heldOutTSV, before: before, after: after,
-                                 total: total, trainCount: trainCount))
+            state = .running(stage: stage, step: nil, progress: nil)
+        case .progress(let stage, let done, let total):
+            state = .running(stage: stage, step: nil, progress: Progress(done: done, total: total))
+        case .step(let step):
+            state = .running(stage: "train", step: step, progress: nil)
+        case .done(let result):
+            state = .done(result)
         case .error(let message):
             state = .failed(message)
         }

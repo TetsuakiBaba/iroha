@@ -1,26 +1,45 @@
 import Foundation
 
-/// 追加学習（LoRA）のハイパーパラメータ。少量の個人データで壊滅的忘却を起こさない側に寄せた既定値
+/// 追加学習（LoRA）のハイパーパラメータ。
+///
+/// 個人の記録はいまのモデルが既に正解できるものが大半（実測で 96.9%）で、それらは損失にほとんど
+/// 寄与せず学習を薄めるだけなので、訓練データは**モデルが間違えた記録（`TrainingScreener`）を
+/// 重み付けして**作り、正解できる記録は忘却を抑えるアンカーとして少量だけ混ぜる
 public struct TrainingConfig: Sendable, Codable, Equatable {
     public var rank = 8
     public var alpha: Float = 16
-    public var learningRate: Float = 1e-4
+    public var learningRate: Float = 5e-5
     public var epochs = 3
     public var batchSize = 16
     /// LoRA を掛けるテンソル名の末尾（`blk.N.<名前>.weight`）。出力層・埋め込みは対象外
     public var targets = ["attn_qkv", "attn_output", "ffn_up", "ffn_down"]
-    /// 時系列の末尾から評価用に取り分ける割合と最低件数
-    public var heldOutFraction = 0.1
-    public var minHeldOut = 20
-    /// 修正して確定した行（`edited == true`）を 2 回入れる（少データで「直した変換」を強調する）
-    public var duplicateEdited = true
+
+    /// モデルが間違えた記録を訓練データに入れる回数（希少なので重くする）
+    public var mistakeWeight = 8
+    /// 重み付け後の行数に対して混ぜるアンカー（モデルが正解できる記録）の比率。
+    /// 0 にすると間違えた記録だけで学習し、忘却しやすくなる
+    public var anchorRatio = 2.0
+
+    /// 間違えた記録のうち評価に回す割合と上限（時系列の末尾から取る）
+    public var heldOutMistakeFraction = 0.2
+    public var maxHeldOutMistakes = 25
+    /// 正解できる記録のうち評価（壊れていないかの確認）に回す上限
+    public var maxHeldOutCorrect = 40
 
     public init() {}
 
-    /// データ量に応じた既定（200 行未満なら epochs を増やす）
-    public static func recommended(forExampleCount count: Int) -> TrainingConfig {
+    /// 学習対象の数に応じた既定。
+    ///
+    /// 既定は「効果より悪化を出さない」側に寄せてある（2026-09-18 実測: 記録 376 件・間違い 10 件では
+    /// どの設定でも間違いは直らず、強い設定ほど元から正しかった変換を壊した。
+    /// lr 1e-4/5 エポックで 38/40、lr 5e-5/3 エポック + アンカー 2 倍で 39/40）。
+    /// 学べる例が増えたら学習率を上げる
+    public static func recommended(forMistakeCount count: Int) -> TrainingConfig {
         var config = TrainingConfig()
-        if count < 200 { config.epochs = 5 }
+        if count >= 50 {
+            config.learningRate = 1e-4
+            config.anchorRatio = 1.0
+        }
         return config
     }
 }
@@ -28,7 +47,7 @@ public struct TrainingConfig: Sendable, Codable, Equatable {
 /// 学習 1 例（トークン化済み）
 public struct TrainingExample: Sendable, Equatable {
     public let line: String
-    /// `trainingLine` のトークン列 + EOS
+    /// `trainingLine` のトークン列 + 終端トークン
     public let tokens: [Int32]
     /// 損失を掛け始める位置。`targets[t] = tokens[t+1]` が U+EE01 の次のトークンになる t
     /// （= U+EE01 を表すトークン列の最後のインデックス）。`training/train.py` の `-100` マスクと同じ
@@ -39,6 +58,20 @@ public struct TrainingExample: Sendable, Equatable {
         self.tokens = tokens
         self.lossFrom = lossFrom
     }
+}
+
+/// 訓練用と評価用に振り分けた結果
+public struct TrainingSplit: Sendable {
+    /// 訓練に使う「モデルが間違えた記録」
+    public var trainMistakes: [ConversionLogEntry] = []
+    /// 訓練に混ぜるアンカー（モデルが正解できる記録）
+    public var anchors: [ConversionLogEntry] = []
+    /// 評価用の「間違えた記録」（学習で当たるようになったか。学習前は 0 件正解と分かっている）
+    public var heldOutMistakes: [ConversionLogEntry] = []
+    /// 評価用の「正解できる記録」（壊れていないか。学習前は全件正解と分かっている）
+    public var heldOutCorrect: [ConversionLogEntry] = []
+    /// 重み付け・混合済みの訓練行
+    public var trainLines: [String] = []
 }
 
 public enum TrainingDataError: Error, CustomStringConvertible {
@@ -68,6 +101,11 @@ public enum TrainingDataBuilder {
         return hasKana
     }
 
+    /// モデルの出力を直した確定か（`edited` が不明な F6〜F10 の確定も、ユーザが形を指定した以上は修正として扱う）
+    public static func isCorrection(_ entry: ConversionLogEntry) -> Bool {
+        entry.edited != false
+    }
+
     /// 全ログファイルから使える記録を時系列順に集める
     public static func collect(from log: ConversionLog) -> [ConversionLogEntry] {
         log.fileURLs()
@@ -83,22 +121,43 @@ public enum TrainingDataBuilder {
         return entries.enumerated().filter { lastIndex[$0.element.trainingLine] == $0.offset }.map(\.element)
     }
 
-    /// 時系列の末尾を評価用（held-out）に取り分ける。件数は `fraction` と `minimum` の大きい方、
-    /// ただし全体の半分まで
-    public static func split(_ entries: [ConversionLogEntry], heldOutFraction fraction: Double, minHeldOut minimum: Int)
-        -> (train: [ConversionLogEntry], heldOut: [ConversionLogEntry])
-    {
-        let count = min(max(Int(Double(entries.count) * fraction), minimum), entries.count / 2)
-        guard count > 0 else { return (entries, []) }
-        return (Array(entries.dropLast(count)), Array(entries.suffix(count)))
+    /// 評価用を時系列の末尾から取り分けて訓練行を組み立てる（`TrainingScreener` の結果を渡す）
+    public static func stratify(_ screening: TrainingScreener.Screening, config: TrainingConfig) -> TrainingSplit {
+        let mistakes = screening.mistakes
+        let correct = screening.correct
+
+        // 評価用に取る「間違えた記録」。少ないときは 1 件でも取る（0 だと効果が測れない）。
+        // ただし 3 分の 1 を超えて取らない（学習に残す分を確保する）。1 件しかなければ学習に回す
+        let heldOutMistakeCount: Int = {
+            guard mistakes.count >= 4 else { return mistakes.count >= 2 ? 1 : 0 }
+            let target = max(2, Int((Double(mistakes.count) * config.heldOutMistakeFraction).rounded()))
+            return min(target, config.maxHeldOutMistakes, mistakes.count / 3)
+        }()
+        let heldOutCorrectCount = min(correct.count / 2, config.maxHeldOutCorrect)
+
+        var split = TrainingSplit()
+        split.heldOutMistakes = Array(mistakes.suffix(heldOutMistakeCount))
+        split.heldOutCorrect = Array(correct.suffix(heldOutCorrectCount))
+        split.trainMistakes = Array(mistakes.dropLast(heldOutMistakeCount))
+
+        let remainingCorrect = Array(correct.dropLast(heldOutCorrectCount))
+        let weighted = split.trainMistakes.count * max(config.mistakeWeight, 1)
+        let anchorCount = min(remainingCorrect.count, Int(Double(weighted) * max(config.anchorRatio, 0)))
+        // アンカーは時系列全体から均等に取る（末尾に偏らせない）
+        split.anchors = sample(remainingCorrect, count: anchorCount)
+
+        split.trainLines =
+            split.trainMistakes.flatMap { Array(repeating: $0.trainingLine, count: max(config.mistakeWeight, 1)) }
+            + split.anchors.map(\.trainingLine)
+        return split
     }
 
-    /// 学習行にする。`duplicateEdited` なら修正した確定を 2 回入れる
-    public static func trainingLines(_ entries: [ConversionLogEntry], duplicateEdited: Bool) -> [String] {
-        entries.flatMap { entry -> [String] in
-            let line = entry.trainingLine
-            return duplicateEdited && entry.edited == true ? [line, line] : [line]
-        }
+    /// `items` から `count` 件を均等間隔で取る（決定的。同じ入力なら同じ結果）
+    static func sample<T>(_ items: [T], count: Int) -> [T] {
+        guard count > 0, !items.isEmpty else { return [] }
+        guard count < items.count else { return items }
+        let step = Double(items.count) / Double(count)
+        return (0..<count).map { items[min(items.count - 1, Int(Double($0) * step))] }
     }
 
     /// トークン化して損失位置を付ける。`outputTag` は U+EE01 のトークン列（`VocabTokenizer.outputTagTokens`。
@@ -114,7 +173,7 @@ public enum TrainingDataBuilder {
                 throw TrainingDataError.outputTagMissing(line)
             }
             tokens.append(eos)
-            // タグの直後に EOS しか無い（出力が空）例は学習に入れない
+            // タグの直後に終端しか無い（出力が空）例は学習に入れない
             guard tagEnd + 2 < tokens.count else { continue }
             examples.append(TrainingExample(line: line, tokens: tokens, lossFrom: tagEnd))
         }

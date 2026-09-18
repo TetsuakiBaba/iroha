@@ -182,6 +182,7 @@ private struct PredictionDelayRow: View {
 private struct DictionarySettingsTab: View {
     @AppStorage(LearningSettings.enabledKey) private var learningEnabled = true
     @AppStorage(ConversionLogSettings.enabledKey) private var conversionLogEnabled = false
+    @AppStorage(ConversionLogSettings.scopeKey) private var conversionLogScope = ConversionLogSettings.Scope.all.rawValue
     @AppStorage(UserDictionarySync.autoSyncKey) private var syncSystemDictionary = false
     @ObservedObject private var uiState = SettingsUIState.shared
 
@@ -254,6 +255,12 @@ private struct DictionarySettingsTab: View {
 
             Section("変換記録") {
                 Toggle("確定した変換を記録する", isOn: $conversionLogEnabled)
+                Picker("記録する範囲", selection: $conversionLogScope) {
+                    ForEach(ConversionLogSettings.Scope.allCases) { scope in
+                        Text(scope.label).tag(scope.rawValue)
+                    }
+                }
+                .disabled(!conversionLogEnabled)
                 LabeledContent("記録したデータ") {
                     HStack {
                         Text(Self.formatSize(conversionLogSize)).foregroundStyle(.secondary)
@@ -268,6 +275,8 @@ private struct DictionarySettingsTab: View {
                 }
                 Text("確定した変換を、そのときモデルに渡した文脈（カーソル手前の文章の末尾40文字）・読み・"
                     + "モデルの出力・確定した文字列とともに1件ずつ記録します。"
+                    + "追加学習の中身になるのは「直した確定」だけですが、「すべての確定」にしておくと"
+                    + "学習で元の変換が壊れていないかも測れます（モデル > 自分の入力で追加学習）。"
                     + "記録はデータフォルダ内の logs/conversions/ にこのMacのファイルとして残るだけで、"
                     + "どこにも送信されません。あとでこの記録を使って、自分の入力に合わせた変換モデルの"
                     + "追加学習（LoRAなど）ができます。上の「変換の学習」とは別のもので、"
@@ -927,7 +936,10 @@ private struct TrainingSection: View {
             adapterField
             Text("確定した変換の記録（辞書・学習タブの「変換記録」）を使って、使用中のモデルに LoRA アダプタを"
                 + "追加学習します。ベースのモデルは変えず、小さなアダプタファイルを models/adapters/ に作ります。"
-                + "記録の新しい 1 割は学習に使わず、学習の前後で変換が一致した数を比べるのに使います。"
+                + "まず記録を1件ずつ変換し直して、いまのモデルが間違えるものを選り分け、それを重点的に学習します"
+                + "（正解できている記録は忘れ防止に少量混ぜます）。間違いの新しい方から 2 割は学習に使わず、"
+                + "学習後に「間違いが直った数」と「元から正しかった変換を保てた数」を測るのに使います。"
+                + "使った記録はアダプタと並べて .train.tsv / .mistakes.tsv に残るので、何を覚えさせたか確かめられます。"
                 + "学習は数十秒〜数分かかり、その間 GPU を使います。アダプタの変更は再起動後に反映されます。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -939,9 +951,10 @@ private struct TrainingSection: View {
     }
 
     @ViewBuilder private var recordsRow: some View {
-        LabeledContent("学習に使える記録") {
+        LabeledContent("記録") {
             if let info = coordinator.info {
-                Text("\(info.usableEntries) 件（学習 \(info.trainCount) / 評価 \(info.heldOutCount)）")
+                // 学習対象は学習時に変換し直して選ぶので、ここでは件数の目安だけを出す
+                Text("\(info.usableEntries) 件（自分で直した確定 \(info.corrections) 件）")
                     .foregroundStyle(.secondary)
             } else if let error = coordinator.infoError {
                 Text(error).foregroundStyle(.red).font(.caption)
@@ -964,7 +977,8 @@ private struct TrainingSection: View {
 
     private var canStart: Bool {
         guard let info = coordinator.info else { return false }
-        return info.supported && info.usableEntries >= 20
+        // 学習できる間違いの数は実際に変換してみるまで分からないので、ここでは記録の件数で判断する
+        return info.supported && info.usableEntries >= info.minimumRecords
     }
 
     @ViewBuilder private var trainingRow: some View {
@@ -973,41 +987,29 @@ private struct TrainingSection: View {
             HStack {
                 Button("学習を開始") { coordinator.start(basePath: basePath) }
                     .disabled(!canStart)
-                if let info = coordinator.info, info.usableEntries < 20 {
-                    Text("記録が 20 件以上必要です").font(.caption).foregroundStyle(.secondary)
+                if let info = coordinator.info, info.usableEntries < info.minimumRecords {
+                    Text("記録が \(info.minimumRecords) 件以上必要です")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
-        case .running(let stage, let epoch, let epochs, let step, let steps, let loss):
+        case .running(let stage, let step, let progress):
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    if steps > 0 {
-                        ProgressView(value: Double(step), total: Double(steps))
+                    if let step, step.steps > 0 {
+                        ProgressView(value: Double(step.step), total: Double(step.steps))
+                    } else if let progress, progress.total > 0 {
+                        ProgressView(value: Double(progress.done), total: Double(progress.total))
                     } else {
                         ProgressView().controlSize(.small)
                     }
                     Button("キャンセル") { coordinator.cancel() }
                 }
-                Text(Self.describe(stage: stage, epoch: epoch, epochs: epochs, step: step, steps: steps, loss: loss))
+                Text(Self.describe(stage: stage, step: step, progress: progress))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         case .done(let result):
-            VStack(alignment: .leading, spacing: 4) {
-                if result.total > 0 {
-                    Text("学習完了（\(result.trainCount) 件）。評価用 \(result.total) 件の一致: "
-                        + "学習前 \(result.before) → 学習後 \(result.after)")
-                } else {
-                    Text("学習完了（\(result.trainCount) 件）。")
-                }
-                Text(URL(fileURLWithPath: result.adapterPath).lastPathComponent)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                HStack {
-                    Button("このアダプタを使う") { adapterPath = result.adapterPath }
-                        .disabled(adapterPath == result.adapterPath)
-                    Button("閉じる") { coordinator.reset() }
-                }
-            }
+            TrainingResultView(result: result, adapterPath: $adapterPath, onClose: { coordinator.reset() })
         case .failed(let message):
             VStack(alignment: .leading, spacing: 4) {
                 Text("学習に失敗しました: \(message)").font(.caption).foregroundStyle(.red)
@@ -1021,17 +1023,22 @@ private struct TrainingSection: View {
         }
     }
 
-    private static func describe(stage: String, epoch: Int, epochs: Int, step: Int, steps: Int, loss: Float?) -> String {
+    private static func describe(stage: String, step: TrainingStep?,
+                                 progress: TrainingCoordinator.Progress?) -> String {
         switch stage {
         case "start": return "準備中…"
-        case "evaluate": return "評価中…（学習前後の変換を比べています）"
+        case "screen":
+            guard let progress else { return "いまのモデルの出来を確認中…" }
+            return "いまのモデルの出来を確認中… \(progress.done)/\(progress.total) 件"
+        case "evaluate": return "学習後の変換を確認中…"
         case "quantize": return "ベースモデルを学習用に変換中…"
         case "load": return "モデルを読み込み中…"
         case "export": return "アダプタを書き出し中…"
         default:
-            var text = "学習中 \(step)/\(steps)"
-            if epochs > 0 { text += "（エポック \(epoch)/\(epochs)）" }
-            if let loss { text += String(format: "  損失 %.3f", loss) }
+            guard let step else { return "学習中…" }
+            var text = "学習中 \(step.step)/\(step.steps)"
+            if step.epochs > 0 { text += "（エポック \(step.epoch)/\(step.epochs)）" }
+            text += String(format: "  損失 %.3f", step.loss)
             return text
         }
     }
@@ -1068,6 +1075,59 @@ private struct TrainingSection: View {
                     .foregroundStyle(.secondary)
                 Button("irohaを再起動") { AppRestarter.restartInstalledApp() }
             }
+        }
+    }
+}
+
+/// 学習結果: 「直した変換が当たるようになったか」と「元から正しかった変換が壊れていないか」を並べて出す。
+/// 体感では悪化の方が目立つので、効果だけでなく副作用も必ず見せる
+private struct TrainingResultView: View {
+    let result: TrainingResult
+    @Binding var adapterPath: String
+    let onClose: () -> Void
+
+    private var mistakesDelta: Int { result.after.mistakes.exact - result.before.mistakes.exact }
+    private var correctDelta: Int { result.after.correct.exact - result.before.correct.exact }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("学習完了（記録 \(result.data.screened) 件を確認し、モデルが間違えた \(result.data.mistakes) 件を"
+                + "\(result.data.trainLines) 行に、正解できた記録 \(result.data.anchors) 件を混ぜて学習）")
+            if result.after.mistakes.total > 0 {
+                scoreRow(title: "間違えていた変換", score: result.after.mistakes,
+                         before: result.before.mistakes.exact, delta: mistakesDelta)
+            }
+            if result.after.correct.total > 0 {
+                scoreRow(title: "正しかった変換", score: result.after.correct,
+                         before: result.before.correct.exact, delta: correctDelta)
+            }
+            if result.after.mistakes.total > 0, result.after.mistakes.total < 10 {
+                Text("評価に回せた間違いが \(result.after.mistakes.total) 件と少ないので、この数値はぶれます。"
+                    + "記録が溜まるほど確かな目安になります。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text(URL(fileURLWithPath: result.adapter).lastPathComponent)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button("このアダプタを使う") { adapterPath = result.adapter }
+                    .disabled(adapterPath == result.adapter)
+                Button("閉じる", action: onClose)
+            }
+        }
+    }
+
+    /// 「N/M 件（学習前 K 件 → +2）」の 1 行
+    @ViewBuilder private func scoreRow(title: String, score: TrainingScore, before: Int, delta: Int) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 6) {
+                Text("\(score.exact)/\(score.total) 件")
+                Text(delta == 0 ? "変化なし" : (delta > 0 ? "+\(delta)" : "\(delta)"))
+                    .foregroundStyle(delta == 0 ? .secondary : (delta > 0 ? Color.green : Color.orange))
+                Text("（学習前 \(before) 件）").foregroundStyle(.secondary)
+            }
+            .font(.callout)
         }
     }
 }

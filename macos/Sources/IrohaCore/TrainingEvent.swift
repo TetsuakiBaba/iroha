@@ -1,75 +1,161 @@
 import Foundation
 
+/// 訓練データの内訳
+public struct TrainingDataSummary: Codable, Sendable, Equatable {
+    /// 重み付け・混合後の訓練行数
+    public var trainLines: Int
+    /// 確認した記録の件数
+    public var screened: Int
+    /// 訓練に使う「モデルが間違えた記録」の件数
+    public var mistakes: Int
+    /// 訓練に混ぜたアンカー（モデルが正解できる記録）の件数
+    public var anchors: Int
+    /// 評価用の「間違えた記録」
+    public var heldOutMistakes: Int
+    /// 評価用の「正解できる記録」
+    public var heldOutCorrect: Int
+
+    public init(trainLines: Int, screened: Int, mistakes: Int, anchors: Int, heldOutMistakes: Int, heldOutCorrect: Int) {
+        self.trainLines = trainLines
+        self.screened = screened
+        self.mistakes = mistakes
+        self.anchors = anchors
+        self.heldOutMistakes = heldOutMistakes
+        self.heldOutCorrect = heldOutCorrect
+    }
+}
+
+public struct TrainingStep: Codable, Sendable, Equatable {
+    public var epoch: Int
+    public var epochs: Int
+    public var step: Int
+    public var steps: Int
+    public var loss: Float
+    public var elapsed: Double
+
+    public init(epoch: Int, epochs: Int, step: Int, steps: Int, loss: Float, elapsed: Double) {
+        self.epoch = epoch
+        self.epochs = epochs
+        self.step = step
+        self.steps = steps
+        self.loss = loss
+        self.elapsed = elapsed
+    }
+}
+
+/// ある評価群の一致数
+public struct TrainingScore: Codable, Sendable, Equatable {
+    public var exact: Int
+    public var total: Int
+
+    public init(exact: Int = 0, total: Int = 0) {
+        self.exact = exact
+        self.total = total
+    }
+}
+
+/// 学習前 or 学習後の評価結果（2 群）
+public struct TrainingScores: Codable, Sendable, Equatable {
+    /// モデルが間違えていた変換（学習で当たるようになってほしいもの）
+    public var mistakes: TrainingScore
+    /// 元から正しく出ていた変換（壊れていないか）
+    public var correct: TrainingScore
+
+    public init(mistakes: TrainingScore = .init(), correct: TrainingScore = .init()) {
+        self.mistakes = mistakes
+        self.correct = correct
+    }
+}
+
+public struct TrainingResult: Codable, Sendable, Equatable {
+    public var adapter: String
+    /// 評価・学習に使った記録の TSV（`iroha-cli bench` で同じ数値を再現できる）
+    public var mistakesTSV: String?
+    public var correctTSV: String?
+    /// 学習に使った記録の TSV（何を覚えさせたかを確かめられる）
+    public var trainTSV: String?
+    public var before: TrainingScores
+    public var after: TrainingScores
+    public var data: TrainingDataSummary
+
+    public init(adapter: String, mistakesTSV: String?, correctTSV: String?, trainTSV: String?,
+                before: TrainingScores, after: TrainingScores, data: TrainingDataSummary) {
+        self.adapter = adapter
+        self.mistakesTSV = mistakesTSV
+        self.correctTSV = correctTSV
+        self.trainTSV = trainTSV
+        self.before = before
+        self.after = after
+        self.data = data
+    }
+}
+
 /// `iroha-train` が標準出力に 1 行 1 JSON で流す進捗。IME 本体（設定画面）がこれを読んで表示する。
 /// 両プロセスで同じ型を使うためここ（IrohaCore）に置く
 public enum TrainingEvent: Codable, Sendable, Equatable {
-    /// 学習データの集計
-    case data(train: Int, heldOut: Int, examples: Int)
-    /// 段階の切り替わり（"quantize" / "load" / "train" / "export" / "evaluate"）
+    case data(TrainingDataSummary)
+    /// 段階の切り替わり（"screen" / "quantize" / "load" / "train" / "export" / "evaluate"）
     case stage(String)
-    /// 学習の 1 ステップ
-    case step(epoch: Int, epochs: Int, step: Int, steps: Int, loss: Float, elapsed: Double)
-    /// held-out の一致数（phase は "before" / "after"）
-    case eval(phase: String, exact: Int, total: Int)
-    /// 完了。アダプタのパスと学習前後の一致数
-    case done(adapter: String, heldOutTSV: String?, before: Int, after: Int, total: Int, trainCount: Int)
+    /// 件数で進む処理（記録の確認など）の進捗
+    case progress(stage: String, done: Int, total: Int)
+    case step(TrainingStep)
+    /// phase は "before" / "after"
+    case eval(phase: String, scores: TrainingScores)
+    case done(TrainingResult)
     case error(String)
 
     private enum CodingKeys: String, CodingKey {
-        case event, train, heldOut, examples, stage, epoch, epochs, step, steps, loss, elapsed
-        case phase, exact, total, adapter, heldOutTSV, before, after, trainCount, message
+        case event, data, stage, step, phase, scores, result, message, done, total
     }
 
     public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch try c.decode(String.self, forKey: .event) {
-        case "data":
-            self = .data(train: try c.decode(Int.self, forKey: .train), heldOut: try c.decode(Int.self, forKey: .heldOut),
-                         examples: try c.decode(Int.self, forKey: .examples))
-        case "stage":
-            self = .stage(try c.decode(String.self, forKey: .stage))
-        case "step":
-            self = .step(epoch: try c.decode(Int.self, forKey: .epoch), epochs: try c.decode(Int.self, forKey: .epochs),
-                         step: try c.decode(Int.self, forKey: .step), steps: try c.decode(Int.self, forKey: .steps),
-                         loss: try c.decode(Float.self, forKey: .loss), elapsed: try c.decode(Double.self, forKey: .elapsed))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(String.self, forKey: .event) {
+        case "data": self = .data(try container.decode(TrainingDataSummary.self, forKey: .data))
+        case "stage": self = .stage(try container.decode(String.self, forKey: .stage))
+        case "progress":
+            self = .progress(stage: try container.decode(String.self, forKey: .stage),
+                             done: try container.decode(Int.self, forKey: .done),
+                             total: try container.decode(Int.self, forKey: .total))
+        case "step": self = .step(try container.decode(TrainingStep.self, forKey: .step))
         case "eval":
-            self = .eval(phase: try c.decode(String.self, forKey: .phase), exact: try c.decode(Int.self, forKey: .exact),
-                         total: try c.decode(Int.self, forKey: .total))
-        case "done":
-            self = .done(adapter: try c.decode(String.self, forKey: .adapter),
-                         heldOutTSV: try c.decodeIfPresent(String.self, forKey: .heldOutTSV),
-                         before: try c.decode(Int.self, forKey: .before), after: try c.decode(Int.self, forKey: .after),
-                         total: try c.decode(Int.self, forKey: .total), trainCount: try c.decode(Int.self, forKey: .trainCount))
-        case "error":
-            self = .error(try c.decode(String.self, forKey: .message))
+            self = .eval(phase: try container.decode(String.self, forKey: .phase),
+                         scores: try container.decode(TrainingScores.self, forKey: .scores))
+        case "done": self = .done(try container.decode(TrainingResult.self, forKey: .result))
+        case "error": self = .error(try container.decode(String.self, forKey: .message))
         case let other:
-            throw DecodingError.dataCorruptedError(forKey: .event, in: c, debugDescription: "unknown event \(other)")
+            throw DecodingError.dataCorruptedError(forKey: .event, in: container,
+                                                   debugDescription: "unknown event \(other)")
         }
     }
 
     public func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
+        var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .data(let train, let heldOut, let examples):
-            try c.encode("data", forKey: .event)
-            try c.encode(train, forKey: .train); try c.encode(heldOut, forKey: .heldOut); try c.encode(examples, forKey: .examples)
+        case .data(let summary):
+            try container.encode("data", forKey: .event)
+            try container.encode(summary, forKey: .data)
         case .stage(let stage):
-            try c.encode("stage", forKey: .event); try c.encode(stage, forKey: .stage)
-        case .step(let epoch, let epochs, let step, let steps, let loss, let elapsed):
-            try c.encode("step", forKey: .event)
-            try c.encode(epoch, forKey: .epoch); try c.encode(epochs, forKey: .epochs)
-            try c.encode(step, forKey: .step); try c.encode(steps, forKey: .steps)
-            try c.encode(loss, forKey: .loss); try c.encode(elapsed, forKey: .elapsed)
-        case .eval(let phase, let exact, let total):
-            try c.encode("eval", forKey: .event)
-            try c.encode(phase, forKey: .phase); try c.encode(exact, forKey: .exact); try c.encode(total, forKey: .total)
-        case .done(let adapter, let heldOutTSV, let before, let after, let total, let trainCount):
-            try c.encode("done", forKey: .event)
-            try c.encode(adapter, forKey: .adapter); try c.encodeIfPresent(heldOutTSV, forKey: .heldOutTSV)
-            try c.encode(before, forKey: .before); try c.encode(after, forKey: .after)
-            try c.encode(total, forKey: .total); try c.encode(trainCount, forKey: .trainCount)
+            try container.encode("stage", forKey: .event)
+            try container.encode(stage, forKey: .stage)
+        case .progress(let stage, let done, let total):
+            try container.encode("progress", forKey: .event)
+            try container.encode(stage, forKey: .stage)
+            try container.encode(done, forKey: .done)
+            try container.encode(total, forKey: .total)
+        case .step(let step):
+            try container.encode("step", forKey: .event)
+            try container.encode(step, forKey: .step)
+        case .eval(let phase, let scores):
+            try container.encode("eval", forKey: .event)
+            try container.encode(phase, forKey: .phase)
+            try container.encode(scores, forKey: .scores)
+        case .done(let result):
+            try container.encode("done", forKey: .event)
+            try container.encode(result, forKey: .result)
         case .error(let message):
-            try c.encode("error", forKey: .event); try c.encode(message, forKey: .message)
+            try container.encode("error", forKey: .event)
+            try container.encode(message, forKey: .message)
         }
     }
 

@@ -20,17 +20,18 @@ final class LoRATrainerTests: XCTestCase {
         XCTAssertEqual(mask.asArray(Float.self), [0, 0, 1, 1, 1, 0, 1, 1, 0, 0])
     }
 
-    /// 小さな合成データで数ステップ回すと損失が下がり、書き出したアダプタを llama.cpp が読める
+    /// 小さな合成データで数ステップ回すと損失が下がり、書き出したアダプタを llama.cpp が読める。
+    /// バッチが毎エポックシャッフルされるので、1 種類の例だけ（＝毎ステップ同じバッチ）で単調性を見る
     func testTrainingReducesLossAndExports() throws {
         let f16 = try TestSupport.f16Model()
         let tokenizer = try VocabTokenizer(modelPath: f16)
-        // 同じ読みを毎回わざと珍しい表記に確定した記録のつもり
-        let lines = (0..<8).map { _ in "\u{EE00}キシャ\u{EE01}貴社" } + (0..<8).map { _ in "\u{EE02}本日は\u{EE00}キシャ\u{EE01}汽車" }
+        // モデルが出さない表記をわざと確定した記録のつもり
+        let lines = (0..<8).map { _ in "\u{EE02}本日は\u{EE00}キシャ\u{EE01}貴社" }
         let examples = try TrainingDataBuilder.encode(lines: lines, tokenize: { tokenizer.tokenize($0) },
                                                       eos: tokenizer.terminator, outputTag: tokenizer.outputTagTokens)
         var config = TrainingConfig()
         config.rank = 4
-        config.epochs = 3
+        config.epochs = 4
         config.batchSize = 8
         config.learningRate = 1e-3
         let model = try GPT2Model(gguf: try GGUFFile(path: f16), lora: LoRASpec(config))
@@ -38,7 +39,7 @@ final class LoRATrainerTests: XCTestCase {
         var losses: [Float] = []
         let last = trainer.train(examples: examples) { losses.append($0.loss) }
         print("losses: \(losses.map { String(format: "%.3f", $0) })")
-        XCTAssertEqual(losses.count, 2 * 3)
+        XCTAssertEqual(losses.count, 4)
         XCTAssertLessThan(last, losses[0])
 
         let adapterPath = TestSupport.temporaryPath("trained")

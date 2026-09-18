@@ -1161,7 +1161,7 @@ final class IrohaInputController: IMKInputController {
 
     // MARK: - 学習用ログ（ConversionLog）
 
-    /// 文節変換での確定を学習用ログに記録する。修正の有無にかかわらず記録するが、
+    /// 文節変換での確定を学習用ログに記録する（記録する範囲は `ConversionLogSettings.scope`）。
     /// 学習と同じく変換ルールの出力や候補ウィンドウ専用の語（`unlearnableCandidates`）を含む確定は残さない
     /// （毎回変わる日付や、読みと対応しない定型文は学習例にならない）
     private func logSegmentsCommit(committed: String) {
@@ -1186,9 +1186,12 @@ final class IrohaInputController: IMKInputController {
         guard ConversionLogSettings.isEnabled, !reading.isEmpty, !committed.isEmpty else { return }
         let source: ConversionLogEntry.ContextSource =
             documentContext != nil ? .document : (recentCommitted.isEmpty ? .none : .committed)
-        ConversionLog.shared.record(ConversionLogEntry(
+        let entry = ConversionLogEntry(
             mode: mode, context: context, contextSource: source, reading: reading,
-            proposed: proposed, committed: committed, segments: segments, model: Self.engineModelName))
+            proposed: proposed, committed: committed, segments: segments, model: Self.engineModelName)
+        // 「直した確定だけ」の設定なら、モデルの出力をそのまま確定したものは残さない
+        guard ConversionLogSettings.shouldRecord(edited: entry.edited) else { return }
+        ConversionLog.shared.record(entry)
     }
 
     /// 文節列を未確定文字列として表示する（現在の文節は太い下線）

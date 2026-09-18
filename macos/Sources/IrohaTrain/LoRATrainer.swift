@@ -4,15 +4,6 @@ import MLXNN
 import MLXOptimizers
 import IrohaCore
 
-public struct TrainProgress: Sendable, Equatable {
-    public var epoch: Int
-    public var epochs: Int
-    public var step: Int
-    public var steps: Int
-    public var loss: Float
-    public var elapsed: TimeInterval
-}
-
 /// LoRA の学習ループ。損失は出力部（U+EE01 の次から EOS まで）だけに掛ける（`training/train.py` と同じ）
 public final class LoRATrainer<Model: TrainableLM> {
 
@@ -54,7 +45,7 @@ public final class LoRATrainer<Model: TrainableLM> {
     /// 学習する。`progress` は各ステップの後に呼ばれ、`shouldStop` が真を返したら途中で止める。
     /// 戻り値は最後のエポックの平均損失
     @discardableResult
-    public func train(examples: [TrainingExample], progress: (TrainProgress) -> Void = { _ in },
+    public func train(examples: [TrainingExample], progress: (TrainingStep) -> Void = { _ in },
                       shouldStop: () -> Bool = { false }) -> Float {
         model.freezeBase()
         let trainable = model.trainableParameters().flattened().count
@@ -87,8 +78,8 @@ public final class LoRATrainer<Model: TrainableLM> {
                 let loss = values[0].item(Float.self)
                 epochLoss += loss
                 step += 1
-                progress(TrainProgress(epoch: epoch, epochs: config.epochs, step: step, steps: totalSteps, loss: loss,
-                                       elapsed: Date().timeIntervalSince(start)))
+                progress(TrainingStep(epoch: epoch, epochs: config.epochs, step: step, steps: totalSteps, loss: loss,
+                                      elapsed: Date().timeIntervalSince(start)))
             }
             lastEpochLoss = epochLoss / Float(max(batches.count, 1))
         }

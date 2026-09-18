@@ -95,6 +95,13 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   テストは `swift test --filter IrohaTrainTests`（metallib が debug 側に無ければスキップ。
   `./macos/scripts/build-mlx-metallib.sh debug` で作る）。MLX 実装と llama.cpp のロジット一致（`GPT2ParityTests`）を
   崩さないこと。別アーキ（llama / T5）を足すときは `TrainableLM` の実装を追加して `TrainableModels.load` に登録する
+- 学習データは**記録を1件ずつ変換し直して「いまのモデルが間違えるもの」を選り分けて**作る
+  （`TrainingScreener`）。`ConversionLogEntry.edited` は辞書ラティス・学習・ユーザ辞書を含む
+  エンジン全体の提示に対する差分なので、NN の誤りとは一致しない（実測: 直した 11 件のうち NN は 6 件を
+  既に正解、逆に NN が間違える 12 件のうち 7 件はユーザが直していない）。**`edited` を学習対象の判定に使わないこと**。
+  間違えた記録を `mistakeWeight` 回入れ、正解できた記録を `anchorRatio` 倍のアンカーとして混ぜる（忘却対策）。
+  評価は2群（間違えていた群＝学習前は 0 件正解・正解群＝学習前は全件正解）で、効果と副作用を必ず並べて報告する。
+  zenz-v3.1-small は個人の記録の 96.9% を既に正解するので、学べる差分は少ない（2026-09-18 実測）
 - バージョンはgitタグが唯一の情報源。リリースはCIがタグから、開発ビルドは
   install.shがgit describeから注入する（Info.plistのコミット値はフォールバック。
   リリース時にゆるく追随させる）。Windows版も同じ原則でCIがタグから注入すること

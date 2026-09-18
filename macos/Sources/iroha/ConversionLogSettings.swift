@@ -9,8 +9,41 @@ import IrohaCore
 enum ConversionLogSettings {
 
     static let enabledKey = "conversionLogEnabled"
+    static let scopeKey = "conversionLogScope"
+
+    /// 何を記録するか
+    enum Scope: String, CaseIterable, Identifiable {
+        /// すべての確定（修正しなかったものも含む）
+        case all
+        /// モデルの出力を直した確定だけ
+        case corrections
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .all: return "すべての確定"
+            case .corrections: return "直した確定だけ"
+            }
+        }
+    }
 
     static var isEnabled: Bool {
         UserDefaults.standard.bool(forKey: enabledKey)
+    }
+
+    static var scope: Scope {
+        Scope(rawValue: UserDefaults.standard.string(forKey: scopeKey) ?? "") ?? .all
+    }
+
+    /// この確定を記録するか。`edited == false`（モデルの出力をそのまま確定した）は
+    /// 追加学習では重み 0 のアンカーにしか使わないので、記録しない選択ができる。
+    /// ただし残しておくと「学習で壊れていないか」の評価に使える（`TrainingEvaluator` の unchanged 群）
+    static func shouldRecord(edited: Bool?) -> Bool {
+        guard isEnabled else { return false }
+        switch scope {
+        case .all: return true
+        case .corrections: return edited != false
+        }
     }
 }
