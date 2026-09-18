@@ -1096,10 +1096,35 @@ private struct TrainingResultView: View {
     private var mistakesDelta: Int { result.after.mistakes.exact - result.before.mistakes.exact }
     private var correctDelta: Int { result.after.correct.exact - result.before.correct.exact }
 
+    /// 見つかった間違いの総数（学習に使った分 ＋ 効果測定に取り分けた分）
+    private var foundMistakes: Int { result.data.mistakes + result.data.heldOutMistakes }
+    /// 間違い1件を訓練データに入れた回数（`TrainingConfig.mistakeWeight`。行数から逆算する）
+    private var repeatsPerMistake: Int {
+        guard result.data.mistakes > 0 else { return 0 }
+        return max(1, (result.data.trainLines - result.data.anchors) / result.data.mistakes)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("学習完了（記録 \(result.data.screened) 件を確認し、モデルが間違えた \(result.data.mistakes) 件を"
-                + "\(result.data.trainLines) 行に、正解できた記録 \(result.data.anchors) 件を混ぜて学習）")
+            Text("学習が終わりました").font(.headline)
+            // 数の関係が読んで分かるように「見つけた → 学習に使った → 水増しした」の順に並べる
+            VStack(alignment: .leading, spacing: 2) {
+                Text("変換記録 \(result.data.screened) 件をいまのモデルで変換し直し、"
+                    + "間違いを \(foundMistakes) 件見つけました。")
+                if result.data.heldOutMistakes > 0 {
+                    Text("うち \(result.data.mistakes) 件を覚えさせ、残る \(result.data.heldOutMistakes) 件は"
+                        + "効果を測るために学習から外しました（下の「間違えていた変換」）。")
+                } else {
+                    Text("この \(result.data.mistakes) 件を覚えさせました。")
+                }
+                Text("覚えさせる \(result.data.mistakes) 件は数が少ないので \(repeatsPerMistake) 回ずつ繰り返し"
+                    + "（\(result.data.trainLines - result.data.anchors) 行）、"
+                    + "元から正しく変換できていた記録 \(result.data.anchors) 件を足した"
+                    + "\(result.data.trainLines) 行で学習しました"
+                    + "（正しい変換を混ぜるのは、できていた変換を忘れないためです）。")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
             if result.after.mistakes.total > 0 {
                 scoreRow(title: "間違えていた変換", score: result.after.mistakes,
                          before: result.before.mistakes.exact, delta: mistakesDelta)
