@@ -1175,19 +1175,22 @@ private struct TrainingResultView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("学習が終わりました（記録 \(result.data.records) 件・\(elapsedText)）").font(.headline)
             Text("記録のうち \(result.data.trainLines) 件で学習し、"
-                + "\(result.data.heldOutMistakes + result.data.heldOutCorrect) 件を評価用に残しました。"
-                + "評価用の記録をアダプタなし／ありで変換した結果です。")
+                + "\(result.data.heldOutMistakes + result.data.heldOutCorrect) 件は学習に使わず評価用に残しました。"
+                + "その評価用の記録を、アダプタなし／ありで変換して記録と一致した数を並べています。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if result.after.mistakes.total > 0 {
-                scoreRow(title: "間違えていた変換", before: result.before.mistakes, after: result.after.mistakes)
+                scoreRow(title: "今のモデルが間違えていた記録", before: result.before.mistakes, after: result.after.mistakes,
+                         help: "アダプタなしでは記録と違う変換になっていた記録。増えていれば、間違いが直った数")
             } else {
                 Text("今のモデルは記録をすべて正しく変換できていたので、「間違いが直ったか」は測れません。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             if result.after.correct.total > 0 {
-                scoreRow(title: "できていた変換", before: result.before.correct, after: result.after.correct)
+                scoreRow(title: "今のモデルが正しく変換できていた記録", before: result.before.correct, after: result.after.correct,
+                         help: "アダプタなしで記録どおりに変換できていた記録（新しい方から最大 \(TrainingDataBuilder.maxHeldOutCorrect) 件）。"
+                            + "減っていれば、学習で崩れた数")
             }
             if result.after.mistakes.total > 0, result.after.mistakes.total < 10 {
                 Text("評価に回せた間違いが \(result.after.mistakes.total) 件と少ないので、この数値はぶれます。"
@@ -1207,7 +1210,7 @@ private struct TrainingResultView: View {
     }
 
     /// 「N 件   アダプタなし a 件正解 → あり b 件正解（+2）」の 1 行
-    @ViewBuilder private func scoreRow(title: String, before: TrainingScore, after: TrainingScore) -> some View {
+    @ViewBuilder private func scoreRow(title: String, before: TrainingScore, after: TrainingScore, help: String) -> some View {
         let delta = after.exact - before.exact
         LabeledContent("\(title) \(after.total) 件") {
             HStack(spacing: 6) {
@@ -1219,6 +1222,7 @@ private struct TrainingResultView: View {
             }
             .font(.callout)
         }
+        .help(help)
     }
 }
 
