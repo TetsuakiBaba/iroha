@@ -159,6 +159,25 @@ final class ConversionLogTests: XCTestCase {
         XCTAssertEqual(Set(records.map(\.id)).count, 2)
     }
 
+    /// データフォルダを共有していると他のMacのファイルが混ざるので、
+    /// ファイル名順（＝ホスト名順）ではなく記録の時刻で並べる
+    func testRecordsMergesHostFilesByTimestamp() throws {
+        // 名前が後ろのホストの記録のほうが古い（ファイル名順に並べると時系列が壊れる組み合わせ）
+        let other = ConversionLog(directory: log.directory, hostName: "zzz")
+        other.record(simple("ふるい", "古い", at: 10))
+        other.record(simple("ふるい2", "古い2", at: 20))
+        other.waitUntilIdle()
+        log.record(simple("あたらしい", "新しい", at: 30))
+        log.waitUntilIdle()
+
+        XCTAssertEqual(log.fileURLs().count, 2)
+        XCTAssertEqual(log.records().map(\.entry.committed), ["古い", "古い2", "新しい"])
+        // 画面は reversed() で最新が先頭に来る
+        XCTAssertEqual(log.records().reversed().first?.entry.committed, "新しい")
+        // 行番号は各ファイルの中の位置のまま（書き戻しの照合に使う）
+        XCTAssertEqual(log.records().map(\.line), [0, 1, 0])
+    }
+
     /// 1件を書き換えると、その行だけが変わる
     func testReplaceUpdatesSingleLine() throws {
         log.record(simple("あ", "亜", at: 0))

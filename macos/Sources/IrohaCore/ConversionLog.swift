@@ -78,7 +78,8 @@ public final class ConversionLog: @unchecked Sendable {
 
     // MARK: - 参照・削除（設定画面用）
 
-    /// このフォルダにあるログファイル（全ホスト分。名前順＝時系列順）
+    /// このフォルダにあるログファイル（全ホスト分。名前順。ホスト名が名前に入るので
+    /// 名前順は時系列にならない＝並べ替えが要るときは `records()` を使う）
     public func fileURLs() -> [URL] {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return [] }
         return names
@@ -135,12 +136,25 @@ public final class ConversionLog: @unchecked Sendable {
         }
     }
 
-    /// すべての記録を時系列（ファイル名順・行順）で返す。設定画面の一覧・編集に使う
+    /// すべての記録を時系列（古い順）で返す。設定画面の一覧・編集に使う。
+    ///
+    /// ファイルはホストごとに分かれているので、ファイル名順に並べただけでは時系列にならない
+    /// （データフォルダを共有していると、他のMacの記録が丸ごと後ろに来て、この端末の最新が
+    /// 何百件も奥に埋もれる）。記録の時刻で全ファイルを混ぜ、同時刻はファイル名・行順で安定させる
     public func records() -> [Record] {
-        fileURLs().flatMap { url -> [Record] in
+        let all = fileURLs().flatMap { url -> [Record] in
             Self.decodeLines(of: url).enumerated().compactMap { index, entry in
                 entry.map { Record(file: url, line: index, entry: $0) }
             }
+        }
+        return all.sorted { lhs, rhs in
+            if lhs.entry.timestamp != rhs.entry.timestamp {
+                return lhs.entry.timestamp < rhs.entry.timestamp
+            }
+            if lhs.file.lastPathComponent != rhs.file.lastPathComponent {
+                return lhs.file.lastPathComponent < rhs.file.lastPathComponent
+            }
+            return lhs.line < rhs.line
         }
     }
 
