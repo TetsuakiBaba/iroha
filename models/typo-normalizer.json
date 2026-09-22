@@ -1,0 +1,24 @@
+{
+  "formatVersion": 1,
+  "license": "CC BY-SA 4.0",
+  "attribution": "zenz-v2.5-dataset (Keita Miwa)",
+  "models": [
+    {
+      "id": "small-v1",
+      "name": "標準",
+      "summary": "3.2M パラメータ・約6MB。CPU 1スレッドで平均4ms",
+      "license": "CC BY-SA 4.0",
+      "attribution": "zenz-v2.5-dataset (Keita Miwa)",
+      "manifest": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/typo-normalizer-v1/small-v1-manifest.json",
+        "bytes": 20807,
+        "sha256": "7cb819b4298e5cc82089a89f82558fba08c0a0d09f64300e30f515785faa9601"
+      },
+      "weights": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/typo-normalizer-v1/small-v1-weights.bin",
+        "bytes": 6397680,
+        "sha256": "611294661ec15bb328b7b8bdda06196318644622ca0f421c43f80b19d35bf3f8"
+      }
+    }
+  ]
+}

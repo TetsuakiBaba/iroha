@@ -128,15 +128,19 @@ cat <<JSON_EOF
 JSON_EOF
 
 echo
+# アップロード用にモデルIDを前置きした名前で複製する。
+# gh の `file#label` は表示ラベルだけを変えるもので、ダウンロード名（= URL）は
+# ファイル名のままになる。モデルを増やしたときに名前が衝突しないよう、実ファイル名を分ける
+mkdir -p "$DEST/upload"
+for f in manifest.json weights.bin LICENSE README.md; do
+  cp "$DEST/$f" "$DEST/upload/$MODEL_ID-$f"
+done
+
 echo "アップロード（内容を確認してから手で実行してください）:"
 echo "  gh release create $TAG --repo $REPO --prerelease \\"
 echo "    --title 'Typo normalizer models' \\"
 echo "    --notes 'iroha の打ち間違い訂正モデル。CC BY-SA 4.0。アプリが設定からダウンロードします' || true"
-echo "  gh release upload $TAG --repo $REPO --clobber \\"
-echo "    '$DEST/manifest.json#$MODEL_ID-manifest.json' \\"
-echo "    '$DEST/weights.bin#$MODEL_ID-weights.bin' \\"
-echo "    '$DEST/LICENSE#$MODEL_ID-LICENSE' \\"
-echo "    '$DEST/README.md#$MODEL_ID-README.md'"
+echo "  gh release upload $TAG --repo $REPO --clobber $DEST/upload/*"
 echo
 echo "そのあと models/typo-normalizer.json を更新して push すると、アプリから見えるようになります。"
 echo "※ --prerelease を外さないこと（外すと releases/latest がこれを指し、更新通知が壊れます）"
