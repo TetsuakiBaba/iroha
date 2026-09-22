@@ -553,10 +553,11 @@ final class IrohaInputController: IMKInputController {
             statusItem.isEnabled = false
             menu.addItem(statusItem)
         }
+        // モデル名は出さない。アダプタを当てていると
+        // 「zenz-v3.1-small-Q5_K_M+zenz-v3.1-small-Q5_K_M-lora-20260922-0837」のように伸びて、
+        // 入力ソースのメニュー全体が横に広がってしまう（モデルは 設定 > モデル で見られる）
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let versionItem = NSMenuItem(
-            title: "iroha \(version) (\(Self.engineModelDisplayName))",
-            action: nil, keyEquivalent: "")
+        let versionItem = NSMenuItem(title: "iroha \(version)", action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
         menu.addItem(versionItem)
         return menu
