@@ -86,10 +86,11 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
 - 打ち間違いの訂正（`TypoNormalizer`、`macos/Sources/IrohaCore/TypoNormalizer/`、既定OFF）は
   かな漢字変換の**手前**で「読み → 読み」を直す 3.2M の文字単位 Transformer（実装は Accelerate の
   `cblas_sgemm` だけ。llama.cpp も MLX も通さない）。学習は `experiments/typo-normalizer/`、
-  移植の仕様は同ディレクトリの **SWIFT-PORT.md が正**。
-  **ただし `experiments/` はリポジトリに入っていない**（上記）。ソース中の
-  `experiments/typo-normalizer/…` への参照は出自を示すもので、clone には含まれない。
-  仕様を読む必要があるときは作業機か `git checkout v0.12.0 -- experiments` で取り出す。守ること:
+  **移植が正しいかの判定は `iroha-cli typo parity`（PyTorch 実装との照合 200 件）で行う。**
+  `experiments/typo-normalizer/SWIFT-PORT.md` は移植を頼むときに書いた開発機間の伝言メモで、
+  リポジトリには入っていないし、実装が進んだ今は内容が古い。ソース中の
+  `experiments/typo-normalizer/…` への参照も出自を示すもので、clone には含まれない
+  （読みたいときは作業機か `git checkout v0.12.0 -- experiments`）。守ること:
   ・**計算の順序を変えたら `iroha-cli typo parity` を必ず回す**（PyTorch 実装との照合 200 件。
     生成が一致してもロジットがずれていれば実装は間違っている。float32 でロジット 1e-3・logP 0.01 以内）
   ・**本線は「入力の休止」で読みそのものを直す**（`scheduleTypoCorrection`、既定 300ms・設定可）。

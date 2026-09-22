@@ -406,8 +406,8 @@ CC BY-SA 4.0（一部は llm-jp-corpus-v3 由来で ODC-BY と Common Crawl の�
   でアダプタ有無を同じ表に並べられる
 - 打ち間違いの訂正は [macos/Sources/IrohaCore/TypoNormalizer/](macos/Sources/IrohaCore/TypoNormalizer/)。
   3.2M パラメータの文字単位 Transformer encoder–decoder を Accelerate（`cblas_sgemm`）だけで実装したもので、
-  llama.cpp も MLX も通さない。学習と重みの書き出しは `experiments/typo-normalizer/`、
-  移植の仕様は同ディレクトリの `SWIFT-PORT.md` が正。
+  llama.cpp も MLX も通さない。学習と重みの書き出しは `experiments/typo-normalizer/`。
+  移植が正しいかは `iroha-cli typo parity`（PyTorch 実装との照合 200 件）で判定する。
   **`experiments/` と `training/` はリポジトリに含めていない**（学習データが大きく、
   AJIMEE-Bench や学習コーパス由来の実文を含むため。他者のデータを再配布しない方針）。
   下の評価コマンドもその手元のデータを前提にしている。変換エンジンのデコレータ鎖には入れず、
