@@ -1,0 +1,11 @@
+# 生成物はすべてここ。データは配布せず、各自が元データから再生成する
+# （LICENSES.md の「派生データの公開可否」を参照）
+/data/
+# data_dir を変えて作った分（config/smoke.yaml の data-smoke/ など）
+/data-*/
+# ローカルの検証用 venv
+/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/

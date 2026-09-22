@@ -1,0 +1,271 @@
+# iroha-dataset の既定設定。
+# ここの数値は「最初の目安」であって実測から決めたものではない。変えるときは
+# data/REPORT.md の統計と data/samples/ の目視で確かめること。
+
+seed: 42
+data_dir: data
+# ダウンロードしたままの生データの置き場所。data_dir を変えても取り直さずに済むよう
+# 別に持てるようにしてある
+raw_dir: data/raw
+
+# ---------------------------------------------------------------- データソース
+sources:
+  tatoeba:
+    enabled: true
+    # 1 文 = 1 document。文をまたぐ左文脈は作れない（文内の左文脈だけ）
+    max_sentences: 0            # 0 = 制限なし
+    # jpn_indices.csv（田中コーパス由来の語＋読み注記）を読みの second opinion に使う
+    use_indices_second_opinion: true
+
+  kaken:
+    enabled: true
+    # ids    : 課題番号ごとの公開 XML を 1 件ずつ取る（appid 不要）
+    # search : OpenSearch API（appid 必須。環境変数 KAKEN_APPID）
+    mode: ids
+    # 採択年度がこれ以降の課題だけ使う。2015年度以前の課題の報告書には
+    # 「著作物であることを明示されている部分」が含まれうるため安全側に切る
+    # （LICENSES.md の KAKEN 節を参照）。
+    min_award_year: 2016
+    # download で集める課題数の目標
+    max_projects: 200
+    # preprocess で読む課題数の上限（0 = キャッシュにあるものすべて）。
+    # max_projects とは別にしてある（兼用だと取得済みの課題が黙って切り捨てられる）
+    max_documents: 0
+    # 秒。公開サーバに連続アクセスしないための待ち。
+    # ids モードは 1 秒で問題ないが、検索 API（mode: search）は throttle が厳しいので
+    # 10 秒以上にする（README「実測で分かった癖」参照）
+    request_interval: 1.0
+    # 使う本文フィールド。summary = 課題サマリーの研究概要、
+    # report:<type> = 報告書の本文（type は KAKEN API の c3 と同じ語彙）
+    fields:
+      - summary
+      - report:kenkyu_seika_hokoku
+      - report:jiseki_hokoku
+      - report:jishi_jokyo_hokoku_kikin
+    # ids モード: 課題番号の作り方。id_file があればそれを優先する
+    id_file: null               # 1 行 1 課題番号のテキスト（KAKEN 画面から書き出したもの等）
+    id_sample:
+      years: [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023]
+      categories: [K, H]        # 課題番号の英字部分
+      number_range: [1, 25000]  # 5 桁部分の範囲
+    # 保存形式。documents() はどちらも読むので、途中で変えても取得済みは無駄にならない
+    #   jsonl … 年度ごとの JSONL に 1 行 1 課題で追記（既定）。
+    #           11 万課題でもファイルは十数個なので、同期フォルダでも重くならない
+    #   xml   … 1 課題 1 ファイル。取得したままの XML を残したいとき
+    store: jsonl
+    # store: xml のとき、課題ごとの XML をそのまま置くと平均 83KB/課題
+    # （productList が大きい）になるので、documents() が使うフィールド
+    # （題名・助成期間・ja の段落）だけに削って保存する。false で取得したままを置く
+    store_trimmed_xml: true
+    # search モード（appid 必須。環境変数 KAKEN_APPID）
+    search:
+      # kw は API の必須パラメータ。s1（助成期間）や qc（研究種目）だけを指定しても
+      # totalResults=0 になるので、分野横断の広い語を振って集める。
+      # 重複は課題番号で落ちるので、語が重なっていて構わない。
+      # 「kw=*」はワイルドカードではなく文字通り「*」で検索されるので使わない
+      keywords:
+        - 研究
+        - 開発
+        - 解析
+        - 評価
+        - 分析
+        - 測定
+        - 制御
+        - 設計
+        - 教育
+        - 医療
+        - 細胞
+        - 遺伝子
+        - 材料
+        - 構造
+        - 環境
+        - 地域
+        - 社会
+        - 歴史
+        - 文化
+        - 言語
+        - 経済
+        - 政策
+        - 情報
+        - 計算
+        - 物理
+        - 化学
+        - 生物
+        - 生態
+        - 農業
+        - 食品
+        - 看護
+        - 臨床
+        - 診断
+        - 治療
+        - 心理
+        - 認知
+        - 機械
+        - 電子
+        - 量子
+        - 触媒
+        - タンパク質
+        - データ
+        - モデル
+        - システム
+        - ネットワーク
+        - 画像
+        - 音声
+      # 年度ごとに s1=s2=<年度> で引く。**古い年度から**並べてある。
+      # 指定しないと API の既定ソート（研究開始年:新しい順）で新しい課題から返るが、
+      # 始まったばかりの課題は研究成果報告書が無いので本文が 1/3 しかない
+      # （実測 2026-09-22: 2026年度採択 254 文字/課題 vs 2016-2025年度 799 文字/課題）。
+      # [] にすると年度で分けず min_award_year 以降をまとめて引く
+      years: [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
+      rows: 500          # 1 リクエストあたりの課題数（API の上限は 500）
+      max_pages: 20      # 1 つの (キーワード, 年度) あたりのページ数
+      # 何リクエストごとに進捗を出すか（0 で出さない）。長い取得で無言にならないため
+      progress_every: 10
+      # 0 件が返ったときに待って同じページを引き直す回数と待ち時間。
+      # 長い取得を一時的な throttle で丸ごと落とさないため
+      empty_retries: 2
+      empty_backoff_seconds: 120
+      # 検索結果 0 件がこの回数続いたら止める。
+      # throttle されると totalResults=0 が黙って返るので、それを「データなし」と
+      # 誤解しないための歯止め
+      max_consecutive_empty: 3
+
+  aozora:
+    # 将来用。著作権消滅かつ新字新仮名の作品だけを対象にする。
+    # 既定 OFF（旧字旧仮名・ルビ・行頭記号の扱いを詰めていないため。README 参照）
+    enabled: false
+    max_works: 50
+    request_interval: 1.0
+    # 「新字新仮名」以外は読みが現代かなと合わないので使わない
+    allowed_orthography: ["新字新仮名"]
+
+# ---------------------------------------------------------------- 読み生成
+reading:
+  dictionary: full              # full / core / small（SudachiDict）
+  mode: C                       # 読みを作る分割単位。C = 長単位（複合語の読みが正確）
+  second_opinion_mode: A        # 別分割での読みと突き合わせる。null で無効
+  reject_oov: true              # OOV を含む文を捨てる
+  # 読みとして許す文字（ひらがな以外）。ローマ字入力で 1 打鍵で出るものだけ
+  allow_extra_chars: "ー、。・「」〜！？"
+  record_morphemes: true        # data/canonical/<source>.morphemes.jsonl に形態素を残す
+  # reading_confidence = low を付ける条件
+  low_confidence:
+    on_mode_disagreement: true
+    on_proper_noun: true        # 人名・地名は Sudachi の読みが当たらないことがある
+    on_numeral: true
+    on_surface_fallback: true   # 漢字を含む表層なのに読みが表層のまま
+    max_reading_surface_ratio: 3.0   # 読み長 / 表層長 がこれを超えたら怪しい
+  drop_low_confidence: false    # 捨てずに残してフラグだけ立てる（既定）
+
+# ---------------------------------------------------------------- 文のフィルタ
+filter:
+  min_chars: 6
+  max_chars: 120
+  max_latin_run: 0              # 連続するラテン文字の許容長。0 = ラテン文字を許さない
+  allow_digits: false           # 数字の読み（3日=みっか 等）は当てられないので既定で捨てる
+  min_japanese_ratio: 0.5       # 日本語の文字（かな・漢字）の割合
+  max_symbol_ratio: 0.25
+  reject_urls: true
+  reject_html: true
+  # 「数式だけ」「記号だけ」の判定に使う
+  min_content_chars: 4
+
+# ---------------------------------------------------------------- 左文脈
+context:
+  max_context_chars: 256
+  max_previous_sentences: 2
+
+# ---------------------------------------------------------------- 文節チャンク
+chunk:
+  min_chars: 2
+  max_chars: 40
+  # 助詞で終わらない文節（連体修飾）を次の文節にくっつける。
+  # 「新しい」＋「入力手法を」→「新しい入力手法を」
+  merge_modifiers: true
+
+# ---------------------------------------------------------------- かな漢字変換データ
+kkc:
+  enabled: true
+  # 文全体を 1 example として足すか（チャンク単位の example に加えて）
+  include_whole_sentence: false
+  # 文をまたぐ左文脈を使う（document 単位の連続性があるソースだけ）
+  use_previous_sentences: true
+  skip_low_confidence: false
+
+# ---------------------------------------------------------------- typo normalizer データ
+typo:
+  enabled: true
+  # 1 つの読みから作る example の総数（clean 1 件 + typo の数）。
+  # clean は 1 読みにつき 1 件しか作れないので clean_ratio の上限は 1/この値。
+  # 4 と clean_ratio 0.25 でちょうど「clean 1 + typo 3」になる
+  variants_per_clean_sample: 4
+  max_errors_per_sample: 2
+  # 2 個目の typo を入れる割合（残りは 1 個）
+  second_error_ratio: 0.2
+  clean_ratio: 0.25
+  # typo を起こす単位。sentence = 文全体の読み、chunk = 文節チャンクの読み
+  units: [sentence, chunk]
+  min_chars: 4
+  max_chars: 60
+  # 実績が下の比率に寄るように、不足している error type を優先して引く。
+  # false にすると毎回独立に引く（促音の過不足は「っ」を含む読みにしか当てられないので、
+  # false では実績が比率よりずっと小さくなる。REPORT の error_types_achieved_ratio で確認できる）
+  match_error_ratios: true
+  # error type の比率（合計は自動で正規化される）
+  error_types:
+    deletion: 0.25
+    substitution: 0.20
+    insertion: 0.10
+    transposition: 0.10
+    repeated_key: 0.10
+    missing_double_consonant: 0.10
+    excessive_double_consonant: 0.05
+    mixed_input: 0.05
+    weak_finger_omission: 0.05
+  # 「ん」の打ち方の個人差。nn = 常に nn、contextual = 子音の前だけ n 1 つ
+  romaji_style:
+    nn: 0.5
+    contextual: 0.5
+  # キー別の押し損ねやすさ。weak_finger_omission と deletion の位置選びに使う。
+  # 1.0 が基準。小指・薬指の担当キーを重くしてある（実測ではなく設計上の初期値）
+  key_weights:
+    q: 1.8
+    a: 1.5
+    z: 1.8
+    p: 1.8
+    ";": 2.0
+    "/": 1.8
+    w: 1.3
+    s: 1.2
+    x: 1.4
+    o: 1.3
+    l: 1.4
+    ".": 1.4
+    "-": 2.0
+  # mixed_input（IME 切替のし忘れを模す）
+  mixed_input:
+    enabled: true
+    min_units: 1
+    max_units: 4
+  max_attempts: 12              # かなが変わらない typo を引いたときの引き直し回数
+
+# ---------------------------------------------------------------- 重複除去
+dedup:
+  exact: true
+  normalized: true              # 記号・空白を落として比較
+  near_duplicate: false         # MinHash LSH。大きいデータでは重いので既定 OFF
+  near:
+    num_perm: 64
+    bands: 16
+    shingle: 5
+    threshold: 0.9
+
+# ---------------------------------------------------------------- 分割
+split:
+  train: 0.98
+  validation: 0.01
+  test: 0.01
+
+# ---------------------------------------------------------------- spot check
+samples:
+  per_file: 150

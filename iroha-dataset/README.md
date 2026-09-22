@@ -1,0 +1,481 @@
+# iroha-dataset
+
+[iroha](../README.md) 日本語入力システム用の学習データセットを、**ライセンスが明確な公開データから
+自前で再生成する**パイプライン。作るのは 2 種類。
+
+1. **かな漢字変換（KKC）用データ** — 左の確定文字列 + 入力中のかな → 変換結果
+2. **typo normalizer 用データ** — 崩れたかな → 意図された正しいかな
+
+`zenz-v2.5-dataset` などには依存しない。ダウンロードから学習データ生成までスクリプトで
+完全に再現できる。
+
+## 設計方針
+
+**「大量であること」より「教師ラベルの品質・由来・再現性」を優先する。**
+
+- **Sudachi の読みを 100% 正解とは仮定しない。** 形態素ごとに surface / reading /
+  normalized_form / POS / OOV を残し、怪しいものには `reading_confidence: "low"` を立てる。
+  読みがひらがなに落ちない文は残さず捨てる
+- 品質に疑問があるサンプルを無理に残すより**捨てる**（何をなぜ捨てたかは `data/REPORT.md` に出る）
+- **生成データは Git に入れない。** 各自が元データから再生成する（→ [LICENSES.md](LICENSES.md)）
+- 同じ seed・同じ設定なら同じデータになる（`tests/test_pipeline_end_to_end.py` で検査）
+
+## 準備
+
+```sh
+cd iroha-dataset
+python3 -m venv .venv
+./.venv/bin/python -m pip install -e ".[dev]"
+```
+
+SudachiDict-full は 120MB ほどある。`reading.dictionary` を `core` にすれば
+`sudachidict-core` でも動くが、**既定は full**（専門用語の読みが取れるかどうかが
+KAKEN のデータで効くため）。
+
+## 実行
+
+```sh
+cd iroha-dataset
+
+./.venv/bin/python -m iroha_dataset download      # 公開データを data/raw/ に取る
+./.venv/bin/python -m iroha_dataset preprocess    # 正規化 → 読み → フィルタ → canonical
+./.venv/bin/python -m iroha_dataset build-kkc     # かな漢字変換用データ
+./.venv/bin/python -m iroha_dataset build-typo    # typo normalizer 用データ
+./.venv/bin/python -m iroha_dataset samples       # 目視確認用のランダム抽出
+./.venv/bin/python -m iroha_dataset stats         # stats.json と REPORT.md
+```
+
+一括:
+
+```sh
+./.venv/bin/python -m iroha_dataset build-all
+```
+
+小規模の動作確認（Tatoeba 1000 文 + KAKEN 60 課題、`data-smoke/` に出る）:
+
+```sh
+./.venv/bin/python -m iroha_dataset build-all --config config/smoke.yaml
+```
+
+ソースとライセンスの確認:
+
+```sh
+./.venv/bin/python -m iroha_dataset sources
+```
+
+### 共通オプション
+
+| オプション | 意味 |
+|---|---|
+| `--config config/smoke.yaml` | 設定ファイル（`config/default.yaml` に重ねる） |
+| `--set typo.clean_ratio=0.3` | 個別の上書き（値は YAML として解釈。複数指定可） |
+| `--source tatoeba` | 対象ソースを絞る（複数指定可） |
+| `--force` | `download` で既存ファイルを取り直す |
+
+### KAKEN の取得について
+
+既定の `mode: ids` は **appid 不要**で、課題ごとの公開 XML を 1 件ずつ取る。
+課題番号を機械的に作って当たったものを保存するので、空振りが半分ほど出る
+（1 件 1 秒なので、300 課題で 10 分ほど）。`sources.kaken.max_projects` で件数を決める。
+
+課題番号のリストが手元にあるなら、そのほうが速くて礼儀もよい:
+
+```yaml
+sources:
+  kaken:
+    id_file: my-award-numbers.txt   # 1 行 1 課題番号
+```
+
+### 検索 API（`mode: search`）
+
+appid の登録が必要（https://api.ci.nii.ac.jp/ja/ ）。**appid はリポジトリに書かず環境変数で渡す。**
+
+```sh
+export KAKEN_APPID=xxxxxxxx
+./.venv/bin/python -m iroha_dataset download --source kaken \
+  --set sources.kaken.mode=search \
+  --set sources.kaken.max_projects=2000 \
+  --set sources.kaken.request_interval=10
+```
+
+応答は**課題ごとの XML と同じスキーマで、研究概要の本文段落がそのまま入る**
+（`rw=500` で 1 リクエスト 500 課題）。これが `ids` モードとの決定的な差で、
+理屈のうえでは 12 万課題が 240 リクエストほどで取れる。
+
+#### 実測で分かった癖（2026-09-22）
+
+**必ず読むこと。** ここを知らないと空のデータセットを作ってしまう。
+
+| 挙動 | 対処 |
+|---|---|
+| **throttle されると `totalResults=0` を HTTP 200 で黙って返す**（エラーにならない） | 0 件が `search.max_consecutive_empty` 回続いたら例外にして止める |
+| throttle 中は `403 <detail>Invalid APPID</detail>` が返ることもある（appid が正しくても） | メッセージだけで appid の無効を判断しない。時間をおいて試す |
+| throttle の窓は**長い**。実測で 20 分ほどの短間隔アクセスのあと、2 分冷却 + 30 秒間隔 6 回でも回復せず | `request_interval` を **10 秒以上**にして、少ない `max_projects` から始める |
+| `kw` は**必須**。`s1`（助成期間）や `qc`（研究種目）だけでは `totalResults=0` | `search.keywords` に分野横断の語を並べて振る（重複は課題番号で落ちる） |
+| `kw=*` はワイルドカードではなく**文字通り「*」**で検索される（実測 24 件） | 使わない |
+| 1 課題あたり平均 83KB（`productList` が大きい） | `store_trimmed_xml: true`（既定）で使うフィールドだけに削る。**96% 減、3.7KB/課題** |
+
+短間隔で API を試すと簡単に throttle に入る。**探索的に叩かないこと。**
+検索経路の検証は `tests/test_kaken_search.py` が保存済みの応答を差し込んで行うので、
+コードを直すだけなら API は不要。
+
+### 保存形式（`store`）
+
+| 値 | 中身 |
+|---|---|
+| `jsonl`（既定） | `data/raw/kaken/projects/<年度>.jsonl` に 1 行 1 課題で追記 |
+| `xml` | `data/raw/kaken/xml/<課題番号>.xml` に 1 課題 1 ファイル |
+
+`documents()` は**両方読む**ので、途中で変えても取得済みは無駄にならない。
+既定を JSONL にしてあるのは、11 万課題を 1 課題 1 ファイルで置くと
+**11 万ファイル**になり、同期フォルダ（Dropbox 等）に置くと辛いため。
+実測では 2,323 課題で **26MB / 2,323 ファイル → 2.5MB / 11 ファイル**になった。
+
+すでに XML で取ってあるものは、まとめ直せる:
+
+```sh
+./.venv/bin/python scripts/migrate-kaken-xml-to-jsonl.py            # JSONL に追記（XML は残る）
+./.venv/bin/python scripts/migrate-kaken-xml-to-jsonl.py --delete-xml
+```
+
+### `max_projects` と `max_documents`
+
+| 設定 | 対象 |
+|---|---|
+| `sources.kaken.max_projects` | **download** で集める課題数の目標 |
+| `sources.kaken.max_documents` | **preprocess** で読む課題数の上限（0 = キャッシュ全部） |
+
+兼用にしていたときは、キャッシュに 323 課題あるのに `max_projects: 200` のせいで
+200 課題しか使われない事故が起きた。別にしてある。
+
+## 出力
+
+```
+data/
+  raw/                     ダウンロードしたまま（raw_dir。data_dir と分けてある）
+  canonical/
+    <source>.jsonl             1 文 1 行の共通形式
+    <source>.morphemes.jsonl   形態素ごとの surface/reading/POS/OOV
+  kkc/       train.jsonl / validation.jsonl / test.jsonl
+  typo/      train.jsonl / validation.jsonl / test.jsonl
+  samples/   canonical_samples.txt / kkc_samples.txt / typo_samples.txt
+  stats.json
+  REPORT.md
+```
+
+### canonical record
+
+```json
+{
+  "id": "kaken_16H03511_0000",
+  "source": "kaken",
+  "document_id": "kaken_16H03511",
+  "sentence_index": 0,
+  "text": "本研究では新しい入力手法を提案する。",
+  "reading": "ほんけんきゅうではあたらしいにゅうりょくしゅほうをていあんする",
+  "previous_text": "視覚障害者の情報アクセスについて検討した。",
+  "license": "CC BY 4.0 互換（文部科学省ウェブサイト利用規約準拠）",
+  "attribution": "出典：「…」課題番号16H03511（KAKEN…）を加工して作成",
+  "has_oov": false,
+  "reading_confidence": "high",
+  "confidence_reasons": [],
+  "chunks": [
+    {"target": "本研究では", "reading": "ほんけんきゅうでは"},
+    {"target": "新しい入力手法を", "reading": "あたらしいにゅうりょくしゅほうを"},
+    {"target": "提案する", "reading": "ていあんする"}
+  ],
+  "split": "train"
+}
+```
+
+`reading` は**文末の句点を含めない**（IME では句点を打たずに確定することも多い）。
+`chunks` を繋ぐと `text`（末尾の句点を除く）と `reading` に戻る。
+
+### kkc example
+
+```json
+{"id":"…","source":"kaken","context":"本研究では","input":"あたらしいにゅうりょくしゅほうを","target":"新しい入力手法を"}
+```
+
+1 文から文節チャンクの数だけ example ができる:
+
+```json
+{"context":"","input":"ほんけんきゅうでは","target":"本研究では"}
+{"context":"本研究では","input":"あたらしいにゅうりょくしゅほうを","target":"新しい入力手法を"}
+{"context":"本研究では新しい入力手法を","input":"ていあんする","target":"提案する"}
+```
+
+KAKEN のように段落内で文が続くソースでは、前の文も context に入る:
+
+```json
+{"context":"視覚障害者の情報アクセスについて検討した。本研究では","input":"あたらしい…","target":"新しい…"}
+```
+
+context は **右端（カーソル直前）を残して** `context.max_context_chars` 文字に切る。
+
+### typo example
+
+```json
+{"id":"…","source":"kaken","input":"あたらしいにゅうりょkしゅほうを","target":"あたらしいにゅうりょくしゅほうを","error_type":"deletion"}
+```
+
+## 仕組み
+
+### 読み生成と品質フィルタ
+
+`reading.mode: C`（長単位）で読みを作る。複合語の読みが正確なため
+（`東京都立大学` → `とうきょうとりつだいがく`。mode A だと 3 語に分かれる）。
+
+**捨てる**（`data/REPORT.md` の「フィルタで捨てた文」「読み生成の失敗」に理由別の件数が出る）:
+
+| 条件 | 設定 |
+|---|---|
+| OOV を含む | `reading.reject_oov`（既定 true） |
+| 読みが取れない語を含む | 常に |
+| 読みがひらがなに落ちない（ラテン文字・数字が残る） | 常に |
+| 制御文字・壊れた Unicode | 常に |
+| HTML 断片・URL | `filter.reject_html` / `filter.reject_urls` |
+| 数式・記号だけ | `filter.min_content_chars` / `filter.max_symbol_ratio` |
+| 極端に長い / 短い | `filter.max_chars` / `filter.min_chars` |
+| ラテン文字を含む | `filter.max_latin_run`（既定 0 = 許さない） |
+| 数字を含む | `filter.allow_digits`（既定 false） |
+
+数字を既定で捨てているのは、**数の読みが当てられない**ため（`3日` は「みっか」だが
+Sudachi は文脈次第で外す）。`filter.allow_digits: true` にすれば通るが、
+その場合は `data/samples/canonical_samples.txt` で読みを確かめてから使うこと。
+
+**低信頼フラグ**（捨てずに `reading_confidence: "low"` を立てる。`reading.low_confidence` で調整）:
+
+| 理由 | 内容 |
+|---|---|
+| `mode_disagreement` | 別の分割単位（mode A）で作った読みと一致しない |
+| `proper_noun` | 人名・地名・固有名詞（Sudachi の読みが当たらないことがある） |
+| `numeral` | 数詞 |
+| `surface_fallback` | 漢字を含む表層なのに読みが表層のまま（辞書に読みが無い） |
+| `long_reading` | 読み長 / 表層長 が `max_reading_surface_ratio` を超える |
+| `indices_disagreement` | Tatoeba の `jpn_indices`（田中コーパス由来の読み注記）と一致しない |
+
+人名・地名をすべて捨てはしない（捨てると固有名詞が一切変換できないモデルになる）。
+`kkc.skip_low_confidence` / `reading.drop_low_confidence` で捨てる運用にもできる。
+
+**別解析器との一致確認を足す**には `iroha_dataset/preprocess/reading.py` の
+`SecondOpinion` プロトコル（`check(text, result, meta) -> list[str]`）を実装して
+`ReadingAnalyzer(cfg, second_opinions=[...])` に渡す。同梱のものは Sudachi の
+別分割（`ModeSecondOpinion`）と Tatoeba の `jpn_indices`（`IndicesSecondOpinion`）。
+
+### 文節チャンク
+
+形態素そのままでは細かすぎる（`新しい` `入力` `手法を`）ので、**助詞まで含めた
+自然な IME 入力単位**にまとめる（`iroha_dataset/preprocess/chunking.py`）:
+
+1. 自立語で新しい文節を始める。助詞・助動詞・接尾辞・非自立語・記号は前にくっつける。
+   接頭辞は後ろにくっつける（`本` + `研究` → `本研究`）。
+   助詞の直後のかなだけの用言も前にくっつける（`に` + `つい` + `て` → `について`）
+2. 助詞・助動詞で終わっていない文節（連体修飾・裸の名詞）を次の文節に合流させる
+   （`chunk.merge_modifiers`）。`新しい` + `入力手法を` → `新しい入力手法を`
+3. `chunk.min_chars` に届かない文節を寄せる
+4. `chunk.max_chars` を超える文節を形態素境界で割る
+
+### typo 生成
+
+**かな文字をランダムに消すのではなく**、必ず
+
+```
+正しいひらがな → ローマ字（打鍵列）→ 疑似キー入力エラー → かなへ再変換
+```
+
+の順で作る。打鍵列 → かなは `macos/Sources/IrohaCore/RomajiComposer.swift` の移植
+（`iroha_dataset/typo/romanize.py`）なので、生成されるかなは**実際の iroha が
+その打鍵列に対して出すもの**と一致する。解決できない打鍵がラテン文字のまま残るのも
+iroha の挙動どおり（`ていsでい` のような input が出るのは正しい）。
+
+隣接キーは Unicode ではなく **QWERTY の物理座標**から作る（`typo/keyboard.py`。
+段の横ずれは数字段 0・上段 0・中段 0.25・下段 0.75 キー分）。
+
+| error_type | 内容 |
+|---|---|
+| `deletion` | キーの押し損ね（位置は `typo.key_weights` で重み付け） |
+| `insertion` | 余分なキー入力（隣接キーが割り込んだ形） |
+| `substitution` | QWERTY 上で隣接したキーへの誤入力 |
+| `transposition` | 隣接する打鍵の順序逆転 |
+| `repeated_key` | キーを余分に複数回入力（既定では音節頭の子音を優先＝促音になりやすい） |
+| `missing_double_consonant` | 促音の二重子音の一方が欠ける（`kitte` → `kite`） |
+| `excessive_double_consonant` | 促音の子音が余分（`kitte` → `kittte`） |
+| `mixed_input` | IME 切替のし忘れ（`きょうはdaigaku`）。`typo.mixed_input.enabled` で ON/OFF |
+| `weak_finger_omission` | 小指・薬指の担当キーが押し切れず落ちる |
+
+- 1 サンプルの typo は既定 1 個、`typo.second_error_ratio` の割合で 2 個
+  （上限 `typo.max_errors_per_sample`）
+- **かなが変わらない崩しは typo ではないので引き直す**（`shi` の `h` が落ちて `si` → `し`）。
+  2 つ目の typo が 1 つ目を打ち消して元に戻る場合も弾く
+- `typo.romaji_style` で「ん」の打ち方の個人差を混ぜる（常に `nn` / 子音の前だけ `n`）
+- `typo.units` で生成単位を選ぶ（既定 `[sentence, chunk]`）。実際の iroha は
+  文節くらいの長さで訂正を走らせるので、チャンク単位のほうが本番に近い
+
+#### error type の比率
+
+`typo.error_types` の比率は**そのまま実績にはならない**。促音の過不足は「っ」を含む
+読みにしか当てられないので、素直に引くと実績が 1/7 くらいまで落ちる。
+`typo.match_error_ratios: true`（既定）は、当てられる type のうち**目標に対して
+不足している type を優先して引く**ことで実績を比率に寄せる。
+
+それでも「っ」を含む読みの数が上限になるので、促音系は要求どおりには届かない。
+**`data/REPORT.md` の `error_types_achieved_ratio` に要求と実績が並ぶ**ので、そこで確認する。
+
+#### clean サンプル
+
+normalizer が何でも書き換えようとするのを防ぐため、`正常入力 → 同一正常入力` を必ず入れる。
+
+1 つの読みから作れる clean は 1 件だけ（同じ `(input, target)` なので重複除去で落ちる）
+なので、**達成できる clean 比率の上限は `1 / typo.variants_per_clean_sample`**。
+既定は `variants_per_clean_sample: 4` と `clean_ratio: 0.25` で
+「clean 1 件 + typo 3 件」。届かない設定にすると REPORT の `clean_ratio` と
+`clean_ratio_requested` がずれるので気づける。
+
+### split と重複除去
+
+**split は `document_id` 単位**（`iroha_dataset/split.py`）。乱数ではなく
+`blake2b(seed:document_id)` で決めるので、データを足しても既存 document の行き先は変わらない。
+同じ原文・同じ document から派生した example が train と test に混ざらないことは
+`test_no_document_leaks_across_splits` で検査している。
+
+重複除去は canonical の段で 3 段（`dedup`）:
+
+- `exact` — 文字列そのまま
+- `normalized` — 記号・空白を落として比較
+- `near_duplicate` — 文字 5-gram の MinHash + LSH。**既定 OFF**（大きいデータで重いため）。
+  総当たりの類似度計算はせずバンドの辞書引きだけなので、有効にしても線形時間
+
+kkc / typo の段では `(context, input, target)` / `(input, target)` の重複も落とす。
+
+## 設定
+
+`config/default.yaml` が全設定。主なもの:
+
+```yaml
+seed: 42
+
+sources:
+  tatoeba: { enabled: true }
+  kaken:   { enabled: true, mode: ids, min_award_year: 2016, max_projects: 200 }
+  aozora:  { enabled: false }   # 将来用。3 作品での動作は確認済み・大規模では未検証
+
+reading:
+  dictionary: full
+  mode: C
+  reject_oov: true
+
+context:
+  max_context_chars: 256
+  max_previous_sentences: 2
+
+chunk:
+  min_chars: 2
+  max_chars: 40
+
+typo:
+  variants_per_clean_sample: 4
+  max_errors_per_sample: 2
+  clean_ratio: 0.25
+
+split:
+  train: 0.98
+  validation: 0.01
+  test: 0.01
+```
+
+## ソースを足す
+
+1. `iroha_dataset/sources/base.py` の `SourceAdapter` を継承し、`info` / `download` /
+   `documents` を書く（手順はその docstring）
+2. モジュール末尾で `register(MyAdapter)`
+3. `iroha_dataset/sources/__init__.py` の import に足す
+4. `config/default.yaml` の `sources:` に既定値を書く
+5. **`LICENSES.md` に節を足す**（`tests/test_config_cli.py` が検査する）
+
+`Document.paragraphs` は「連続した文章のかたまり」のリスト。左文脈は段落の中だけで繋ぐ
+（別の段落の文は前文にしない）。1 文ずつのソースは 1 段落 1 文の Document を返す。
+
+## テスト
+
+```sh
+./.venv/bin/python -m pytest tests/ -q
+```
+
+Sudachi が入っていない環境では読み・チャンクのテストは skip される
+（打鍵列・キーボード・split・重複除去・フィルタのテストは依存なしで走る）。
+
+## 目視確認
+
+数字だけ見ても読みの良し悪しは分からないので、**必ず `data/samples/` を見る**。
+seed 固定なので再現する。
+
+```sh
+less data/samples/canonical_samples.txt   # 原文・読み・チャンク・low の理由
+less data/samples/kkc_samples.txt         # context / input / target
+less data/samples/typo_samples.txt        # input / target / どう崩したか
+```
+
+## 目標規模と現状
+
+最初の目標は clean な原文 50万〜100万文、KKC example 数百万件、
+typo example 500万〜1000万件。**件数を満たすために品質を落とさない。**
+
+### 実測（2026-09-22、Tatoeba 全量 + KAKEN 2,292 課題）
+
+`build-all` は download 済みの状態から **165 秒**、ピークメモリ約 490MB
+（MacBook / Python 3.12）:
+
+| | 件数 |
+|---|---|
+| 原文（canonical） | **236,844 文**（Tatoeba 231,765 / KAKEN 5,079） |
+| KKC example | **635,368**（train 622,381 / validation 6,433 / test 6,554） |
+| うち文をまたぐ左文脈あり | 43,232 |
+| typo example | **2,670,384**（train 2,616,168 / validation 26,801 / test 27,415） |
+
+歩留まり:
+
+| ソース | document | → 文 | 1 document あたり |
+|---|---|---|---|
+| Tatoeba | 248,909 文 | 231,765 文 | 0.93（1 文 = 1 document） |
+| KAKEN（2016〜2025年度採択） | 291 課題 | 約 1,280 文 | **約 4.4 文** |
+| KAKEN（2026年度採択） | 2,001 課題 | 約 3,800 文 | **約 1.9 文** |
+
+**採択年度で 1 課題あたりの文数が 2 倍以上違う。** 始まったばかりの課題には
+研究成果報告書が無く、採択時の概要しか無いため（本文 254 文字 vs 799 文字）。
+`search.years` を古い年度から並べてあるのはこのため。
+
+### 目標に届かせるには
+
+- **Tatoeba は上限**（全 24.8 万文で打ち止め）。23.2 万文が取れている
+- 残りは **KAKEN を伸ばす**。原文 50 万文なら KAKEN からあと約 27 万文 =
+  **約 6.1 万課題**（2016〜2025年度なら 4.4 文/課題）。検索 API は 1 リクエスト
+  500 課題なので **約 122 リクエスト**、`request_interval: 10` で **20 分ほど**
+
+```sh
+export KAKEN_APPID=xxxxxxxx
+./.venv/bin/python -m iroha_dataset download --source kaken \
+  --set sources.kaken.mode=search \
+  --set sources.kaken.max_projects=63000 \
+  --set sources.kaken.request_interval=10
+./.venv/bin/python -m iroha_dataset build-all
+```
+
+`max_projects` は**保存済みを含む合計**なので、いまの 2,292 課題ぶんを足した値にする。
+途中で throttle に入っても保存済みは消えないので、時間をおいて同じコマンドを
+再実行すれば続きから集まる。
+
+- 1 リクエストの応答は約 41MB（500 課題 × 83KB）なので、6.1 万課題で
+  **約 5GB の転送**になる。保存は削ったあとなので 230MB 程度
+- typo example は `typo.variants_per_clean_sample` を上げれば線形に増える
+  （ただし clean 比率の上限が下がる。上の「clean サンプル」を参照）
+- 原文が増えれば `data/canonical/<source>.morphemes.jsonl` も大きくなる
+  （23 万文で 287MB）。要らなければ `reading.record_morphemes: false`
+
+## 動作確認済みの環境
+
+macOS 27 / Python 3.12.3 / SudachiPy 0.6.11 / SudachiDict-full 20260723。
+
+```sh
+./scripts/verify-smoke.sh     # テスト + 小規模ビルド + サンプルの先頭を表示
+```
