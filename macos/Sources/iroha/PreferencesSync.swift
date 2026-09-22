@@ -21,11 +21,13 @@ final class PreferencesSync {
     /// 同期するキー
     static let syncedKeys: Set<String> = {
         var keys: Set<String> = [
-            "liveConversion", "commitOnPunctuation", "candidateCount", "punctuationStyle",
+            "liveConversion", "candidateCount", "punctuationStyle",
             DocumentContextSettings.enabledKey,
             PredictionSettings.predictiveEnabledKey, PredictionSettings.completionEnabledKey,
             PredictionSettings.delayMillisecondsKey,
             LearningSettings.enabledKey, UserDictionarySync.autoSyncKey,
+            TypoNormalizerSettings.enabledKey, TypoNormalizerSettings.thresholdKey,
+            TypoNormalizerSettings.delayMillisecondsKey,
             SelectionSettings.enabledKey, SelectionSettings.triggerModeKey,
             SelectionSettings.onDemandHotkeyKey, SelectionSettings.excludedBundleIdsKey,
             SelectionSettings.characterCountKey,

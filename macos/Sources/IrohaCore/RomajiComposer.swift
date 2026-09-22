@@ -84,6 +84,14 @@ public struct RomajiComposer: Sendable, Equatable {
         rawIsReliable = false
     }
 
+    /// 確定済みかなを丸ごと置き換える（打ち間違いの自動訂正で読みを直すときに使う）。
+    /// 置き換えた読みは打鍵列と対応しなくなるので `raw`（F9/F10の英数変換）は捨てる
+    public mutating func replaceText(_ kana: String) {
+        text = kana
+        raw = ""
+        rawIsReliable = false
+    }
+
     public mutating func clear() {
         text = ""
         pending = ""

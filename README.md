@@ -67,7 +67,6 @@
 | ↑↓ / Space | 候補ウィンドウ内の選択（Enterで採用、Escで閉じる） |
 | Esc | 候補→文節→かな→取消 と段階的に戻る |
 | Backspace | 1文字削除。表示はかなに戻り、次の入力までライブ変換しない（文節変換中はかな入力に戻る） |
-| 、。！？ | 自動確定（メニューでOFF可、ライブ変換時のみ） |
 | F6 / F7 / F8 | ひらがな / カタカナ / 半角カタカナ（Ctrl+U / I / O でも可） |
 | F9 / F10 | 全角英数 / 半角英数（打鍵通りの文字列、Ctrl+P / T でも可） |
 | Shift+英字 | Shiftを押している間だけ英字入力。文章の途中でも確定せずに英字を挿入できる（下記） |
@@ -113,7 +112,7 @@ Shift+←→でユーザがいつでも調整できる。文節の候補生成�
 
 | タブ | 内容 |
 |---|---|
-| 入力 | ライブ変換・句読点で自動確定・候補数・予測変換・インライン補完・予測の休止時間・句読点スタイル（、。/ ，．）・AI変換して確定のプリセット3つ（名前・プロンプト・ショートカット） |
+| 入力 | ライブ変換・候補数・打ち間違いの訂正（ON/OFF・休止時間・確信の強さ）・予測変換・インライン補完・予測の休止時間・句読点スタイル（、。/ ，．）・AI変換して確定のプリセット3つ（名前・プロンプト・ショートカット） |
 | 辞書・学習 | ユーザ辞書（編集・macOSからの取り込み）・変換ルール（編集）・変換の学習（ON/OFF・リセット）・変換記録（ON/OFF・削除） |
 | 選択テキスト | 選択テキストのAI編集（有効化・権限・トリガー・プリセット5つ・除外するアプリ）・選択した文字数の表示 |
 | モデル | かな漢字変換モデルのパス・ダウンロード状況・再起動・予測変換/インライン補完のモデル・AIサービスの選択 |
@@ -260,6 +259,39 @@ ASCIIショートカット）は取り込みの対象外。取り込んだ単語
   ルールの出力を選んで確定しても学習には記録しない（日付を覚えると翌日から誤るため）
 - トリガーは今のところ完全一致のみ（正規表現・コード実行・外部通信はしない）
 
+### 打ち間違いの訂正（設定でON、既定OFF）
+
+**設定 > 入力 > 打ち間違いの訂正** をONにすると、**入力の手が止まったとき（既定300ms）に
+読みの打ち間違いを直してから変換する**。かな漢字変換の**手前**で「読み → 読み」を直す専用の
+小さなモデル（3.2Mパラメータの文字単位Transformer）を使う。
+
+```
+をわぇてけいやくする  →  候補ウィンドウに「分けて」（訂正後の読み「をわけて」の変換結果）
+がちがうんっだろな    →  「んだろな」（「っ」の入れすぎ）
+fとんはあらったほうが →  「布団は」（ローマ字がかなにならず残った打ち間違い）
+```
+
+- 直せるのは隣のキーの打ち間違い・抜け・重複・入れ替え・「っ」の過不足。ローマ字が
+  かなにならずに残った文字（`とうじょうsじない`）もひらがなに直せる
+- **直したときは「打った読み → 直した読み」をカーソルの下の小窓に出す。** ライブ変換がONだと
+  画面に出るのは変換後の文字列なので、読みのどこが直ったかは読みの形でしか見せられない
+  （未確定文字列の色や下線はアプリが無視することがあり、当てにできない）。
+  小窓はBackspaceで戻せる間だけ出る（次に何か打つと消える。出しっぱなしを防ぐため4秒でも消える）
+- **直った直後にBackspaceを押すと、打ったとおりの読みに戻る。** 打ち間違いに気づいた人が
+  最初に押すキーがBackspaceなので、そこを取り消しに充てている。訂正のあと何か打っていれば
+  Backspaceは普通に1文字消す。取り消した読みは直しにこない
+- スペースで変換するほうが休止より早かったときは、読みは書き換えずに候補ウィンドウに
+  訂正を足す。打ち間違いのせいで文節の切り方自体が崩れている場合（`さsてえいただいていて` が
+  `さ|sて|えいただいていて` に割れる等）は、**文全体を訂正した候補**が先頭の文節に出る。
+  この候補を選んで確定しても学習には記録しない
+- 「訂正するまでの休止時間」（既定300ms）と「訂正を出す確信の強さ」（既定2.0）を設定で変えられる。
+  確信の強さは大きいほど訂正が減り、正しく打った読みを壊すことも減る
+- 入力中は「読みの末尾に文字を足すだけ」の訂正はしない。打ちかけの読みは常に終わりが
+  足りなく見えるので、モデルが句読点で文を締めようとする（`こえて` → `こえて、`）のを防ぐ
+- 未確定のローマ字が残っている間（`k` と打った状態など）は走らない。CPU 1スレッドで平均4ms前後
+- 読みが48文字を超えるとき・かな以外の文字が混じるときは何もしない
+- モデルはアプリに含まれず、有効にすると約6MBを1回だけダウンロードする（下記「打ち間違い訂正モデルの配布」）
+
 ### データの保存場所（複数のMacで共有）
 
 ユーザ辞書・学習・変換ルール・変換モデル・設定は、既定では
@@ -296,6 +328,55 @@ swift build && .build/debug/iroha-cli repl  # CLIで変換を試す（レイテ�
 log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
 ```
 
+#### 打ち間違い訂正モデルの配布
+
+打ち間違いの訂正（上記）のモデルは**アプリに同梱していない**。設定でONにしたときに
+アプリが取りにいく（重みは本体コード(MIT)と別ライセンス CC BY-SA 4.0 なので、配布物を分けてある）。
+
+- 一覧: [models/typo-normalizer.json](models/typo-normalizer.json)（このリポジトリのファイル）。
+  アプリが焼き込んでいるのは**このURLだけ**なので、モデルの追加・差し替えはカタログの更新だけで済む
+- 重み本体: GitHub Releases の専用タグ `typo-normalizer-v1`（アプリのリリース `vX.Y.Z` とは別系列）
+- 取得したものは `<データフォルダ>/models/typo-normalizer/` に入る。保存場所を共有フォルダに
+  していれば、1回落とすだけで全部のMacで使える
+- 落としたあと **SHA-256 と大きさを照合してから設置**する。通らなければ何も置かない
+- 置き場所は環境変数 `IROHA_TYPO_MODEL`、カタログのURLは `IROHA_TYPO_CATALOG` で上書きできる
+
+新しいモデルを公開する手順:
+
+```sh
+# 1. 書き出しを配布用に整える（float16化 + 移植の照合 + LICENSE/README 添付）
+./macos/scripts/publish-typo-normalizer.sh <書き出しディレクトリ> <モデルID>
+# 2. 表示された gh コマンドで Release へアップロード（**必ず --prerelease**）
+# 3. 表示された JSON を models/typo-normalizer.json に入れて push
+# 4. 確認
+.build/release/iroha-cli typo catalog          # 一覧が見えるか
+.build/release/iroha-cli typo catalog install  # 実際に取得・照合・設置できるか
+```
+
+**`--prerelease` を外さないこと。** 通常リリースにすると GitHub の `releases/latest` が
+モデルのリリースを指してしまい、アプリの更新通知（[UpdateChecker](macos/Sources/iroha/UpdateChecker.swift)）が壊れる。
+なお `release.yml` のトリガは `tags: ['v*']` なので、このタグを push してもアプリのビルドは走らない。
+
+配布するファイルの大きさ（scale-16x の場合）:
+
+| | weights.bin | manifest.json |
+|---|---:|---:|
+| float16（既定） | 6,397,680 B (6.1 MiB) | 20,807 B |
+| float32（`--float32`） | 12,795,360 B (12.2 MiB) | 20,229 B |
+
+float16 でも照合は通る（greedy 200/200 一致・margin 最大差 0.0043、θ別の訂正率の表も float32 と同一）。
+
+##### モデルのライセンス
+
+現在配布しているモデルは **CC BY-SA 4.0**。学習元の
+[zenz-v2.5-dataset](https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset)（Keita Miwa 氏）が
+CC BY-SA 4.0（一部は llm-jp-corpus-v3 由来で ODC-BY と Common Crawl の規約）なので、継承して同じ条件で配る。
+**iroha 本体のコードは MIT のまま**で、重みを別ファイルにしてあるので混ざらない。
+
+ライセンスはカタログの**モデルごと**に書く（アプリに焼き込まない）。学習元を
+[iroha-dataset](iroha-dataset/) のような別のコーパスに替えたモデルは、条件が変わりうるため。
+
+
 - 変換エンジンは [ConversionEngine](macos/Sources/IrohaCore/ConversionEngine.swift) プロトコルで抽象化されており、
   [ZenzEngine](macos/Sources/IrohaCore/ZenzEngine.swift)（zenz-v3 + llama.cpp）を別モデルに差し替えられる
 - モデルの評価は `iroha-cli bench ../testdata/eval.tsv`（完全一致率・CER・レイテンシ）。
@@ -323,6 +404,33 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
   mlx-swift は 0.31.4 に固定（0.31.5 以降は swift-tools-version 6.3 が必要）。
   CLI では `IROHA_LORA=<adapter.gguf>` でアダプタを適用でき、`scripts/bench-compare.sh model.gguf:adapter.gguf`
   でアダプタ有無を同じ表に並べられる
+- 打ち間違いの訂正は [macos/Sources/IrohaCore/TypoNormalizer/](macos/Sources/IrohaCore/TypoNormalizer/)。
+  3.2M パラメータの文字単位 Transformer encoder–decoder を Accelerate（`cblas_sgemm`）だけで実装したもので、
+  llama.cpp も MLX も通さない。学習と重みの書き出しは `experiments/typo-normalizer/`、
+  移植の仕様は同ディレクトリの `SWIFT-PORT.md` が正。
+  **`experiments/` はリポジトリに含めていない**（学習データが大きく、結果の一部に学習コーパス由来の
+  実文が混ざるため）。下の評価コマンドもその手元のデータを前提にしている。変換エンジンのデコレータ鎖には入れず、
+  変換ルールと同じくコントローラが候補ウィンドウを開くときに合流させる
+  （読み全体の訂正を、差分が収まっている文節の候補に落とす。[TypoCorrectionPlacement](macos/Sources/IrohaCore/TypoNormalizer/TypoCorrectionPlacement.swift)）
+
+  ```sh
+  ./macos/scripts/install-typo-normalizer.sh <書き出しディレクトリ>  # float16に落として vendor/ へ設置 + 照合
+  .build/release/iroha-cli typo parity                             # PyTorch実装との照合（200件）
+  .build/release/iroha-cli typo eval  ../experiments/typo-normalizer/data/master/test.jsonl --n 10000
+  .build/release/iroha-cli typo bench ../experiments/typo-normalizer/data/master/test.jsonl --n 300
+  .build/release/iroha-cli typo pause    ../experiments/typo-normalizer/data/master/test.jsonl --n 600
+  .build/release/iroha-cli typo prefix   ../experiments/typo-normalizer/data/master/test.jsonl --n 2000
+  .build/release/iroha-cli typo segments ../experiments/typo-normalizer/data/master/test.jsonl --n 400
+  .build/release/iroha-cli typo "をわぇてけいやくする"              # 1件試す（生成・margin・採否）
+  ```
+
+  `typo pause` は**人が入力を止めそうな場所（文節の切れ目）で切った読み**への誤検出率で、
+  入力中に訂正を走らせる設計の根拠（θ=2.0・末尾への追加を捨てて 1.29%）。
+  `typo prefix` は文字数で機械的に切るので語の途中が多く、条件が実際より厳しく出る。
+  `typo segments` は訂正が1文節に収まる割合（文全体の訂正候補が要る割合の根拠）
+
+  **計算の順序を変えたら必ず `typo parity` を回すこと**（生成が一致してもロジットがずれていれば実装は間違っている）
+
 - 変換ルールは `<データフォルダ>/user-rewrite-rules.json`
   （[UserRewriteRule](macos/Sources/IrohaCore/UserRewriteRule.swift)。変換エンジンのデコレータ鎖には入れず、
   コントローラが候補ウィンドウを開くときに独立した候補生成源として合流させる。
@@ -353,8 +461,8 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
   左文脈は「確定済み文字列（最大40文字）＋表示中の未確定文字列」（予測変換）または
   「確定済み文字列」（インライン補完）。確定済み文字列は下記の左文脈の取得と同じ。コントローラは休止時間（設定 `predictionDelayMs`、既定300ms）を
   キー入力の時刻から測り、ライブ変換の到着後に残り時間だけ待ってから予測を走らせる。
-  表示は [PredictionPanel](macos/Sources/iroha/PredictionPanel.swift)（フォーカスを取らない
-  フローティングの `NSPanel`）で、位置は `IMKTextInput.attributes(forCharacterIndex:lineHeightRectangle:)`
+  表示は [CaretPanel](macos/Sources/iroha/CaretPanel.swift)（フォーカスを取らない
+  フローティングの `NSPanel`。打ち間違いの訂正の知らせも同じ1枚を使うので、2つが重なって出ることはない）で、位置は `IMKTextInput.attributes(forCharacterIndex:lineHeightRectangle:)`
   が返すカーソル行の矩形の直下。未確定文字列に予測を混ぜない（混ぜると検索欄などが予測文に反応し、
   薄い色の描画もアプリ任せになる）
 - 生成は読みで縛る（[ReadingConstraint](macos/Sources/IrohaCore/ReadingConstraint.swift)）。

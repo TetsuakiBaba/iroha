@@ -1,4 +1,5 @@
 import Cocoa
+
 import InputMethodKit
 import IrohaCore
 
@@ -11,7 +12,8 @@ import IrohaCore
 /// - Shift+英字: Shiftを押している間だけ英字入力（離すとその英字を固定してかな入力に戻る）
 /// - 予測変換（設定・既定OFF）: 入力の休止後に続きの文節をカーソル下の小窓に表示、Tabで取り入れる
 /// - インライン補完（設定・既定OFF）: 確定の休止後に続きの文節を同じ小窓に表示、Tabで確定する
-///   （どちらも `PredictionPanel`。未確定文字列には混ぜない）
+///   （どちらも `CaretPanel`。未確定文字列には混ぜない）
+/// - 打ち間違いの訂正を知らせる小窓: 自動で直したときに「打った読み → 直した読み」を同じ小窓に出す
 @objc(IrohaInputController)
 final class IrohaInputController: IMKInputController {
 
@@ -75,6 +77,36 @@ final class IrohaInputController: IMKInputController {
                 forKey: PredictionSettings.predictiveModelPathKey, fallback: engineModelPath), predictionEngine),
         ])
 
+    /// 打ち間違いを読みの段階で直すモデル（既定OFF・設定でON）。モデルが無ければ nil。
+    /// 本線は入力の休止で読みそのものを直す（`scheduleTypoCorrection`）。休止より先に
+    /// スペースを押したときだけ、読みを書き換えずに候補ウィンドウへ合流させる。
+    /// どちらも `ConversionEngine` のデコレータ鎖には入れない（SWIFT-PORT.md §5）。
+    ///
+    /// モデルはアプリに同梱せず設定でONにしたときに取得するので、**起動時に決め打ちしない**。
+    /// 置き場所を1回だけ調べて覚え、取得・削除のときに `invalidateTypoNormalizer()` で捨てる
+    /// （ダウンロード直後に再起動なしで効かせるため）
+    private static let typoNormalizerLock = NSLock()
+    private static var typoNormalizerResolved = false
+    private static var typoNormalizerCache: TypoNormalizer?
+
+    static func typoNormalizer() -> TypoNormalizer? {
+        typoNormalizerLock.lock()
+        defer { typoNormalizerLock.unlock() }
+        if !typoNormalizerResolved {
+            typoNormalizerCache = TypoNormalizerSettings.makeNormalizer()
+            typoNormalizerResolved = true
+        }
+        return typoNormalizerCache
+    }
+
+    /// モデルを取得・削除したときに呼ぶ（次の利用で置き場所を調べ直す）
+    static func invalidateTypoNormalizer() {
+        typoNormalizerLock.lock()
+        typoNormalizerResolved = false
+        typoNormalizerCache = nil
+        typoNormalizerLock.unlock()
+    }
+
     private static func makeCoreEngine() -> any ConversionEngine {
         guard let dictionaryURL = LatticeConverter.defaultDictionaryURL() else {
             NSLog("iroha: 辞書ラティスの辞書が見つかりません。zenz単体で変換します")
@@ -102,6 +134,35 @@ final class IrohaInputController: IMKInputController {
 
     private var mode: Mode = .composing
     private var composer = IrohaInputController.makeComposer()
+
+    /// スペース押下（文節変換）で 1 回だけ走らせる打ち間違い訂正。候補ウィンドウを開くときに
+    /// 待ち合わせる。休止（`typoIdleTask`）で既に直っていれば何も返らない
+    private var typoCorrectionTask: Task<TypoCorrection?, Never>?
+
+    /// 入力中の休止で走らせる打ち間違い訂正（読みそのものを直す本線）
+    private var typoIdleTask: Task<Void, Never>?
+    private var typoIdleGeneration = 0
+    /// 直前に自動で直した内容（`original` に戻すため）。直後の Backspace でだけ使える
+    private var lastTypoCorrection: (original: String, corrected: String)?
+    /// 直後の Backspace で取り消せる状態か（訂正のあと何か打たれたら消える）。
+    /// 小窓の寿命はこれに合わせる（出ている ⇒ Backspace で戻せる）
+    private var typoUndoAvailable = false {
+        didSet { if oldValue, !typoUndoAvailable { hideTypoFeedback() } }
+    }
+    /// 小窓に出している「何をどう直したか」。出ている間は予測を出さない（同じ小窓を奪い合うため）
+    private var typoFeedback: NSAttributedString?
+    /// 小窓を出しっぱなしにしないための保険
+    private var typoFeedbackTask: Task<Void, Never>?
+    /// 小窓のヒント。Backspace の記号（U+232B）はシステムフォントに入っている
+    private static let typoFeedbackHint = "⌫ で戻す"
+    /// カーソルが動いたあとも古い小窓が残らないよう、これだけ経ったら閉じる
+    private static let typoFeedbackLifetime = Duration.seconds(4)
+    /// ユーザが取り消した読み。同じ読みをもう一度直しにいかない
+    private var typoRejectedReading: String?
+
+    /// 差分が文節境界をまたいでいて 1 文節では直せないときに出す「文全体を訂正した候補」。
+    /// 選ばれたら先頭の固定部分より後ろの文節をまとめて置き換える（`candidateSelected`）
+    private var typoWholeSentence: (candidate: String, reading: String, segmentOffset: Int)?
 
     /// 句読点スタイル（"、。" または "，．"のセット）
     private static let punctuationStyleKey = "punctuationStyle"
@@ -137,10 +198,6 @@ final class IrohaInputController: IMKInputController {
     private var liveConversionEnabled: Bool {
         UserDefaults.standard.object(forKey: Self.liveConversionKey) as? Bool ?? true
     }
-    private static let commitOnPunctuationKey = "commitOnPunctuation"
-    private var commitOnPunctuationEnabled: Bool {
-        UserDefaults.standard.object(forKey: Self.commitOnPunctuationKey) as? Bool ?? false
-    }
 
     // MARK: 状態
 
@@ -168,8 +225,6 @@ final class IrohaInputController: IMKInputController {
     private var alphabetRun: String?
     /// 固定部分の表示文字列
     private var fixedText: String { fixedChunks.map(\.text).joined() }
-    /// 句読点入力後、変換結果の到着を待って自動確定するフラグ
-    private var autoCommitPending = false
     /// 最後に完了したライブ変換の（読み, 変換結果）
     private var lastConversion: (reading: String, result: String)?
     private var conversionTask: Task<Void, Never>?
@@ -242,6 +297,7 @@ final class IrohaInputController: IMKInputController {
         documentContext = nil
         cancelPrediction()
         dismissCompletion()
+        hideTypoFeedback()
         // 他アプリでのクリック・スクロール・アプリ切替の合図はアクティブなコントローラ（自分）が受ける
         PointerActivityMonitor.shared.handler = { [weak self] event in
             self?.dismissFloatingWindows(for: event)
@@ -252,6 +308,11 @@ final class IrohaInputController: IMKInputController {
         if PredictionSettings.isPredictiveEnabled { Task { try? await Self.predictionEngine.prewarm() } }
         if PredictionSettings.isCompletionEnabled { Task { try? await Self.completionEngine.prewarm() } }
         Task.detached { TranslationService.prewarm() }
+        // 打ち間違い訂正モデル（6.4MB）も先に読む。候補ウィンドウを開くときに待ち合わせるので、
+        // 初回だけ読み込みぶん遅れるのを避ける
+        if TypoNormalizerSettings.isEnabled, let normalizer = Self.typoNormalizer() {
+            Task.detached(priority: .utility) { try? await normalizer.prewarm() }
+        }
         // アップデートの自動確認（1日1回まで、設定でOFF可）
         Task { await UpdateChecker.shared.autoCheckIfDue() }
         // 変換モデルが未取得のままなら再試行（起動時にオフラインだった場合など。60秒スロットル付き）
@@ -394,6 +455,7 @@ final class IrohaInputController: IMKInputController {
     private func dismissFloatingWindows(for event: PointerActivityMonitor.Event) {
         dismissCompletion()
         cancelPrediction()
+        hideTypoFeedback()
         if event != .scroll, panelVisible {
             hidePanel()
         }
@@ -585,18 +647,27 @@ final class IrohaInputController: IMKInputController {
     // MARK: - 入力・ライブ変換中のキー処理
 
     private func handleComposing(_ event: NSEvent, client: IMKTextInput) -> Bool {
+        // 打ち間違いの自動訂正を取り消せるのは「直した直後の Backspace」だけ。
+        // ほかのキーが来た時点でその窓は閉じる（以降の Backspace は普通に1文字消す）
+        let canUndoTypoCorrection = typoUndoAvailable
+        if Int(event.keyCode) != kVK_Delete { typoUndoAvailable = false }
+
         switch Int(event.keyCode) {
         case kVK_Return, kVK_ANSI_KeypadEnter:
             guard isComposing else { return false }
             commitCurrent(client: client)
             return true
         case kVK_Delete:
+            if canUndoTypoCorrection {
+                if undoTypoCorrection(client: client) { return true }
+                // 取り消せる状態ではなかった（読みが変わっている等）。普通の削除に戻す
+                typoUndoAvailable = false
+            }
             guard isComposing else { return false }
             if alphabetRun == nil, composer.isEmpty, fixedChunks.last?.kind == .prediction {
                 // 取り入れた予測に戻ってきた: 読みが無いので1文字ずつは消せず、予測ごと取り消す。
                 // 取り入れたときに固定したかなも入力中の状態に戻す（Tabの前の表示に戻る）
                 displayOverride = nil
-                autoCommitPending = false
                 undoLastPrediction()
                 updateMarkedText(client: client, display: currentDisplay)
                 return true
@@ -607,12 +678,10 @@ final class IrohaInputController: IMKInputController {
             }
             if alphabetRun != nil {
                 displayOverride = nil
-                autoCommitPending = false
                 deleteAlphabetBackward(client: client)
                 return true
             }
             displayOverride = nil
-            autoCommitPending = false
             // 固定部分しか残っていないときは、直前の固定部分を読みに戻してから削除する
             if composer.isEmpty { unlockLastFixedChunk() }
             composer.deleteBackward()
@@ -625,7 +694,6 @@ final class IrohaInputController: IMKInputController {
             return true
         case kVK_Escape:
             guard isComposing else { return false }
-            autoCommitPending = false
             if alphabetRun != nil {
                 // 英字入力を取り消して、Shiftを押す前の状態（ライブ変換表示）に戻す
                 endAlphabetRun()
@@ -682,10 +750,6 @@ final class IrohaInputController: IMKInputController {
         finishAlphabetRun()
         lockDisplayOverride()
         composer.input(first)
-        // 句読点で自動確定（ライブ変換時のみ）: 変換結果の到着を待って確定する
-        autoCommitPending = liveConversionEnabled && commitOnPunctuationEnabled
-            && composer.pending.isEmpty
-            && composer.text.last.map { "、。！？，．".contains($0) } == true
         composerDidChange(client: client)
         return true
     }
@@ -696,7 +760,6 @@ final class IrohaInputController: IMKInputController {
         // 固定部分しかない（新しく打った読みがない）ときは対象がない
         guard !composer.isEmpty else { return true }
         conversionTask?.cancel()
-        autoCommitPending = false
         composer.flush()
         let kana = composer.text
         let converted: String?
@@ -769,7 +832,6 @@ final class IrohaInputController: IMKInputController {
     private func inputAlphabet(_ character: Character, client: IMKTextInput) {
         captureDocumentContextIfStarting(client: client)
         if alphabetRun == nil {
-            autoCommitPending = false
             lockDisplayOverride()
             lockComposerWithLiveConversion()
             alphabetRun = ""
@@ -851,7 +913,6 @@ final class IrohaInputController: IMKInputController {
     /// スペース押下: 全体を変換し、文節に分割して文節変換モードに入る
     private func enterSegmentMode(client: IMKTextInput) {
         conversionTask?.cancel()
-        autoCommitPending = false
         lockDisplayOverride()
         composer.flush()
         let reading = composer.text
@@ -893,6 +954,13 @@ final class IrohaInputController: IMKInputController {
 
         // 固定部分だけなら変換するものがない
         guard !reading.isEmpty else { return }
+
+        // 合成中の訂正（読みを直す本線）はここで終わり
+        cancelTypoCorrection()
+        // 休止を待たずにスペースを押した場合の保険。こちらは読みを書き換えず候補ウィンドウに出す。
+        // 休止で既に直っていれば訂正は出ない（同じ読みをもう一度見るだけ）
+        typoWholeSentence = nil
+        startTypoCorrection(reading: reading)
 
         let context = conversionContext + fixedPrefix
         conversionTask = Task { [weak self] in
@@ -998,6 +1066,270 @@ final class IrohaInputController: IMKInputController {
         }
     }
 
+    // MARK: - 打ち間違いの訂正（TypoNormalizer）
+
+    /// 入力の休止（既定 300ms）を待って、読みそのものを直す。
+    ///
+    /// iroha はライブ変換が主で、スペースを押さずに確定することも多い。しかも打ち間違いに
+    /// 気づいた人はスペースではなく Backspace を押すので、「変換を要求した時点」では遅い。
+    /// 人が入力を止める場所は文節や句の切れ目になりやすく、認知的には変換キーを押す地点に近い。
+    ///
+    /// 未解決のローマ字が残っている間（`pending`）は走らせない。打ちかけの語を
+    /// typo と誤認するのを避けるため（SWIFT-PORT.md §5）
+    private func scheduleTypoCorrection() {
+        typoIdleTask?.cancel()
+        typoIdleTask = nil
+        guard TypoNormalizerSettings.isEnabled, let normalizer = Self.typoNormalizer(),
+              mode == .composing, alphabetRun == nil, displayOverride == nil,
+              composer.pending.isEmpty
+        else { return }
+        let reading = composer.text
+        guard !reading.isEmpty, reading.count <= TypoNormalizer.maxReadingLength,
+              // 直した直後の読み・ユーザが取り消した読みは触らない（直し合いを起こさない）
+              reading != lastTypoCorrection?.corrected, reading != typoRejectedReading
+        else { return }
+        let threshold = TypoNormalizerSettings.threshold
+        let delay = remainingTypoIdleDelay()
+        typoIdleGeneration += 1
+        let generation = typoIdleGeneration
+        typoIdleTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: delay)
+                // 休止中に入力が進んでいたら推論しない（ライブ変換と計算を取り合わない）
+                let stillValid = await MainActor.run {
+                    generation == self.typoIdleGeneration && self.mode == .composing
+                        && self.composer.text == reading && self.composer.pending.isEmpty
+                }
+                guard stillValid,
+                      let correction = try await normalizer.correction(
+                        for: reading, threshold: threshold),
+                      // 「読みの末尾に足しただけ」は訂正ではなく続きの補完。打ちかけの読みは
+                      // 常に終わりが足りなく見えるので、入力中は必ず捨てる
+                      !correction.isTrailingInsertionOnly
+                else { return }
+                await MainActor.run {
+                    guard generation == self.typoIdleGeneration, self.mode == .composing,
+                          self.composer.text == reading, self.composer.pending.isEmpty,
+                          let client = self.client() else { return }
+                    self.applyTypoCorrection(correction, client: client)
+                }
+            } catch is CancellationError {
+            } catch {
+                NSLog("iroha: 打ち間違い訂正エラー: \(error)")
+            }
+        }
+    }
+
+    /// 読みを訂正後のものに差し替え、その読みで変換し直す
+    private func applyTypoCorrection(_ correction: TypoCorrection, client: IMKTextInput) {
+        composer.replaceText(correction.corrected)
+        lastTypoCorrection = (original: correction.reading, corrected: correction.corrected)
+        typoUndoAvailable = true
+        cancelPrediction()
+        composerDidChange(client: client)
+        // 表示を更新したあとに出す（小窓の位置は更新後の未確定文字列の末尾で決まる）
+        showTypoFeedback(correction, client: client)
+    }
+
+    /// 「打った読み → 直した読み」をカーソル下の小窓に出す。
+    ///
+    /// 訂正は**読み**に対して起きるが、ライブ変換がONだと画面に出るのは変換後の文字列なので、
+    /// 何がどう直ったかは読みの形でしか見せられない。同時に Backspace で戻せることも伝える
+    /// （この取り消しは、直されたことに気づいた人が最初に押すキーに充ててある）。
+    /// カーソル位置を教えてくれないアプリでは小窓を出さない（取り消し自体は効く）
+    private func showTypoFeedback(_ correction: TypoCorrection, client: IMKTextInput) {
+        hideTypoFeedback()
+        guard let feedback = TypoCorrectionFeedback.make(from: correction),
+              let rect = caretRect(client: client, markedTextLength: currentDisplay.utf16.count)
+        else { return }
+        let text = Self.attributedTypoFeedback(feedback)
+        typoFeedback = text
+        CaretPanel.shared.show(text, hint: Self.typoFeedbackHint, near: rect)
+        typoFeedbackTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.typoFeedbackLifetime)
+            guard !Task.isCancelled, let self else { return }
+            await MainActor.run { self.hideTypoFeedback() }
+        }
+    }
+
+    /// 小窓を閉じる。Backspace で取り消せる状態が終わったとき（`typoUndoAvailable` の didSet）と、
+    /// 出しっぱなしにしないための保険のタイマーから呼ばれる。
+    /// **取り消せる状態そのものは終わらせない** — 小窓が消えても、続けて何か打つまでは戻せる
+    private func hideTypoFeedback() {
+        typoFeedbackTask?.cancel()
+        typoFeedbackTask = nil
+        guard typoFeedback != nil else { return }
+        typoFeedback = nil
+        CaretPanel.shared.hide()
+        // 小窓を譲ったので予測を出せるようになる
+        schedulePrediction()
+    }
+
+    /// 変わった部分だけを目立たせる。消えた側は取り消し線、入った側は濃く太く
+    /// （半透明の背景の上に出るので、色の違いだけに頼らない）
+    private static func attributedTypoFeedback(_ feedback: TypoCorrectionFeedback) -> NSAttributedString {
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let result = NSMutableAttributedString()
+        func append(_ text: String, _ attributes: [NSAttributedString.Key: Any]) {
+            guard !text.isEmpty else { return }
+            result.append(NSAttributedString(string: text, attributes: attributes))
+        }
+        let faded: [NSAttributedString.Key: Any] = [
+            .font: font, .foregroundColor: NSColor.tertiaryLabelColor,
+        ]
+        append(feedback.prefix, faded)
+        append(feedback.originalChanged, [
+            .font: font,
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+            .strikethroughColor: NSColor.secondaryLabelColor,
+        ])
+        append(feedback.suffix, faded)
+        append(" → ", faded)
+        let kept: [NSAttributedString.Key: Any] = [
+            .font: font, .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        append(feedback.prefix, kept)
+        append(feedback.correctedChanged, [
+            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+            .foregroundColor: NSColor.labelColor,
+        ])
+        append(feedback.suffix, kept)
+        return result
+    }
+
+    /// 自動で直した直後の Backspace は、1文字消すのではなく訂正を取り消して打った読みに戻す。
+    /// 「直されたけど違う」と思った人が最初に押すキーがこれなので、そこを取り消しに充てる。
+    /// 訂正のあと何か打っていれば（`typoUndoAvailable` が false）通常の削除に戻る
+    private func undoTypoCorrection(client: IMKTextInput) -> Bool {
+        guard typoUndoAvailable, let last = lastTypoCorrection,
+              composer.text == last.corrected, composer.pending.isEmpty else { return false }
+        composer.replaceText(last.original)
+        typoRejectedReading = last.original
+        lastTypoCorrection = nil
+        typoUndoAvailable = false
+        cancelPrediction()
+        composerDidChange(client: client)
+        return true
+    }
+
+    /// 最後の打鍵からの経過を引いた、訂正を走らせるまでの残り時間
+    private func remainingTypoIdleDelay() -> Duration {
+        let elapsed = lastKeyEventTime.duration(to: .now)
+        let delay = TypoNormalizerSettings.idleDelay
+        return elapsed >= delay ? .zero : delay - elapsed
+    }
+
+    /// 進行中の訂正を捨てる
+    private func cancelTypoCorrection() {
+        typoIdleTask?.cancel()
+        typoIdleTask = nil
+        typoIdleGeneration += 1
+        lastTypoCorrection = nil
+        typoUndoAvailable = false
+        typoRejectedReading = nil
+    }
+
+    /// 読み全体を打ち間違い訂正モデルに 1 回だけ通す（結果は候補ウィンドウで使う）。
+    /// 設定OFF・モデルなし・対象外の読みなら何もしない
+    private func startTypoCorrection(reading: String) {
+        typoCorrectionTask?.cancel()
+        typoCorrectionTask = nil
+        guard TypoNormalizerSettings.isEnabled, let normalizer = Self.typoNormalizer() else { return }
+        let threshold = TypoNormalizerSettings.threshold
+        typoCorrectionTask = Task.detached(priority: .userInitiated) {
+            do {
+                return try await normalizer.correction(for: reading, threshold: threshold)
+            } catch {
+                NSLog("iroha: 打ち間違い訂正エラー: \(error)")
+                return nil
+            }
+        }
+    }
+
+    /// この文節に当たる訂正候補（訂正後の読みでの変換結果と、訂正後の読みそのもの）。
+    /// 差分が文節境界をまたぐときや、しきい値に届かなかったときは空
+    private func typoCandidates(
+        correction: TypoCorrection?, segmentIndex: Int, segmentReadings: [String], context: String
+    ) async -> [String] {
+        // 訂正は未確定の読み全体に対して出している。文節の列の先頭には英字や取り入れた予測などの
+        // 固定部分が付いていることがあるので、末尾から読みが一致する範囲を探して対応づける
+        guard let correction else { return [] }
+        guard let placement = correction.placement(inSegmentsWithFixedPrefix: segmentReadings) else {
+            // 差分が文節境界をまたいでいる（実測 6.8%）。typo のせいで文節の切り方そのものが
+            // 崩れている場合（「さsてえいただいていて」→「さ|sて|えいただいていて」）がこれで、
+            // 1 文節を直しても直らない。読み全体を訂正した候補を先頭の文節に出し、
+            // 選ばれたら文節ごと置き換える
+            return await typoWholeSentenceCandidate(
+                correction: correction, segmentIndex: segmentIndex,
+                segmentReadings: segmentReadings, context: context)
+        }
+        guard placement.index == segmentIndex else { return [] }
+        var results: [String] = []
+        if let converted = try? await Self.engine.convert(
+            reading: placement.correctedReading, context: context, candidateCount: 1).first,
+           !converted.isEmpty {
+            results.append(converted)
+        }
+        // 訂正後の読みそのものも出す。打ち間違いでローマ字がかなにならずに残った場合
+        // （「とうじょうsじない」）は、ひらがなに直るだけで用が足りることがある
+        if !results.contains(placement.correctedReading) {
+            results.append(placement.correctedReading)
+        }
+        return results
+    }
+
+    /// 文全体を訂正した候補（差分が文節境界をまたぐときだけ）。
+    /// 出すのは訂正対象の先頭の文節だけ。選ばれたときの置き換えに使う情報を控えておく
+    private func typoWholeSentenceCandidate(
+        correction: TypoCorrection, segmentIndex: Int, segmentReadings: [String], context: String
+    ) async -> [String] {
+        guard let offset = correction.segmentOffset(inSegments: segmentReadings),
+              offset == segmentIndex,
+              // 文節が1つしかないなら通常の候補生成で足りる（またぐ境界が無い）
+              segmentReadings.count - offset > 1,
+              let converted = try? await Self.engine.convert(
+                reading: correction.corrected, context: context, candidateCount: 1).first,
+              !converted.isEmpty
+        else { return [] }
+        await MainActor.run {
+            self.typoWholeSentence = (converted, correction.corrected, offset)
+        }
+        return [converted]
+    }
+
+    /// 「文全体を訂正した候補」を今選んでいるか。
+    ///
+    /// 候補の反映は `candidateSelectionChanged` が「その文節の結果を書き換える」形で行うので、
+    /// この候補を選んだ瞬間は「先頭の文節＝文全体の訂正」＋「後ろに元のままの文節」という
+    /// 半端な状態になる。表示では後ろを隠し（`refreshSegmentDisplay`）、
+    /// 候補ウィンドウを閉じるときに文節ごと差し替える（`applyTypoWholeSentenceIfSelected`）
+    private var isSelectingTypoWholeSentence: Bool {
+        guard let whole = typoWholeSentence, currentSegmentIndex == whole.segmentOffset,
+              segments.indices.contains(currentSegmentIndex) else { return false }
+        return segments[currentSegmentIndex].result == whole.candidate
+    }
+
+    /// 「文全体を訂正した候補」を選んだまま候補ウィンドウを閉じたら、訂正対象の文節を
+    /// まとめて差し替える。Return でも Escape でも文節移動でも同じ（irohaは
+    /// 「最後に選んでいた候補を残す」動きなので、閉じ方で結果を変えない）
+    private func applyTypoWholeSentenceIfSelected() {
+        guard isSelectingTypoWholeSentence, let whole = typoWholeSentence,
+              whole.segmentOffset <= segments.count else { return }
+        let replacement = ReadingAligner.segmentReading(whole.reading, conversion: whole.candidate)
+            .map {
+                // 訂正由来なので確定しても学習しない（打ち間違えた読みを覚えると
+                // ライブ変換に戻ってきてしまう。1文節の訂正候補と同じ扱い）
+                BunsetsuSegment(reading: $0.reading, result: $0.conversion,
+                                candidates: nil, unlearnableCandidates: [$0.conversion])
+            }
+        guard !replacement.isEmpty else { return }
+        segments = Array(segments[..<whole.segmentOffset]) + replacement
+        currentSegmentIndex = min(whole.segmentOffset, segments.count - 1)
+        typoWholeSentence = nil
+    }
+
     /// 現在の文節の候補ウィンドウを開く
     private func openSegmentCandidates(client: IMKTextInput) {
         guard segments.indices.contains(currentSegmentIndex) else { return }
@@ -1010,6 +1342,8 @@ final class IrohaInputController: IMKInputController {
         let context = conversionContext + segments[..<index].map(\.result).joined()
         let generation = segmentGeneration
         let count = candidateCount
+        let segmentReadings = segments.map(\.reading)
+        let correctionTask = typoCorrectionTask
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -1028,6 +1362,13 @@ final class IrohaInputController: IMKInputController {
                 let rewrites = UserRewriteRuleStore.shared.current.candidates(forReading: reading)
                     .filter { !candidates.contains($0) }
                 candidates.insert(contentsOf: rewrites, at: min(1, candidates.count))
+                // 打ち間違いの訂正も同じやり方で合流させる（スペース押下時に始めた 1 回ぶんを待つ）。
+                // 変換ルールの後ろに置く: ルールはユーザが自分で書いたもので確実性が高い
+                let typoFixes = await self.typoCandidates(
+                    correction: await correctionTask?.value, segmentIndex: index,
+                    segmentReadings: segmentReadings, context: context
+                ).filter { !candidates.contains($0) }
+                candidates.insert(contentsOf: typoFixes, at: min(1 + rewrites.count, candidates.count))
                 // 定番のフォールバック候補（ひらがな・カタカナ）を末尾に追加
                 for extra in [reading, hiraganaToKatakana(reading)] where !candidates.contains(extra) {
                     candidates.append(extra)
@@ -1035,7 +1376,10 @@ final class IrohaInputController: IMKInputController {
                 // ユーザ辞書のうちライブ変換から除外した語（候補ウィンドウ専用）を含む候補も
                 // 学習しない。部分一致で合成された候補（「#tag をつける」等）も対象
                 let candidateOnlyWords = UserDictionaryStore.shared.current.candidateOnlyWords(in: reading)
-                let unlearnable = Set(rewrites).union(candidates.filter { candidate in
+                // 打ち間違いの訂正を選んだ確定も学習しない。学習は読み全体 → 確定文字列を覚えるので、
+                // 覚えると打ち間違えた読みがライブ変換で勝手に直るようになる
+                // （過剰訂正を候補ウィンドウの中に閉じ込めた意味がなくなる）
+                let unlearnable = Set(rewrites).union(typoFixes).union(candidates.filter { candidate in
                     candidateOnlyWords.contains { candidate.contains($0) }
                 })
                 let finalCandidates = candidates
@@ -1125,6 +1469,9 @@ final class IrohaInputController: IMKInputController {
     /// 文節変換をやめて、読み（かな）の入力状態に戻る
     private func exitSegmentModeToKana(client: IMKTextInput) {
         conversionTask?.cancel()
+        typoCorrectionTask?.cancel()
+        typoCorrectionTask = nil
+        typoWholeSentence = nil
         segmentGeneration += 1
         mode = .composing
         segments = []
@@ -1197,7 +1544,11 @@ final class IrohaInputController: IMKInputController {
     private func refreshSegmentDisplay(client: IMKTextInput) {
         let attributed = NSMutableAttributedString()
         var selectionLocation = 0
-        for (index, segment) in segments.enumerated() {
+        // 「文全体を訂正した候補」を選んでいる間は、その候補が後ろの文節ぶんまで含んでいるので、
+        // 元のままの文節を並べると二重に見えてしまう。確定するまでは隠しておく
+        let visibleSegments = isSelectingTypoWholeSentence
+            ? Array(segments[...currentSegmentIndex]) : segments
+        for (index, segment) in visibleSegments.enumerated() {
             let underline: NSUnderlineStyle = (index == currentSegmentIndex) ? .thick : .single
             attributed.append(NSAttributedString(
                 string: segment.result,
@@ -1226,6 +1577,7 @@ final class IrohaInputController: IMKInputController {
     }
 
     private func hidePanel() {
+        applyTypoWholeSentenceIfSelected()
         candidatesPanel?.hide()
         panelVisible = false
         panelCandidates = []
@@ -1237,6 +1589,8 @@ final class IrohaInputController: IMKInputController {
     private func composerDidChange(client: IMKTextInput) {
         conversionTask?.cancel()
         updateMarkedText(client: client, display: currentDisplay)
+        // 打ち間違いの訂正はライブ変換のON/OFFに関わらず仕掛ける（読みを直すのが仕事なので）
+        scheduleTypoCorrection()
 
         let reading = composer.text
         guard liveConversionEnabled, !reading.isEmpty else { return }
@@ -1258,11 +1612,7 @@ final class IrohaInputController: IMKInputController {
                     self.lastConversion = (reading, best)
                     // 変換中にさらに入力が進んでいたら表示しない（新しい変換の結果を待つ）
                     guard self.mode == .composing, self.composer.text == reading else { return }
-                    if self.autoCommitPending {
-                        // 句読点入力による自動確定
-                        self.autoCommitPending = false
-                        self.commitCurrent(client: self.client())
-                    } else if self.displayOverride == nil, let client = self.client() {
+                    if self.displayOverride == nil, let client = self.client() {
                         self.updateMarkedText(client: client, display: self.currentDisplay)
                         // 表示が確定したので、入力の休止（残り時間）を待って続きを予測する
                         self.schedulePrediction()
@@ -1317,6 +1667,12 @@ final class IrohaInputController: IMKInputController {
             selectionRange: NSRange(location: display.utf16.count, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )
+        // 訂正の小窓を出している間にライブ変換の結果が届くと、未確定文字列の長さが変わって
+        // カーソルが動く。内容はそのままに位置だけ追う（作り直すとちらつく）
+        if let typoFeedback,
+           let rect = caretRect(client: client, markedTextLength: display.utf16.count) {
+            CaretPanel.shared.show(typoFeedback, hint: Self.typoFeedbackHint, near: rect)
+        }
     }
 
     /// 現在の表示内容（ライブ変換結果 or かな or 文節列）をそのまま確定する。
@@ -1397,7 +1753,6 @@ final class IrohaInputController: IMKInputController {
             return true
         }
         conversionTask?.cancel()  // ライブ変換の到着で翻訳中表示が上書きされないように
-        autoCommitPending = false
         translationGeneration += 1
         let generation = translationGeneration
         isTranslating = true
@@ -1506,11 +1861,14 @@ final class IrohaInputController: IMKInputController {
         alphabetRun = nil
         segments = []
         segmentBaseline = nil
+        typoCorrectionTask?.cancel()
+        typoCorrectionTask = nil
+        typoWholeSentence = nil
+        cancelTypoCorrection()
         // 候補ウィンドウを閉じる。文節変換中に文字を打って確定した場合など、
         // hidePanelを経由しない確定経路でパネルが残るのを防ぐ
         hidePanel()
         displayOverride = nil
-        autoCommitPending = false
         mode = .composing
         guard let client else { return }
         client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
@@ -1543,6 +1901,8 @@ final class IrohaInputController: IMKInputController {
         guard PredictionSettings.isPredictiveEnabled, liveConversionEnabled,
               mode == .composing, isComposing, alphabetRun == nil, displayOverride == nil,
               composer.pending.isEmpty,
+              // 訂正の小窓と同じ場所に出るので、出ている間は譲る
+              typoFeedback == nil,
               composer.isEmpty || lastConversion?.reading == composer.text
         else { return }
         let base = currentDisplay
@@ -1566,7 +1926,8 @@ final class IrohaInputController: IMKInputController {
                 guard !Task.isCancelled, !text.isEmpty else { return }
                 await MainActor.run {
                     guard generation == self.predictionGeneration, self.mode == .composing,
-                          self.currentDisplay == base, let client = self.client() else { return }
+                          self.currentDisplay == base, self.typoFeedback == nil,
+                          let client = self.client() else { return }
                     // 小窓を出せた（カーソル位置が取れた）ときだけTabで取り入れられる状態にする
                     if self.showPredictionPanel(text, client: client, markedTextLength: base.utf16.count) {
                         self.prediction = (base, text)
@@ -1586,7 +1947,7 @@ final class IrohaInputController: IMKInputController {
         predictionGeneration += 1
         if prediction != nil {
             prediction = nil
-            PredictionPanel.shared.hide()
+            CaretPanel.shared.hide()
         }
     }
 
@@ -1627,7 +1988,7 @@ final class IrohaInputController: IMKInputController {
     /// `markedTextLength` は未確定文字列のUTF-16長（カーソルはその末尾。無ければ0）
     private func showPredictionPanel(_ text: String, client: IMKTextInput, markedTextLength: Int) -> Bool {
         guard let rect = caretRect(client: client, markedTextLength: markedTextLength) else { return false }
-        PredictionPanel.shared.show(text, near: rect)
+        CaretPanel.shared.show(text, near: rect)
         return true
     }
 
@@ -1708,7 +2069,7 @@ final class IrohaInputController: IMKInputController {
         completionGeneration += 1
         guard pendingCompletion != nil else { return }
         pendingCompletion = nil
-        PredictionPanel.shared.hide()
+        CaretPanel.shared.hide()
     }
 
     /// Tab: 小窓に出している補完をアプリに挿入して確定する。確定後はまた休止を待って次の続きを出す

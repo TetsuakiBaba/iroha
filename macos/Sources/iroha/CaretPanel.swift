@@ -1,14 +1,19 @@
 import Cocoa
 
-/// 予測変換・インライン補完の予測文を、カーソルの近くに出す小さなフローティングウィンドウ。
+/// カーソルの近くに一行だけ出す小さなフローティングウィンドウ。
+/// 予測変換・インライン補完の予測文と、打ち間違いを直したときの知らせに使う。
 ///
 /// 未確定文字列（マークテキスト）には触らない。予測をマークテキストに混ぜると、検索欄の
 /// インクリメンタル検索やエディタの補完が予測文まで拾ってしまい、薄い表示になるかもアプリ任せになる。
 /// azooKeyの予測候補と同じく別ウィンドウにすることで、Tabを押すまでアプリのテキストは一切変わらない。
+/// 打ち間違いの知らせも同じ事情で別ウィンドウにする（マークテキストの属性はアプリが無視することがあり、
+/// ライブ変換中は読みのどこが直ったかを変換結果の上では示せない）。
+///
+/// パネルは1枚しか持たない。予測と打ち間違いの知らせが重なって出る事故が構造的に起きないようにするため。
 /// キーボードフォーカスは取らず（nonactivating）、マウスも透過する。
 /// IMKのコールバックと同じくメインスレッドから使う
-final class PredictionPanel {
-    static let shared = PredictionPanel()
+final class CaretPanel {
+    static let shared = CaretPanel()
 
     private let panel: NSPanel
     private let label: NSTextField
@@ -47,25 +52,42 @@ final class PredictionPanel {
 
         label = NSTextField(labelWithString: "")
         label.font = .systemFont(ofSize: NSFont.systemFontSize)
-        label.textColor = .secondaryLabelColor
         label.lineBreakMode = .byClipping
         background.addSubview(label)
 
-        hint = NSTextField(labelWithString: "Tab")
+        hint = NSTextField(labelWithString: "")
         hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         hint.textColor = .tertiaryLabelColor
-        hint.sizeToFit()
         background.addSubview(hint)
     }
 
-    /// カーソル行の矩形（スクリーン座標）の直下に予測文を出す。画面の下に収まらなければ行の上に出す
+    /// 予測文をカーソル行の直下に出す（取り入れるキーは Tab）
     func show(_ text: String, near caretRect: NSRect) {
-        label.stringValue = text
+        let attributed = NSAttributedString(
+            string: text,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+        )
+        show(attributed, hint: "Tab", near: caretRect)
+    }
+
+    /// 書式付きの一行をカーソル行の直下に出す。画面の下に収まらなければ行の上に出す。
+    /// `hint` が nil ならヒント欄を畳む
+    func show(_ text: NSAttributedString, hint hintText: String?, near caretRect: NSRect) {
+        label.attributedStringValue = text
         label.sizeToFit()
-        let width = padding.left + label.frame.width + hintGap + hint.frame.width + padding.right
+        hint.stringValue = hintText ?? ""
+        hint.sizeToFit()
+        let gap = hintText == nil ? 0 : hintGap
+        let hintWidth = hintText == nil ? 0 : hint.frame.width
+
+        let width = padding.left + label.frame.width + gap + hintWidth + padding.right
         let height = max(label.frame.height, hint.frame.height) + padding.top + padding.bottom
         label.frame.origin = NSPoint(x: padding.left, y: (height - label.frame.height) / 2)
-        hint.frame.origin = NSPoint(x: padding.left + label.frame.width + hintGap, y: (height - hint.frame.height) / 2)
+        hint.frame.origin = NSPoint(
+            x: padding.left + label.frame.width + gap, y: (height - hint.frame.height) / 2)
 
         let screen = NSScreen.screens.first { $0.frame.contains(caretRect.origin) } ?? NSScreen.main
         var origin = NSPoint(x: caretRect.minX, y: caretRect.minY - caretGap - height)

@@ -3,22 +3,33 @@
 vendor/llama.cpp/
 vendor/azooKey_dictionary_storage/
 vendor/dist/
+# 打ち間違い訂正モデル（install-typo-normalizer.sh が書き出しから作る）。
+# /export-scale-16x/ は学習機からの書き出しの置き場所。どちらも重みなのでgitには入れない
+vendor/typo-normalizer/
+/export-scale-16x/
 vendor/dist-windows/
 vendor/dist-windows-vulkan/
 windows/**/build/
 windows/build-vulkan/
 *.gguf
 .venv/
-training/base/
-training/train*.txt
-training/__pycache__/
-training/imellm-llmjp-150m/
-training/iroha-*/
+# 配布用にまとめたモデル（publish-typo-normalizer.sh の出力。Releaseへ上げるだけで追跡しない）
+/dist/
+
+# 学習まわり（training/）。データ・チェックポイントが大きいので、このMacでは
+# Dropboxの同期から外してある（フォルダごと存在しない）。
+# スクリプトとREADMEは追跡したまま: GPUマシン側のチェックアウトが使っていて、
+# CLAUDE.md / README.md も「training/ が正」として参照しているため。
+# このMacで「削除」として拾わないよう skip-worktree を立ててある:
+#   git ls-files -v training/ | grep '^S'          立っているか確認
+#   git update-index --no-skip-worktree <path>     解除（再び同期する / 編集するとき）
+/training/
 testdata/ajimee/
-training/*.log
-# 候補選択モデルの実験（ラティスダンプ・チェックポイントは大きいので追跡しない）
-experiments/reranker/data/
-experiments/reranker/runs/
+# 実験ディレクトリは追跡しない（2026-09-22〜）。
+# 学習データ・チェックポイントが大きいうえ、results/ の一部に学習コーパス由来の実文
+# （zenz-v2.5-dataset の読み等）が入るため、iroha のリポジトリから他者のデータを再配布しない。
+# 既に追跡済みの23ファイル（experiments/jev/ 等）はそのまま残る＝この行は新規分にだけ効く
+/experiments/
 
 # 助成金申請書類（非公開）
 grants/

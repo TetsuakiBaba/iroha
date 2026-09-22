@@ -46,6 +46,12 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   `vendor/`（llama.cpp）・`patches/`・`testdata/`・`training/`・`.venv` はプラットフォーム共有の
   ためリポジトリ直下に置く（**`training/` のスクリプトがルート直下の `vendor/`・`.venv` を
   参照しているので、これらを `macos/` 配下へ移動してはならない**）
+- **`training/` はこのMacには存在しない**（2026-09-21〜。データが大きいのでDropboxの同期から
+  外した。学習はGPUマシン側で行う）。スクリプト類（149KB）はリポジトリには入ったままで、
+  `.gitignore` の `/training/` と `git update-index --skip-worktree` で「削除」として
+  拾わないようにしてある。**この状態で `git rm` などをして消さないこと**（GPUマシンが
+  次に pull したときに消える）。中身を読む必要があるときは `git show HEAD:training/train.py`
+  のように git から取り出すか、GPUマシン側で見る
 - `macos/Sources/iroha/` — IME本体（Swift 5モード）: IMKコントローラ、設定UI、
   AIバックエンド（Apple FoundationModels / Ollama / LM Studio / OpenAI互換）、
   アップデータ、モデルDL、macOSユーザ辞書の取り込み（`SystemUserDictionary`）、
@@ -75,6 +81,61 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   が偽: 2倍超かつ3文字以上長い。ハッシュタグ・URL・定型文など）はライブ変換・文節分割には
   使わず候補ウィンドウにだけ出す（ことえりと同じ体感）。この語を候補から確定しても学習しない
   （学習は辞書の外側にあるので、覚えるとライブ変換に戻ってくる）
+- 打ち間違いの訂正（`TypoNormalizer`、`macos/Sources/IrohaCore/TypoNormalizer/`、既定OFF）は
+  かな漢字変換の**手前**で「読み → 読み」を直す 3.2M の文字単位 Transformer（実装は Accelerate の
+  `cblas_sgemm` だけ。llama.cpp も MLX も通さない）。学習は `experiments/typo-normalizer/`、
+  移植の仕様は同ディレクトリの **SWIFT-PORT.md が正**。
+  **ただし `experiments/` はリポジトリに入れていない**（`.gitignore` の `/experiments/`。
+  学習データが大きく、results/ に学習コーパス由来の実文が混ざるため）。
+  ソース中の `experiments/typo-normalizer/…` への参照は出自を示すもので、clone には含まれない。
+  仕様を読む必要があるときは作業機か、既に追跡済みの分を git から取り出すこと。守ること:
+  ・**計算の順序を変えたら `iroha-cli typo parity` を必ず回す**（PyTorch 実装との照合 200 件。
+    生成が一致してもロジットがずれていれば実装は間違っている。float32 でロジット 1e-3・logP 0.01 以内）
+  ・**本線は「入力の休止」で読みそのものを直す**（`scheduleTypoCorrection`、既定 300ms・設定可）。
+    iroha はライブ変換が主でスペースを押さずに確定することも多く、しかも打ち間違いに
+    気づいた人はスペースではなく Backspace を押すので、変換要求を起点にすると遅い。
+    直した直後の Backspace だけは「1文字消す」ではなく訂正の取り消しに使う
+    （`undoTypoCorrection`。ほかのキーが来たらその窓は閉じる）。取り消した読みは再訂正しない
+  ・**直したら「打った読み → 直した読み」をカーソル下の小窓に出す**（`showTypoFeedback` /
+    `TypoCorrectionFeedback`）。ライブ変換がONだと画面に出るのは変換後の文字列で、読みのどこが
+    直ったかは示せない（未確定文字列の属性はアプリが無視することがあり当てにならない）。
+    小窓の寿命は `typoUndoAvailable` に合わせる（**出ている ⇒ Backspace で戻せる**。逆は成り立たない。
+    保険の4秒タイマーで閉じても取り消しは効かせたままにする）。小窓は予測変換と同じ1枚
+    （`CaretPanel`）なので、訂正の小窓が出ている間は予測を出さない
+  ・毎打鍵では走らせない。未解決のローマ字が残っている間（`composer.pending`）も走らせない
+  ・**入力中は「読みの末尾に足しただけ」の訂正を必ず捨てる**（`isTrailingInsertionOnly`）。
+    学習データが句読点で終わる節なので、モデルは「こえて」→「こえて、」のように文を
+    締めたがる。打ちかけの読みは常に終わりが足りなく見えるので、これは訂正ではなく補完
+  ・休止地点の誤検出率は実測で低い（2026-09-21、`iroha-cli typo pause`、
+    正しく打てている 302 件・θ=2.0）: 文節境界で切ると **1.29%**、打ち終わりで 0.66%。
+    末尾追加を捨てないと 5.31% まで上がる。なお `iroha-cli typo prefix`（文字数で機械的に
+    25/50/75% で切る）は 23.7/10.7/5.1% と厳しく出るが、**人が止まるのは語の途中ではなく
+    文節の切れ目**なので、設計の判断には `typo pause` のほうを使うこと
+  ・スペースを休止より先に押した場合の保険として、文節変換でも訂正を出す（こちらは読みを
+    書き換えない）。`ConversionEngine` のデコレータ鎖には入れず、ユーザ定義ルールと同じく
+    独立した候補生成源として候補ウィンドウに合流させる。
+    読み全体の訂正を、差分が収まっている文節の候補に落とす（実測 93.2%）。
+    差分が文節境界をまたぐ 6.8%（typo のせいで文節の切り方自体が崩れている
+    「さsてえいただいていて」→「さ|sて|えいただいていて」のような場合）は、
+    **文全体を訂正した候補**を先頭の文節に出し、選ばれたら文節ごと差し替える
+    （`typoWholeSentence` / `applyTypoWholeSentenceIfSelected`。反映は
+    `candidateSelectionChanged` が文節の結果を書き換える形なので、差し替えは `hidePanel` で行い、
+    選んでいる間は後ろの古い文節を表示から隠す）。割合は `iroha-cli typo segments` で測れる。
+    訂正候補を確定しても学習しない
+    （`unlearnableCandidates`。覚えるとライブ変換に戻ってきて過剰訂正が表に出る）
+  ・GPU に載せない（batch=1 の逐次デコードは CPU 1 スレッドが MPS の 5 倍速い）
+  ・**モデルは .app に同梱しない。**設定でONにした時点でダウンロードする
+    （`TypoNormalizerFetcher`（IrohaCore、取得・照合・設置）＋ `TypoNormalizerDownloader`（表示だけ））。
+    重みは本体コード(MIT)と別ライセンス CC BY-SA 4.0 なので、配布物を分けてある。
+    一覧は `models/typo-normalizer.json`（アプリが焼き込むのはこのURLだけ。モデルの追加・差し替えは
+    カタログ更新だけで済む）、重み本体は Release タグ `typo-normalizer-v1`。
+    公開は `./macos/scripts/publish-typo-normalizer.sh <書き出しdir> <ID>`。
+    **必ず `--prerelease` で作ること**（通常リリースにすると `releases/latest` がこれを指し、
+    `UpdateChecker` が壊れる）。設置先は `<データフォルダ>/models/typo-normalizer/` で、
+    SHA-256 と大きさを照合してからでないと置かない。動作確認は `iroha-cli typo catalog [install]`
+  ・**ライセンスをアプリに焼き込まない。**カタログのモデルごとに `license` / `attribution` を持つ。
+    学習元を `iroha-dataset/` など別コーパスに替えたモデルは条件が変わりうるため
+  ・訂正率 79%（θなし）は合成 typo 分布の数字で、実使用の数字ではない。UI で約束しない
 - ユーザ定義の変換ルール（User Rewriter、`UserRewriteRule` / `UserRewriteRuleStore`）は
   エンジンのデコレータ鎖に入れず、コントローラが文節の候補ウィンドウを開くときに独立した
   候補生成源として合流させる（第一候補の直後に挿入。ライブ変換には影響しない）。

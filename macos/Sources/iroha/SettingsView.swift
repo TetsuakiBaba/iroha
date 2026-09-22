@@ -72,7 +72,6 @@ struct SettingsView: View {
 
 private struct InputSettingsTab: View {
     @AppStorage("liveConversion") private var liveConversion = true
-    @AppStorage("commitOnPunctuation") private var commitOnPunctuation = false
     @AppStorage(DocumentContextSettings.enabledKey) private var documentContext = true
     @AppStorage("candidateCount") private var candidateCount = 8
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
@@ -80,13 +79,16 @@ private struct InputSettingsTab: View {
     @AppStorage(PredictionSettings.completionEnabledKey) private var inlineCompletion = false
     @AppStorage(PredictionSettings.delayMillisecondsKey)
     private var predictionDelayMs = PredictionSettings.defaultDelayMilliseconds
+    @AppStorage(TypoNormalizerSettings.enabledKey) private var typoNormalizer = false
+    @AppStorage(TypoNormalizerSettings.thresholdKey)
+    private var typoThreshold = TypoNormalizer.defaultThreshold
+    @AppStorage(TypoNormalizerSettings.delayMillisecondsKey)
+    private var typoDelayMs = TypoNormalizerSettings.defaultDelayMilliseconds
 
     var body: some View {
         Form {
             Section("変換") {
                 Toggle("ライブ変換", isOn: $liveConversion)
-                Toggle("句読点で自動確定", isOn: $commitOnPunctuation)
-                    .disabled(!liveConversion)
                 Stepper(value: $candidateCount, in: 3...16) {
                     HStack {
                         Text("候補ウィンドウでモデルが並べる候補数")
@@ -101,6 +103,31 @@ private struct InputSettingsTab: View {
                 Text("入力を始めた位置の手前にある文章（最大40文字）をアプリから読み取り、変換と予測の文脈にします。"
                     + "文章の途中に書き足すときや、別のアプリに移った直後でも前後に合った変換になります。"
                     + "文章を返さないアプリでは、irohaで直前に確定した文字列を文脈にします。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("打ち間違いの訂正") {
+                Toggle("打ち間違いを自動で直す", isOn: $typoNormalizer)
+                Text("入力の手が止まったとき、読みの打ち間違い（隣のキー・抜け・重複・入れ替え・"
+                    + "「っ」の過不足）を直してから変換します。直したときは何をどう直したかを"
+                    + "カーソルの下に表示し、そのままBackspaceを押すと打ったとおりの読みに戻せます。"
+                    + "休止を待たずにスペースを押したときは、"
+                    + "読みは変えずに候補ウィンドウに訂正を足します。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                // 訂正モデルはアプリに同梱していない。ONにした時点で取得する
+                TypoNormalizerModelRow(isEnabled: typoNormalizer)
+                TypoDelayRow(milliseconds: $typoDelayMs)
+                    .disabled(!typoNormalizer)
+                Text("キーを離してからこの時間だけ何も押さなければ訂正します。"
+                    + "短いほど早く直りますが、語の途中で考えているだけのときにも動きます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TypoThresholdRow(threshold: $typoThreshold)
+                    .disabled(!typoNormalizer)
+                Text("大きくするほど、モデルがよほど確信したときしか直しません。"
+                    + "小さくすると打ち間違いをよく拾いますが、正しく打った読みも直してしまいます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -150,6 +177,144 @@ private struct InputSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// 訂正モデルの取得状況。アプリに同梱していないので、ONにした時点でここから落としてくる。
+///
+/// 重みは本体コード(MIT)と別ライセンス（CC BY-SA 4.0）なので、配布物を分けてある。
+/// 取得したものは `<データフォルダ>/models/typo-normalizer/` に入り、保存場所を共有フォルダに
+/// している人は1回落とせば全部のMacで使える
+private struct TypoNormalizerModelRow: View {
+    let isEnabled: Bool
+    @ObservedObject private var downloader = TypoNormalizerDownloader.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("訂正モデル")
+                Spacer()
+                content
+            }
+            if case .downloading(let progress) = downloader.state {
+                ProgressView(value: progress)
+            }
+            if case .failed(let message) = downloader.state {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            if downloader.installed == nil, !downloader.isBusy {
+                Text(downloader.offerDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { downloader.refreshCatalogIfNeeded() }
+        // トグルをONにした時点で取りにいく（OFFのまま勝手に通信しない）
+        .onChange(of: isEnabled) { _, enabled in
+            if enabled, downloader.installed == nil { downloader.install() }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch downloader.state {
+        case .loadingCatalog:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("確認中…").foregroundStyle(.secondary)
+            }
+        case .downloading(let progress):
+            HStack(spacing: 6) {
+                Text("ダウンロード中 \(Int(progress * 100))%").foregroundStyle(.secondary)
+                Button("中止") { downloader.cancel() }
+            }
+        case .verifying:
+            Text("検証中…").foregroundStyle(.secondary)
+        case .idle, .failed:
+            if let installed = downloader.installed {
+                HStack(spacing: 6) {
+                    Text(installed.name).foregroundStyle(.secondary)
+                    Button("削除") { downloader.remove() }
+                }
+            } else {
+                Button("ダウンロード") { downloader.install() }
+            }
+        }
+    }
+}
+
+/// 打ち間違いの訂正を走らせるまでの休止時間（ミリ秒）
+private struct TypoDelayRow: View {
+    @Binding var milliseconds: Int
+    private static let step = 50.0
+    private static let range = Double(TypoNormalizerSettings.delayMillisecondsRange.lowerBound)
+        ... Double(TypoNormalizerSettings.delayMillisecondsRange.upperBound)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("訂正するまでの休止時間")
+                Spacer()
+                Text("\(milliseconds) ms")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Slider(value: sliderValue, in: Self.range, step: Self.step)
+        }
+    }
+
+    private var sliderValue: Binding<Double> {
+        Binding(
+            get: { Double(milliseconds) },
+            set: { milliseconds = Int(($0 / Self.step).rounded() * Self.step) }
+        )
+    }
+}
+
+/// 打ち間違い訂正を採用する margin のしきい値。既定 2.0（SWIFT-PORT.md §4 の推奨）。
+///
+/// 数字そのものはユーザに意味が伝わらないので、目安の言葉を添える。
+/// 訂正率・過剰訂正率の実測値は合成した打ち間違いの分布で測ったもので、実際の打ち間違いの
+/// 分布ではないため、UIでは割合を約束しない（SWIFT-PORT.md §1）
+private struct TypoThresholdRow: View {
+    @Binding var threshold: Double
+
+    /// しきい値の目安。境目は test 10,000 件で測った曲線の形に合わせてある
+    /// （2.0 付近から過剰訂正が 1% を切り、5.0 を超えると訂正がほとんど出なくなる）
+    private var label: String {
+        switch threshold {
+        case ..<1.0: return "よく拾う"
+        case ..<3.0: return threshold == TypoNormalizer.defaultThreshold ? "標準・既定" : "標準"
+        case ..<5.0: return "慎重"
+        default: return "ほとんど出さない"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("訂正を出す確信の強さ")
+                Spacer()
+                Text(String(format: "%.1f", threshold))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Text("（\(label)）")
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                Slider(value: $threshold, in: 0...8, step: 0.5) {
+                    EmptyView()
+                } minimumValueLabel: {
+                    Text("よく拾う").font(.caption).foregroundStyle(.secondary)
+                } maximumValueLabel: {
+                    Text("慎重").font(.caption).foregroundStyle(.secondary)
+                }
+                Button("既定") { threshold = TypoNormalizer.defaultThreshold }
+                    .disabled(threshold == TypoNormalizer.defaultThreshold)
+            }
+        }
     }
 }
 

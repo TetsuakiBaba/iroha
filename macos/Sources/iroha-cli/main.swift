@@ -22,6 +22,17 @@ import IrohaCore
 //   iroha-cli repl                                : 対話モード（1行ずつ変換、レイテンシ表示）
 //   iroha-cli lattice <読み>                       : 辞書ラティス（azooKey）の生の候補を表示（調査用）
 //   iroha-cli predict [--chain 回数] <左文脈>        : 予測（左文脈の続き1文節）。--chainで採用を繰り返す
+//   iroha-cli typo catalog [install|remove]        : 配布中の訂正モデルの一覧・取得・削除（設定画面と同じ経路）
+//   iroha-cli typo parity                         : 打ち間違い訂正モデルの移植検証（parity.json 200件）
+//   iroha-cli typo bench <test.jsonl> [--n 件数]   : 同モデルのレイテンシ（mean / p50 / p95）
+//   iroha-cli typo eval <test.jsonl> [--n 件数]    : 同モデルのθ別の訂正率・過剰訂正率（threshold_curve.py 相当）
+//   iroha-cli typo prefix <test.jsonl> [--n 件数]  : 入力途中の読み（文字数で機械的に切る）に訂正を出す割合
+//   iroha-cli typo pause <test.jsonl> [--n 件数]   : 文節の境目（人が入力を止めそうな場所）で切ったときの誤検出率
+//   iroha-cli typo segments <test.jsonl> [--n 件数]: 採用した訂正が1文節に収まる割合（実際の変換・文節分割で測る）
+//   iroha-cli typo shrink <出力先>                 : 重みを float16 に落として半分にする（落としたら parity を再実行）
+//   iroha-cli typo <読み> [--threshold θ]          : 同モデルを1件試す（生成・margin・採否）
+//   環境変数 IROHA_TYPO_MODEL で打ち間違い訂正モデルの置き場所を、IROHA_TYPO_CATALOG で
+//   配布カタログのURLを上書きできる（既定は <データフォルダ>/models/typo-normalizer と GitHub）
 //   環境変数 IROHA_MODEL でモデルパス、IROHA_LORA で追加学習した LoRA アダプタ（GGUF）、
 //   IROHA_USER_DICT でユーザ辞書、IROHA_LEARNING で学習結果のファイルを上書き可能。
 //   bench / ajimee はモデルの素の力を測るため、既定でユーザ辞書・学習を空にする
@@ -164,6 +175,23 @@ func convertAndPrint(engine: any ConversionEngine, reading: String, context: Str
         print(line)
     } catch {
         FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
+    }
+}
+
+/// ダウンロードの進捗を10%刻みで標準エラーに出す（コールバックは別スレッドから来る）
+final class ProgressPrinter: @unchecked Sendable {
+    static let shared = ProgressPrinter()
+    private let lock = NSLock()
+    private var lastBucket = -1
+
+    func report(_ progress: Double) {
+        let bucket = Int(progress * 10)
+        lock.lock()
+        let shouldPrint = bucket != lastBucket
+        if shouldPrint { lastBucket = bucket }
+        lock.unlock()
+        guard shouldPrint else { return }
+        FileHandle.standardError.write("  \(bucket * 10)%\n".data(using: .utf8)!)
     }
 }
 
@@ -786,6 +814,641 @@ case "predict" where arguments.count >= 3:
         }
     } catch {
         FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
+    }
+
+case "typo":
+    // 打ち間違い訂正モデル（experiments/typo-normalizer、SWIFT-PORT.md）の検証。
+    //   typo parity [--dir DIR]          書き出しに付いてくる parity.json 200件と突き合わせる
+    //   typo bench <test.jsonl> [--n 件数] レイテンシ（mean / p50 / p95）
+    //   typo <読み> [--threshold θ]       1件だけ試す
+    var typoDirectory = TypoNormalizer.defaultDirectoryURL()
+    var typoThreshold = TypoNormalizer.defaultThreshold
+    var typoCount = 300
+    var typoPositional: [String] = []
+    var typoIndex = 2
+    while typoIndex < arguments.count {
+        switch arguments[typoIndex] {
+        case "--dir" where typoIndex + 1 < arguments.count:
+            typoDirectory = URL(fileURLWithPath: arguments[typoIndex + 1], isDirectory: true)
+            typoIndex += 2
+        case "--threshold" where typoIndex + 1 < arguments.count:
+            typoThreshold = Double(arguments[typoIndex + 1]) ?? typoThreshold
+            typoIndex += 2
+        case "--n" where typoIndex + 1 < arguments.count:
+            typoCount = Int(arguments[typoIndex + 1]) ?? typoCount
+            typoIndex += 2
+        default:
+            typoPositional.append(arguments[typoIndex])
+            typoIndex += 1
+        }
+    }
+    guard let typoDirectory else {
+        FileHandle.standardError.write(
+            "Typo Normalizer のモデルが見つかりません（IROHA_TYPO_MODEL か --dir で指定してください）\n"
+                .data(using: .utf8)!)
+        exit(1)
+    }
+    let normalizer = TypoNormalizer(directory: typoDirectory)
+
+    switch typoPositional.first {
+    case "parity":
+        // SWIFT-PORT.md §7 の検証。ロジット → 生成 → logP の順に見る
+        // （生成が一致してもロジットがずれていれば実装は間違っている）
+        struct ParityCase: Decodable {
+            let noisy: String
+            let clean: String
+            let greedy: String
+            let logprobGreedy: Double
+            let logprobNoisy: Double
+            let margin: Double
+            let firstLogits: [[Float]]
+            enum CodingKeys: String, CodingKey {
+                case noisy, clean, greedy, margin
+                case logprobGreedy = "logprob_greedy"
+                case logprobNoisy = "logprob_noisy"
+                case firstLogits = "first_logits"
+            }
+        }
+        struct ParityFile: Decodable {
+            let run: String
+            let cases: [ParityCase]
+        }
+        let parityURL = typoDirectory.appendingPathComponent("parity.json")
+        guard let parityData = try? Data(contentsOf: parityURL),
+              let parity = try? JSONDecoder().decode(ParityFile.self, from: parityData) else {
+            FileHandle.standardError.write("parity.json が読めません: \(parityURL.path)\n".data(using: .utf8)!)
+            exit(1)
+        }
+        var logitError: Float = 0
+        var greedyMatches = 0
+        var logProbError = 0.0
+        var marginError = 0.0
+        var mismatches: [String] = []
+        do {
+            for item in parity.cases {
+                // ① teacher forcing のロジット（先頭3ステップ）
+                let logits = try await normalizer.logits(
+                    source: item.noisy, target: item.clean, steps: item.firstLogits.count)
+                for (step, expected) in item.firstLogits.enumerated() where step < logits.count {
+                    for (index, value) in expected.enumerated() {
+                        logitError = max(logitError, abs(value - logits[step][index]))
+                    }
+                }
+                // ② greedy
+                let generated = try await normalizer.generate(for: item.noisy) ?? ""
+                if generated == item.greedy {
+                    greedyMatches += 1
+                } else if mismatches.count < 10 {
+                    mismatches.append("  \(item.noisy) → \(generated)（期待 \(item.greedy)）")
+                }
+                // ③ logP と margin
+                let greedyLogProb = try await normalizer.logProbability(of: item.greedy, given: item.noisy)
+                let noisyLogProb = try await normalizer.logProbability(of: item.noisy, given: item.noisy)
+                logProbError = max(logProbError, abs(greedyLogProb - item.logprobGreedy))
+                logProbError = max(logProbError, abs(noisyLogProb - item.logprobNoisy))
+                marginError = max(marginError, abs((greedyLogProb - noisyLogProb) - item.margin))
+            }
+        } catch {
+            FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
+            exit(1)
+        }
+        // 許容幅は重みの精度で変える（SWIFT-PORT.md §7）。float32 は「ロジット 1e-3・logP 0.01」、
+        // float16 に落としたあとは「greedy が数件ずれるのは許容・margin が 0.1 以上ずれたら戻す」
+        let isHalf = ((try? Data(contentsOf: typoDirectory.appendingPathComponent("manifest.json")))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["dtype"]
+            as? String) == "float16-le"
+        let logitTolerance: Float = isHalf ? 0.05 : 1e-3
+        let logProbTolerance = isHalf ? 0.1 : 0.01
+        let greedyFloor = isHalf ? parity.cases.count - parity.cases.count / 50 : parity.cases.count
+        let logitOK = logitError <= logitTolerance
+        let greedyOK = greedyMatches >= greedyFloor
+        let logProbOK = logProbError <= logProbTolerance && marginError <= logProbTolerance
+        print("parity: \(parity.run) / \(parity.cases.count)件  (\(typoDirectory.path))")
+        print("  重みの精度         \(isHalf ? "float16" : "float32")")
+        print("  ロジット最大誤差   \(String(format: "%.6f", logitError))   \(logitOK ? "OK" : "NG")（許容 \(logitTolerance)）")
+        print("  greedy 一致        \(greedyMatches)/\(parity.cases.count)   \(greedyOK ? "OK" : "NG")（許容 \(greedyFloor)以上）")
+        print("  logP 最大誤差      \(String(format: "%.6f", logProbError))   \(logProbOK ? "OK" : "NG")（許容 \(logProbTolerance)）")
+        print("  margin 最大誤差    \(String(format: "%.6f", marginError))")
+        for line in mismatches { print(line) }
+        exit(logitOK && greedyOK && logProbOK ? 0 : 1)
+
+    case "shrink":
+        // float32 の書き出しを float16 に落として半分にする（12.8MB → 6.4MB）。
+        // 落としたあとは必ず parity をもう一度回すこと（SWIFT-PORT.md §7-5。
+        // greedy が数件ずれるのは許容、margin が 0.1 以上ずれるなら float32 に戻す）
+        guard typoPositional.count >= 2 else {
+            FileHandle.standardError.write(
+                "使い方: iroha-cli typo shrink <出力ディレクトリ>\n".data(using: .utf8)!)
+            exit(1)
+        }
+        let destination = URL(fileURLWithPath: typoPositional[1], isDirectory: true)
+        do {
+            let manifestURL = typoDirectory.appendingPathComponent("manifest.json")
+            let manifestData = try Data(contentsOf: manifestURL)
+            guard var manifestObject = try JSONSerialization.jsonObject(with: manifestData)
+                    as? [String: Any],
+                  let totalFloats = manifestObject["total_floats"] as? Int,
+                  manifestObject["dtype"] as? String == "float32-le" else {
+                FileHandle.standardError.write("float32-le の manifest ではありません\n".data(using: .utf8)!)
+                exit(1)
+            }
+            let source = try Data(contentsOf: typoDirectory.appendingPathComponent("weights.bin"))
+            guard source.count == totalFloats * 4 else {
+                let message = "weights.bin の大きさが manifest と合いません"
+                    + "（期待 \(totalFloats * 4) バイト、実際 \(source.count) バイト）\n"
+                FileHandle.standardError.write(message.data(using: .utf8)!)
+                exit(1)
+            }
+            var halves = [UInt16](repeating: 0, count: totalFloats)
+            source.withUnsafeBytes { raw in
+                let floats = raw.bindMemory(to: Float.self)
+                for i in 0..<totalFloats { halves[i] = TypoWeightConversion.floatToHalf(floats[i]) }
+            }
+            manifestObject["dtype"] = "float16-le"
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+            try JSONSerialization.data(withJSONObject: manifestObject, options: [.prettyPrinted, .sortedKeys])
+                .write(to: destination.appendingPathComponent("manifest.json"))
+            try halves.withUnsafeBufferPointer { Data(buffer: $0) }
+                .write(to: destination.appendingPathComponent("weights.bin"))
+            // parity.json はそのまま（float32 で作った期待値と比べるのが目的）
+            let parity = typoDirectory.appendingPathComponent("parity.json")
+            if FileManager.default.fileExists(atPath: parity.path) {
+                try? FileManager.default.removeItem(at: destination.appendingPathComponent("parity.json"))
+                try FileManager.default.copyItem(at: parity, to: destination.appendingPathComponent("parity.json"))
+            }
+            print("float16 で書き出しました: \(destination.path)  (\(totalFloats * 2 / 1_000_000)MB)")
+            print("次に: iroha-cli typo parity --dir \(destination.path)")
+        } catch {
+            FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
+            exit(1)
+        }
+
+    case "prefix":
+        // 「入力途中の読み」に対して訂正を出してしまう割合を測る。
+        // 合成中（確定前）に走らせる設計が成り立つかの判断材料（SWIFT-PORT.md §5 は
+        // 「打ち終わった読みでしか学習していないので入力途中を typo と誤認する」と警告している）。
+        //   正しい読みを途中で切ったもの  → 訂正を出したら誤検出
+        //   typo のある読みを途中で切ったもの → typo を含む長さなら直せてほしい
+        guard typoPositional.count >= 2 else {
+            FileHandle.standardError.write(
+                "使い方: iroha-cli typo prefix <test.jsonl> [--n 件数] [--threshold θ]\n".data(using: .utf8)!)
+            exit(1)
+        }
+        guard let content = try? String(contentsOfFile: typoPositional[1], encoding: .utf8) else {
+            FileHandle.standardError.write("ファイルが読めません: \(typoPositional[1])\n".data(using: .utf8)!)
+            exit(1)
+        }
+        struct PrefixRecord: Decodable {
+            let noisy: String
+            let clean: String
+            let errorType: String
+            enum CodingKeys: String, CodingKey {
+                case noisy, clean
+                case errorType = "error_type"
+            }
+        }
+        let prefixDecoder = JSONDecoder()
+        let records: [PrefixRecord] = content.split(separator: "\n").prefix(typoCount).compactMap {
+            guard let data = $0.data(using: .utf8) else { return nil }
+            return try? prefixDecoder.decode(PrefixRecord.self, from: data)
+        }
+        guard !records.isEmpty else {
+            FileHandle.standardError.write("評価できる行がありません\n".data(using: .utf8)!)
+            exit(1)
+        }
+        let fractions = [0.25, 0.5, 0.75, 1.0]
+        var cleanTotal = [Int](repeating: 0, count: fractions.count)
+        var cleanFired = [Int](repeating: 0, count: fractions.count)
+        var typoTotal = [Int](repeating: 0, count: fractions.count)
+        var typoFixed = [Int](repeating: 0, count: fractions.count)
+        var typoWrong = [Int](repeating: 0, count: fractions.count)
+        do {
+            for record in records {
+                let noisy = Array(record.noisy)
+                let clean = Array(record.clean)
+                for (slot, fraction) in fractions.enumerated() {
+                    let cut = max(1, Int((Double(noisy.count) * fraction).rounded()))
+                    guard cut <= noisy.count else { continue }
+                    let partial = String(noisy[0..<cut])
+                    guard let correction = try await normalizer.correction(
+                        for: partial, threshold: typoThreshold) else {
+                        if record.errorType == "none" { cleanTotal[slot] += 1 } else { typoTotal[slot] += 1 }
+                        continue
+                    }
+                    if record.errorType == "none" {
+                        // 正しい読みの途中なので、何か出したら誤検出
+                        cleanTotal[slot] += 1
+                        cleanFired[slot] += 1
+                    } else {
+                        // typo 側: 切った長さに対応する正解の前半と比べる。
+                        // typo は 1 文字ぶん長さを変えるので（重複・「っ」の過不足）、
+                        // 全部打ち終わっていれば正解そのもの、途中なら正解の前半と前方一致で甘く見る
+                        typoTotal[slot] += 1
+                        let expected = cut == noisy.count
+                            ? record.clean : String(clean[0..<min(cut, clean.count)])
+                        if correction.corrected == expected
+                            || expected.hasPrefix(correction.corrected)
+                            || correction.corrected.hasPrefix(expected) {
+                            typoFixed[slot] += 1
+                        } else {
+                            typoWrong[slot] += 1
+                        }
+                    }
+                }
+            }
+        } catch {
+            FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
+            exit(1)
+        }
+        print("typo prefix: \(records.count)件 × 読みの長さ \(fractions.map { Int($0 * 100) })%  θ=\(typoThreshold)")
+        print("  読みの割合   正しい読みへの誤検出        typoを直せた        typoに別の訂正")
+        for (slot, fraction) in fractions.enumerated() {
+            let falseRate = cleanTotal[slot] == 0 ? 0
+                : Double(cleanFired[slot]) / Double(cleanTotal[slot]) * 100
+            let fixRate = typoTotal[slot] == 0 ? 0
+                : Double(typoFixed[slot]) / Double(typoTotal[slot]) * 100
+            let wrongRate = typoTotal[slot] == 0 ? 0
+                : Double(typoWrong[slot]) / Double(typoTotal[slot]) * 100
+            print(String(format: "  %4d%%        %6.2f%% (%d/%d)   %6.2f%% (%d/%d)   %6.2f%%",
+                         Int(fraction * 100), falseRate, cleanFired[slot], cleanTotal[slot],
+                         fixRate, typoFixed[slot], typoTotal[slot], wrongRate))
+        }
+
+    case "segments":
+        // 採用した訂正が「1文節の中に収まるか」を実際の変換・文節分割で測る。
+        // 収まらない（差分が文節境界をまたぐ）ときは今の作りでは候補を出せないので、
+        // その割合が「文節分割のせいで訂正を出せない率」になる
+        guard typoPositional.count >= 2 else {
+            FileHandle.standardError.write(
+                "使い方: iroha-cli typo segments <test.jsonl> [--n 件数] [--threshold θ]\n".data(using: .utf8)!)
+            exit(1)
+        }
+        guard let content = try? String(contentsOfFile: typoPositional[1], encoding: .utf8) else {
+            FileHandle.standardError.write("ファイルが読めません: \(typoPositional[1])\n".data(using: .utf8)!)
+            exit(1)
+        }
+        struct SegRecord: Decodable {
+            let noisy: String
+            let clean: String
+            let errorType: String
+            enum CodingKeys: String, CodingKey {
+                case noisy, clean
+                case errorType = "error_type"
+            }
+        }
+        let segDecoder = JSONDecoder()
+        let segRecords: [SegRecord] = content.split(separator: "\n").prefix(typoCount).compactMap {
+            guard let data = $0.data(using: .utf8) else { return nil }
+            return try? segDecoder.decode(SegRecord.self, from: data)
+        }
+        let segEngine = makeEngine()
+        var accepted = 0, fitsInSegment = 0, straddles = 0, singleSegment = 0
+        var wholeSentenceCorrect = 0, segmentCorrect = 0
+        var examples: [String] = []
+        do {
+            for record in segRecords where record.errorType != "none" {
+                guard let correction = try await normalizer.correction(
+                    for: record.noisy, threshold: typoThreshold) else { continue }
+                accepted += 1
+                // IME と同じ手順: typo のある読みをそのまま変換して文節に割る
+                let conversion = try await segEngine.convert(
+                    reading: record.noisy, context: "", candidateCount: 1).first ?? record.noisy
+                let segments = ReadingAligner.segmentReading(record.noisy, conversion: conversion)
+                let readings = segments.map(\.reading)
+                if readings.count == 1 { singleSegment += 1 }
+                if let placement = correction.placement(inSegments: readings) {
+                    fitsInSegment += 1
+                    // その文節だけ直した読み全体が正解と一致するか
+                    var fixed = readings
+                    fixed[placement.index] = placement.correctedReading
+                    if fixed.joined() == record.clean { segmentCorrect += 1 }
+                } else {
+                    straddles += 1
+                    if examples.count < 6 {
+                        examples.append("  \(record.noisy) → \(correction.corrected)"
+                            + "  文節: \(readings.joined(separator: "|"))")
+                    }
+                }
+                if correction.corrected == record.clean { wholeSentenceCorrect += 1 }
+            }
+        } catch {
+            FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
+            exit(1)
+        }
+        print("typo segments: typoのある \(segRecords.filter { $0.errorType != "none" }.count) 件  θ=\(typoThreshold)")
+        print("  訂正を採用            \(accepted)")
+        print(String(format: "  1文節に収まる        %d (%.1f%%) ← 今の作りで候補を出せる",
+                     fitsInSegment, Double(fitsInSegment) / Double(max(1, accepted)) * 100))
+        print(String(format: "  文節境界をまたぐ      %d (%.1f%%) ← 今の作りでは何も出せない",
+                     straddles, Double(straddles) / Double(max(1, accepted)) * 100))
+        print("  （うち1文節しかない   \(singleSegment)）")
+        print(String(format: "  読み全体として正解    %d (%.1f%%)",
+                     wholeSentenceCorrect, Double(wholeSentenceCorrect) / Double(max(1, accepted)) * 100))
+        if !examples.isEmpty {
+            print("  またいだ例:")
+            for line in examples { print(line) }
+        }
+
+    case "pause":
+        // 「人が入力を止めそうな場所」で切った読みに訂正を出してしまう割合。
+        //
+        // `typo prefix` は文字数の 25/50/75% という機械的な位置で切るので、語の途中が多く
+        // 条件が実際より厳しい。人が 300ms 止まるのは文節や句の切れ目なので、ここでは
+        // 文節の境目（= 変換・文節分割が見ている切れ目）で切って測る。
+        // 合成中に訂正を走らせる設計（入力の休止で読みを直す）の誤検出率はこちらが近い
+        guard typoPositional.count >= 2 else {
+            FileHandle.standardError.write(
+                "使い方: iroha-cli typo pause <test.jsonl> [--n 件数] [--threshold θ]\n".data(using: .utf8)!)
+            exit(1)
+        }
+        guard let content = try? String(contentsOfFile: typoPositional[1], encoding: .utf8) else {
+            FileHandle.standardError.write("ファイルが読めません: \(typoPositional[1])\n".data(using: .utf8)!)
+            exit(1)
+        }
+        struct PauseRecord: Decodable {
+            let noisy: String
+            let clean: String
+            let errorType: String
+            enum CodingKeys: String, CodingKey {
+                case noisy, clean
+                case errorType = "error_type"
+            }
+        }
+        let pauseDecoder = JSONDecoder()
+        let pauseRecords: [PauseRecord] = content.split(separator: "\n").prefix(typoCount).compactMap {
+            guard let data = $0.data(using: .utf8) else { return nil }
+            return try? pauseDecoder.decode(PauseRecord.self, from: data)
+        }
+        // --keep-tail を付けると素の挙動（末尾への追加も誤検出に数える）
+        let dropTrailingInsertions = !typoPositional.contains("--keep-tail")
+        let pauseEngine = makeEngine()
+        // 正しく打てている読みだけを見る（誤検出＝訂正を出したら負け）
+        let cleanRecords = pauseRecords.filter { $0.errorType == "none" }
+        var boundaryTotal = 0, boundaryFired = 0
+        var finalTotal = 0, finalFired = 0
+        var examples: [String] = []
+        do {
+            for record in cleanRecords {
+                let conversion = try await pauseEngine.convert(
+                    reading: record.clean, context: "", candidateCount: 1).first ?? record.clean
+                let segments = ReadingAligner.segmentReading(record.clean, conversion: conversion)
+                var prefix = ""
+                for (index, segment) in segments.enumerated() {
+                    prefix += segment.reading
+                    let isFinal = index == segments.count - 1
+                    var correction = try await normalizer.correction(
+                        for: prefix, threshold: typoThreshold)
+                    // 入力中の訂正と同じ条件: 末尾に足しただけのものは捨てる
+                    if dropTrailingInsertions, correction?.isTrailingInsertionOnly == true {
+                        correction = nil
+                    }
+                    if isFinal {
+                        finalTotal += 1
+                        if correction != nil { finalFired += 1 }
+                    } else {
+                        boundaryTotal += 1
+                        if let correction {
+                            boundaryFired += 1
+                            if examples.count < 5 {
+                                examples.append("  \(prefix) → \(correction.corrected)"
+                                    + String(format: "  (margin %.1f)", correction.margin))
+                            }
+                        }
+                    }
+                }
+            }
+        } catch {
+            FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
+            exit(1)
+        }
+        print("typo pause: 正しく打てている \(cleanRecords.count) 件  θ=\(typoThreshold)"
+            + (dropTrailingInsertions ? "  末尾への追加は捨てる" : "  末尾への追加も数える"))
+        print(String(format: "  文の途中の文節境界で切った  %5.2f%% が誤検出 (%d/%d)",
+                     boundaryTotal == 0 ? 0 : Double(boundaryFired) / Double(boundaryTotal) * 100,
+                     boundaryFired, boundaryTotal))
+        print(String(format: "  最後まで打ち終わった時点    %5.2f%% が誤検出 (%d/%d)",
+                     finalTotal == 0 ? 0 : Double(finalFired) / Double(finalTotal) * 100,
+                     finalFired, finalTotal))
+        if !examples.isEmpty {
+            print("  誤検出の例:")
+            for line in examples { print(line) }
+        }
+
+    case "catalog":
+        // 配布中のモデル一覧を見る / 取得する。設定画面のダウンロードと同じ経路を通るので、
+        // 公開したカタログとリリースが正しいかをここで確かめられる
+        //   typo catalog            一覧を表示
+        //   typo catalog install    先頭（推奨）のモデルを取得して設置
+        //   typo catalog install <ID>
+        //   typo catalog remove     設置したモデルを削除
+        let action = typoPositional.count >= 2 ? typoPositional[1] : "list"
+        do {
+            switch action {
+            case "remove":
+                try TypoNormalizerInstall.remove()
+                print("設置したモデルを削除しました")
+            case "list", "install":
+                let catalog = try await TypoNormalizerFetcher.fetchCatalog()
+                print("カタログ: \(TypoNormalizerCatalog.defaultURL)")
+                if let license = catalog.license { print("  既定ライセンス: \(license)") }
+                let installed = TypoNormalizerInstall.installedRecord()
+                for model in catalog.models {
+                    let mark = installed?.id == model.id ? " ← 設置済み" : ""
+                    print(String(format: "  %-12s %@  %.1fMB%@", (model.id as NSString).utf8String!,
+                                 model.name, Double(model.totalBytes) / 1_000_000, mark))
+                    if let summary = model.summary { print("               \(summary)") }
+                    if let license = catalog.license(for: model) {
+                        print("               \(license)"
+                            + (catalog.attribution(for: model).map { " / 学習元: \($0)" } ?? ""))
+                    }
+                }
+                guard action == "install" else { break }
+                let target: TypoNormalizerCatalog.Model?
+                if typoPositional.count >= 3 {
+                    target = catalog.model(id: typoPositional[2])
+                    if target == nil {
+                        FileHandle.standardError.write(
+                            "そのIDのモデルがありません: \(typoPositional[2])\n".data(using: .utf8)!)
+                        exit(1)
+                    }
+                } else {
+                    target = catalog.models.first
+                }
+                guard let target else { exit(1) }
+                print("\n取得します: \(target.id)")
+                let record = try await TypoNormalizerFetcher.install(target) { progress in
+                    // 進捗は別スレッドから来る。10%刻みだけ出す
+                    ProgressPrinter.shared.report(progress)
+                }
+                print("設置しました: \(record.name) (\(record.id))")
+                print("  場所: \(TypoNormalizerInstall.directoryURL.path)")
+            default:
+                FileHandle.standardError.write(
+                    "使い方: iroha-cli typo catalog [list|install [ID]|remove]\n".data(using: .utf8)!)
+                exit(1)
+            }
+        } catch {
+            FileHandle.standardError.write("エラー: \(error.localizedDescription)\n".data(using: .utf8)!)
+            exit(1)
+        }
+
+    case "eval":
+        // threshold_curve.py と同じ表を Swift 側で出す（移植の最終確認と、モデルを差し替えたときの再測定）
+        guard typoPositional.count >= 2 else {
+            FileHandle.standardError.write(
+                "使い方: iroha-cli typo eval <test.jsonl> [--n 件数]\n".data(using: .utf8)!)
+            exit(1)
+        }
+        guard let content = try? String(contentsOfFile: typoPositional[1], encoding: .utf8) else {
+            FileHandle.standardError.write("ファイルが読めません: \(typoPositional[1])\n".data(using: .utf8)!)
+            exit(1)
+        }
+        struct TypoRecord: Decodable {
+            let noisy: String
+            let clean: String
+            let errorType: String
+            enum CodingKeys: String, CodingKey {
+                case noisy, clean
+                case errorType = "error_type"
+            }
+        }
+        let decoder = JSONDecoder()
+        let records: [TypoRecord] = content.split(separator: "\n").prefix(typoCount).compactMap {
+            guard let data = $0.data(using: .utf8) else { return nil }
+            return try? decoder.decode(TypoRecord.self, from: data)
+        }
+        guard !records.isEmpty else {
+            FileHandle.standardError.write("評価できる行がありません\n".data(using: .utf8)!)
+            exit(1)
+        }
+        // 生成と margin は θ に依らないので 1 回だけ計算して、θ を振るのは採否の判定だけにする
+        var predictions: [String] = []
+        var margins: [Double] = []
+        do {
+            for record in records {
+                let generated = try await normalizer.generate(for: record.noisy) ?? record.noisy
+                predictions.append(generated)
+                if generated == record.noisy {
+                    margins.append(0)
+                } else {
+                    margins.append(
+                        try await normalizer.logProbability(of: generated, given: record.noisy)
+                            - normalizer.logProbability(of: record.noisy, given: record.noisy))
+                }
+            }
+        } catch {
+            FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
+            exit(1)
+        }
+        let cleanCount = records.filter { $0.errorType == "none" }.count
+        let typoCountTotal = records.count - cleanCount
+        let characters = records.reduce(0) { $0 + $1.clean.count }
+        print("typo eval: \(records.count)件（正しい入力 \(cleanCount) / typo \(typoCountTotal)）  \(typoDirectory.path)")
+        print(" θ        Exact Match   CER    Typo訂正率   過剰訂正率   書き換えた割合")
+        for threshold in [-Double.infinity, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 10.0] {
+            var exact = 0, errors = 0, changed = 0, typoFixed = 0, falseCorrections = 0
+            for (index, record) in records.enumerated() {
+                let prediction = predictions[index]
+                let final = (prediction != record.noisy && margins[index] > threshold)
+                    ? prediction : record.noisy
+                if final == record.clean { exact += 1 }
+                errors += editDistance(Array(final), Array(record.clean))
+                if final != record.noisy { changed += 1 }
+                if record.errorType == "none" {
+                    if final != record.clean { falseCorrections += 1 }
+                } else if final == record.clean {
+                    typoFixed += 1
+                }
+            }
+            let label = threshold == -.infinity ? "なし" : String(format: "%.1f", threshold)
+            print(String(
+                format: " %6@   %7.2f%%  %5.2f%%   %7.2f%%   %7.2f%%   %6.2f%%",
+                label as NSString,
+                Double(exact) / Double(records.count) * 100,
+                Double(errors) / Double(max(1, characters)) * 100,
+                typoCountTotal == 0 ? 0 : Double(typoFixed) / Double(typoCountTotal) * 100,
+                cleanCount == 0 ? 0 : Double(falseCorrections) / Double(cleanCount) * 100,
+                Double(changed) / Double(records.count) * 100))
+        }
+
+    case "bench":
+        guard typoPositional.count >= 2 else {
+            FileHandle.standardError.write("使い方: iroha-cli typo bench <test.jsonl> [--n 件数]\n".data(using: .utf8)!)
+            exit(1)
+        }
+        guard let content = try? String(contentsOfFile: typoPositional[1], encoding: .utf8) else {
+            FileHandle.standardError.write("ファイルが読めません: \(typoPositional[1])\n".data(using: .utf8)!)
+            exit(1)
+        }
+        // JSONL（{"noisy": ...}）でも、1行1読みのテキストでも受ける
+        let readings: [String] = content.split(separator: "\n").prefix(typoCount).compactMap { line in
+            guard let data = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return String(line) }
+            return object["noisy"] as? String
+        }
+        guard !readings.isEmpty else {
+            FileHandle.standardError.write("測れる読みがありません: \(typoPositional[1])\n".data(using: .utf8)!)
+            exit(1)
+        }
+        do {
+            try await normalizer.prewarm()
+            _ = try await normalizer.generate(for: readings.first ?? "てすと")   // 初回の確保を測らない
+            var times: [Double] = []
+            var corrections = 0
+            for reading in readings {
+                let start = ContinuousClock.now
+                // 実運用と同じ経路（生成1回 + 前向き2回）を測る
+                let correction = try await normalizer.correction(for: reading, threshold: typoThreshold)
+                let elapsed = start.duration(to: .now)
+                times.append(Double(elapsed.components.attoseconds) / 1e15
+                    + Double(elapsed.components.seconds) * 1e3)
+                if correction != nil { corrections += 1 }
+            }
+            times.sort()
+            func percentile(_ p: Double) -> Double { times[min(times.count - 1, Int(Double(times.count) * p))] }
+            let mean = times.reduce(0, +) / Double(times.count)
+            print("typo bench: \(times.count)件  θ=\(typoThreshold)")
+            print(String(format: "  mean %.2fms  p50 %.2fms  p95 %.2fms  max %.2fms",
+                         mean, percentile(0.5), percentile(0.95), times.last ?? 0))
+            print("  訂正を出した件数 \(corrections)/\(times.count)")
+            print("  目標は mean 7ms 以下・p95 15ms 以下（SWIFT-PORT.md §7）")
+        } catch {
+            FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
+            exit(1)
+        }
+
+    case .some(let reading):
+        do {
+            let kana = romajiToKana(reading)
+            let generated = try await normalizer.generate(for: kana)
+            let correction = try await normalizer.correction(for: kana, threshold: typoThreshold)
+            print("入力     \(kana)")
+            print("生成     \(generated ?? "（対象外）")")
+            if let correction {
+                print(String(format: "採用     %@  (margin %.3f > θ %.2f)",
+                             correction.corrected, correction.margin, typoThreshold))
+                if correction.isTrailingInsertionOnly {
+                    print("         ただし末尾に足しただけなので、入力中の訂正では捨てられる"
+                        + "（打ちかけの読みは常に終わりが足りなく見えるため）")
+                }
+            } else if let generated, generated != kana {
+                let margin = try await normalizer.logProbability(of: generated, given: kana)
+                    - normalizer.logProbability(of: kana, given: kana)
+                print(String(format: "不採用   margin %.3f ≤ θ %.2f", margin, typoThreshold))
+            } else {
+                print("不採用   訂正なし")
+            }
+        } catch {
+            FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
+            exit(1)
+        }
+
+    case .none:
+        FileHandle.standardError.write(
+            "使い方: iroha-cli typo parity | typo bench <test.jsonl> | typo <読み> [--threshold θ]\n"
+                .data(using: .utf8)!)
+        exit(1)
     }
 
 case "convert":

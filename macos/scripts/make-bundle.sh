@@ -38,6 +38,11 @@ if [ ! -f "$DICT/mm.binary" ]; then
   exit 1
 fi
 cp -R "$DICT" "$APP/Contents/Resources/Dictionary"
+
+# 打ち間違い訂正モデルは**同梱しない**。設定でONにしたときに
+# TypoNormalizerDownloader が models/typo-normalizer.json 経由で取得する
+# （重みは本体コード(MIT)と別ライセンス(CC BY-SA 4.0)なので配布物を分けてある）。
+# 公開の手順は ./macos/scripts/publish-typo-normalizer.sh
 # SwiftPM依存パッケージのリソースバンドル（Bundle.module の解決先。存在するものだけ）
 for bundle in .build/release/*.bundle; do
   [ -d "$bundle" ] && cp -R "$bundle" "$APP/Contents/Resources/"
