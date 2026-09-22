@@ -14,6 +14,7 @@ import IrohaCore
 /// - インライン補完（設定・既定OFF）: 確定の休止後に続きの文節を同じ小窓に表示、Tabで確定する
 ///   （どちらも `CaretPanel`。未確定文字列には混ぜない）
 /// - 打ち間違いの訂正を知らせる小窓: 自動で直したときに「打った読み → 直した読み」を同じ小窓に出す
+/// - 句読点スタイルの切り替え（Control+.）の知らせ: 「、。 → ，．」を同じ小窓に出す
 @objc(IrohaInputController)
 final class IrohaInputController: IMKInputController {
 
@@ -164,6 +165,15 @@ final class IrohaInputController: IMKInputController {
     /// 選ばれたら先頭の固定部分より後ろの文節をまとめて置き換える（`candidateSelected`）
     private var typoWholeSentence: (candidate: String, reading: String, segmentOffset: Int)?
 
+    /// 句読点スタイルを切り替えたときの知らせを小窓に出しているか（予測はこの間だけ小窓を譲る）
+    private var punctuationNoticeVisible = false
+    /// 知らせを出しっぱなしにしないためのタイマー
+    private var punctuationNoticeTask: Task<Void, Never>?
+    /// 切り替えの知らせの寿命（次のキーでも閉じるので、取り消しを待つ訂正の小窓より短くてよい）
+    private static let punctuationNoticeLifetime = Duration.seconds(1.5)
+    /// 小窓のヒント。同じキーをもう一度押せば戻せる
+    private static let punctuationNoticeHint = "⌃. で戻す"
+
     /// 句読点スタイル（"、。" または "，．"のセット）
     private static let punctuationStyleKey = "punctuationStyle"
     static var punctuationStyle: String {
@@ -298,6 +308,7 @@ final class IrohaInputController: IMKInputController {
         cancelPrediction()
         dismissCompletion()
         hideTypoFeedback()
+        hidePunctuationNotice()
         // 他アプリでのクリック・スクロール・アプリ切替の合図はアクティブなコントローラ（自分）が受ける
         PointerActivityMonitor.shared.handler = { [weak self] event in
             self?.dismissFloatingWindows(for: event)
@@ -336,6 +347,8 @@ final class IrohaInputController: IMKInputController {
               let client = sender as? IMKTextInput else { return false }
 
         lastKeyEventTime = .now
+        // 句読点スタイルの知らせは次のキーで閉じる（この後の Control+. なら出し直す）
+        hidePunctuationNotice()
         let plainTab = Int(event.keyCode) == kVK_Tab
             && event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
 
@@ -456,6 +469,7 @@ final class IrohaInputController: IMKInputController {
         dismissCompletion()
         cancelPrediction()
         hideTypoFeedback()
+        hidePunctuationNotice()
         if event != .scroll, panelVisible {
             hidePanel()
         }
@@ -602,12 +616,68 @@ final class IrohaInputController: IMKInputController {
     }
 
     @objc private func togglePunctuationStyle(_ sender: Any?) {
-        let newStyle = Self.punctuationStyle == "、。" ? "，．" : "、。"
+        let oldStyle = Self.punctuationStyle
+        let newStyle = oldStyle == "、。" ? "，．" : "、。"
         UserDefaults.standard.set(newStyle, forKey: Self.punctuationStyleKey)
         // 入力中はcomposerを作り直せない（バッファが消える）ため、次の確定時に反映される
         if !isComposing, mode == .composing {
             composer = Self.makeComposer()
         }
+        showPunctuationNotice(from: oldStyle, to: newStyle)
+    }
+
+    /// 「句読点 、。 → ，．」をカーソル下の小窓に出す。
+    ///
+    /// Control+. はモードの表示が変わるわけでもアプリのテキストが動くわけでもないので、
+    /// 知らせないと次に句読点を打つまでどちらになったのか分からない（押し間違いにも気づけない）。
+    /// 訂正の小窓と同じ1枚を使うので、出す前に相手を閉じる（訂正の取り消し自体は効いたままにする）。
+    /// カーソル位置を教えてくれないアプリでは出ない（切り替え自体は効く）
+    private func showPunctuationNotice(from oldStyle: String, to newStyle: String) {
+        hidePunctuationNotice()
+        hideTypoFeedback()
+        guard let client = client(),
+              let rect = caretRect(
+                client: client, markedTextLength: isComposing ? currentDisplay.utf16.count : 0)
+        else { return }
+        CaretPanel.shared.show(
+            Self.attributedPunctuationNotice(from: oldStyle, to: newStyle),
+            hint: Self.punctuationNoticeHint, near: rect)
+        punctuationNoticeVisible = true
+        punctuationNoticeTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.punctuationNoticeLifetime)
+            guard !Task.isCancelled, let self else { return }
+            await MainActor.run {
+                self.hidePunctuationNotice()
+                // 小窓を譲ったので予測を出せるようになる
+                self.schedulePrediction()
+            }
+        }
+    }
+
+    private func hidePunctuationNotice() {
+        punctuationNoticeTask?.cancel()
+        punctuationNoticeTask = nil
+        guard punctuationNoticeVisible else { return }
+        punctuationNoticeVisible = false
+        CaretPanel.shared.hide()
+    }
+
+    /// 切り替え前 → 切り替え後。入った側を濃く太くする（`attributedTypoFeedback` と同じ見せ方で、
+    /// 半透明の背景の上でも色の違いだけに頼らない）
+    private static func attributedPunctuationNotice(
+        from oldStyle: String, to newStyle: String
+    ) -> NSAttributedString {
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let result = NSMutableAttributedString(
+            string: "句読点 \(oldStyle) → ",
+            attributes: [.font: font, .foregroundColor: NSColor.tertiaryLabelColor])
+        result.append(NSAttributedString(
+            string: newStyle,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+            ]))
+        return result
     }
 
     @objc private func openModelFolder(_ sender: Any?) {
@@ -1988,7 +2058,9 @@ final class IrohaInputController: IMKInputController {
     /// 予測文をカーソル行の直下の小窓に出す。カーソル位置を教えてくれないアプリでは出さず、falseを返す。
     /// `markedTextLength` は未確定文字列のUTF-16長（カーソルはその末尾。無ければ0）
     private func showPredictionPanel(_ text: String, client: IMKTextInput, markedTextLength: Int) -> Bool {
-        guard let rect = caretRect(client: client, markedTextLength: markedTextLength) else { return false }
+        // 句読点スタイルの知らせを出している間は同じ小窓を奪わない（数えるほどの時間しか出ていない）
+        guard !punctuationNoticeVisible,
+              let rect = caretRect(client: client, markedTextLength: markedTextLength) else { return false }
         CaretPanel.shared.show(text, near: rect)
         return true
     }
