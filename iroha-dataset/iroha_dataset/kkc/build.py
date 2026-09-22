@@ -1,4 +1,4 @@
-"""かな漢字変換用データ（``build-kkc``）。
+"""かな漢字変換用データ（``build-kkc``）。KKC = Kana-Kanji Conversion。
 
 canonical record から
 

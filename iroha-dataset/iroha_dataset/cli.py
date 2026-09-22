@@ -2,7 +2,7 @@
 
     python -m iroha_dataset download
     python -m iroha_dataset preprocess
-    python -m iroha_dataset build-kkc
+    python -m iroha_dataset build-kkc      # KKC = かな漢字変換（Kana-Kanji Conversion）
     python -m iroha_dataset build-typo
     python -m iroha_dataset stats
     python -m iroha_dataset samples
@@ -158,7 +158,8 @@ COMMANDS = {
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m iroha_dataset",
-        description="iroha 用の学習データセット生成（かな漢字変換 / typo normalizer）",
+        description="iroha 用の学習データセット生成"
+                    "（KKC = かな漢字変換 / typo = 打ち間違いの訂正）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("command", choices=sorted(COMMANDS), help="実行するコマンド")

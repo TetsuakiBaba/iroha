@@ -3,8 +3,11 @@
 [iroha](../README.md) 日本語入力システム用の学習データセットを、**ライセンスが明確な公開データから
 自前で再生成する**パイプライン。作るのは 2 種類。
 
-1. **かな漢字変換（KKC）用データ** — 左の確定文字列 + 入力中のかな → 変換結果
+1. **かな漢字変換用データ** — 左の確定文字列 + 入力中のかな → 変換結果
 2. **typo normalizer 用データ** — 崩れたかな → 意図された正しいかな
+
+以降、かな漢字変換を **KKC**（Kana-Kanji Conversion）と略す。
+`data/kkc/` と `build-kkc` コマンドの `kkc` はこれ。
 
 `zenz-v2.5-dataset` などには依存しない。ダウンロードから学習データ生成までスクリプトで
 完全に再現できる。
@@ -421,56 +424,78 @@ less data/samples/typo_samples.txt        # input / target / どう崩したか
 最初の目標は clean な原文 50万〜100万文、KKC example 数百万件、
 typo example 500万〜1000万件。**件数を満たすために品質を落とさない。**
 
-### 実測（2026-09-22、Tatoeba 全量 + KAKEN 2,292 課題）
+### 実測（2026-09-22、Tatoeba 全量 + KAKEN 90,302 課題）
 
-`build-all` は download 済みの状態から **165 秒**、ピークメモリ約 490MB
-（MacBook / Python 3.12）:
+| | 件数 | 目標 | |
+|---|---|---|---|
+| 原文（canonical） | **513,941 文**（Tatoeba 231,765 / KAKEN 282,176） | 50万〜100万文 | **達成** |
+| KKC example | **3,333,277**（train 3,266,774 / valid 32,541 / test 33,962） | 数百万件 | **達成** |
+| typo example | **8,985,114**（train 8,804,117 / valid 88,840 / test 92,157） | 500万〜1000万件 | **達成** |
 
-| | 件数 |
-|---|---|
-| 原文（canonical） | **236,844 文**（Tatoeba 231,765 / KAKEN 5,079） |
-| KKC example | **635,368**（train 622,381 / validation 6,433 / test 6,554） |
-| うち文をまたぐ左文脈あり | 43,232 |
-| typo example | **2,670,384**（train 2,616,168 / validation 26,801 / test 27,415） |
+KKC は平均 input 7.9 字 / 平均 context 65.8 字、**文をまたぐ左文脈のある example が 1,531,508 件**。
+typo は平均 input 11.9 字 / clean 比率 0.176、異なる clean 読み **1,581,698 件**。
+`data/` は 6.0GB・68 ファイル（うち `*.morphemes.jsonl` が約 2GB。
+要らなければ `reading.record_morphemes: false`）。
 
-歩留まり:
+#### 歩留まり
+
+走査した 1,003,049 文のうち **513,941 文（51%）**が残った。
 
 | ソース | document | → 文 | 1 document あたり |
 |---|---|---|---|
 | Tatoeba | 248,909 文 | 231,765 文 | 0.93（1 文 = 1 document） |
-| KAKEN（2016〜2025年度採択） | 291 課題 | 約 1,280 文 | **約 4.4 文** |
-| KAKEN（2026年度採択） | 2,001 課題 | 約 3,800 文 | **約 1.9 文** |
+| KAKEN | 90,302 課題 | 282,176 文 | **3.13 文** |
 
-**採択年度で 1 課題あたりの文数が 2 倍以上違う。** 始まったばかりの課題には
-研究成果報告書が無く、採択時の概要しか無いため（本文 254 文字 vs 799 文字）。
-`search.years` を古い年度から並べてあるのはこのため。
+捨てた内訳で大きいもの:
 
-### 目標に届かせるには
+| 理由 | 件数 | 走査比 |
+|---|---|---|
+| `latin_run`（ラテン文字を含む） | 228,025 | 22.7% |
+| `digits`（数字を含む） | 94,063 | 9.4% |
+| `too_long` | 46,537 | 4.6% |
+| 読み生成の失敗（`non_kana_reading` / `oov`） | 100,219 | 10.0% |
+| 重複除去 | 11,369 | 1.1% |
 
-- **Tatoeba は上限**（全 24.8 万文で打ち止め）。23.2 万文が取れている
-- 残りは **KAKEN を伸ばす**。原文 50 万文なら KAKEN からあと約 27 万文 =
-  **約 6.1 万課題**（2016〜2025年度なら 4.4 文/課題）。検索 API は 1 リクエスト
-  500 課題なので **約 122 リクエスト**、`request_interval: 10` で **20 分ほど**
+**ラテン文字と数字で 32 万文（走査の 32%）を捨てている。** 学術文には
+「COVID-19」「AI」「3次元」が多いので、KAKEN ではここが効く。
+`filter.max_latin_run` / `filter.allow_digits` を緩めれば原文は増えるが、
+**数の読み（`3日` = みっか）やラテン語彙の読みは当たらない**ので、緩めるなら
+`data/samples/canonical_samples.txt` で読みを確かめてからにすること。
 
-```sh
-export KAKEN_APPID=xxxxxxxx
-./.venv/bin/python -m iroha_dataset download --source kaken \
-  --set sources.kaken.mode=search \
-  --set sources.kaken.max_projects=63000 \
-  --set sources.kaken.request_interval=10
-./.venv/bin/python -m iroha_dataset build-all
-```
+`reading_confidence: low` は 159,227 文（30%）。大半は固有名詞。
 
-`max_projects` は**保存済みを含む合計**なので、いまの 2,292 課題ぶんを足した値にする。
-途中で throttle に入っても保存済みは消えないので、時間をおいて同じコマンドを
-再実行すれば続きから集まる。
+### 学習に足りるか（リポジトリの実測との比較）
 
-- 1 リクエストの応答は約 41MB（500 課題 × 83KB）なので、6.1 万課題で
-  **約 5GB の転送**になる。保存は削ったあとなので 230MB 程度
-- typo example は `typo.variants_per_clean_sample` を上げれば線形に増える
-  （ただし clean 比率の上限が下がる。上の「clean サンプル」を参照）
-- 原文が増えれば `data/canonical/<source>.morphemes.jsonl` も大きくなる
-  （23 万文で 287MB）。要らなければ `reading.record_morphemes: false`
+**typo normalizer 用は十分**。`experiments/typo-normalizer/README.md` の実運用モデル
+（Small 3.2M、clean 読み 900k × 8ep、EM 80.99%）と同じ尺度で比べると:
+
+| | clean 読み | トークン/パラメータ（1ep 換算） |
+|---|---|---|
+| 実運用モデル（900k × 8ep） | 900,000 | 約 47 |
+| **このデータ** | **1,581,698** | **66** |
+
+同 README は「この先さらに計算量を増やすなら、**900k では足りなくなる**」と書いており、
+その不足分を埋める量になっている。
+
+**KKC のフルスクラッチ学習には足りない**。`training/train-full.txt` は
+188,643,956 行（約 9.2B 文字、150M パラメータあたり約 61 トークン/パラメータ）。
+このデータは 3.33M example / 約 250M 文字で、**150M パラメータあたり約 1.7 トークン**。
+`training/README.md` は from-scratch に「全件規模のデータ推奨」としており、
+typo 実験では 11.8 トークン/パラメータが「明確に学習不足」と実測されている。
+
+**ファインチューニング・ドメイン適応には使える規模**（`training/README.md` の
+健全性チェックは「100万件×2エポックで完全一致 70%+」なので、その 3 倍以上）。
+
+### 現在のソースの上限
+
+- **Tatoeba は打ち止め**（全 24.8 万文）
+- **KAKEN は 2016年度以降に限っている**ので約 33 万課題が上限。3.1 文/課題で約 100 万文
+
+合計 **約 120 万文 → KKC で約 800 万 example** が現在のソースの天井で、
+`train-full.txt` の 188M には桁で届かない。そこを狙うならソースを足す必要がある
+（`SourceAdapter` を実装する。手順は「ソースを足す」節）。
+zenz-v2.5-dataset は Wikipedia 由来なので日本語 Wikipedia が最短だが、
+**CC BY-SA は派生データが SA に縛られる**（`LICENSES.md` の「将来の追加候補」）。
 
 ## 動作確認済みの環境
 
