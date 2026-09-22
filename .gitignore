@@ -16,19 +16,16 @@ windows/build-vulkan/
 # 配布用にまとめたモデル（publish-typo-normalizer.sh の出力。Releaseへ上げるだけで追跡しない）
 /dist/
 
-# 学習まわり（training/）。データ・チェックポイントが大きいので、このMacでは
-# Dropboxの同期から外してある（フォルダごと存在しない）。
-# スクリプトとREADMEは追跡したまま: GPUマシン側のチェックアウトが使っていて、
-# CLAUDE.md / README.md も「training/ が正」として参照しているため。
-# このMacで「削除」として拾わないよう skip-worktree を立ててある:
-#   git ls-files -v training/ | grep '^S'          立っているか確認
-#   git update-index --no-skip-worktree <path>     解除（再び同期する / 編集するとき）
+# 学習まわり（training/）。2026-09-22 にリポジトリから外した（それまでは
+# スクリプト10件だけ追跡していた）。prepare_data.py が作るデータの出所が
+# zenz-v2.5-dataset なので、iroha のリポジトリから他者のデータを再配布しないため。
+# 中身は履歴に残っている: git checkout v0.12.0 -- training
 /training/
 testdata/ajimee/
-# 実験ディレクトリは追跡しない（2026-09-22〜）。
-# 学習データ・チェックポイントが大きいうえ、results/ の一部に学習コーパス由来の実文
-# （zenz-v2.5-dataset の読み等）が入るため、iroha のリポジトリから他者のデータを再配布しない。
-# 既に追跡済みの23ファイル（experiments/jev/ 等）はそのまま残る＝この行は新規分にだけ効く
+# 実験ディレクトリ。2026-09-22 にリポジトリから外した（追跡していた23件も削除）。
+# 学習データ・チェックポイントが大きいうえ、jev/ajimee-candidates*.jsonl（AJIMEE-Bench、
+# CC-BY-SA 3.0）や typo-normalizer/results/ の実文など他者のデータを含むため。
+# 中身は履歴に残っている: git checkout v0.12.0 -- experiments
 /experiments/
 
 # 助成金申請書類（非公開）

@@ -46,12 +46,14 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   `vendor/`（llama.cpp）・`patches/`・`testdata/`・`training/`・`.venv` はプラットフォーム共有の
   ためリポジトリ直下に置く（**`training/` のスクリプトがルート直下の `vendor/`・`.venv` を
   参照しているので、これらを `macos/` 配下へ移動してはならない**）
-- **`training/` はこのMacには存在しない**（2026-09-21〜。データが大きいのでDropboxの同期から
-  外した。学習はGPUマシン側で行う）。スクリプト類（149KB）はリポジトリには入ったままで、
-  `.gitignore` の `/training/` と `git update-index --skip-worktree` で「削除」として
-  拾わないようにしてある。**この状態で `git rm` などをして消さないこと**（GPUマシンが
-  次に pull したときに消える）。中身を読む必要があるときは `git show HEAD:training/train.py`
-  のように git から取り出すか、GPUマシン側で見る
+- **`training/` と `experiments/` はリポジトリに入っていない**（2026-09-22 に追跡から外した。
+  他者のデータを iroha のリポジトリから再配布しないため。`.gitignore` の該当行に理由がある）。
+  中身が要るときは `git checkout v0.12.0 -- training experiments` で履歴から取り出す。
+  - このMacの `training/` は**第一階層のファイルだけ**が Dropbox で同期されている
+    （1.0GB。`train.py` `prepare_data.py` `README.md` と GGUF・ログ類）。
+    `t5/` や `iroha-llmjp-150m-full/` などの**サブディレクトリは同期していない**ので手元に無い。
+    T5 側の作業や学習そのものは GPU マシン（`/data1/Dropbox/project/iroha`）で行う
+  - `experiments/` はこのMacに全部ある（2.4GB）。追跡していないだけ
 - `macos/Sources/iroha/` — IME本体（Swift 5モード）: IMKコントローラ、設定UI、
   AIバックエンド（Apple FoundationModels / Ollama / LM Studio / OpenAI互換）、
   アップデータ、モデルDL、macOSユーザ辞書の取り込み（`SystemUserDictionary`）、
@@ -85,10 +87,9 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   かな漢字変換の**手前**で「読み → 読み」を直す 3.2M の文字単位 Transformer（実装は Accelerate の
   `cblas_sgemm` だけ。llama.cpp も MLX も通さない）。学習は `experiments/typo-normalizer/`、
   移植の仕様は同ディレクトリの **SWIFT-PORT.md が正**。
-  **ただし `experiments/` はリポジトリに入れていない**（`.gitignore` の `/experiments/`。
-  学習データが大きく、results/ に学習コーパス由来の実文が混ざるため）。
-  ソース中の `experiments/typo-normalizer/…` への参照は出自を示すもので、clone には含まれない。
-  仕様を読む必要があるときは作業機か、既に追跡済みの分を git から取り出すこと。守ること:
+  **ただし `experiments/` はリポジトリに入っていない**（上記）。ソース中の
+  `experiments/typo-normalizer/…` への参照は出自を示すもので、clone には含まれない。
+  仕様を読む必要があるときは作業機か `git checkout v0.12.0 -- experiments` で取り出す。守ること:
   ・**計算の順序を変えたら `iroha-cli typo parity` を必ず回す**（PyTorch 実装との照合 200 件。
     生成が一致してもロジットがずれていれば実装は間違っている。float32 でロジット 1e-3・logP 0.01 以内）
   ・**本線は「入力の休止」で読みそのものを直す**（`scheduleTypoCorrection`、既定 300ms・設定可）。

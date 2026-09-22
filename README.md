@@ -408,8 +408,9 @@ CC BY-SA 4.0（一部は llm-jp-corpus-v3 由来で ODC-BY と Common Crawl の�
   3.2M パラメータの文字単位 Transformer encoder–decoder を Accelerate（`cblas_sgemm`）だけで実装したもので、
   llama.cpp も MLX も通さない。学習と重みの書き出しは `experiments/typo-normalizer/`、
   移植の仕様は同ディレクトリの `SWIFT-PORT.md` が正。
-  **`experiments/` はリポジトリに含めていない**（学習データが大きく、結果の一部に学習コーパス由来の
-  実文が混ざるため）。下の評価コマンドもその手元のデータを前提にしている。変換エンジンのデコレータ鎖には入れず、
+  **`experiments/` と `training/` はリポジトリに含めていない**（学習データが大きく、
+  AJIMEE-Bench や学習コーパス由来の実文を含むため。他者のデータを再配布しない方針）。
+  下の評価コマンドもその手元のデータを前提にしている。変換エンジンのデコレータ鎖には入れず、
   変換ルールと同じくコントローラが候補ウィンドウを開くときに合流させる
   （読み全体の訂正を、差分が収まっている文節の候補に落とす。[TypoCorrectionPlacement](macos/Sources/IrohaCore/TypoNormalizer/TypoCorrectionPlacement.swift)）
 
