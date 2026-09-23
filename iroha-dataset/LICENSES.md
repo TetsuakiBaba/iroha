@@ -173,7 +173,55 @@ Tatoeba sentence #<id> by <username> (CC BY 2.0 FR)
 
 ---
 
-## D. 将来の追加候補
+## D. JWTD（日本語 Wikipedia 入力誤りデータセット v2.0）— `build-jwtd` 専用
+
+ソースアダプタではない（`download` / `preprocess` の対象外）。手元に置いた配布物を
+`build-jwtd` が読み、typo normalizer 用の学習データとベンチマークを作る。
+
+| 項目 | 内容 |
+|---|---|
+| ソース名 | 日本語Wikipedia入力誤りデータセット（Japanese Wikipedia Typo Dataset, JWTD）v2.0 |
+| URL | https://nlp.ist.i.kyoto-u.ac.jp/?日本語Wikipedia入力誤りデータセット |
+| 配布元 | https://nlp.ist.i.kyoto-u.ac.jp/nl-resource/JWTD/jwtd_v2.0.tar.gz （京都大学 言語メディア研究室） |
+| ライセンス | **CC BY-SA 3.0**（元データである日本語 Wikipedia に従う、と配布ページに明記） |
+| ライセンス本文 | https://creativecommons.org/licenses/by-sa/3.0/ |
+
+### 使用フィールド
+
+`train.jsonl` / `test.jsonl` / `gold.jsonl` の `page`・`title`・`pre_rev`・`post_rev`・
+`pre_text`・`post_text`・`diffs[].pre_str / post_str / category`。
+尤度（`*_likelihood`）は使わない。
+
+### attribution 方法
+
+配布ページが引用を求めている文献:
+
+```
+田中 佑, 村脇 有吾, 河原 大輔, 黒橋 禎夫: 日本語Wikipediaの編集履歴に基づく入力誤りデータセットと
+訂正システムの改良, 言語処理学会 第27回年次大会, 2021.
+```
+
+データ全体に対しては:
+
+```
+出典: 日本語Wikipedia入力誤りデータセット v2.0（京都大学 言語メディア研究室）を加工して作成。
+元データは Wikipedia 日本語版（CC BY-SA 3.0）
+```
+
+### 注意事項
+
+- **SA（継承）が付く。** JWTD から作ったデータで学習したモデルの重みを配るときは、
+  CC BY-SA 3.0 か、同じ要素を持つ後の版（BY-SA 4.0）で出す。typo normalizer の重みは
+  もともと CC BY-SA 4.0 なので条件は合うが、**公開するモデルのカタログ
+  （`models/typo-normalizer.json`）の `attribution` に JWTD と Wikipedia を足すこと**
+  （ライセンスはアプリに焼き込まず、カタログのモデルごとに持つ方針）
+- 生成物（`data/jwtd/`）は他のソースと同じく Git に入れず、配布もしない
+- 本文は Wikipedia の版であり、執筆者ごとの帰属は版の履歴（`page` と `pre_rev` / `post_rev`）
+  でたどれる。生成物の各行にはこの 3 つを残してある
+
+---
+
+## E. 将来の追加候補
 
 `iroha_dataset/sources/base.py` の `SourceAdapter` を実装すれば足せる（手順はその docstring）。
 **追加するときは必ずこのファイルに節を足す**（`tests/test_config_cli.py` が

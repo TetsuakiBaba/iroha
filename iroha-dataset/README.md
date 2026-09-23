@@ -44,6 +44,7 @@ cd iroha-dataset
 ./.venv/bin/python -m iroha_dataset preprocess    # 正規化 → 読み → フィルタ → canonical
 ./.venv/bin/python -m iroha_dataset build-kkc     # かな漢字変換用データ
 ./.venv/bin/python -m iroha_dataset build-typo    # typo normalizer 用データ
+./.venv/bin/python -m iroha_dataset build-jwtd    # 実 typo（JWTD）→ 学習データ + ベンチ（要 --set jwtd.src=…）
 ./.venv/bin/python -m iroha_dataset samples       # 目視確認用のランダム抽出
 ./.venv/bin/python -m iroha_dataset stats         # stats.json と REPORT.md
 ```
@@ -334,6 +335,52 @@ normalizer が何でも書き換えようとするのを防ぐため、`正常�
 既定は `variants_per_clean_sample: 4` と `clean_ratio: 0.25` で
 「clean 1 件 + typo 3 件」。届かない設定にすると REPORT の `clean_ratio` と
 `clean_ratio_requested` がずれるので気づける。
+
+### 実 typo（JWTD）からの学習データとベンチマーク（`build-jwtd`）
+
+合成 typo だけでは「実際の打ち間違いでどれだけ直せるか」が分からないので、
+[日本語 Wikipedia 入力誤りデータセット v2.0](https://nlp.ist.i.kyoto-u.ac.jp/?日本語Wikipedia入力誤りデータセット)
+（JWTD、CC BY-SA 3.0 → [LICENSES.md](LICENSES.md) の D 節）から作る。実装は
+`iroha_dataset/wild/jwtd.py`。`build-all` には入らない。
+
+```sh
+./.venv/bin/python -m iroha_dataset build-jwtd --set jwtd.src=<jwtd_v2.0 を展開したディレクトリ>
+```
+
+JWTD は**表層（漢字仮名交じり）**の「直す前 / 直した後」の組なので、次の順に読みの組へ直す。
+
+1. 差分が 1 か所で、両側とも仮名だけのものに絞る。漢字の同音誤り（固体 → 個体。train の約 4 割）は
+   読みにすると同じなので対象外
+2. 直した後の文を文節に切り、差分を含む文節の前後だけを窓として切り出す（読み 48 字以内。
+   JWTD の文は中央値 54 字ある）
+3. 両側の窓を読みにし、**読みの差が表層の仮名差分と完全に一致する**ものだけを採る
+   （誤入力側は形態素解析が崩れやすい）。仮名で書かれた語は表層のまま読みにする
+   （あるいは → Sudachi は あるいわ と読むが、打つのは あるいは）。
+   英字・数字・読みを持つ記号（`(` → きごう）を含む窓は捨てる
+4. 読みの差をローマ字の打鍵列で比べて**層**に分ける
+
+| tier | error_type | 内容 |
+|---|---|---|
+| `keystroke` | `key_missing` / `key_extra` / `key_adjacent` / `key_transposition` | 打鍵列で 1 打鍵の差（「ん」は nn / n の近い方） |
+| `keystroke` | `mora_duplication` | 仮名 1 つの二重打ち（をを・がが） |
+| `editing` | `key_far` | 1 打鍵だが離れたキー（を → の） |
+| `editing` | `mora_missing` / `mora_extra` / `mora_substitution` | 仮名単位の出し入れ。大半は助詞（郡属する → 郡に属する） |
+| `editing` | `word_duplication` | 語の二重（からから）。正しい畳語（いろいろ）と区別できない |
+
+出力（`data/jwtd/`）:
+
+- `train.jsonl` … **keystroke だけ**＋同じ窓の clean（`jwtd.clean_ratio`）。typo 形式に
+  `tier` / `category` / `page` / `pre_rev` / `post_rev` を足したもの。editing を学習に入れると、
+  正しい読みに助詞を足す過剰訂正を覚える
+- `bench/keystroke.jsonl`・`bench/editing.jsonl` … JWTD の test と gold から。
+  typo 行（`noisy` / `clean` / `error_type`）と、同じ窓の直した後の読みを clean 行
+  （`error_type: "none"`）として対にしてある。`subset`（test / gold）・`at_end`（差分が窓の末尾）・
+  表層（`surface_noisy` / `surface_clean`）付き。**test・gold に出るページは train から丸ごと除く**
+- `data/_stats.jwtd.json` … 段ごとに捨てた件数と理由、層・型の内訳
+
+実測（2026-09-23）: 仮名だけの差分のうち train 225,558 組が読みの組になり、keystroke は約 6 万組
+（残りは editing）。ベンチは keystroke 603 件・editing 1,621 件（＋同数の clean）。
+gold（人手確認済み）の keystroke は 100 件しか無いので、数字は test と合わせて読む。
 
 ### split と重複除去
 

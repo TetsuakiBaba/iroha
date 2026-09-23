@@ -4,6 +4,7 @@
     python -m iroha_dataset preprocess
     python -m iroha_dataset build-kkc      # KKC = かな漢字変換（Kana-Kanji Conversion）
     python -m iroha_dataset build-typo
+    python -m iroha_dataset build-jwtd     # JWTD（Wikipedia の実 typo）→ 学習データ + ベンチ
     python -m iroha_dataset stats
     python -m iroha_dataset samples
     python -m iroha_dataset build-all      # download 以降を一括
@@ -113,6 +114,18 @@ def cmd_build_typo(args, cfg, paths) -> int:
     return 0
 
 
+def cmd_build_jwtd(args, cfg, paths) -> int:
+    from iroha_dataset.wild.jwtd import JwtdBuilder
+    paths.ensure()
+    builder = JwtdBuilder(cfg, paths)
+    stats = builder.run()
+    _echo({"kept_pairs": stats["kept_pairs"], "bench": stats["bench"],
+           "train": {k: stats["train"][k] for k in ("examples", "clean", "excluded")}})
+    print(f"→ {builder.out}")
+    print(f"→ {paths.stage_stats('jwtd')}")
+    return 0
+
+
 def cmd_stats(args, cfg, paths) -> int:
     from iroha_dataset.stats import run_stats
     paths.ensure()
@@ -149,6 +162,7 @@ COMMANDS = {
     "preprocess": cmd_preprocess,
     "build-kkc": cmd_build_kkc,
     "build-typo": cmd_build_typo,
+    "build-jwtd": cmd_build_jwtd,
     "stats": cmd_stats,
     "samples": cmd_samples,
     "build-all": cmd_build_all,

@@ -249,6 +249,23 @@ typo:
     max_units: 4
   max_attempts: 12              # かなが変わらない typo を引いたときの引き直し回数
 
+# ---------------------------------------------------------------- JWTD（ワイルドな typo）
+# 日本語 Wikipedia 入力誤りデータセット v2.0 から、typo normalizer の学習データ（打鍵系のみ）と
+# ベンチマーク（打鍵系・推敲系、clean と対）を作る。`build-jwtd` で使う（build-all には入らない）
+jwtd:
+  src: data/raw/jwtd            # train.jsonl / test.jsonl / gold.jsonl のあるディレクトリ
+  max_chars: 48                 # 読みの上限（本体の TypoNormalizer.maxReadingLength）
+  bench_window: 1               # ベンチの窓 = 差分の文節 ± この数の文節
+  # train の窓の文節数（± 0 / 1 / 2）の比率
+  train_window_weights: [0.4, 0.35, 0.25]
+  clean_ratio: 0.25             # train に混ぜる clean（同じ窓の直した後の読み）の割合
+  max_duplication_chars: 3      # 二重打ちとみなす長さの上限（をを・するする）
+  # 直した後の窓で、これらの低信頼理由があれば捨てる（固有名詞は Wikipedia では多すぎるので残す）
+  drop_low_reasons: [mode_disagreement, surface_fallback, long_reading, numeral]
+  seed: 42
+  workers: 0                    # 0 = CPU 数 - 1
+  limit: 0                      # 各ファイルの先頭 n 行だけ（動作確認用。0 = 全部）
+
 # ---------------------------------------------------------------- 重複除去
 dedup:
   exact: true

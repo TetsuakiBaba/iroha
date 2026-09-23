@@ -158,9 +158,14 @@ class ReadingAnalyzer:
         key = reason.split(":", 1)[0]
         self.low_reasons[key] = self.low_reasons.get(key, 0) + 1
 
-    def tokenize(self, text: str) -> list[Morpheme]:
+    def tokenize(self, text: str, mode: str | None = None) -> list[Morpheme]:
+        """mode（"A"/"B"/"C"）を渡すと既定の分割単位の代わりにそれを使う。"""
+        split_mode = self._mode
+        if mode is not None:
+            from sudachipy import SplitMode
+            split_mode = getattr(SplitMode, _SPLIT_MODES[mode.upper()])
         out = []
-        for m in self._tokenizer.tokenize(text, self._mode):
+        for m in self._tokenizer.tokenize(text, split_mode):
             reading = _morpheme_reading(m)
             out.append(Morpheme(
                 surface=m.surface(),
