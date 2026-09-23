@@ -305,14 +305,14 @@ iroha の挙動どおり（`ていsでい` のような input が出るのは正
 
 | error_type | 内容 |
 |---|---|
-| `deletion` | キーの押し損ね（位置は `typo.key_weights` で重み付け） |
+| `deletion` | キーの押し損ね（位置は既定ではどの打鍵も同じ確率。`typo.key_weights` で重み付けできる） |
 | `insertion` | 余分なキー入力（隣接キーが割り込んだ形） |
 | `substitution` | QWERTY 上で隣接したキーへの誤入力 |
 | `transposition` | 隣接する打鍵の順序逆転 |
 | `repeated_key` | キーを余分に複数回入力（既定では音節頭の子音を優先＝促音になりやすい） |
 | `missing_double_consonant` | 促音の二重子音の一方が欠ける（`kitte` → `kite`） |
 | `excessive_double_consonant` | 促音の子音が余分（`kitte` → `kittte`） |
-| `mixed_input` | IME 切替のし忘れ（`きょうはdaigaku`）。`typo.mixed_input.enabled` で ON/OFF |
+| `mixed_input` | IME 切替のし忘れ（`きょうはdaigaku`）。**既定では生成しない**（ローマ字の打ち間違いではなく IME の状態の問題なので）。`typo.mixed_input.enabled` で ON/OFF |
 | `weak_finger_omission` | 小指・薬指の担当キーが押し切れず落ちる |
 
 - 1 サンプルの typo は既定 1 個、`typo.second_error_ratio` の割合で 2 個
@@ -324,6 +324,26 @@ iroha の挙動どおり（`ていsでい` のような input が出るのは正
   文節くらいの長さで訂正を走らせるので、チャンク単位のほうが本番に近い
 
 #### error type の比率
+
+既定の比率は、ハードウェアキーボードの打ち間違いを分類した実測
+（Komatsu & Nakatoh, "Analysis of Mistyping in Hardware Keyboard", ICISIP 2018,
+DOI [10.12792/icisip2018.079](https://doi.org/10.12792/icisip2018.079)。20 代 12 名が
+ひらがなの単語を 1,000 語ずつローマ字入力）の全被験者の内訳（Fig. 3）に合わせてある。
+
+| 論文の分類 | 比率 | 生成器の型 |
+|---|---:|---|
+| Replacement | 60.3% | `substitution` |
+| Insertion / Involvement（隣のキーも押す） | 12.5% | `insertion`（隣接キー） |
+| Insertion / Other | 4.2% | `insertion`（離れたキー。`typo.dist.insertion_far_ratio: 0.251`） |
+| Insertion / Repetition | 9.4% | `repeated_key` |
+| Removal | 11.5% | `deletion` |
+| Exchange | 2.2% | `transposition` |
+
+論文の分類に無い型は 0 にしてある。促音の過不足（`missing_double_consonant` /
+`excessive_double_consonant`）は論文では Removal / Repetition に含まれ、`deletion` と
+`repeated_key` からも起きる。`weak_finger_omission` は Removal の内訳として測られていない。
+論文の Replacement は隣接キーに限らない（隣接が 70% の被験者が「他より多い」とされる）が、
+`substitution` は隣接キーだけに置き換える。
 
 `typo.error_types` の比率は**そのまま実績にはならない**。促音の過不足は「っ」を含む
 読みにしか当てられないので、素直に引くと実績が 1/7 くらいまで落ちる。
@@ -415,8 +435,8 @@ JWTD を**学習データではなく分布の推定**に使い、合成 typo �
 **推定から除くもの:** い抜き・い足し（していた ⇄ してた。文体の書き直しで打ち間違いではない）、
 読みの末尾での仮名の脱落（入力中の読みと区別できない。生成器も最後の仮名は落とさない）。
 漢字の変換誤り（JWTD の約 4 割）は読み→読みでは作れないので対象外。
-**推定できないもの:** clean の割合と `mixed_input`（英字の残り。JWTD では観測できない）。後者は
-`typo_dist.mixed_input`（既定 0.05）の事前の値で入れる。
+**推定できないもの:** clean の割合と `mixed_input`（英字の残り。JWTD では観測できない）。
+`mixed_input` はローマ字の打ち間違いではないので既定では 0（`typo_dist.mixed_input` で事前の値を与えられる）。
 
 制約: 仮名の出し入れは形態素の境界を見ないので、助詞の脱落のつもりで語の途中の仮名が落ちることがある
 （抜ける仮名の割合は JWTD に合うが、位置は近似）。

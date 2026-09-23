@@ -79,6 +79,17 @@ def test_mixed_input_leaves_raw_keys():
     assert any("a" <= c <= "z" for c in typo.raw_output)
 
 
+def test_mixed_input_is_not_generated_by_default():
+    """英字が残るのは IME の状態の問題でローマ字の打ち間違いではないので、既定では作らない。"""
+    gen = TypoGenerator(load_config())
+    assert "mixed_input" not in gen.types
+    rng = random.Random(0)
+    for _ in range(50):
+        for kana in READINGS:
+            s = gen.generate(kana, rng)
+            assert s is None or "mixed_input" not in s["error_type"]
+
+
 def test_weak_finger_omission_only_drops_weak_keys():
     ctx = ErrorContext(rng=random.Random(4), key_weights={})
     stream = _stream("ありがとう")     # arigatou: a が小指

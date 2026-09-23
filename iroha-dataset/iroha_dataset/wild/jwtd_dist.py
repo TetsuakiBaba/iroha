@@ -25,7 +25,9 @@ TypoGenerator がこの比率と表で typo を作る:
 * 漢字の変換誤り・英数字を含む窓など、``build-jwtd`` の段で読みの組にならなかったもの（件数だけレポートに載せる）
 
 推定できないもの: 誤りの無い入力の割合（clean の比率）と ``mixed_input``（英字が残る誤り。
-JWTD では抽出の段で捨てられ、保存前にも気づかれやすい）。後者は設定 ``typo_dist.mixed_input``（既定 0.05）の事前の値で入れる。
+JWTD では抽出の段で捨てられ、保存前にも気づかれやすい）。``mixed_input`` はローマ字の打ち間違いではない
+（IME の状態の問題）ので既定では 0 にする。入れたいときは設定 ``typo_dist.mixed_input`` で事前の値を与える
+（生成器側の ``typo.mixed_input.enabled`` も true にする）。
 """
 from __future__ import annotations
 
@@ -277,7 +279,7 @@ class Estimator:
 
 
 def estimate(pairs_path: Path, stats_path: Path | None, out_dir: Path,
-             mixed_input: float = 0.05) -> dict:
+             mixed_input: float = 0.0) -> dict:
     est = Estimator()
     n = 0
     with open(pairs_path, encoding="utf-8") as f:
@@ -308,7 +310,7 @@ LABELS = {
     "key_far": "離れたキーの打ち間違い（を⇄の・が⇄か など）", "transposition": "打鍵の入れ替え",
     "mora_duplication": "仮名の二重打ち（をを・がが）", "word_duplication": "語の二重（からから）",
     "mora_missing": "仮名の脱落（主に助詞）", "mora_extra": "余分な仮名（主に助詞）",
-    "mora_substitution": "仮名の置き換え（を→が など）", "mixed_input": "英字の残り（事前の値）",
+    "mora_substitution": "仮名の置き換え（を→が など）", "mixed_input": "英字の残り（JWTD では観測できない）",
     "weak_finger_omission": "（キー別の重みで表すので 0）",
 }
 
@@ -321,7 +323,8 @@ def _report(est: Estimator, cfg: dict, n: int, dropped: dict, input_pairs: int, 
              "## 生成器の型の比率", "", "| 型 | 内容 | 件数 | 比率 |", "|---|---|---:|---:|"]
     for k, w in sorted(t["error_types"].items(), key=lambda kv: -kv[1]):
         lines.append(f"| `{k}` | {LABELS.get(k, '')} | {est.types.get(k, 0):,} | {w * 100:.1f}% |")
-    lines += ["", f"`mixed_input` は JWTD で観測できないので事前の値 {mixed * 100:.0f}%（他を按分して縮めた）。",
+    lines += ["", (f"`mixed_input` は JWTD で観測できないので事前の値 {mixed * 100:.0f}%（他を按分して縮めた）。" if mixed > 0
+                   else "`mixed_input` はローマ字の打ち間違いではないので生成しない（0%）。"),
               f"2 個目の typo の割合: {t['second_error_ratio'] * 100:.1f}%（差分が複数ある組 {dropped.get('multi_diff', 0):,} / train {input_pairs:,}）。",
               f"`repeat_sokuon_bias`: {t['repeat_sokuon_bias']:.3f}、`insertion_far_ratio`: {t['dist']['insertion_far_ratio']:.3f}", "",
               "## 推定から除いたもの", "", "| 理由 | 件数 |", "|---|---:|"]

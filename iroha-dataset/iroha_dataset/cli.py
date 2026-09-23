@@ -142,7 +142,7 @@ def cmd_estimate_typo_dist(args, cfg, paths) -> int:
     if not stats.exists():
         stats = paths.stage_stats("jwtd")
     res = estimate(pairs, stats, paths.root / "typo-dist",
-                   mixed_input=float(cfg.get("typo_dist.mixed_input", 0.05)))
+                   mixed_input=float(cfg.get("typo_dist.mixed_input", 0.0)))
     _echo(res)
     print(f"→ {paths.root / 'typo-dist' / 'jwtd.yaml'}")
     print(f"→ {paths.root / 'typo-dist' / 'REPORT.md'}")

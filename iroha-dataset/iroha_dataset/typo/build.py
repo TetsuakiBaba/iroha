@@ -125,7 +125,7 @@ class TypoGenerator:
         self._drawn: dict[str, int] = {}
         self._drawn_total = 0
         mixed = typo.sub("mixed_input")
-        self.mixed_enabled = bool(mixed.get("enabled", True))
+        self.mixed_enabled = bool(mixed.get("enabled", False))
         self.mixed_min_units = int(mixed.get("min_units", 1))
         self.mixed_max_units = int(mixed.get("max_units", 4))
         if not self.mixed_enabled and "mixed_input" in self.types:
