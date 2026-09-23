@@ -133,3 +133,91 @@ def test_max_errors_is_respected():
         if sample is None:
             continue
         assert sample["n_errors"] <= 2
+
+
+# ---------------------------------------------------------------- 仮名単位の誤りと推定した分布（typo.dist）
+KANA_TYPES = ("mora_missing", "mora_extra", "mora_substitution", "mora_duplication", "word_duplication")
+
+
+def _apply(name: str, kana: str, dist: dict | None = None, seed: int = 0, n: int = 200) -> list[str]:
+    ctx = ErrorContext(rng=random.Random(seed), key_weights={}, dist=dist or {})
+    out = []
+    for _ in range(n):
+        typo = ERROR_TYPES[name](_stream(kana), ctx)
+        if typo is not None:
+            out.append(to_kana(typo.keys))
+    return out
+
+
+@pytest.mark.parametrize("name", KANA_TYPES)
+def test_kana_types_rebuild_consistent_keys(name):
+    """仮名を編集したあとの打鍵列は、かなに戻すと編集後の読みそのものになる（ローマ字が残らない）"""
+    for kana in READINGS:
+        for out in _apply(name, kana, n=30):
+            assert all("ぁ" <= c <= "ゖ" or c == "ー" for c in out), (name, kana, out)
+
+
+def test_mora_missing_never_drops_the_last_kana():
+    """末尾の脱落は入力途中と区別できない（本体も末尾に足すだけの訂正は捨てる）ので作らない"""
+    for kana in READINGS:
+        for out in _apply("mora_missing", kana, n=100):
+            assert out[-1] == kana[-1] and len(out) == len(kana) - 1, (kana, out)
+
+
+def test_mora_missing_follows_the_table():
+    dist = {"mora_missing": {"を": 1.0}}
+    outs = _apply("mora_missing", "しんぶんをよむ", dist)
+    assert outs and all(o == "しんぶんよむ" for o in outs)
+
+
+def test_mora_extra_uses_the_previous_kana():
+    dist = {"mora_extra": {"ん": {"の": 1.0}}}
+    outs = set(_apply("mora_extra", "しんぶんをよむ", dist))
+    assert outs == {"しんのぶんをよむ", "しんぶんのをよむ"}
+
+
+def test_mora_substitution_follows_the_table():
+    dist = {"mora_substitution": {"を": {"が": 1.0}}}
+    assert set(_apply("mora_substitution", "しんぶんをよむ", dist)) == {"しんぶんがよむ"}
+
+
+def test_duplications():
+    assert set(_apply("mora_duplication", "しんぶんをよむ", {"mora_duplication": {"を": 1.0}})) == {"しんぶんををよむ"}
+    assert set(_apply("word_duplication", "してからいく", {"word_duplication": {"から": 1.0}})) == {"してからからいく"}
+
+
+def test_key_far_uses_confusion_and_is_never_adjacent():
+    from iroha_dataset.typo import keyboard
+    dist = {"key_rates": {"key_far": {"w": 1.0}}, "confusion": {"key_far": {"w": {"n": 1.0}}}}
+    assert set(_apply("key_far", "しんぶんをよむ", dist)) == {"しんぶんのよむ"}
+    ctx = ErrorContext(rng=random.Random(1), key_weights={})
+    for _ in range(200):
+        t = ERROR_TYPES["key_far"](_stream("ありがとう"), ctx)
+        i = t.position
+        assert t.keys[i] not in keyboard.neighbors(_stream("ありがとう").keys[i])
+
+
+def test_substitution_confusion_is_limited_to_neighbors():
+    dist = {"key_rates": {"substitution": {"r": 1.0}}, "confusion": {"substitution": {"r": {"t": 1.0, "n": 5.0}}}}
+    outs = set(_apply("substitution", "される", dist))
+    # sareru の r を t に置き換える。n は r の隣接キーでないので、表で重くても使わない
+    assert outs == {to_kana("sateru"), to_kana("saretu")}
+
+
+def test_learned_key_rates_replace_key_weights():
+    dist = {"key_rates": {"deletion": {"k": 1.0}}}
+    outs = set(_apply("deletion", "きって", dist))
+    assert outs <= {to_kana("itte"), to_kana("kite")}
+
+
+def test_generator_reads_dist_from_config():
+    cfg = load_config(overrides=[
+        "typo.error_types={deletion: 0, substitution: 0, insertion: 0, transposition: 0, repeated_key: 0, "
+        "missing_double_consonant: 0, excessive_double_consonant: 0, mixed_input: 0, weak_finger_omission: 0, "
+        "mora_substitution: 1}",
+        "typo.dist={mora_substitution: {を: {が: 1.0}}}",
+        "typo.second_error_ratio=0",
+    ])
+    gen = TypoGenerator(cfg)
+    s = gen.generate("しんぶんをよむ", random.Random(0))
+    assert s["input"] == "しんぶんがよむ" and s["error_type"] == "mora_substitution"

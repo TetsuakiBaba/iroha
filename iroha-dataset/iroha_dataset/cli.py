@@ -119,10 +119,33 @@ def cmd_build_jwtd(args, cfg, paths) -> int:
     paths.ensure()
     builder = JwtdBuilder(cfg, paths)
     stats = builder.run()
+    if builder.pairs_only:
+        _echo({"kept_pairs": stats["kept_pairs"], "pairs_train": stats["pairs_train"]})
+        print(f"→ {builder.out / 'pairs_train.jsonl'}")
+        print(f"→ {paths.stage_stats('jwtd_pairs')}")
+        return 0
     _echo({"kept_pairs": stats["kept_pairs"], "bench": stats["bench"],
-           "train": {k: stats["train"][k] for k in ("examples", "clean", "excluded")}})
+           "train": {k: stats["train"][k] for k in ("examples", "clean", "excluded")},
+           "pairs_train": stats["pairs_train"]["pairs"]})
     print(f"→ {builder.out}")
     print(f"→ {paths.stage_stats('jwtd')}")
+    return 0
+
+
+def cmd_estimate_typo_dist(args, cfg, paths) -> int:
+    """JWTD の実誤りから typo 生成器の抽出確率を推定する（build-jwtd の後に実行）"""
+    from iroha_dataset.wild.jwtd_dist import estimate
+    pairs = paths.root / "jwtd" / "pairs_train.jsonl"
+    if not pairs.exists():
+        raise SystemExit(f"{pairs} が無い。先に build-jwtd を実行する")
+    stats = paths.stage_stats("jwtd_pairs")
+    if not stats.exists():
+        stats = paths.stage_stats("jwtd")
+    res = estimate(pairs, stats, paths.root / "typo-dist",
+                   mixed_input=float(cfg.get("typo_dist.mixed_input", 0.05)))
+    _echo(res)
+    print(f"→ {paths.root / 'typo-dist' / 'jwtd.yaml'}")
+    print(f"→ {paths.root / 'typo-dist' / 'REPORT.md'}")
     return 0
 
 
@@ -163,6 +186,7 @@ COMMANDS = {
     "build-kkc": cmd_build_kkc,
     "build-typo": cmd_build_typo,
     "build-jwtd": cmd_build_jwtd,
+    "estimate-typo-dist": cmd_estimate_typo_dist,
     "stats": cmd_stats,
     "samples": cmd_samples,
     "build-all": cmd_build_all,

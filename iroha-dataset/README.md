@@ -45,6 +45,7 @@ cd iroha-dataset
 ./.venv/bin/python -m iroha_dataset build-kkc     # かな漢字変換用データ
 ./.venv/bin/python -m iroha_dataset build-typo    # typo normalizer 用データ
 ./.venv/bin/python -m iroha_dataset build-jwtd    # 実 typo（JWTD）→ 学習データ + ベンチ（要 --set jwtd.src=…）
+./.venv/bin/python -m iroha_dataset estimate-typo-dist  # JWTD の実誤りから typo 生成器の抽出確率を推定（build-jwtd の後）
 ./.venv/bin/python -m iroha_dataset samples       # 目視確認用のランダム抽出
 ./.venv/bin/python -m iroha_dataset stats         # stats.json と REPORT.md
 ```
@@ -387,6 +388,38 @@ JWTD は**表層（漢字仮名交じり）**の「直す前 / 直した後」�
 実測（2026-09-23）: 仮名だけの差分のうち train 225,558 組が読みの組になり、keystroke は約 6 万組
 （残りは editing）。ベンチは keystroke 603 件・editing 1,621 件（＋同数の clean）。
 gold（人手確認済み）の keystroke は 100 件しか無いので、数字は test と合わせて読む。
+
+### 実誤りの分布の推定（`estimate-typo-dist`）
+
+JWTD を**学習データではなく分布の推定**に使い、合成 typo の抽出確率に反映する。実装は
+`iroha_dataset/wild/jwtd_dist.py`。入力は `build-jwtd` が毎回書く `data/jwtd/pairs_train.jsonl`
+（train の全ペア＝打鍵系＋推敲系。ベンチのページは除外済み）。推定用のペアだけを作り直すなら
+`--set jwtd.pairs_only=true`（`train.jsonl`・ベンチには触れない）。
+
+```sh
+./.venv/bin/python -m iroha_dataset build-jwtd --set jwtd.src=<jwtd_v2.0> --set jwtd.pairs_only=true
+./.venv/bin/python -m iroha_dataset estimate-typo-dist
+# → data/typo-dist/jwtd.yaml（typo: の上書き設定）、data/typo-dist/REPORT.md（比率表・除外件数・混同表）
+```
+
+出力の YAML を `load_config(path)` で重ねると、`TypoGenerator` がその比率と表で typo を作る:
+
+- 型の比率（`error_types`）。JWTD の型を生成器の型に対応させる（key_adjacent → substitution、
+  key_far → key_far、mora_missing → mora_missing …）。推敲系・二重打ち用に
+  `key_far` / `mora_missing` / `mora_extra` / `mora_substitution` / `mora_duplication` / `word_duplication`
+  の型がある（`default.yaml` では重み 0）
+- `typo.dist`: キー別の起こりやすさ（誤りの数 / 意図した打鍵列でのキーの出現数。平均へ向けて平滑化）、
+  混同表（隣接・離れたキー）、仮名の出し入れ・置換の表（直前の仮名で条件づけたものを含む）
+- `second_error_ratio`（差分が複数ある組の割合）、`repeat_sokuon_bias`、`insertion_far_ratio`
+
+**推定から除くもの:** い抜き・い足し（していた ⇄ してた。文体の書き直しで打ち間違いではない）、
+読みの末尾での仮名の脱落（入力中の読みと区別できない。生成器も最後の仮名は落とさない）。
+漢字の変換誤り（JWTD の約 4 割）は読み→読みでは作れないので対象外。
+**推定できないもの:** clean の割合と `mixed_input`（英字の残り。JWTD では観測できない）。後者は
+`typo_dist.mixed_input`（既定 0.05）の事前の値で入れる。
+
+制約: 仮名の出し入れは形態素の境界を見ないので、助詞の脱落のつもりで語の途中の仮名が落ちることがある
+（抜ける仮名の割合は JWTD に合うが、位置は近似）。
 
 ### split と重複除去
 

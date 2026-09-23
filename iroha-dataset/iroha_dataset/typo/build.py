@@ -133,6 +133,10 @@ class TypoGenerator:
             self.types.pop(i)
             self.weights.pop(i)
         self.retries: dict[str, int] = {}
+        # 実誤りから推定した分布（jwtd_dist.py が書く typo.dist）。無ければ従来の一様な選び方
+        dist = typo.get("dist", {}) or {}
+        self.dist = dist.data if hasattr(dist, "data") else dict(dist)
+        self.repeat_sokuon_bias = float(typo.get("repeat_sokuon_bias", 0.6))
 
     def _bump_retry(self, key: str) -> None:
         self.retries[key] = self.retries.get(key, 0) + 1
@@ -140,7 +144,8 @@ class TypoGenerator:
     def _context(self, rng: random.Random) -> ErrorContext:
         return ErrorContext(rng=rng, key_weights=self.key_weights,
                             mixed_min_units=self.mixed_min_units,
-                            mixed_max_units=self.mixed_max_units)
+                            mixed_max_units=self.mixed_max_units,
+                            repeat_sokuon_bias=self.repeat_sokuon_bias, dist=self.dist)
 
     def stream_for(self, clean: str, rng: random.Random) -> tuple[KeyStream, str] | None:
         style = rng.choices(self.styles, self.style_weights)[0]

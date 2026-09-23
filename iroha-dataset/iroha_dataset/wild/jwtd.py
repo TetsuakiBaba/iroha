@@ -245,6 +245,11 @@ class Sample:
     window: int
     surface_pre: str
     surface_post: str
+    # 読みの上での差分（clean[:edit_at] + intended + … が clean、typed に置き換えたものが noisy）。
+    # 分布の推定（jwtd_dist.py）で、どこに何が入った・抜けたかを見るのに使う
+    edit_at: int = 0
+    typed: str = ""
+    intended: str = ""
 
 
 def _strip_tail(text: str, limit: int) -> int:
@@ -323,7 +328,7 @@ def extract(reader: WindowReader, pre: str, post: str, window: int, max_chars: i
             return None, et
         return Sample(noisy=r_pre, clean=r_post, tier=tier, error_type=et, detail=detail,
                       at_end=(right == ""), window=w, surface_pre=pre_win,
-                      surface_post=post_win), ""
+                      surface_post=post_win, edit_at=k, typed=a, intended=b), ""
     return None, reason
 
 
@@ -400,6 +405,8 @@ class JwtdBuilder:
         self.clean_ratio = float(cfg.get("jwtd.clean_ratio", 0.25))
         self.workers = int(cfg.get("jwtd.workers", 0)) or max(mp.cpu_count() - 1, 1)
         self.limit = int(cfg.get("jwtd.limit", 0))
+        # true なら推定用の pairs_train.jsonl だけを書き、train.jsonl・ベンチ・_stats.jwtd.json には触れない
+        self.pairs_only = bool(cfg.get("jwtd.pairs_only", False))
 
     def _jobs(self, split: str, fname: str):
         path = self.src / fname
@@ -447,8 +454,13 @@ class JwtdBuilder:
                        "kept_pairs": {s: len(got[s]) for s, _ in SRC_FILES},
                        "dropped": {s: dict(self.drops[s].most_common()) for s, _ in SRC_FILES}}
 
-        # ---- ベンチ（test + gold）。gold を先に入れて、同じ組は gold 側に残す
         bench_pages = self.pages["test"] | self.pages["gold"]
+        stats["pairs_train"] = self._write_pairs(got["train"], bench_pages)
+        if self.pairs_only:
+            write_json(self.paths.stage_stats("jwtd_pairs"), stats)
+            return stats
+
+        # ---- ベンチ（test + gold）。gold を先に入れて、同じ組は gold 側に残す
         bench_keys: set[tuple[str, str]] = set()
         bench_clean: set[str] = set()
         bench_rows: dict[str, list[dict]] = {KEYSTROKE: [], EDITING: []}
@@ -533,6 +545,28 @@ class JwtdBuilder:
         }
         write_json(self.paths.stage_stats("jwtd"), stats)
         return stats
+
+
+    def _write_pairs(self, train: list[dict], bench_pages: set[str]) -> dict:
+        """train の全ペア（打鍵系・推敲系）を分布の推定用に書く。ベンチのページは除く。
+
+        学習データ（train.jsonl）ではない。typo 生成器の抽出確率を JWTD から推定するための
+        入力で、読み（noisy / clean）と差分の位置・中身、層・型だけを持つ。
+        """
+        n = 0
+        tiers = Counter()
+        with JsonlWriter(self.out / "pairs_train.jsonl") as w:
+            for info in train:
+                if info["page"] in bench_pages:
+                    continue
+                s = info["sample"]
+                w.write({"noisy": s["noisy"], "clean": s["clean"], "tier": s["tier"],
+                         "error_type": s["error_type"], "detail": s["detail"],
+                         "edit_at": s["edit_at"], "typed": s["typed"], "intended": s["intended"],
+                         "at_end": s["at_end"], "category": info["category"], "page": info["page"]})
+                n += 1
+                tiers[f"{s['tier']}/{s['error_type']}"] += 1
+        return {"pairs": n, "by_type": dict(tiers.most_common())}
 
 
 def _summ(rows: list[dict]) -> dict:

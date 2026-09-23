@@ -222,6 +222,14 @@ typo:
     excessive_double_consonant: 0.05
     mixed_input: 0.05
     weak_finger_omission: 0.05
+    # 実誤り（JWTD）から推定した分布で使う型。既定では使わない
+    # （iroha_dataset/wild/jwtd_dist.py が書く設定で重みと typo.dist が入る）
+    key_far: 0
+    mora_missing: 0
+    mora_extra: 0
+    mora_substitution: 0
+    mora_duplication: 0
+    word_duplication: 0
   # 「ん」の打ち方の個人差。nn = 常に nn、contextual = 子音の前だけ n 1 つ
   romaji_style:
     nn: 0.5
@@ -248,6 +256,9 @@ typo:
     min_units: 1
     max_units: 4
   max_attempts: 12              # かなが変わらない typo を引いたときの引き直し回数
+  repeat_sokuon_bias: 0.6       # repeated_key で音節頭の子音（促音になる）を選ぶ割合
+  # 実誤りから推定した分布（key_rates・confusion・mora_* など）。空なら各 type は一様に選ぶ
+  dist: {}
 
 # ---------------------------------------------------------------- JWTD（ワイルドな typo）
 # 日本語 Wikipedia 入力誤りデータセット v2.0 から、typo normalizer の学習データ（打鍵系のみ）と
@@ -265,6 +276,9 @@ jwtd:
   seed: 42
   workers: 0                    # 0 = CPU 数 - 1
   limit: 0                      # 各ファイルの先頭 n 行だけ（動作確認用。0 = 全部）
+  # true なら分布の推定用の pairs_train.jsonl だけを書く（train.jsonl・ベンチは作り直さない）。
+  # pairs_train.jsonl は false でも毎回書く
+  pairs_only: false
 
 # ---------------------------------------------------------------- 重複除去
 dedup:
