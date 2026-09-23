@@ -84,6 +84,8 @@ private struct InputSettingsTab: View {
     private var typoThreshold = TypoNormalizer.defaultThreshold
     @AppStorage(TypoNormalizerSettings.delayMillisecondsKey)
     private var typoDelayMs = TypoNormalizerSettings.defaultDelayMilliseconds
+    @AppStorage(TypoNormalizerSettings.minimumLengthKey)
+    private var typoMinLength = TypoNormalizerSettings.defaultMinimumLength
 
     var body: some View {
         Form {
@@ -122,6 +124,18 @@ private struct InputSettingsTab: View {
                     .disabled(!typoNormalizer)
                 Text("キーを離してからこの時間だけ何も押さなければ訂正します。"
                     + "短いほど早く直りますが、語の途中で考えているだけのときにも動きます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Stepper(value: $typoMinLength, in: TypoNormalizerSettings.minimumLengthRange) {
+                    HStack {
+                        Text("訂正する読みの最低文字数")
+                        Spacer()
+                        Text("\(typoMinLength)文字").foregroundStyle(.secondary).monospacedDigit()
+                    }
+                }
+                .disabled(!typoNormalizer)
+                Text("読みがこの文字数に満たないときは直しません。短い読みは正しく打っていても"
+                    + "別の語の打ち間違いに見えやすいためです（例:「さど」が「さいど」に直る）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 TypoThresholdRow(threshold: $typoThreshold)

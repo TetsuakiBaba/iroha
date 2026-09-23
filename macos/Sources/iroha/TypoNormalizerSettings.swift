@@ -19,9 +19,12 @@ enum TypoNormalizerSettings {
     static let enabledKey = "typoNormalizer"
     static let thresholdKey = "typoNormalizerThreshold"
     static let delayMillisecondsKey = "typoNormalizerDelayMs"
+    static let minimumLengthKey = "typoNormalizerMinLength"
 
     static let defaultDelayMilliseconds = 300
     static let delayMillisecondsRange = 100...2000
+    static let defaultMinimumLength = 4
+    static let minimumLengthRange = 1...20
 
     static var isEnabled: Bool {
         UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
@@ -43,6 +46,21 @@ enum TypoNormalizerSettings {
         let milliseconds = value == 0 ? defaultDelayMilliseconds
             : min(delayMillisecondsRange.upperBound, max(delayMillisecondsRange.lowerBound, value))
         return .milliseconds(milliseconds)
+    }
+
+    /// 読みがこの文字数に満たなければ訂正しない（休止・スペース押下のどちらでも）。
+    /// 短い読みは正しく打った語でも別の語の打ち間違いに見えやすく（「さど」→「さいど」）、
+    /// 直されると打った語そのものが消える。1 なら制限なし
+    static var minimumLength: Int {
+        guard let value = UserDefaults.standard.object(forKey: minimumLengthKey) as? Int else {
+            return defaultMinimumLength
+        }
+        return min(minimumLengthRange.upperBound, max(minimumLengthRange.lowerBound, value))
+    }
+
+    /// この読みを訂正の対象にするか（長さの条件だけ）
+    static func accepts(reading: String) -> Bool {
+        reading.count >= minimumLength && reading.count <= TypoNormalizer.maxReadingLength
     }
 
     /// モデルが手元にあるか（設定画面の表示用。無ければ `TypoNormalizerDownloader` が取りにいく）

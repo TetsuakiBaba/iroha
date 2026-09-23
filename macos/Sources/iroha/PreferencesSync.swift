@@ -27,7 +27,7 @@ final class PreferencesSync {
             PredictionSettings.delayMillisecondsKey,
             LearningSettings.enabledKey, UserDictionarySync.autoSyncKey,
             TypoNormalizerSettings.enabledKey, TypoNormalizerSettings.thresholdKey,
-            TypoNormalizerSettings.delayMillisecondsKey,
+            TypoNormalizerSettings.delayMillisecondsKey, TypoNormalizerSettings.minimumLengthKey,
             SelectionSettings.enabledKey, SelectionSettings.triggerModeKey,
             SelectionSettings.onDemandHotkeyKey, SelectionSettings.excludedBundleIdsKey,
             SelectionSettings.characterCountKey,

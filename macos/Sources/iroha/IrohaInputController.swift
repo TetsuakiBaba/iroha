@@ -1155,7 +1155,7 @@ final class IrohaInputController: IMKInputController {
               composer.pending.isEmpty
         else { return }
         let reading = composer.text
-        guard !reading.isEmpty, reading.count <= TypoNormalizer.maxReadingLength,
+        guard TypoNormalizerSettings.accepts(reading: reading),
               // 直した直後の読み・ユーザが取り消した読みは触らない（直し合いを起こさない）
               reading != lastTypoCorrection?.corrected, reading != typoRejectedReading
         else { return }
@@ -1307,7 +1307,8 @@ final class IrohaInputController: IMKInputController {
     private func startTypoCorrection(reading: String) {
         typoCorrectionTask?.cancel()
         typoCorrectionTask = nil
-        guard TypoNormalizerSettings.isEnabled, let normalizer = Self.typoNormalizer() else { return }
+        guard TypoNormalizerSettings.isEnabled, TypoNormalizerSettings.accepts(reading: reading),
+              let normalizer = Self.typoNormalizer() else { return }
         let threshold = TypoNormalizerSettings.threshold
         typoCorrectionTask = Task.detached(priority: .userInitiated) {
             do {
