@@ -3,7 +3,7 @@ from iroha_dataset.sources.base import (
     Document, SourceAdapter, SourceInfo, register, get_adapter, adapter_names,
     enabled_adapters, all_source_info,
 )
-from iroha_dataset.sources import tatoeba, kaken, aozora  # noqa: F401  （register のため）
+from iroha_dataset.sources import tatoeba, kaken, aozora, llmjp, zenz_wiki  # noqa: F401  （register のため）
 
 __all__ = ["Document", "SourceAdapter", "SourceInfo", "register", "get_adapter",
            "adapter_names", "enabled_adapters", "all_source_info"]

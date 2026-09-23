@@ -25,9 +25,10 @@ canonical record の ``reading`` を正解として
 from __future__ import annotations
 
 import random
+from pathlib import Path
 from dataclasses import dataclass, field
 
-from iroha_dataset.config import Config
+from iroha_dataset.config import PROJECT_ROOT, Config
 from iroha_dataset.dedup import KeyDeduplicator
 from iroha_dataset.jsonlio import SplitWriter, read_jsonl, write_json
 from iroha_dataset.paths import Paths, SPLITS
@@ -271,6 +272,31 @@ class TypoGenerator:
         return deficits
 
 
+def load_readings(paths: list[str], fields: tuple[str, ...] = ("clean", "target")) -> tuple[set[str], dict]:
+    """評価セットの正しい読みの集合。{ファイル: 読みの数}（無いファイルは -1）も返す。
+
+    行の ``clean``（experiments/typo-normalizer の形式・JWTD のベンチ）か ``target``
+    （iroha-dataset の typo 形式）を読む。相対パスは iroha-dataset のディレクトリから。
+    """
+    readings: set[str] = set()
+    counts: dict[str, int] = {}
+    for p in paths:
+        path = Path(p).expanduser()
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        if not path.exists():
+            counts[p] = -1
+            continue
+        before = len(readings)
+        for row in read_jsonl(path):
+            for f in fields:
+                if row.get(f):
+                    readings.add(row[f])
+                    break
+        counts[p] = len(readings) - before
+    return readings, counts
+
+
 class TypoBuilder:
     def __init__(self, cfg: Config, paths: Paths):
         self.cfg = cfg
@@ -284,6 +310,10 @@ class TypoBuilder:
         self.min_chars = int(typo.get("min_chars", 4))
         self.max_chars = int(typo.get("max_chars", 60))
         self.seed = int(cfg.get("seed", 42))
+        # 既存の評価セット（iroha-ds・kkctx・master・JWTD のベンチなど）と同じ読みは作らない。
+        # 別のソースから同じ文が来ることがある（LLM-jp の ja_kaken と自前の kaken など）
+        self.excluded_readings, self.exclude_files = load_readings(
+            list(typo.get("exclude_readings_from", []) or []))
 
     def _clean_readings(self, record: dict) -> list[tuple[str, str]]:
         """(読み, 単位名) のリスト。"""
@@ -307,6 +337,9 @@ class TypoBuilder:
                 for record in read_jsonl(path):
                     split = record.get("split", "train")
                     for index, (clean, unit) in enumerate(self._clean_readings(record)):
+                        if clean in self.excluded_readings:
+                            report.bump(report.skipped, "eval_reading")
+                            continue
                         # 読みごとに決まった seed を使う（再実行で同じデータになる）
                         rng = random.Random(f"{self.seed}:{record['id']}:{index}")
                         # この読みに clean を 1 件入れるか。入れるなら残りを typo にする
@@ -354,5 +387,6 @@ class TypoBuilder:
             for t, w in sorted(zip(self.generator.types, self.generator.weights),
                                key=lambda tw: -tw[1])}
         stats = report.as_dict()
+        stats["exclude_readings_from"] = self.exclude_files
         write_json(self.paths.stage_stats("typo"), stats)
         return stats

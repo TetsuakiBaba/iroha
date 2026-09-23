@@ -86,3 +86,51 @@ def download_to(url: str, dest: str | os.PathLike, *, force: bool = False,
     tmp.write_bytes(data)
     os.replace(tmp, dest)
     return dest
+
+
+def download_stream_to(url: str, dest: str | os.PathLike, *, force: bool = False,
+                       timeout: float = 120.0, retries: int = 5,
+                       chunk_size: int = 1 << 20) -> Path:
+    """大きなファイルをメモリに載せずに書く。途中で切れたら ``.part`` の続きから取り直す。
+
+    dest が既にあれば取り直さない（force で上書き）。LLM-jp Corpus や zenz-v2.5 の
+    ファイルは 1 本で数百 MB〜数 GB あるので ``download_to`` は使えない。
+    """
+    dest = Path(dest)
+    if dest.exists() and dest.stat().st_size > 0 and not force:
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    if force and tmp.exists():
+        tmp.unlink()
+    last: Exception | None = None
+    for attempt in range(retries):
+        offset = tmp.stat().st_size if tmp.exists() else 0
+        headers = {"User-Agent": USER_AGENT}
+        if offset:
+            headers["Range"] = f"bytes={offset}-"
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                # Range を無視して全体を返すサーバでは最初から書き直す
+                mode = "ab" if offset and resp.status == 206 else "wb"
+                with open(tmp, mode) as fh:
+                    while True:
+                        block = resp.read(chunk_size)
+                        if not block:
+                            break
+                        fh.write(block)
+            os.replace(tmp, dest)
+            return dest
+        except urllib.error.HTTPError as e:
+            last = e
+            if e.code == 416 and tmp.exists():      # 取り終わっている
+                os.replace(tmp, dest)
+                return dest
+            if e.code != 429 and 400 <= e.code < 500:
+                raise DownloadError(f"{url}: HTTP {e.code}{_body_hint(e)}") from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last = e
+        if attempt < retries - 1:
+            time.sleep(2.0 * (attempt + 1))
+    raise DownloadError(f"{url}: {last}") from last

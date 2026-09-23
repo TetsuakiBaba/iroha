@@ -1,0 +1,90 @@
+# typo normalizer の学習データ（2026-09-23）。ライセンスが明確で使いやすい 5 つのソースだけで作る:
+#
+#   zenz_wiki     zenz-v2.5-dataset / train_wikipedia.jsonl   CC BY-SA 4.0
+#   llmjp_kaken   LLM-jp Corpus v4 / ja_kaken                  CC BY 4.0
+#   llmjp_egov    LLM-jp Corpus v4 / ja_e-gov                  CC BY 4.0
+#   llmjp_patent  LLM-jp Corpus v4 / ja_patent                 CC BY 4.0（621 ファイルから 8 本）
+#   llmjp_aozora  LLM-jp Corpus v4 / ja_aozorabunko            CC BY 4.0（新字新仮名・著作権消滅だけ）
+#
+# zenz_wiki が CC BY-SA 4.0 なので、生成物とそれで学習したモデルは CC BY-SA 4.0 になる。
+#
+# 使い方（default.yaml に重ねる）:
+#   ./.venv/bin/python -m iroha_dataset download   --config config/typo-corpus.yaml
+#   ./.venv/bin/python -m iroha_dataset preprocess --config config/typo-corpus.yaml
+#   ./.venv/bin/python -m iroha_dataset build-readings --config config/typo-corpus.yaml
+#
+# typo は学習中にオンザフライで付けるので、出力は正しい読みの一覧
+# （<data_dir>/readings/{train,validation,test}.jsonl）。typo 付きが要るときは build-typo。
+#
+# 生データ 7GB・生成物 10GB 超になるので Dropbox の外に置く（kkctx のプールと同じ置き場）。
+data_dir: ~/iroha-typo-data/typo-corpus
+raw_dir: ~/iroha-typo-data/raw
+
+sources:
+  tatoeba: { enabled: false }
+  kaken: { enabled: false }       # 中身が llmjp_kaken と重なる
+  aozora: { enabled: false }      # llmjp_aozora を使う
+  # document_ratio: 文書単位で間引く割合。全量だと Wikipedia・kaken・特許に偏るので、
+  # wiki 32%・kaken 27%・aozora 20%・patent 16%・egov 4% を目安に揃える（全体で約 820 万文）。
+  # 実測（2026-09-23）: kaken 45% で 221 万文、aozora 全量で 274 万文、patent 8 本の 26% で 83 万文、
+  # egov 全量で 32 万文 → aozora 60%・patent 41% に直した
+  zenz_wiki:
+    enabled: true
+    document_ratio: 0.30
+    block_rows: 1000              # 連続するこの行数を 1 文書にして split を決める
+    max_rows: 0                   # 0 = 全部
+    # JWTD のベンチ（Wikipedia 由来）と表層が 12 字以上重なる行は捨てる
+    overlap_chars: 12
+    exclude_overlap_with:
+      - data/jwtd/bench/keystroke.jsonl
+      - data/jwtd/bench/editing.jsonl
+  llmjp_kaken:
+    enabled: true
+    document_ratio: 0.45
+    files: all
+  llmjp_egov:
+    enabled: true
+    files: all
+  llmjp_patent:
+    enabled: true
+    # 68B トークンあるので、年代が偏らないよう等間隔に 8 本を取り、さらに文書を間引く
+    # （8 本の全量で約 320 万文。特許の定型文に全体が引っ張られないように）
+    files: 8
+    document_ratio: 0.41
+  llmjp_aozora:
+    enabled: true
+    document_ratio: 0.60
+    files: all
+    allowed_orthography: ["新字新仮名"]
+
+reading:
+  record_morphemes: false         # 形態素の記録は目視用。数百万文では大きすぎる
+
+typo:
+  units: [sentence, chunk]
+  # kkctx のプールと同じ長さの範囲（モデルの入力幅 70 に収まる）
+  min_chars: 4
+  max_chars: 64
+  # 1 つの読みから 1 件だけ作る（同じ読みに違う typo を何通りも付けるより、読みの種類を増やす）。
+  # 学習でオンザフライに作り直すときも、この読みの集合を使える
+  variants_per_clean_sample: 1
+  # 誤りのない入力の割合。これまでの学習（irohads-4ep・kkctx-4ep）と同じ 17.6%
+  clean_ratio: 0.176
+  # 既存の評価セットと同じ読みは作らない（無いファイルは飛ばす。experiments/ はリポジトリに無い）
+  exclude_readings_from:
+    - data/jwtd/bench/keystroke.jsonl
+    - data/jwtd/bench/editing.jsonl
+    - data/typo/validation.jsonl
+    - data/typo/test.jsonl
+    - ../experiments/typo-normalizer/data/iroha-ds/valid.jsonl
+    - ../experiments/typo-normalizer/data/iroha-ds/test.jsonl
+    - ../experiments/typo-normalizer/data/kkctx/valid.jsonl
+    - ../experiments/typo-normalizer/data/kkctx/test.jsonl
+    - ../experiments/typo-normalizer/data/kkctx-jwtd/valid.jsonl
+    - ../experiments/typo-normalizer/data/kkctx-jwtd/test.jsonl
+    - ../experiments/typo-normalizer/data/master/valid.jsonl
+    - ../experiments/typo-normalizer/data/master/test.jsonl
+    - ../experiments/typo-normalizer/data/master/test_by_type.jsonl
+
+kkc:
+  enabled: false

@@ -12,6 +12,8 @@ split は document_id で決まるので、この時点で record に入れて�
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Iterator
 
@@ -32,6 +34,7 @@ from iroha_dataset.split import Splitter
 class SourceReport:
     source: str
     documents: int = 0
+    skipped_documents: int = 0
     paragraphs: int = 0
     sentences_seen: int = 0
     records: int = 0
@@ -48,6 +51,7 @@ class SourceReport:
         return {
             "source": self.source,
             "documents": self.documents,
+            "skipped_documents": self.skipped_documents,
             "paragraphs": self.paragraphs,
             "sentences_seen": self.sentences_seen,
             "records": self.records,
@@ -60,6 +64,18 @@ class SourceReport:
             "splits": self.splits,
             "licenses": self.license_counts,
         }
+
+
+def sampled(document_id: str, ratio: float) -> bool:
+    """文書を ratio の割合で選ぶ（document_id で決まるので再実行で同じになる）。
+
+    split（``Splitter``）とは別の塩でハッシュする。同じハッシュで選ぶと、選んだ文書が
+    split の境界の片側（train）に偏る。
+    """
+    if ratio >= 1.0:
+        return True
+    h = int.from_bytes(hashlib.blake2b(f"sample:{document_id}".encode(), digest_size=8).digest(), "big")
+    return h / 2**64 < ratio
 
 
 def _previous_text(previous: list[str], max_sentences: int, max_chars: int) -> str:
@@ -117,7 +133,12 @@ class CanonicalBuilder:
     def _records(self, adapter: SourceAdapter, sentence_filter: SentenceFilter,
                  analyzer: ReadingAnalyzer, dedup: Deduplicator,
                  report: SourceReport) -> Iterator[tuple[dict, dict]]:
+        # 大きいソースは文書単位で間引く（sources.<name>.document_ratio。1.0 = 全部）
+        ratio = float(adapter.source_cfg.get("document_ratio", 1.0))
         for doc in adapter.documents():
+            if not sampled(doc.document_id, ratio):
+                report.skipped_documents += 1
+                continue
             report.documents += 1
             split = self.splitter.split_for(doc.document_id)
             sentence_index = 0
@@ -181,11 +202,20 @@ class CanonicalBuilder:
 
 
 def run_preprocess(cfg: Config, paths: Paths, adapters: list[SourceAdapter]) -> dict:
+    """ソースごとに ``_stats.preprocess.<source>.json`` を書き、全体の ``_stats.preprocess.json`` は
+    有効なソースのうち統計のあるものを合わせて作る（``--source`` で分けて並列に回せるように）。"""
+    from iroha_dataset.sources import enabled_adapters
     builder = CanonicalBuilder(cfg, paths)
-    reports = {}
     for adapter in adapters:
         report = builder.build_source(adapter)
-        reports[adapter.name] = report.as_dict()
+        write_json(paths.stage_stats(f"preprocess.{adapter.name}"), report.as_dict())
+    names = [a.name for a in adapters]
+    names += [a.name for a in enabled_adapters(cfg, paths) if a.name not in names]
+    reports = {}
+    for name in names:
+        p = paths.stage_stats(f"preprocess.{name}")
+        if p.exists():
+            reports[name] = json.loads(p.read_text(encoding="utf-8"))
     stats = {"sources": reports,
              "totals": {
                  "records": sum(r["records"] for r in reports.values()),

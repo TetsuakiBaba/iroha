@@ -139,6 +139,32 @@ sources:
     # 「新字新仮名」以外は読みが現代かなと合わないので使わない
     allowed_orthography: ["新字新仮名"]
 
+  # typo normalizer 用コーパス（config/typo-corpus.yaml で有効にする）。既定 OFF
+  zenz_wiki:                    # zenz-v2.5-dataset / train_wikipedia.jsonl（CC BY-SA 4.0）
+    enabled: false
+    document_ratio: 1.0         # 文書単位で間引く割合（どのソースでも使える）
+    block_rows: 1000            # 連続するこの行数を 1 文書にして split を決める
+    max_rows: 0                 # 0 = 全部
+    overlap_chars: 12           # exclude_overlap_with の表層とこの字数以上重なる行は捨てる
+    exclude_overlap_with: []
+  llmjp_kaken:                  # LLM-jp Corpus v4 / ja_kaken（CC BY 4.0）
+    enabled: false
+    files: all                  # all / 本数（等間隔に選ぶ）/ ファイル番号のリスト
+    max_documents: 0
+  llmjp_egov:                   # LLM-jp Corpus v4 / ja_e-gov（CC BY 4.0）
+    enabled: false
+    files: all
+    max_documents: 0
+  llmjp_patent:                 # LLM-jp Corpus v4 / ja_patent（CC BY 4.0、68B トークン）
+    enabled: false
+    files: 8
+    max_documents: 0
+  llmjp_aozora:                 # LLM-jp Corpus v4 / ja_aozorabunko（CC BY 4.0）
+    enabled: false
+    files: all
+    max_documents: 0
+    allowed_orthography: ["新字新仮名"]
+
 # ---------------------------------------------------------------- 読み生成
 reading:
   dictionary: full              # full / core / small（SudachiDict）

@@ -44,6 +44,7 @@ cd iroha-dataset
 ./.venv/bin/python -m iroha_dataset preprocess    # 正規化 → 読み → フィルタ → canonical
 ./.venv/bin/python -m iroha_dataset build-kkc     # かな漢字変換用データ
 ./.venv/bin/python -m iroha_dataset build-typo    # typo normalizer 用データ
+./.venv/bin/python -m iroha_dataset build-readings  # typo を付けない正しい読みの一覧（オンザフライ学習用）
 ./.venv/bin/python -m iroha_dataset build-jwtd    # 実 typo（JWTD）→ 学習データ + ベンチ（要 --set jwtd.src=…）
 ./.venv/bin/python -m iroha_dataset estimate-typo-dist  # JWTD の実誤りから typo 生成器の抽出確率を推定（build-jwtd の後）
 ./.venv/bin/python -m iroha_dataset samples       # 目視確認用のランダム抽出
@@ -440,6 +441,71 @@ JWTD を**学習データではなく分布の推定**に使い、合成 typo �
 
 制約: 仮名の出し入れは形態素の境界を見ないので、助詞の脱落のつもりで語の途中の仮名が落ちることがある
 （抜ける仮名の割合は JWTD に合うが、位置は近似）。
+
+### typo normalizer 用コーパス（`config/typo-corpus.yaml`）
+
+typo normalizer の学習データを、ライセンスが明確で使いやすい 5 つのソースだけで作る設定
+（2026-09-23）。Tatoeba・自前の KAKEN は使わない。
+
+| ソース | 中身 | ライセンス | 扱い |
+|---|---|---|---|
+| `zenz_wiki` | zenz-v2.5-dataset / `train_wikipedia.jsonl` | CC BY-SA 4.0 | `output` の表層だけ使い、読みは Sudachi で付け直す。連続 1,000 行を 1 文書にして split を決める。JWTD のベンチと 12 字以上重なる行は捨てる |
+| `llmjp_kaken` | LLM-jp Corpus v4 / `ja_kaken` | CC BY 4.0 | そのまま |
+| `llmjp_egov` | LLM-jp Corpus v4 / `ja_e-gov` | CC BY 4.0 | ひらがなを含まない段落（カタカナ文語の旧法令）を捨てる |
+| `llmjp_patent` | LLM-jp Corpus v4 / `ja_patent` | CC BY 4.0 | 621 ファイルから等間隔に 8 本。【】の見出し・図の参照行・符号・列挙記号を落とす |
+| `llmjp_aozora` | LLM-jp Corpus v4 / `ja_aozorabunko` | CC BY 4.0 | 新字新仮名・著作権消滅の作品だけ |
+
+**`zenz_wiki` が CC BY-SA 4.0 なので、生成物とそれで学習したモデルは CC BY-SA 4.0 になる**
+（LICENSES.md の E・F 節）。
+
+```sh
+cd iroha-dataset
+./.venv/bin/python -m iroha_dataset download   --config config/typo-corpus.yaml   # 約 7GB
+./.venv/bin/python -m iroha_dataset preprocess --config config/typo-corpus.yaml   # --source で分けて並列に回せる
+./.venv/bin/python -m iroha_dataset build-readings --config config/typo-corpus.yaml   # 正しい読みの一覧
+```
+
+全部入り（間引きなし）は、別の data_dir に `document_ratio` を 1.0 で上書きして作る:
+
+```sh
+F=~/iroha-typo-data/typo-corpus-full
+for s in zenz_wiki llmjp_kaken llmjp_egov llmjp_patent llmjp_aozora; do
+  ./.venv/bin/python -m iroha_dataset preprocess --config config/typo-corpus.yaml \
+      --set data_dir=$F --set sources.$s.document_ratio=1.0 --source $s &
+done; wait
+./.venv/bin/python -m iroha_dataset build-readings --config config/typo-corpus.yaml --set data_dir=$F
+```
+
+できた一覧は別の PC で学習するため `iroha-dataset/data/typo-corpus/readings-balanced/`（割合を揃えたもの）と
+`readings-full/`（全部入り）に置いてある（Git には入らず Dropbox で同期される。説明は同じ場所の README.md）。
+**2 つを混ぜて評価しない**（重複除去の都合で、片方の held-out の読みの 1 割がもう片方の train に入る）。
+
+**typo は学習中にオンザフライで付ける**ので、出力は typo を付けない正しい読みの一覧
+（`build-readings`）。置き場所は Dropbox の外で、`~/iroha-typo-data/typo-corpus/readings/{train,validation,test}.jsonl`
+に 1 行 1 読み（`{"reading", "unit": "sentence" | "chunk", "source", "document_id"}`）。
+打鍵列に戻せない読みを除き、読みで全体の重複を除く（同じ読みが train と test にまたがらない）。
+typo 付きの example が要るときは従来どおり `build-typo`（`variants_per_clean_sample: 1`・clean 17.6%）。
+
+- **量の釣り合い:** 全量だと Wikipedia と特許に偏るので、`document_ratio` で文書単位に間引く
+  （split とは別の塩でハッシュするので、間引いても split の比率は変わらない）
+- **既存の評価セットと同じ読みは作らない**（`typo.exclude_readings_from`。JWTD のベンチ、iroha-dataset の
+  validation / test、experiments/typo-normalizer の iroha-ds・kkctx・master の valid / test）。
+  よく出る文節（「〜について」など）も評価セットにあれば落ちる点に注意
+- typo の型の比率は `default.yaml` のまま（Komatsu & Nakatoh 2018 に合わせたもの）
+
+実測（2026-09-23、この Mac で preprocess 約 30 分・build-readings 約 10 分）:
+
+| ソース | 文（canonical） | 読み（文 + 文節） | 読みの割合 |
+|---|---:|---:|---:|
+| `zenz_wiki`（文書の 30%） | 2,834,779 | 5,833,111 | 28.6% |
+| `llmjp_kaken`（45%） | 2,209,781 | 6,104,970 | 30.0% |
+| `llmjp_aozora`（60%） | 1,584,750 | 4,840,213 | 23.7% |
+| `llmjp_patent`（8 本の 41%） | 1,294,961 | 2,996,532 | 14.7% |
+| `llmjp_egov`（全部） | 323,745 | 609,840 | 3.0% |
+| 計 | 8,248,016 | **20,384,666**（train 19,938,621 / validation 238,767 / test 207,278） | |
+
+**ソースの割合（`document_ratio`）は実測で決めたものではない。** 全量のままだと Wikipedia と特許に
+寄るのを避けるために置いた目安で、どの割合が良いかは測っていない。
 
 ### split と重複除去
 

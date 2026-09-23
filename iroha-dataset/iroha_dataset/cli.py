@@ -85,7 +85,9 @@ def cmd_preprocess(args, cfg, paths) -> int:
     adapters = _adapters(cfg, paths, args.source)
     print(f"[preprocess] {', '.join(a.name for a in adapters)}", flush=True)
     stats = run_preprocess(cfg, paths, adapters)
-    _echo(stats["totals"])
+    # 今回処理したソースの件数と、統計のある全ソースの合計（--source で分けて回すと両者は違う）
+    _echo({"records": {a.name: stats["sources"][a.name]["records"] for a in adapters},
+           "totals": stats["totals"]})
     print(f"→ {paths.canonical}")
     return 0
 
@@ -111,6 +113,17 @@ def cmd_build_typo(args, cfg, paths) -> int:
     stats = TypoBuilder(cfg, paths).run(_adapters(cfg, paths, args.source))
     _echo({k: stats[k] for k in ("examples", "total", "clean_ratio", "error_types")})
     print(f"→ {paths.typo}")
+    return 0
+
+
+def cmd_build_readings(args, cfg, paths) -> int:
+    """typo を付けない正しい読みの一覧（オンザフライで typo を付ける学習用）"""
+    from iroha_dataset.typo.readings import ReadingsBuilder
+    paths.ensure()
+    builder = ReadingsBuilder(cfg, paths)
+    stats = builder.run(_adapters(cfg, paths, args.source))
+    _echo({k: stats[k] for k in ("readings", "per_source", "skipped")})
+    print(f"→ {builder.out}")
     return 0
 
 
@@ -185,6 +198,7 @@ COMMANDS = {
     "preprocess": cmd_preprocess,
     "build-kkc": cmd_build_kkc,
     "build-typo": cmd_build_typo,
+    "build-readings": cmd_build_readings,
     "build-jwtd": cmd_build_jwtd,
     "estimate-typo-dist": cmd_estimate_typo_dist,
     "stats": cmd_stats,

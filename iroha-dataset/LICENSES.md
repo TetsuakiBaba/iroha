@@ -221,7 +221,85 @@ Tatoeba sentence #<id> by <username> (CC BY 2.0 FR)
 
 ---
 
-## E. 将来の追加候補
+## E. LLM-jp Corpus v4（ja_kaken / ja_e-gov / ja_patent / ja_aozorabunko）— typo normalizer 用コーパス
+
+`config/typo-corpus.yaml` で有効にする（既定 OFF）。アダプタは `iroha_dataset/sources/llmjp.py`。
+
+| 項目 | 内容 |
+|---|---|
+| ソース名 | LLM-jp Corpus v4（LLM-jp コーパス構築 WG） |
+| URL | https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4 |
+| ライセンス | 4 サブコーパスとも **CC BY 4.0**（README-ja.md の「各サブコーパスの詳細・ライセンス」） |
+| ライセンス本文 | https://creativecommons.org/licenses/by/4.0/ |
+
+| アダプタ | サブコーパス | 中身・一次配布先 |
+|---|---|---|
+| `llmjp_kaken` | `ja/ja_kaken` | KAKEN の研究課題の概要 |
+| `llmjp_egov` | `ja/ja_e-gov` | e-Gov 法令（一次配布 https://huggingface.co/datasets/nlp-waseda/e_gov） |
+| `llmjp_patent` | `ja/ja_patent` | 特許庁の公報データファイルから抽出した公報 |
+| `llmjp_aozora` | `ja/ja_aozorabunko` | 青空文庫（一次配布 https://huggingface.co/datasets/globis-university/aozorabunko-clean） |
+
+### 使用フィールド
+
+`text`。`meta` はサブコーパスごとの選別と出典表記にだけ使う（e-Gov の `LawNum`、
+青空文庫の `文字遣い種別` / `作品著作権フラグ` / `作品名` / `姓` / `名`）。
+
+### attribution 方法
+
+```
+出典: LLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/<サブコーパス>、
+LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成
+```
+
+canonical record の `attribution` に文書ごとに入る（e-Gov は法令番号、青空文庫は作品名・著者名を足す）。
+
+### 注意事項
+
+- LLM-jp は**日本国著作権法を適用するため日本国内のサーバから配布**しており、
+  国外のサーバから再配布すると同法が適用されない旨を README に書いている。
+  生データ・生成物とも再配布しない（この文書冒頭の方針どおり）
+- 各文書の著作権は原則として著作者に帰属する（LLM-jp の README）
+- `ja_kaken` は自前の `kaken` ソース（KAKEN API）と中身が重なる。同時に有効にしない
+- `ja_e-gov` は、ひらがなを含まない段落（カタカナ文語の旧法令）を捨てる
+- `ja_aozorabunko` は `作品著作権フラグ = なし` かつ `文字遣い種別 = 新字新仮名` の作品だけを使う
+- `ja_patent` は 68B トークンあるので、621 ファイルから等間隔に選んだ本数だけを使う
+
+---
+
+## F. zenz-v2.5-dataset / train_wikipedia.jsonl — typo normalizer 用コーパス
+
+`config/typo-corpus.yaml` で有効にする（既定 OFF）。アダプタは `iroha_dataset/sources/zenz_wiki.py`。
+
+| 項目 | 内容 |
+|---|---|
+| ソース名 | zenz-v2.5-dataset（Keita Miwa）の Wikipedia サブセット |
+| URL | https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset |
+| ライセンス | **CC BY-SA 4.0**（2024 年 2 月取得の Wikipedia 日本語版アーカイブが元、とデータセットカードに明記） |
+| ライセンス本文 | https://creativecommons.org/licenses/by-sa/4.0/deed.ja |
+
+### 使用フィールド
+
+`train_wikipedia.jsonl` の `output`（表層）だけ。`input`（読み）は使わず、Sudachi で付け直す。
+`train_llm-jp-corpus-v3.jsonl`（Common Crawl 由来、ODC-BY + Common Crawl 規約）は**使わない**。
+
+### attribution 方法
+
+```
+出典: zenz-v2.5-dataset（Keita Miwa、https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset）の
+train_wikipedia.jsonl（Wikipedia 日本語版、CC BY-SA 4.0）。読みを付け直すなど加工して作成
+```
+
+### 注意事項
+
+- **SA（継承）が付く。** このソースを混ぜた生成物と、それで学習したモデルの重みは
+  CC BY-SA 4.0 で扱う。typo normalizer の重みはもともと CC BY-SA 4.0 なので条件は合うが、
+  **公開するモデルのカタログ（`models/typo-normalizer.json`）の `attribution` に
+  zenz-v2.5-dataset・Wikipedia と LLM-jp Corpus v4 を書くこと**
+- JWTD のベンチ（これも Wikipedia 由来）と表層が 12 字以上重なる行は捨てる（評価の漏れ止め）
+
+---
+
+## G. 将来の追加候補
 
 `iroha_dataset/sources/base.py` の `SourceAdapter` を実装すれば足せる（手順はその docstring）。
 **追加するときは必ずこのファイルに節を足す**（`tests/test_config_cli.py` が
@@ -242,6 +320,8 @@ Tatoeba sentence #<id> by <username> (CC BY 2.0 FR)
 ## 使っていないもの
 
 - **`zenz-v2.5-dataset`**: iroha はこれまで zenz 系の学習データを使ってきたが、
-  このパイプラインは**依存しない**（自前で再生成できることが目的）
+  かな漢字変換用・既定の typo 用のパイプラインは**依存しない**（自前で再生成できることが目的）。
+  例外は typo normalizer 用コーパス（`config/typo-corpus.yaml`）の `train_wikipedia.jsonl` だけ（F 節）。
+  `train_llm-jp-corpus-v3.jsonl` はどこでも使わない
 - **Hugging Face 上のミラー**: 一次配布元から取る（更新のタイミングと
   ライセンス表記が一次側と食い違うことがあるため）
