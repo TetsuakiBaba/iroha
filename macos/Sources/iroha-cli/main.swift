@@ -1324,8 +1324,17 @@ case "typo":
         // 生成と margin は θ に依らないので 1 回だけ計算して、θ を振るのは採否の判定だけにする
         var predictions: [String] = []
         var margins: [Double] = []
+        var unsupported = 0
         do {
             for record in records {
+                // 本体の correction(for:) と同じく、語彙外の文字を含む・長すぎる読みは素通しにする
+                // （通さないと「入力そのまま」の logP が −∞ になり、必ず書き換えたことになる）
+                guard try await normalizer.supports(reading: record.noisy) else {
+                    unsupported += 1
+                    predictions.append(record.noisy)
+                    margins.append(0)
+                    continue
+                }
                 let generated = try await normalizer.generate(for: record.noisy) ?? record.noisy
                 predictions.append(generated)
                 if generated == record.noisy {
@@ -1344,6 +1353,9 @@ case "typo":
         let typoCountTotal = records.count - cleanCount
         let characters = records.reduce(0) { $0 + $1.clean.count }
         print("typo eval: \(records.count)件（正しい入力 \(cleanCount) / typo \(typoCountTotal)）  \(typoDirectory.path)")
+        if unsupported > 0 {
+            print("（語彙外の文字を含む・長すぎるため素通しにした入力: \(unsupported) 件）")
+        }
         print(" θ        Exact Match   CER    Typo訂正率   過剰訂正率   書き換えた割合")
         for threshold in [-Double.infinity, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 10.0] {
             var exact = 0, errors = 0, changed = 0, typoFixed = 0, falseCorrections = 0
