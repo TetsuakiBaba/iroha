@@ -24,8 +24,8 @@ _SPLIT_MODES = {"A": "A", "B": "B", "C": "C"}
 # 読みとして通すひらがな以外の文字は config（reading.allow_extra_chars）で決める
 DEFAULT_EXTRA = "ー、。・「」"
 
-# 読みを持たなくてよい品詞（記号・空白）
-_NO_READING_POS = ("補助記号", "空白")
+# 読みを持たなくてよい品詞（記号・空白）。表層をそのまま読みにする
+_NO_READING_POS = ("補助記号", "記号", "空白")
 
 
 @dataclass
@@ -105,11 +105,13 @@ def _morpheme_reading(m) -> str | None:
     """形態素の読みをひらがなで返す。取れなければ None。"""
     pos = m.part_of_speech()
     surface = m.surface()
+    # 記号・空白は表層をそのまま読みにする（。、・ など）。Sudachi は（）『』〜 / ♪ 全角空白などに
+    # reading_form = キゴウ を返すので、reading_form より先に見る（採ると「司法全般(警察」が
+    # しほうぜんぱんきごうけいさつ になる）。許可文字以外の記号は is_valid_reading で文ごと落ちる
+    if pos and pos[0] in _NO_READING_POS:
+        return surface
     reading = m.reading_form() or ""
     if not reading:
-        # 記号・空白は表層をそのまま読みにする（。、・ など）
-        if pos and pos[0] in _NO_READING_POS:
-            return surface
         return None
     return normalize.katakana_to_hiragana(reading)
 

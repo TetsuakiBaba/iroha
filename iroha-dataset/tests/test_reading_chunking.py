@@ -41,6 +41,32 @@ def test_latin_reading_is_rejected(analyzer):
 
 
 @needs_sudachi
+@pytest.mark.parametrize("text", [
+    "司法全般(警察と検察)",
+    "番組『笑っていいとも』に出た",
+    "劇場の神様　極付丹下",
+    "ドラマ【北の国から】",
+])
+def test_symbol_reading_is_not_kigou(analyzer, text):
+    """Sudachi は（）『』/ 全角空白などに reading_form = キゴウ を返す。読みに混ぜず、文ごと落とす。"""
+    result = analyzer.analyze(text)
+    assert not result.ok
+    assert result.failure.startswith("non_kana_reading")
+
+
+@needs_sudachi
+@pytest.mark.parametrize("text,reading", [
+    ("「今日」は晴れ", "「きょう」ははれ"),
+    ("すごい！本当？", "すごい！ほんとう？"),
+    ("東京〜大阪", "とうきょう〜おおさか"),
+])
+def test_allowed_symbols_keep_surface(analyzer, text, reading):
+    result = analyzer.analyze(text)
+    assert result.ok
+    assert result.reading == reading
+
+
+@needs_sudachi
 def test_proper_noun_is_low_confidence(analyzer):
     result = analyzer.analyze("田中さんは大阪に住んでいる")
     assert result.ok

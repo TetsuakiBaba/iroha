@@ -237,6 +237,7 @@ context は **右端（カーソル直前）を残して** `context.max_context_
 | OOV を含む | `reading.reject_oov`（既定 true） |
 | 読みが取れない語を含む | 常に |
 | 読みがひらがなに落ちない（ラテン文字・数字が残る） | 常に |
+| `reading.allow_extra_chars` 以外の記号・空白を含む（`()` `『』` `【】` `/` 全角空白など） | 常に |
 | 制御文字・壊れた Unicode | 常に |
 | HTML 断片・URL | `filter.reject_html` / `filter.reject_urls` |
 | 数式・記号だけ | `filter.min_content_chars` / `filter.max_symbol_ratio` |
@@ -247,6 +248,11 @@ context は **右端（カーソル直前）を残して** `context.max_context_
 数字を既定で捨てているのは、**数の読みが当てられない**ため（`3日` は「みっか」だが
 Sudachi は文脈次第で外す）。`filter.allow_digits: true` にすれば通るが、
 その場合は `data/samples/canonical_samples.txt` で読みを確かめてから使うこと。
+
+記号・空白の読みは**表層のまま**にする。Sudachi は `()` `『』` `〜` `/` `♪` 全角空白などに
+読み「キゴウ」を返すので、それを採ると `司法全般(警察` が `しほうぜんぱんきごうけいさつ` になる
+（2026-09-23 に修正。それ以前に作った KAKEN の canonical の 5.57%、Tatoeba の 0.13% に混入していた）。
+表層が許可文字（`reading.allow_extra_chars`）でない記号を含む文は、読みがひらがなに落ちないものとして捨てる。
 
 **低信頼フラグ**（捨てずに `reading_confidence: "low"` を立てる。`reading.low_confidence` で調整）:
 
