@@ -326,12 +326,12 @@ fとんはあらったほうが →  「布団は」（ローマ字がかなに�
 | | `windows/` | 追跡 | Windows 版（TSF） |
 | 配布・評価 | `models/` | 追跡 | アプリがダウンロードするモデルの一覧（`typo-normalizer.json`） |
 | | `testdata/` | 追跡 | 評価セット（`eval.tsv`、`iroha/typo/`。`ajimee/` は取得して置く） |
-| 学習データを作る | `dataset/` | コードだけ追跡 | 公開データから学習データを作る Python パッケージ。作ったデータは `dataset/data/`（追跡しない） |
+| 学習データを作る | `dataset/iroha-typo-normalizer/` | コードだけ追跡 | 公開データから学習データを作る Python パッケージ。作ったデータは `dataset/iroha-typo-normalizer/data/`（追跡しない） |
 | 学習・検証 | `training/` | 追跡しない | モデルの学習。直下がかな漢字変換モデル（llm-jp・T5）、`typo-normalizer/` が打ち間違いの訂正 |
 | | `experiments/` | 追跡しない | アプリに入れない検証（候補の並べ替え `reranker/`・生成 LM による判定 `jev/`） |
 | 外部依存 | `vendor/` `patches/` | パッチだけ追跡 | llama.cpp・辞書データ（取得して置く）と llama.cpp へのパッチ |
 
-データの流れは「`dataset/` で作る → `training/` で学習する → `testdata/` で測る →
+データの流れは「`dataset/iroha-typo-normalizer/` で作る → `training/` で学習する → `testdata/` で測る →
 `models/`（打ち間違いの訂正）または GGUF で配る → `macos/` `windows/` が使う」。
 `training/` の学習スクリプトはルートの `vendor/`・`.venv` を参照するので、これらはルートに置く。
 
@@ -396,7 +396,7 @@ CC BY-SA 4.0（一部は llm-jp-corpus-v3 由来で ODC-BY と Common Crawl の�
 **iroha 本体のコードは MIT のまま**で、重みを別ファイルにしてあるので混ざらない。
 
 ライセンスはカタログの**モデルごと**に書く（アプリに焼き込まない）。学習元を
-[dataset](dataset/) のような別のコーパスに替えたモデルは、条件が変わりうるため。
+[dataset/iroha-typo-normalizer/iroha](dataset/iroha-typo-normalizer/) のような別のコーパスに替えたモデルは、条件が変わりうるため。
 
 
 - 変換エンジンは [ConversionEngine](macos/Sources/IrohaCore/ConversionEngine.swift) プロトコルで抽象化されており、

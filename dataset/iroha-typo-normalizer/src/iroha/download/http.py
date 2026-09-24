@@ -12,7 +12,7 @@ from pathlib import Path
 
 from iroha import __version__
 
-USER_AGENT = (f"dataset/{__version__} "
+USER_AGENT = (f"iroha-dataset/{__version__} "
               "(+https://github.com/tetsuakibaba/iroha; dataset builder for a Japanese IME)")
 
 

@@ -24,6 +24,7 @@ core = ["sudachidict-core>=20230110"]
 iroha-dataset = "iroha.cli:main"
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["iroha*"]
 
 [tool.pytest.ini_options]

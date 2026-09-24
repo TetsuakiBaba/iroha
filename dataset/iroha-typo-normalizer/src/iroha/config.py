@@ -9,7 +9,8 @@ from typing import Any
 import yaml
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-PROJECT_ROOT = PACKAGE_ROOT.parent
+# パッケージは <プロジェクト>/src/iroha/ にある。config/ data/ など相対パスの基準はプロジェクト（dataset/iroha-typo-normalizer/）
+PROJECT_ROOT = PACKAGE_ROOT.parent.parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "default.yaml"
 
 
@@ -81,8 +82,8 @@ def load_config(path: str | os.PathLike | None = None,
     """default.yaml → path の YAML → ``key=value`` の overrides の順に重ねる。"""
     if not DEFAULT_CONFIG_PATH.exists():
         raise FileNotFoundError(
-            f"{DEFAULT_CONFIG_PATH} が無い。iroha-dataset は自分のディレクトリ（dataset/）から実行する"
-            "（`pip install -e .` で入れて、リポジトリの dataset/ で動かす）")
+            f"{DEFAULT_CONFIG_PATH} が無い。iroha-dataset は自分のディレクトリ（dataset/iroha-typo-normalizer/）から実行する"
+            "（`pip install -e .` で入れて、リポジトリの dataset/iroha-typo-normalizer/ で動かす）")
     with open(DEFAULT_CONFIG_PATH, encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if path:

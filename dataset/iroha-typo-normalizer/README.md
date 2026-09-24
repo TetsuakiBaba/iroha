@@ -1,13 +1,13 @@
 # iroha-dataset
 
-ディレクトリは `dataset/`、Python パッケージは `dataset/iroha/`（`python -m iroha …`）。
-名前の「iroha-dataset」は pip のパッケージ名・`--version`・出典表記に使っている（2026-09-24 に `iroha-dataset/iroha_dataset/` から改名）。
+ディレクトリは `dataset/iroha-typo-normalizer/`、Python のコードは `dataset/iroha-typo-normalizer/src/iroha/`（`python -m iroha …`）。
+名前の「iroha-dataset」は pip のパッケージ名・`--version`・出典表記に使っている（2026-09-24 に `iroha-dataset/iroha_dataset/` から移した）。
 
 > **このディレクトリの役割: 学習データを作る。** コード（Python パッケージ）は Git で追跡し、作ったデータは
-> `data/`（追跡しない）に置く。作ったデータで学習するのは `../training/`、評価セットのうち追跡するものは `../testdata/`。
+> `data/`（追跡しない）に置く。作ったデータで学習するのは `../../training/`、評価セットのうち追跡するものは `../../testdata/`。
 > 全体の構成はルートの README.md の「ディレクトリ構成」節。
 
-[iroha](../README.md) 日本語入力システム用の学習データセットを、**ライセンスが明確な公開データから
+[iroha](../../README.md) 日本語入力システム用の学習データセットを、**ライセンスが明確な公開データから
 自前で再生成する**パイプライン。作るのは 2 種類。
 
 1. **かな漢字変換用データ** — 左の確定文字列 + 入力中のかな → 変換結果
@@ -33,7 +33,7 @@
 ## 準備
 
 ```sh
-cd dataset
+cd dataset/iroha-typo-normalizer/iroha
 python3 -m venv .venv
 ./.venv/bin/python -m pip install -e ".[dev]"
 ```
@@ -45,7 +45,7 @@ KAKEN のデータで効くため）。
 ## 実行
 
 ```sh
-cd dataset
+cd dataset/iroha-typo-normalizer/iroha
 
 ./.venv/bin/python -m iroha download      # 公開データを data/raw/ に取る
 ./.venv/bin/python -m iroha preprocess    # 正規化 → 読み → フィルタ → canonical
@@ -468,7 +468,7 @@ typo normalizer の学習データを、ライセンスが明確で使いやす�
 **作り方はスクリプト 1 本**（取得 → 前処理 → 読み一覧 → 2026-09-23 に作ったものとの SHA-256 照合 → 配置）:
 
 ```sh
-cd dataset
+cd dataset/iroha-typo-normalizer/iroha
 ./scripts/build-typo-corpus.sh balanced   # 割合を揃えたもの → data/typo-corpus/readings-balanced/
 ./scripts/build-typo-corpus.sh full       # 間引かないもの（document_ratio をすべて 1.0）→ data/typo-corpus/readings-full/
 ./scripts/build-typo-corpus.sh both
@@ -478,11 +478,11 @@ cd dataset
 - 2026-09-24 に `both` で作り直し、balanced・full の 6 ファイルとも 2026-09-23 のものと SHA-256 が一致した（この Mac で取得を除いて約 66 分）
 - 置き場所に既に一覧があれば上書きせず、照合の結果だけを出す。一致しなければ置かずに止まる
 - 同じものができるように、元データの版を固定してある（`sources/zenz_wiki.py` と `sources/llmjp.py` の `REVISION`）。
-  除外する評価セットは `../training/typo-normalizer/data/`（`heldout/` に JWTD のベンチと iroha-dataset の typo の
+  除外する評価セットは `../../training/typo-normalizer/data/`（`heldout/` に JWTD のベンチと iroha-dataset の typo の
   validation / test の写し）にあり、スクリプトは最初にそろっているかを確かめる（**無いファイルは黙って飛ばされる**ため）。
   読みは Sudachi の辞書の版で変わりうる（2026-09-23 は sudachipy 0.6.11 / sudachidict-full 20260723）
 
-一覧は別の PC で学習するため `dataset/data/typo-corpus/readings-balanced/` と
+一覧は別の PC で学習するため `dataset/iroha-typo-normalizer/data/typo-corpus/readings-balanced/` と
 `readings-full/` に置く（Git には入らず Dropbox で同期される。説明は同じ場所の README.md）。
 **2 つを混ぜて評価しない**（重複除去の都合で、片方の held-out の読みの 1 割がもう片方の train に入る）。
 

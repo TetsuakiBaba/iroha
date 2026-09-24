@@ -14,10 +14,10 @@
 # 同じものができる前提:
 #   - 元データの版は固定してある（zenz_wiki.py / llmjp.py の REVISION）
 #   - 除外する評価セット（config/typo-corpus.yaml の exclude_readings_from / exclude_overlap_with）は
-#     ../training/typo-normalizer/data/ にある。**無いファイルは黙って飛ばされ、別物ができる**ので、先に確かめる
+#     ../../training/typo-normalizer/data/ にある。**無いファイルは黙って飛ばされ、別物ができる**ので、先に確かめる
 #   - Sudachi の辞書の版で読みが変わりうる（2026-09-23 は sudachipy 0.6.11 / sudachidict-full 20260723）
 set -euo pipefail
-cd "$(dirname "$0")/.."   # dataset/
+cd "$(dirname "$0")/.."   # dataset/iroha-typo-normalizer/
 
 VARIANT="${1:-balanced}"
 case "${VARIANT}" in balanced|full|both) ;; *) echo "使い方: $0 [balanced|full|both]" >&2; exit 1 ;; esac

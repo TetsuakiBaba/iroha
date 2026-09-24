@@ -276,7 +276,7 @@ def load_readings(paths: list[str], fields: tuple[str, ...] = ("clean", "target"
     """評価セットの正しい読みの集合。{ファイル: 読みの数}（無いファイルは -1）も返す。
 
     行の ``clean``（training/typo-normalizer の形式・JWTD のベンチ）か ``target``
-    （iroha-dataset の typo 形式）を読む。相対パスは dataset/ のディレクトリから。
+    （iroha-dataset の typo 形式）を読む。相対パスは dataset/iroha-typo-normalizer/ のディレクトリから。
     """
     readings: set[str] = set()
     counts: dict[str, int] = {}

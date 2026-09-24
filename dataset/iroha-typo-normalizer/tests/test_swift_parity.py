@@ -13,7 +13,7 @@ import pytest
 from iroha.config import PROJECT_ROOT
 from iroha.typo.romanize import SOKUON_CONSONANTS, TABLE
 
-SWIFT = PROJECT_ROOT.parent / "macos" / "Sources" / "IrohaCore" / "RomajiComposer.swift"
+SWIFT = PROJECT_ROOT.parent.parent / "macos" / "Sources" / "IrohaCore" / "RomajiComposer.swift"
 
 needs_swift = pytest.mark.skipif(
     not SWIFT.exists(), reason=f"{SWIFT} が無い（iroha リポジトリの外に置かれている）")
