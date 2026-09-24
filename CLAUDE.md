@@ -48,16 +48,19 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
 |---|---|---|
 | アプリ | `macos/`（Swift パッケージ）・`windows/`（TSF） | 追跡 |
 | 配布・評価 | `models/`（アプリが取得するモデルの一覧）・`testdata/`（評価セット。`ajimee/` は追跡外） | 追跡 |
-| 学習データを作る | `iroha-dataset/`（Python パッケージ。作ったデータは `iroha-dataset/data/` で追跡外） | コードだけ追跡 |
+| 学習データを作る | `dataset/`（Python パッケージは `dataset/iroha/`、`python -m iroha …`。作ったデータは `dataset/data/` で追跡外） | コードだけ追跡 |
 | 学習 | `training/`（直下がかな漢字変換モデル、`typo-normalizer/` が打ち間違いの訂正） | 追跡外 |
 | アプリに入れない検証 | `experiments/`（`reranker/`・`jev/`） | 追跡外 |
 | 外部依存 | `vendor/`（llama.cpp・辞書データ）・`patches/` | パッチだけ追跡 |
 | 非公開の文書 | `grants/`・`論文/` | 追跡外。**触らない** |
 
-- 学習データの置き場所は `iroha-dataset/data/`、学習とその記録は `training/`、アプリに載せたモデルの
+- 学習データの置き場所は `dataset/data/`、学習とその記録は `training/`、アプリに載せたモデルの
   評価セットのうち追跡するものは `testdata/`。同じ取り組みの物がこの 3 か所に分かれるのは役割の違いによる
-  （例: 打ち間違いの訂正は、読み一覧 `iroha-dataset/data/typo-corpus/`・学習 `training/typo-normalizer/`・
+  （例: 打ち間違いの訂正は、読み一覧 `dataset/data/typo-corpus/`・学習 `training/typo-normalizer/`・
   書き下ろしのベンチ `testdata/iroha/typo/`）
+- `dataset/` は 2026-09-24 に `iroha-dataset/`（パッケージ `iroha_dataset/`）から改名した。`.venv` の編集可能インストールは
+  パスを持つので、改名後の別マシンでは `cd dataset && ./.venv/bin/python -m pip install --no-deps -e .` で入れ直す。
+  pip のパッケージ名・`--version`・出典表記の「iroha-dataset」は名前として残している
 - **保留中の整理**（2026-09-24 決定）: `training/` 直下のかな漢字変換モデルの学習一式（llm-jp・T5）を
   `training/kkc/` へ移す。GPU マシンで T5 の本番学習（`training/t5/iroha-t5-e12d2-full`）が
   進んでいる間は動かさない（Dropbox の同期でパスが変わり学習が壊れる）。学習が終わってから、
@@ -108,7 +111,7 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   かな漢字変換の**手前**で「読み → 読み」を直す 3.2M の文字単位 Transformer（実装は Accelerate の
   `cblas_sgemm` だけ。llama.cpp も MLX も通さない）。学習・評価の環境と実験の記録は
   `training/typo-normalizer/`（2026-09-24 に `experiments/` から移した。リポジトリには入っていない。
-  学習データの読み一覧は `iroha-dataset/data/typo-corpus/`。実験の経緯と数字は同ディレクトリの README.md）、
+  学習データの読み一覧は `dataset/data/typo-corpus/`。実験の経緯と数字は同ディレクトリの README.md）、
   **移植が正しいかの判定は `iroha-cli typo parity`（PyTorch 実装との照合 200 件）で行う。**
   `training/typo-normalizer/SWIFT-PORT.md` は移植を頼むときに書いた開発機間の伝言メモで、
   実装が進んだ今は内容が古い。ソース中の `training/typo-normalizer/…` への参照も出自を示すもので、
@@ -162,7 +165,7 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
     `UpdateChecker` が壊れる）。設置先は `<データフォルダ>/models/typo-normalizer/` で、
     SHA-256 と大きさを照合してからでないと置かない。動作確認は `iroha-cli typo catalog [install]`
   ・**ライセンスをアプリに焼き込まない。**カタログのモデルごとに `license` / `attribution` を持つ。
-    学習元を `iroha-dataset/` など別コーパスに替えたモデルは条件が変わりうるため
+    学習元を `dataset/` など別コーパスに替えたモデルは条件が変わりうるため
   ・訂正率 79%（θなし）は合成 typo 分布の数字で、実使用の数字ではない。UI で約束しない
 - ユーザ定義の変換ルール（User Rewriter、`UserRewriteRule` / `UserRewriteRuleStore`）は
   エンジンのデコレータ鎖に入れず、コントローラが文節の候補ウィンドウを開くときに独立した

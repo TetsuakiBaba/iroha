@@ -2,8 +2,8 @@
 """bench.tsv（正本・手で編集する）から typo_bench.jsonl と REVIEW.md を作り、中身を検査する。
 
     cd testdata/iroha/typo
-    ../../../iroha-dataset/.venv/bin/python make_bench.py            # 作る + 検査
-    ../../../iroha-dataset/.venv/bin/python make_bench.py --corpus   # 学習コーパスとの重なりも数える（数分）
+    ../../../dataset/.venv/bin/python make_bench.py            # 作る + 検査
+    ../../../dataset/.venv/bin/python make_bench.py --corpus   # 学習コーパスとの重なりも数える（数分）
 
 誤りのある入力（noisy）は、``typed``（実際に打った打鍵列）を iroha と同じ規則でかなに戻して作る
 （iroha-dataset の ``to_kana``）。解決できない打鍵がローマ字のまま残るのも iroha の挙動どおり。
@@ -28,13 +28,13 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-sys.path.insert(0, str(ROOT / "iroha-dataset"))
+sys.path.insert(0, str(ROOT / "dataset"))
 
-from iroha_dataset.typo.romanize import romanize, to_kana  # noqa: E402
-from iroha_dataset.wild.jwtd import osa_distance  # noqa: E402
+from iroha.typo.romanize import romanize, to_kana  # noqa: E402
+from iroha.wild.jwtd import osa_distance  # noqa: E402
 
-VOCAB = ROOT / "experiments" / "typo-normalizer" / "data" / "vocab-120.json"
-CORPUS = [ROOT / "iroha-dataset" / "data" / "typo-corpus" / d / "train.jsonl"
+VOCAB = ROOT / "training" / "typo-normalizer" / "data" / "vocab-120.json"
+CORPUS = [ROOT / "dataset" / "data" / "typo-corpus" / d / "train.jsonl"
           for d in ("readings-balanced", "readings-full")]
 MIN_CHARS = 4
 

@@ -12,7 +12,7 @@ typo normalizer（読み → 読みの打ち間違い訂正）を測るための
 
 ```sh
 cd testdata/iroha/typo
-../../../iroha-dataset/.venv/bin/python make_bench.py --corpus   # 作り直し + 検査（--corpus は学習コーパスとの重なり）
+../../../dataset/.venv/bin/python make_bench.py --corpus   # 作り直し + 検査（--corpus は学習コーパスとの重なり）
 cd ../../..
 macos/.build/release/iroha-cli typo eval testdata/iroha/typo/typo_bench.jsonl
 ```
@@ -49,7 +49,7 @@ macos/.build/release/iroha-cli typo eval testdata/iroha/typo/typo_bench.jsonl
 - 誤りありは `noisy != clean`、誤りなしは `noisy == clean`
 - 正しい読みの打鍵列と `typed` の距離（OSA）が誤りの数と一致する
 - 語彙外の文字がない・4 文字以上・重複がない
-- `--corpus`: 学習コーパス（iroha-dataset/data/typo-corpus）との重なり。
+- `--corpus`: 学習コーパス（dataset/data/typo-corpus）との重なり。
   **入力（noisy）が正しい読みとしてコーパスに現れるもの**は別の語として成り立つので避けた
   （わかりました → わかいました を差し替えた）。正しい読みが学習にも出てくるものは 68 件（よくある言い回し）
 
