@@ -114,6 +114,7 @@ def test_build_typo_skips_eval_readings(tmp_path):
     paths = Paths(tmp_path / "out", tmp_path / "raw").ensure()
     rows = [{"id": f"r{i}", "source": "tatoeba", "document_id": f"d{i}", "reading": r, "chunks": [],
              "split": "train"} for i, r in enumerate(["しんぶんをよむ", "がっこうにいく"])]
+    paths.canonical.mkdir(parents=True, exist_ok=True)   # ensure() は置き場所しか作らない
     paths.canonical_for("tatoeba").write_text(
         "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
     stats = TypoBuilder(cfg, paths).run([get_adapter("tatoeba", cfg, paths)])
@@ -156,6 +157,7 @@ def test_build_readings_excludes_eval_and_dedups_across_splits(tmp_path):
         {"id": "b", "source": "tatoeba", "document_id": "d2", "split": "test",
          "reading": "しんぶんをよむ", "chunks": [{"reading": "がっこうに"}]},
     ]
+    paths.canonical.mkdir(parents=True, exist_ok=True)   # ensure() は置き場所しか作らない
     paths.canonical_for("tatoeba").write_text(
         "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
     b = ReadingsBuilder(cfg, paths)

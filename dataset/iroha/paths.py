@@ -57,8 +57,9 @@ class Paths:
         return self.root / f"_stats.{stage}.json"
 
     def ensure(self) -> "Paths":
-        for p in (self.raw, self.canonical, self.kkc, self.typo, self.samples):
-            p.mkdir(parents=True, exist_ok=True)
+        # 置き場所そのものだけ作る。raw/ canonical/ kkc/ typo/ samples/ は書き込む処理が
+        # 必要になった時点で作る（使わないコマンドで空のディレクトリが並ばないように）
+        self.root.mkdir(parents=True, exist_ok=True)
         return self
 
 
