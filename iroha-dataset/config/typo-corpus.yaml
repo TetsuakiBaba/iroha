@@ -36,8 +36,8 @@ sources:
     # JWTD のベンチ（Wikipedia 由来）と表層が 12 字以上重なる行は捨てる
     overlap_chars: 12
     exclude_overlap_with:
-      - data/jwtd/bench/keystroke.jsonl
-      - data/jwtd/bench/editing.jsonl
+      - ../training/typo-normalizer/data/heldout/jwtd-bench/keystroke.jsonl
+      - ../training/typo-normalizer/data/heldout/jwtd-bench/editing.jsonl
   llmjp_kaken:
     enabled: true
     document_ratio: 0.45
@@ -70,12 +70,13 @@ typo:
   variants_per_clean_sample: 1
   # 誤りのない入力の割合。これまでの学習（irohads-4ep・kkctx-4ep）と同じ 17.6%
   clean_ratio: 0.176
-  # 既存の評価セットと同じ読みは作らない（無いファイルは飛ばす。experiments/ はリポジトリに無い）
+  # 既存の評価セットと同じ読みは作らない（無いファイルは黙って飛ばされる。training/ はリポジトリに無い。
+  # JWTD のベンチと iroha-dataset の typo の validation / test は training/typo-normalizer/data/heldout/ に写してある）
   exclude_readings_from:
-    - data/jwtd/bench/keystroke.jsonl
-    - data/jwtd/bench/editing.jsonl
-    - data/typo/validation.jsonl
-    - data/typo/test.jsonl
+    - ../training/typo-normalizer/data/heldout/jwtd-bench/keystroke.jsonl
+    - ../training/typo-normalizer/data/heldout/jwtd-bench/editing.jsonl
+    - ../training/typo-normalizer/data/heldout/iroha-dataset-typo/validation.jsonl
+    - ../training/typo-normalizer/data/heldout/iroha-dataset-typo/test.jsonl
     - ../training/typo-normalizer/data/iroha-ds/valid.jsonl
     - ../training/typo-normalizer/data/iroha-ds/test.jsonl
     - ../training/typo-normalizer/data/kkctx/valid.jsonl

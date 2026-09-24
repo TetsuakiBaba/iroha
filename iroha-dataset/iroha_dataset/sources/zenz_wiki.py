@@ -25,7 +25,10 @@ from iroha_dataset.config import PROJECT_ROOT
 from iroha_dataset.download.http import download_stream_to
 from iroha_dataset.sources.base import Document, SourceAdapter, SourceInfo, register
 
-URL = "https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset/resolve/main/train_wikipedia.jsonl"
+# 版を固定する（main を取ると上流の更新で読み一覧が変わる）。2025-01-17 の版で、
+# 2026-09-23 に typo-corpus（readings-balanced / readings-full）を作ったときもこの版だった
+REVISION = "7d9c9ea36347b638a627c1d264da48ebc7eb38aa"
+URL = f"https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset/resolve/{REVISION}/train_wikipedia.jsonl"
 FILE = "train_wikipedia.jsonl"
 LICENSE = "CC BY-SA 4.0"
 

@@ -38,6 +38,9 @@ PROJECT = "datasets/llm-jp-corpus-v4"
 LICENSE = "CC BY 4.0"
 LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/"
 HOMEPAGE = f"{GITLAB}/{PROJECT}"
+# 取得する版（コミット）を固定する（main を取ると上流の更新でファイル一覧や中身が変わる）。
+# 2026-04-24 の版で、2026-09-23 に typo-corpus を作ったときもこの版だった
+REVISION = "9057147090263ca4dc52b64daa7e931629064b1c"
 
 _HIRAGANA = re.compile(r"[ぁ-ゖ]")
 _PATENT_HEADING = re.compile(r"【[^】]{1,20}】|\(\d{2}\)|（\d{2}）")
@@ -55,7 +58,7 @@ def _file_names(subset: str) -> list[str]:
     page = 1
     while True:
         url = (f"{GITLAB}/api/v4/projects/{path}/repository/tree"
-               f"?path=ja/{subset}&per_page=100&page={page}")
+               f"?path=ja/{subset}&ref={REVISION}&per_page=100&page={page}")
         rows = json.loads(http_get(url).decode("utf-8"))
         if not rows:
             break
@@ -106,7 +109,7 @@ class _LlmJpAdapter(SourceAdapter):
     def download(self, *, force: bool = False) -> dict:
         picked = self._selected()
         for name in picked:
-            download_stream_to(f"{HOMEPAGE}/-/raw/main/ja/{self.subset}/{name}",
+            download_stream_to(f"{HOMEPAGE}/-/raw/{REVISION}/ja/{self.subset}/{name}",
                                self.raw_dir / name, force=force)
         return {"files": picked}
 

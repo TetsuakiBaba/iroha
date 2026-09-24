@@ -462,30 +462,29 @@ typo normalizer の学習データを、ライセンスが明確で使いやす�
 **`zenz_wiki` が CC BY-SA 4.0 なので、生成物とそれで学習したモデルは CC BY-SA 4.0 になる**
 （LICENSES.md の E・F 節）。
 
+**作り方はスクリプト 1 本**（取得 → 前処理 → 読み一覧 → 2026-09-23 に作ったものとの SHA-256 照合 → 配置）:
+
 ```sh
 cd iroha-dataset
-./.venv/bin/python -m iroha_dataset download   --config config/typo-corpus.yaml   # 約 7GB
-./.venv/bin/python -m iroha_dataset preprocess --config config/typo-corpus.yaml   # --source で分けて並列に回せる
-./.venv/bin/python -m iroha_dataset build-readings --config config/typo-corpus.yaml   # 正しい読みの一覧
+./scripts/build-typo-corpus.sh balanced   # 割合を揃えたもの → data/typo-corpus/readings-balanced/
+./scripts/build-typo-corpus.sh full       # 間引かないもの（document_ratio をすべて 1.0）→ data/typo-corpus/readings-full/
+./scripts/build-typo-corpus.sh both
 ```
 
-全部入り（間引きなし）は、別の data_dir に `document_ratio` を 1.0 で上書きして作る:
+- 途中のファイル（元データ約 7GB・canonical）は Dropbox の外の `$IROHA_TYPO_WORK`（既定 `~/iroha-typo-data`）。`both` で約 50GB の空きが要る。終わったら消してよい
+- 2026-09-24 に `both` で作り直し、balanced・full の 6 ファイルとも 2026-09-23 のものと SHA-256 が一致した（この Mac で取得を除いて約 66 分）
+- 置き場所に既に一覧があれば上書きせず、照合の結果だけを出す。一致しなければ置かずに止まる
+- 同じものができるように、元データの版を固定してある（`sources/zenz_wiki.py` と `sources/llmjp.py` の `REVISION`）。
+  除外する評価セットは `../training/typo-normalizer/data/`（`heldout/` に JWTD のベンチと iroha-dataset の typo の
+  validation / test の写し）にあり、スクリプトは最初にそろっているかを確かめる（**無いファイルは黙って飛ばされる**ため）。
+  読みは Sudachi の辞書の版で変わりうる（2026-09-23 は sudachipy 0.6.11 / sudachidict-full 20260723）
 
-```sh
-F=~/iroha-typo-data/typo-corpus-full
-for s in zenz_wiki llmjp_kaken llmjp_egov llmjp_patent llmjp_aozora; do
-  ./.venv/bin/python -m iroha_dataset preprocess --config config/typo-corpus.yaml \
-      --set data_dir=$F --set sources.$s.document_ratio=1.0 --source $s &
-done; wait
-./.venv/bin/python -m iroha_dataset build-readings --config config/typo-corpus.yaml --set data_dir=$F
-```
-
-できた一覧は別の PC で学習するため `iroha-dataset/data/typo-corpus/readings-balanced/`（割合を揃えたもの）と
-`readings-full/`（全部入り）に置いてある（Git には入らず Dropbox で同期される。説明は同じ場所の README.md）。
+一覧は別の PC で学習するため `iroha-dataset/data/typo-corpus/readings-balanced/` と
+`readings-full/` に置く（Git には入らず Dropbox で同期される。説明は同じ場所の README.md）。
 **2 つを混ぜて評価しない**（重複除去の都合で、片方の held-out の読みの 1 割がもう片方の train に入る）。
 
 **typo は学習中にオンザフライで付ける**ので、出力は typo を付けない正しい読みの一覧
-（`build-readings`）。置き場所は Dropbox の外で、`~/iroha-typo-data/typo-corpus/readings/{train,validation,test}.jsonl`
+（`build-readings`）。`readings/{train,validation,test}.jsonl`
 に 1 行 1 読み（`{"reading", "unit": "sentence" | "chunk", "source", "document_id"}`）。
 打鍵列に戻せない読みを除き、読みで全体の重複を除く（同じ読みが train と test にまたがらない）。
 typo 付きの example が要るときは従来どおり `build-typo`（`variants_per_clean_sample: 1`・clean 17.6%）。
