@@ -16,8 +16,9 @@ final class TypoNormalizerTests: XCTestCase {
         let clean: String
         let greedy: String
         let logprobGreedy: Double
-        let logprobNoisy: Double
-        let margin: Double
+        /// 入力を出力できない（出力語彙に無い文字を含む）ときは null
+        let logprobNoisy: Double?
+        let margin: Double?
         let firstLogits: [[Float]]
 
         enum CodingKeys: String, CodingKey {
@@ -102,21 +103,25 @@ final class TypoNormalizerTests: XCTestCase {
             let noisy = try await normalizer.logProbability(of: item.noisy, given: item.noisy)
             let accuracy = tolerance.logProbability
             XCTAssertEqual(greedy, item.logprobGreedy, accuracy: accuracy, "入力: \(item.noisy)")
-            XCTAssertEqual(noisy, item.logprobNoisy, accuracy: accuracy, "入力: \(item.noisy)")
-            XCTAssertEqual(greedy - noisy, item.margin, accuracy: accuracy, "入力: \(item.noisy)")
+            guard let expectedNoisy = item.logprobNoisy, let expectedMargin = item.margin else {
+                XCTAssertEqual(noisy, -.infinity, "出力できない入力の logP は −∞: \(item.noisy)")
+                continue
+            }
+            XCTAssertEqual(noisy, expectedNoisy, accuracy: accuracy, "入力: \(item.noisy)")
+            XCTAssertEqual(greedy - noisy, expectedMargin, accuracy: accuracy, "入力: \(item.noisy)")
         }
     }
 
     /// しきい値を超えた訂正だけが返る。θ を上げれば同じ入力でも返らなくなる
     func testCorrectionRespectsThreshold() async throws {
         let (normalizer, cases, _) = try loadParity()
-        guard let item = cases.first(where: { $0.greedy != $0.noisy && $0.margin > 2.0 }) else {
+        guard let item = cases.first(where: { $0.greedy != $0.noisy && ($0.margin ?? 0) > 2.0 }) else {
             throw XCTSkip("しきい値を超える訂正の例が先頭 \(Self.caseLimit) 件に無い")
         }
         let accepted = try await normalizer.correction(for: item.noisy, threshold: 2.0)
         XCTAssertEqual(accepted?.corrected, item.greedy)
         XCTAssertEqual(accepted?.reading, item.noisy)
-        let rejected = try await normalizer.correction(for: item.noisy, threshold: item.margin + 1)
+        let rejected = try await normalizer.correction(for: item.noisy, threshold: (item.margin ?? 0) + 1)
         XCTAssertNil(rejected, "θ を margin より上げたら訂正は返らないはず")
     }
 

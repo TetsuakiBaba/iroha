@@ -5,6 +5,9 @@
 #   ./macos/scripts/publish-typo-normalizer.sh <書き出しディレクトリ> <モデルID> [--float32]
 #   例: ./macos/scripts/publish-typo-normalizer.sh export-scale-16x small-v1
 #
+#   LICENSE の「学習元」段落は既定で zenz-v2.5-dataset（small-v1 の学習元）。学習元の違うモデルは
+#   TRAINED_ON=<段落を書いたテキストファイル> で差し替える（ライセンスはモデルごとに変わりうる）
+#
 # やること:
 #   1. 重みを float16 に落とす（既定。12.8MB → 6.4MB）
 #   2. 移植の照合（parity 200件）を回して、配るものが正しいことを確かめる
@@ -67,7 +70,16 @@ else
   echo "warning: parity.json が無いので照合を飛ばします" >&2
 fi
 
-cat > "$DEST/LICENSE" <<'LICENSE_EOF'
+if [ -n "${TRAINED_ON:-}" ]; then
+  TRAINED_ON_TEXT=$(cat "$TRAINED_ON")
+else
+  TRAINED_ON_TEXT='The model was trained on readings (kana) derived from:
+  zenz-v2.5-dataset by Keita Miwa
+  https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset
+  Licensed under CC BY-SA 4.0. The subset derived from llm-jp-corpus-v3 is
+  covered by ODC-BY and the Common Crawl terms of use.'
+fi
+cat > "$DEST/LICENSE" <<LICENSE_EOF
 iroha typo normalizer model weights
 Copyright (c) 2026 Tetsuaki Baba
 
@@ -75,11 +87,7 @@ These model weights are licensed under the Creative Commons
 Attribution-ShareAlike 4.0 International License (CC BY-SA 4.0).
 https://creativecommons.org/licenses/by-sa/4.0/
 
-The model was trained on readings (kana) derived from:
-  zenz-v2.5-dataset by Keita Miwa
-  https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset
-  Licensed under CC BY-SA 4.0. The subset derived from llm-jp-corpus-v3 is
-  covered by ODC-BY and the Common Crawl terms of use.
+$TRAINED_ON_TEXT
 
 Note: the iroha application itself is MIT licensed. Only these weights are
 CC BY-SA 4.0, which is why they are distributed separately from the app.

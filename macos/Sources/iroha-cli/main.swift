@@ -859,8 +859,9 @@ case "typo":
             let clean: String
             let greedy: String
             let logprobGreedy: Double
-            let logprobNoisy: Double
-            let margin: Double
+            /// 入力を出力できない（出力語彙に無い文字を含む）ときは null。Swift 側は −∞ を返すはず
+            let logprobNoisy: Double?
+            let margin: Double?
             let firstLogits: [[Float]]
             enum CodingKeys: String, CodingKey {
                 case noisy, clean, greedy, margin
@@ -884,6 +885,8 @@ case "typo":
         var logProbError = 0.0
         var marginError = 0.0
         var mismatches: [String] = []
+        var unrepresentable = 0          // 入力そのものを出力できない例（期待値が null）
+        var unrepresentableMismatch = 0  // そのうち Swift が −∞ を返さなかったもの
         do {
             for item in parity.cases {
                 // ① teacher forcing のロジット（先頭3ステップ）
@@ -905,8 +908,13 @@ case "typo":
                 let greedyLogProb = try await normalizer.logProbability(of: item.greedy, given: item.noisy)
                 let noisyLogProb = try await normalizer.logProbability(of: item.noisy, given: item.noisy)
                 logProbError = max(logProbError, abs(greedyLogProb - item.logprobGreedy))
-                logProbError = max(logProbError, abs(noisyLogProb - item.logprobNoisy))
-                marginError = max(marginError, abs((greedyLogProb - noisyLogProb) - item.margin))
+                if let expectedNoisy = item.logprobNoisy, let expectedMargin = item.margin {
+                    logProbError = max(logProbError, abs(noisyLogProb - expectedNoisy))
+                    marginError = max(marginError, abs((greedyLogProb - noisyLogProb) - expectedMargin))
+                } else {
+                    unrepresentable += 1
+                    if noisyLogProb != -.infinity { unrepresentableMismatch += 1 }
+                }
             }
         } catch {
             FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
@@ -923,12 +931,16 @@ case "typo":
         let logitOK = logitError <= logitTolerance
         let greedyOK = greedyMatches >= greedyFloor
         let logProbOK = logProbError <= logProbTolerance && marginError <= logProbTolerance
+            && unrepresentableMismatch == 0
         print("parity: \(parity.run) / \(parity.cases.count)件  (\(typoDirectory.path))")
         print("  重みの精度         \(isHalf ? "float16" : "float32")")
         print("  ロジット最大誤差   \(String(format: "%.6f", logitError))   \(logitOK ? "OK" : "NG")（許容 \(logitTolerance)）")
         print("  greedy 一致        \(greedyMatches)/\(parity.cases.count)   \(greedyOK ? "OK" : "NG")（許容 \(greedyFloor)以上）")
         print("  logP 最大誤差      \(String(format: "%.6f", logProbError))   \(logProbOK ? "OK" : "NG")（許容 \(logProbTolerance)）")
         print("  margin 最大誤差    \(String(format: "%.6f", marginError))")
+        if unrepresentable > 0 {
+            print("  入力を出力できない \(unrepresentable)件（logP −∞ でないもの \(unrepresentableMismatch)件）")
+        }
         for line in mismatches { print(line) }
         exit(logitOK && greedyOK && logProbOK ? 0 : 1)
 

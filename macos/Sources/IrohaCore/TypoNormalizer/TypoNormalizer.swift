@@ -147,6 +147,8 @@ public actor TypoNormalizer {
         private let vocabulary: TypoVocabulary
         private let model: TypoNormalizerModel
         private let maxLength: Int
+        /// 出力ヘッドの幅。入力にしか無い文字（ラテン文字など）の id はこれ以上になる
+        private let outputSize: Int
 
         init(directory: URL) throws {
             guard TypoNormalizer.isModelDirectory(directory) else {
@@ -160,6 +162,7 @@ public actor TypoNormalizer {
             vocabulary = TypoVocabulary(manifest: manifest)
             model = try TypoNormalizerModel(manifest: manifest, weights: weights)
             maxLength = manifest.config.maxLength
+            outputSize = manifest.outputSize
         }
 
         func supports(reading: String) -> Bool {
@@ -191,6 +194,10 @@ public actor TypoNormalizer {
             let sourceIDs = vocabulary.encode(source, eos: true)
             let targetIDs = [TypoVocabulary.bos] + vocabulary.encode(target, eos: true)
             guard sourceIDs.count <= maxLength, targetIDs.count - 1 <= maxLength else { return -.infinity }
+            // 出力できない文字を含む列の確率は 0（training/typo-normalizer の evaluate.py と同じ）。
+            // 入力語彙が出力より広いモデルでは、ラテン文字が残った読みそのものがこれに当たり、
+            // margin が +∞ になって訂正は常に採用される。ここで止めないとロジットの範囲外を読む
+            guard targetIDs.dropFirst().allSatisfy({ $0 < outputSize }) else { return -.infinity }
             let memory = model.encode(sourceIDs)
             let cache = model.makeCache(memory: memory)
             let logits = model.decode(Array(targetIDs.dropLast()), cache: cache, offset: 0)
