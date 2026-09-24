@@ -23,7 +23,7 @@ public struct TypoCorrection: Sendable, Equatable {
 /// ```
 ///
 /// 3.2M パラメータの文字単位 Transformer encoder–decoder。学習と書き出しは
-/// `experiments/typo-normalizer/`、移植の仕様は同ディレクトリの SWIFT-PORT.md が正。
+/// `training/typo-normalizer/`、移植の仕様は同ディレクトリの SWIFT-PORT.md が正。
 ///
 /// ## 使いかたの制約（SWIFT-PORT.md §5・§9）
 ///
@@ -216,7 +216,7 @@ public actor TypoNormalizer {
     }
 }
 
-/// 文字単位の語彙（`experiments/typo-normalizer/tokenizer.py`）。
+/// 文字単位の語彙（`training/typo-normalizer/tokenizer.py`）。
 /// 先頭 4 つは `<pad> <s> </s> <unk>`、以降は 1 文字ずつ
 struct TypoVocabulary {
     static let pad = 0

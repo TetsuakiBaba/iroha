@@ -275,7 +275,7 @@ class TypoGenerator:
 def load_readings(paths: list[str], fields: tuple[str, ...] = ("clean", "target")) -> tuple[set[str], dict]:
     """評価セットの正しい読みの集合。{ファイル: 読みの数}（無いファイルは -1）も返す。
 
-    行の ``clean``（experiments/typo-normalizer の形式・JWTD のベンチ）か ``target``
+    行の ``clean``（training/typo-normalizer の形式・JWTD のベンチ）か ``target``
     （iroha-dataset の typo 形式）を読む。相対パスは iroha-dataset のディレクトリから。
     """
     readings: set[str] = set()

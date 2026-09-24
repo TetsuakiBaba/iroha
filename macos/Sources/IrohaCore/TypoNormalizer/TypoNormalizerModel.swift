@@ -2,7 +2,7 @@ import Foundation
 
 /// 文字単位 Transformer encoder–decoder（3.2M パラメータ）の推論。
 ///
-/// `experiments/typo-normalizer/model.py` の移植。計算の順序はそちらが正で、
+/// `training/typo-normalizer/model.py` の移植。計算の順序はそちらが正で、
 /// ずれていないことは `parity.json` の 200 件（ロジット・生成結果・logP）で確かめる
 /// （`iroha-cli typo parity`）。**式を触ったら必ず parity を回すこと。**
 ///

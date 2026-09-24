@@ -489,7 +489,7 @@ typo 付きの example が要るときは従来どおり `build-typo`（`variant
 - **量の釣り合い:** 全量だと Wikipedia と特許に偏るので、`document_ratio` で文書単位に間引く
   （split とは別の塩でハッシュするので、間引いても split の比率は変わらない）
 - **既存の評価セットと同じ読みは作らない**（`typo.exclude_readings_from`。JWTD のベンチ、iroha-dataset の
-  validation / test、experiments/typo-normalizer の iroha-ds・kkctx・master の valid / test）。
+  validation / test、training/typo-normalizer の iroha-ds・kkctx・master の valid / test）。
   よく出る文節（「〜について」など）も評価セットにあれば落ちる点に注意
 - typo の型の比率は `default.yaml` のまま（Komatsu & Nakatoh 2018 に合わせたもの）
 
@@ -638,7 +638,7 @@ typo は平均 input 11.9 字 / clean 比率 0.176、異なる clean 読み **1,
 
 ### 学習に足りるか（リポジトリの実測との比較）
 
-**typo normalizer 用は十分**。`experiments/typo-normalizer/README.md` の実運用モデル
+**typo normalizer 用は十分**。`training/typo-normalizer/README.md` の実運用モデル
 （Small 3.2M、clean 読み 900k × 8ep、EM 80.99%）と同じ尺度で比べると:
 
 | | clean 読み | トークン/パラメータ（1ep 換算） |

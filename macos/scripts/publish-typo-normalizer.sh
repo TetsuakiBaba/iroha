@@ -1,5 +1,5 @@
 #!/bin/bash
-# 打ち間違い訂正モデル（experiments/typo-normalizer の export_model.py の書き出し）を
+# 打ち間違い訂正モデル（training/typo-normalizer の export_model.py の書き出し）を
 # 配布用に整えて、GitHub Releases の専用タグへ公開する。
 #
 #   ./macos/scripts/publish-typo-normalizer.sh <書き出しディレクトリ> <モデルID> [--float32]
@@ -91,7 +91,7 @@ cat > "$DEST/README.md" <<README_EOF
 ローマ字入力の打ち間違いを、かな漢字変換の手前で直す「読み → 読み」のモデル。
 文字単位 Transformer encoder–decoder。iroha が設定でONにしたときに取得して使う。
 
-- 学習・評価: https://github.com/$REPO の \`experiments/typo-normalizer/\`
+- 学習・評価: \`training/typo-normalizer/\`（リポジトリには含めていない）
 - 推論の実装: 同 \`macos/Sources/IrohaCore/TypoNormalizer/\`
 - ライセンス: CC BY-SA 4.0（LICENSE を参照）
 

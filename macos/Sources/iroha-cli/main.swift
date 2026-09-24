@@ -817,7 +817,7 @@ case "predict" where arguments.count >= 3:
     }
 
 case "typo":
-    // 打ち間違い訂正モデル（experiments/typo-normalizer、SWIFT-PORT.md）の検証。
+    // 打ち間違い訂正モデル（training/typo-normalizer、SWIFT-PORT.md）の検証。
     //   typo parity [--dir DIR]          書き出しに付いてくる parity.json 200件と突き合わせる
     //   typo bench <test.jsonl> [--n 件数] レイテンシ（mean / p50 / p95）
     //   typo <読み> [--threshold θ]       1件だけ試す

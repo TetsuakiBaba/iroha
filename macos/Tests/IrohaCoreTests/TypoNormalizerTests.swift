@@ -1,7 +1,7 @@
 import XCTest
 @testable import IrohaCore
 
-/// 打ち間違い訂正モデル（`experiments/typo-normalizer`）の Swift 移植が
+/// 打ち間違い訂正モデル（`training/typo-normalizer`）の Swift 移植が
 /// 学習側（PyTorch）と同じ数を出すかを、書き出しに付いてくる `parity.json` で確かめる。
 ///
 /// SWIFT-PORT.md §7 の順序（ロジット → greedy → logP / margin）に沿って見る。

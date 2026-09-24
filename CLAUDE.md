@@ -1,4 +1,5 @@
 # iroha 開発ガイド（Claude Code用）
+まず、報告、会話は日本でお願いします。また、報告内容で気の利かせた言い回しや比喩は避けてください。名前に関しても省略名称は極力使わないか、使う場合は事前にこのように呼ぶ、報告を先にしてください。
 
 ## リリースポリシー（重要）
 
@@ -52,8 +53,9 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   - このMacの `training/` は**第一階層のファイルだけ**が Dropbox で同期されている
     （1.0GB。`train.py` `prepare_data.py` `README.md` と GGUF・ログ類）。
     `t5/` や `iroha-llmjp-150m-full/` などの**サブディレクトリは同期していない**ので手元に無い。
-    T5 側の作業や学習そのものは GPU マシン（`/data1/Dropbox/project/iroha`）で行う
-  - `experiments/` はこのMacに全部ある（2.4GB）。追跡していないだけ
+    T5 側の作業や学習そのものは GPU マシン（`/data1/Dropbox/project/iroha`）で行う。
+    例外として `typo-normalizer/`（打ち間違いの訂正の学習環境と実験記録、126MB）はこのMacにある
+  - `experiments/` はこのMacに全部ある（`reranker/` と `jev/`）。追跡していないだけ
 - `macos/Sources/iroha/` — IME本体（Swift 5モード）: IMKコントローラ、設定UI、
   AIバックエンド（Apple FoundationModels / Ollama / LM Studio / OpenAI互換）、
   アップデータ、モデルDL、macOSユーザ辞書の取り込み（`SystemUserDictionary`）、
@@ -85,12 +87,14 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   （学習は辞書の外側にあるので、覚えるとライブ変換に戻ってくる）
 - 打ち間違いの訂正（`TypoNormalizer`、`macos/Sources/IrohaCore/TypoNormalizer/`、既定OFF）は
   かな漢字変換の**手前**で「読み → 読み」を直す 3.2M の文字単位 Transformer（実装は Accelerate の
-  `cblas_sgemm` だけ。llama.cpp も MLX も通さない）。学習は `experiments/typo-normalizer/`、
+  `cblas_sgemm` だけ。llama.cpp も MLX も通さない）。学習・評価の環境と実験の記録は
+  `training/typo-normalizer/`（2026-09-24 に `experiments/` から移した。リポジトリには入っていない。
+  学習データの読み一覧は `iroha-dataset/data/typo-corpus/`。実験の経緯と数字は同ディレクトリの README.md）、
   **移植が正しいかの判定は `iroha-cli typo parity`（PyTorch 実装との照合 200 件）で行う。**
-  `experiments/typo-normalizer/SWIFT-PORT.md` は移植を頼むときに書いた開発機間の伝言メモで、
-  リポジトリには入っていないし、実装が進んだ今は内容が古い。ソース中の
-  `experiments/typo-normalizer/…` への参照も出自を示すもので、clone には含まれない
-  （読みたいときは作業機か `git checkout v0.12.0 -- experiments`）。守ること:
+  `training/typo-normalizer/SWIFT-PORT.md` は移植を頼むときに書いた開発機間の伝言メモで、
+  実装が進んだ今は内容が古い。ソース中の `training/typo-normalizer/…` への参照も出自を示すもので、
+  clone には含まれない（読みたいときは作業機か `git checkout v0.12.0 -- experiments`。
+  このときの置き場所は旧パスの `experiments/typo-normalizer/`）。守ること:
   ・**計算の順序を変えたら `iroha-cli typo parity` を必ず回す**（PyTorch 実装との照合 200 件。
     生成が一致してもロジットがずれていれば実装は間違っている。float32 でロジット 1e-3・logP 0.01 以内）
   ・**本線は「入力の休止」で読みそのものを直す**（`scheduleTypoCorrection`、既定 300ms・設定可）。

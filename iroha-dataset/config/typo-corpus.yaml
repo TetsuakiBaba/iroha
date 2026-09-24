@@ -76,15 +76,15 @@ typo:
     - data/jwtd/bench/editing.jsonl
     - data/typo/validation.jsonl
     - data/typo/test.jsonl
-    - ../experiments/typo-normalizer/data/iroha-ds/valid.jsonl
-    - ../experiments/typo-normalizer/data/iroha-ds/test.jsonl
-    - ../experiments/typo-normalizer/data/kkctx/valid.jsonl
-    - ../experiments/typo-normalizer/data/kkctx/test.jsonl
-    - ../experiments/typo-normalizer/data/kkctx-jwtd/valid.jsonl
-    - ../experiments/typo-normalizer/data/kkctx-jwtd/test.jsonl
-    - ../experiments/typo-normalizer/data/master/valid.jsonl
-    - ../experiments/typo-normalizer/data/master/test.jsonl
-    - ../experiments/typo-normalizer/data/master/test_by_type.jsonl
+    - ../training/typo-normalizer/data/iroha-ds/valid.jsonl
+    - ../training/typo-normalizer/data/iroha-ds/test.jsonl
+    - ../training/typo-normalizer/data/kkctx/valid.jsonl
+    - ../training/typo-normalizer/data/kkctx/test.jsonl
+    - ../training/typo-normalizer/data/kkctx-jwtd/valid.jsonl
+    - ../training/typo-normalizer/data/kkctx-jwtd/test.jsonl
+    - ../training/typo-normalizer/data/master/valid.jsonl
+    - ../training/typo-normalizer/data/master/test.jsonl
+    - ../training/typo-normalizer/data/master/test_by_type.jsonl
 
 kkc:
   enabled: false

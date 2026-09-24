@@ -5,7 +5,7 @@ import Accelerate
 
 /// Typo Normalizer の重みと設定（`export_model.py` が書き出す manifest.json / weights.bin）。
 ///
-/// 書き出し側の仕様は `experiments/typo-normalizer/SWIFT-PORT.md` §2 が正。
+/// 書き出し側の仕様は `training/typo-normalizer/SWIFT-PORT.md` §2 が正。
 /// weights.bin は全テンソルを **little-endian で連結しただけ**のもので、どこに何があるかは
 /// manifest.json の `tensors`（name / shape / offset / count）だけが知っている。
 struct TypoNormalizerManifest: Decodable {

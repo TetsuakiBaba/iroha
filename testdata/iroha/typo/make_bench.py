@@ -13,7 +13,7 @@
 * 誤りなし（error_type = none）は typed が空で noisy == clean、誤りありは noisy != clean
 * 正しい読みの打鍵列（nn / contextual の近い方）と typed の距離（OSA）が誤りの数と一致する
   （error_type の ``+`` で数える。2 つなら 2）
-* 読みがモデルの語彙（experiments/typo-normalizer/data/vocab-120.json）に収まる。
+* 読みがモデルの語彙（training/typo-normalizer/data/vocab-120.json）に収まる。
   収まらないと ``iroha-cli typo eval`` は素通しにするので測れない
 * 読みが 4 文字以上（本体は最低文字数 4 未満では訂正を走らせない）
 * id・(noisy, clean) の重複がない

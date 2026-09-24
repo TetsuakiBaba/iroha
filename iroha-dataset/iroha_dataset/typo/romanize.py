@@ -2,7 +2,7 @@
 
 打鍵列→かな は ``macos/Sources/IrohaCore/RomajiComposer.swift`` の移植で、テーブルも
 アルゴリズム（pending / prefixes / forceResolveHead）もそのまま写している。
-``experiments/typo-normalizer/typo_generator/romaji.py`` と同じ実装
+``training/typo-normalizer/typo_generator/romaji.py`` と同じ実装
 （あちらは ``test_parity.py`` で Swift 版との一致を確認済み）。
 
 typo は**かな文字列ではなく打鍵列の上**で起こす。その打鍵列が実際の iroha で何に

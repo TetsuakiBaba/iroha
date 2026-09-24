@@ -406,7 +406,7 @@ CC BY-SA 4.0（一部は llm-jp-corpus-v3 由来で ODC-BY と Common Crawl の�
   でアダプタ有無を同じ表に並べられる
 - 打ち間違いの訂正は [macos/Sources/IrohaCore/TypoNormalizer/](macos/Sources/IrohaCore/TypoNormalizer/)。
   3.2M パラメータの文字単位 Transformer encoder–decoder を Accelerate（`cblas_sgemm`）だけで実装したもので、
-  llama.cpp も MLX も通さない。学習と重みの書き出しは `experiments/typo-normalizer/`。
+  llama.cpp も MLX も通さない。学習と重みの書き出しは `training/typo-normalizer/`。
   移植が正しいかは `iroha-cli typo parity`（PyTorch 実装との照合 200 件）で判定する。
   **`experiments/` と `training/` はリポジトリに含めていない**（学習データが大きく、
   AJIMEE-Bench や学習コーパス由来の実文を含むため。他者のデータを再配布しない方針）。
@@ -417,11 +417,11 @@ CC BY-SA 4.0（一部は llm-jp-corpus-v3 由来で ODC-BY と Common Crawl の�
   ```sh
   ./macos/scripts/install-typo-normalizer.sh <書き出しディレクトリ>  # float16に落として vendor/ へ設置 + 照合
   .build/release/iroha-cli typo parity                             # PyTorch実装との照合（200件）
-  .build/release/iroha-cli typo eval  ../experiments/typo-normalizer/data/master/test.jsonl --n 10000
-  .build/release/iroha-cli typo bench ../experiments/typo-normalizer/data/master/test.jsonl --n 300
-  .build/release/iroha-cli typo pause    ../experiments/typo-normalizer/data/master/test.jsonl --n 600
-  .build/release/iroha-cli typo prefix   ../experiments/typo-normalizer/data/master/test.jsonl --n 2000
-  .build/release/iroha-cli typo segments ../experiments/typo-normalizer/data/master/test.jsonl --n 400
+  .build/release/iroha-cli typo eval  ../training/typo-normalizer/data/master/test.jsonl --n 10000
+  .build/release/iroha-cli typo bench ../training/typo-normalizer/data/master/test.jsonl --n 300
+  .build/release/iroha-cli typo pause    ../training/typo-normalizer/data/master/test.jsonl --n 600
+  .build/release/iroha-cli typo prefix   ../training/typo-normalizer/data/master/test.jsonl --n 2000
+  .build/release/iroha-cli typo segments ../training/typo-normalizer/data/master/test.jsonl --n 400
   .build/release/iroha-cli typo "をわぇてけいやくする"              # 1件試す（生成・margin・採否）
   ```
 

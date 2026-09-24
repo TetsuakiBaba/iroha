@@ -1,6 +1,6 @@
 """typo normalizer 用の「正しい読み」の一覧（``build-readings``）。
 
-typo を学習中にオンザフライで付ける（experiments/typo-normalizer の ``OnTheFlyTypos``）ときは、
+typo を学習中にオンザフライで付ける（training/typo-normalizer の ``OnTheFlyTypos``）ときは、
 typo 付きの example（``build-typo``）ではなく clean の読みの集合だけあればよい。
 canonical record から ``build-typo`` と同じ単位（文・文節）と長さで読みを取り出し、
 
