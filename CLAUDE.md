@@ -42,6 +42,26 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
 
 ## プロジェクト構成の要点
 
+ディレクトリは役割で分ける（README.md の「ディレクトリ構成」節と同じ）。**新しいものを置くときはこの表の役割で場所を決める**:
+
+| 役割 | ディレクトリ | Git |
+|---|---|---|
+| アプリ | `macos/`（Swift パッケージ）・`windows/`（TSF） | 追跡 |
+| 配布・評価 | `models/`（アプリが取得するモデルの一覧）・`testdata/`（評価セット。`ajimee/` は追跡外） | 追跡 |
+| 学習データを作る | `iroha-dataset/`（Python パッケージ。作ったデータは `iroha-dataset/data/` で追跡外） | コードだけ追跡 |
+| 学習 | `training/`（直下がかな漢字変換モデル、`typo-normalizer/` が打ち間違いの訂正） | 追跡外 |
+| アプリに入れない検証 | `experiments/`（`reranker/`・`jev/`） | 追跡外 |
+| 外部依存 | `vendor/`（llama.cpp・辞書データ）・`patches/` | パッチだけ追跡 |
+| 非公開の文書 | `grants/`・`論文/` | 追跡外。**触らない** |
+
+- 学習データの置き場所は `iroha-dataset/data/`、学習とその記録は `training/`、アプリに載せたモデルの
+  評価セットのうち追跡するものは `testdata/`。同じ取り組みの物がこの 3 か所に分かれるのは役割の違いによる
+  （例: 打ち間違いの訂正は、読み一覧 `iroha-dataset/data/typo-corpus/`・学習 `training/typo-normalizer/`・
+  書き下ろしのベンチ `testdata/iroha/typo/`）
+- **保留中の整理**（2026-09-24 決定）: `training/` 直下のかな漢字変換モデルの学習一式（llm-jp・T5）を
+  `training/kkc/` へ移す。GPU マシンで T5 の本番学習（`training/t5/iroha-t5-e12d2-full`）が
+  進んでいる間は動かさない（Dropbox の同期でパスが変わり学習が壊れる）。学習が終わってから、
+  スクリプトの相対パス（`../vendor` → `../../vendor` など）と CLAUDE.md・README の参照を合わせて移す
 - プラットフォーム別レイアウト: macOS版のSwiftパッケージ一式（Package.swift / Sources /
   Tests / Resources / scripts）は `macos/` 配下。Windows版は今後 `windows/` に実装する。
   `vendor/`（llama.cpp）・`patches/`・`testdata/`・`training/`・`.venv` はプラットフォーム共有の
@@ -50,11 +70,10 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
 - **`training/` と `experiments/` はリポジトリに入っていない**（2026-09-22 に追跡から外した。
   他者のデータを iroha のリポジトリから再配布しないため。`.gitignore` の該当行に理由がある）。
   中身が要るときは `git checkout v0.12.0 -- training experiments` で履歴から取り出す。
-  - このMacの `training/` は**第一階層のファイルだけ**が Dropbox で同期されている
-    （1.0GB。`train.py` `prepare_data.py` `README.md` と GGUF・ログ類）。
-    `t5/` や `iroha-llmjp-150m-full/` などの**サブディレクトリは同期していない**ので手元に無い。
-    T5 側の作業や学習そのものは GPU マシン（`/data1/Dropbox/project/iroha`）で行う。
-    例外として `typo-normalizer/`（打ち間違いの訂正の学習環境と実験記録、126MB）はこのMacにある
+  - このMacにも `training/` の全体（`t5/`・`iroha-llmjp-150m-full/` などのサブディレクトリを含む、
+    2026-09-24 時点で 79GB）が Dropbox で同期されている。ただし T5 側の作業や学習そのものは
+    GPU マシン（`/data1/Dropbox/project/iroha`）で行い、このMacからは起動しない。
+    `typo-normalizer/` だけはこのMac（MPS）で学習する
   - `experiments/` はこのMacに全部ある（`reranker/` と `jev/`）。追跡していないだけ
 - `macos/Sources/iroha/` — IME本体（Swift 5モード）: IMKコントローラ、設定UI、
   AIバックエンド（Apple FoundationModels / Ollama / LM Studio / OpenAI互換）、

@@ -315,6 +315,28 @@ fとんはあらったほうが →  「布団は」（ローマ字がかなに�
 
 ## 開発
 
+### ディレクトリ構成
+
+役割で 4 つに分かれる。リポジトリに入っているのは上の 3 つのコードと評価セットだけで、
+学習データ・学習・検証の中身（他者のデータや大きな生成物を含む）は入れていない。
+
+| 役割 | ディレクトリ | Git | 中身 |
+|---|---|---|---|
+| アプリ | `macos/` | 追跡 | macOS 版（Swift パッケージ。IME 本体・変換エンジン・CLI・追加学習） |
+| | `windows/` | 追跡 | Windows 版（TSF） |
+| 配布・評価 | `models/` | 追跡 | アプリがダウンロードするモデルの一覧（`typo-normalizer.json`） |
+| | `testdata/` | 追跡 | 評価セット（`eval.tsv`、`iroha/typo/`。`ajimee/` は取得して置く） |
+| 学習データを作る | `iroha-dataset/` | コードだけ追跡 | 公開データから学習データを作る Python パッケージ。作ったデータは `iroha-dataset/data/`（追跡しない） |
+| 学習・検証 | `training/` | 追跡しない | モデルの学習。直下がかな漢字変換モデル（llm-jp・T5）、`typo-normalizer/` が打ち間違いの訂正 |
+| | `experiments/` | 追跡しない | アプリに入れない検証（候補の並べ替え `reranker/`・生成 LM による判定 `jev/`） |
+| 外部依存 | `vendor/` `patches/` | パッチだけ追跡 | llama.cpp・辞書データ（取得して置く）と llama.cpp へのパッチ |
+
+データの流れは「`iroha-dataset/` で作る → `training/` で学習する → `testdata/` で測る →
+`models/`（打ち間違いの訂正）または GGUF で配る → `macos/` `windows/` が使う」。
+`training/` の学習スクリプトはルートの `vendor/`・`.venv` を参照するので、これらはルートに置く。
+
+### ビルドとテスト
+
 macOS版のSwiftパッケージは `macos/` 配下にある（Windows版は今後 `windows/` に実装予定）。
 ビルドコマンドは `macos/` から実行する:
 
