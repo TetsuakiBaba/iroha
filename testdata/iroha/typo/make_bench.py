@@ -3,7 +3,9 @@
 
     cd testdata/iroha/typo
     ../../../dataset/iroha-typo-normalizer/.venv/bin/python make_bench.py            # 作る + 検査
-    ../../../dataset/iroha-typo-normalizer/.venv/bin/python make_bench.py --corpus   # 学習コーパスとの重なりも数える（数分）
+    ../../../dataset/iroha-typo-normalizer/.venv/bin/python make_bench.py --corpus   # 学習コーパスとの重なりも調べる（数分）
+    # 読み一覧を作る前の段階（除外をかける前の canonical）とも照合する
+    ../../../dataset/iroha-typo-normalizer/.venv/bin/python make_bench.py --corpus --canonical ~/iroha-typo-data/typo-spoken-check/canonical
 
 誤りのある入力（noisy）は、``typed``（実際に打った打鍵列）を iroha と同じ規則でかなに戻して作る
 （iroha-dataset の ``to_kana``）。解決できない打鍵がローマ字のまま残るのも iroha の挙動どおり。
@@ -17,6 +19,11 @@
   収まらないと ``iroha-cli typo eval`` は素通しにするので測れない
 * 読みが 4 文字以上（本体は最低文字数 4 未満では訂正を走らせない）
 * id・(noisy, clean) の重複がない
+* ``--corpus``: **学習データに含まれていない**（2026-09-25）。正しい読み（clean）が typo-corpus の読み一覧
+  （readings-balanced / full / spoken の train・validation・test、文と文節）に無く、誤りのある入力（noisy）も
+  正しい読みとして現れない。``--canonical`` を渡すと canonical（文の読みと文節の読み）とも照合する。
+  readings-spoken は作るときにこのベンチの読みを除外しているので、一覧だけでは重なりが見えない。
+  除外をかける前の canonical と照合すること
 """
 from __future__ import annotations
 
@@ -34,8 +41,9 @@ from iroha.typo.romanize import romanize, to_kana  # noqa: E402
 from iroha.wild.jwtd import osa_distance  # noqa: E402
 
 VOCAB = ROOT / "training" / "typo-normalizer" / "data" / "vocab-120.json"
-CORPUS = [ROOT / "dataset" / "iroha-typo-normalizer" / "data" / "typo-corpus" / d / "train.jsonl"
-          for d in ("readings-balanced", "readings-full")]
+CORPUS = [ROOT / "dataset" / "iroha-typo-normalizer" / "data" / "typo-corpus" / d / f
+          for d in ("readings-balanced", "readings-full", "readings-spoken")
+          for f in ("train.jsonl", "validation.jsonl", "test.jsonl")]
 MIN_CHARS = 4
 
 
@@ -55,24 +63,36 @@ def keys_for(clean: str, typed: str) -> tuple[str, int]:
     return best
 
 
-def corpus_hits(readings: set[str]) -> dict[str, set[str]]:
+def corpus_hits(readings: set[str], canonical: list[Path]) -> dict[str, set[str]]:
+    """読み一覧（一覧ごと）と canonical（ソースごと）のうち、readings と一致する読み。"""
     hits: dict[str, set[str]] = {}
     for path in CORPUS:
         if not path.exists():
             continue
-        found: set[str] = set()
+        found = hits.setdefault(path.parent.name, set())
         with open(path, encoding="utf-8") as f:
             for line in f:
                 r = json.loads(line)["reading"]
                 if r in readings:
                     found.add(r)
-        hits[path.parent.name] = found
+    for d in canonical:
+        for path in sorted(Path(d).expanduser().glob("*.jsonl")):
+            if path.name.endswith(".morphemes.jsonl"):
+                continue
+            found = hits.setdefault(f"canonical:{path.stem}", set())
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    rec = json.loads(line)
+                    for r in [rec.get("reading", "")] + [c.get("reading", "") for c in rec.get("chunks") or []]:
+                        if r in readings:
+                            found.add(r)
     return hits
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--corpus", action="store_true", help="学習コーパスとの重なりも数える")
+    ap.add_argument("--corpus", action="store_true", help="学習コーパスとの重なりも調べる（重なれば失敗）")
+    ap.add_argument("--canonical", nargs="*", default=[], help="照合する canonical のディレクトリ")
     args = ap.parse_args()
 
     vocab = set(json.loads(VOCAB.read_text(encoding="utf-8"))) if VOCAB.exists() else None
@@ -114,12 +134,20 @@ def main() -> int:
 
     hits = {}
     if args.corpus:
-        hits = corpus_hits({o["clean"] for o in out} | {o["noisy"] for o in out})
+        hits = corpus_hits({o["clean"] for o in out} | {o["noisy"] for o in out},
+                           [Path(p) for p in args.canonical])
         for o in out:
             o["clean_in_corpus"] = [k for k, v in hits.items() if o["clean"] in v]
             if o["error_type"] != "none":
                 # 誤りを入れた読みが、コーパスに正しい読みとして現れる = 別の語として成り立ちうる
                 o["noisy_in_corpus"] = [k for k, v in hits.items() if o["noisy"] in v]
+            else:
+                o["noisy_in_corpus"] = []
+            if o["clean_in_corpus"]:
+                problems.append(f"{o['id']}: 正しい読みが学習データにある（{o['clean']} … {', '.join(o['clean_in_corpus'])}）")
+            if o["noisy_in_corpus"]:
+                problems.append(f"{o['id']}: 入力が正しい読みとして学習データにある（{o['noisy']} … "
+                                f"{', '.join(o['noisy_in_corpus'])}）")
 
     with open(HERE / "typo_bench.jsonl", "w", encoding="utf-8") as f:
         for o in out:

@@ -1,201 +1,201 @@
 id	domain	error_type	category	surface	clean	typed	note
-sub01	chat	deletion	Removal	今日は楽しかった	きょうはたのしかった	kyohatanoshikatta	kyou の u が抜ける（ょう が ょ になる）
-sub02	chat	substitution	Replacement（隣接キー）	ちょっと待ってて	ちょっとまってて	chittomattete	o→i
-sub03	chat	substitution	Replacement（隣接キー）	今から行くね	いまからいくね	imakaraikine	u→i（論文の I/U）
-sub04	chat	substitution	Replacement（隣接キー）	大丈夫だよ	だいじょうぶだよ	daijiubudayo	o→i
+sub01	chat	deletion	Removal	今日は楽しかった、また五人で集まろう	きょうはたのしかった、またごにんであつまろう	kyohatanoshikatta,matagoninndeatsumarou	kyou の u が抜ける（ょう が ょ になる）
+sub02	chat	substitution	Replacement（隣接キー）	改札の前でちょっと待ってて	かいさつのまえでちょっとまってて	kaisatsunomaedechittomattete	o→i
+sub03	chat	substitution	Replacement（隣接キー）	今から行くね、改札の横で待ってて	いまからいくね、かいさつのよこでまってて	imakaraikine,kaisatsunoyokodemattete	u→i（論文の I/U）
+sub04	chat	substitution	Replacement（隣接キー）	傘なら二本あるから大丈夫だよ	かさならにほんあるからだいじょうぶだよ	kasanaranihonnarukaradaijiubudayo	o→i
 sub05	chat	substitution	Replacement（隣接キー）	何時に集合する	なんじにしゅうごうする	nannjinishuugouduru	s→d
-sub06	chat	substitution	Replacement（隣接キー）	週末空いてる	しゅうまつあいてる	shuumarsuaiteru	t→r
-sub07	chat	substitution	Replacement（隣接キー）	めっちゃ眠い	めっちゃねむい	mecchanenui	m→n
-sub08	chat	substitution	Replacement（隣接キー）	風邪ひいたかも	かぜひいたかも	kaxehiitakamo	z→x（xe が小さい ぇ になる）
+sub06	chat	substitution	Replacement（隣接キー）	来月の最初の週末空いてる	らいげつのさいしょのしゅうまつあいてる	raigetsunosaishonoshuumarsuaiteru	t→r
+sub07	chat	substitution	Replacement（隣接キー）	昨日の夜更かしでめっちゃ眠い	きのうのよふかしでめっちゃねむい	kinounoyofukashidemecchanenui	m→n
+sub08	chat	substitution	Replacement（隣接キー）	喉が痛いから風邪ひいたかも	のどがいたいからかぜひいたかも	nodogaitaikarakaxehiitakamo	z→x（xe が小さい ぇ になる）
 sub09	business	substitution	Replacement（隣接キー）	返信遅れてごめん	へんしんおくれてごめん	hennshinnokutetegomenn	r→t
-sub10	business	substitution	Replacement（隣接キー）	お世話になっております	おせわになっております	osrwaninatteorimasu	e→r
+sub10	business	substitution	Replacement（隣接キー）	お世話になっております、佐藤です	おせわになっております、さとうです	osrwaninatteorimasu,satoudesu	e→r
 sub11	business	substitution	Replacement（隣接キー）	資料を添付しました	しりょうをてんぷしました	shiryouwotennpushimsshita	a→s（ss が促音になる）
-sub12	business	substitution	Replacement（隣接キー）	よろしくお願いします	よろしくおねがいします	yoroshikuonegsishimasu	a→s
-sub13	business	substitution	Replacement（隣接キー）	承知いたしました	しょうちいたしました	shouchiitashimasgita	h→g
-sub14	business	substitution	Replacement（隣接キー）	恐れ入りますが	おそれいりますが	osoeirimasuga	r→e
+sub12	business	substitution	Replacement（隣接キー）	よろしくお願いします、打ち合わせの議事録は明日送ります	よろしくおねがいします、うちあわせのぎじろくはあしたおくります	yoroshikuonegsishimasu,uchiawasenogijirokuhaashitaokurimasu	a→s
+sub13	business	substitution	Replacement（隣接キー）	承知いたしました、さっそく手配します	しょうちいたしました、さっそくてはいします	shouchiitashimasgita,sassokutehaishimasu	h→g
+sub14	business	substitution	Replacement（隣接キー）	恐れ入りますが折り返しお電話ください	おそれいりますがおりかえしおでんわください	osoeirimasugaorikaeshiodennwakudasai	r→e
 sub15	business	substitution	Replacement（隣接キー）	至急ご対応ください	しきゅうごたいおうください	shiktuugotaioukudasai	y→t
 sub16	business	substitution	Replacement（隣接キー）	見積書を送付します	みつもりしょをそうふします	mitsumorishowosougushimasu	f→g
 sub17	business	substitution	Replacement（隣接キー）	折り返しご連絡します	おりかえしごれんらくします	orilaeshigorennrakushimasu	k→l（la が小さい ぁ になる）
 sub18	sns	substitution	Replacement（隣接キー）	新しいカフェに行ってきた	あたらしいかふぇにいってきた	atarashuikafeniittekita	i→u
 sub19	sns	substitution	Replacement（隣接キー）	電車が遅れてる	でんしゃがおくれてる	dennshsgaokureteru	a→s
-sub20	daily	substitution	Replacement（隣接キー）	朝ごはん食べた	あさごはんたべた	asagohanntaneta	b→n
+sub20	daily	substitution	Replacement（隣接キー）	寝坊したけど朝ごはん食べた	ねぼうしたけどあさごはんたべた	neboushitakedoasagohanntaneta	b→n
 sub21	academic	substitution	Replacement（隣接キー）	本研究では	ほんけんきゅうでは	honnkennkuuudeha	y→u
-sub22	academic	substitution	Replacement（隣接キー）	先行研究によれば	せんこうけんきゅうによれば	sennkoukennkyuuniyoeeba	r→e
+sub22	academic	substitution	Replacement（隣接キー）	先行研究によればこの手法は有効だ	せんこうけんきゅうによればこのしゅほうはゆうこうだ	sennkoukennkyuuniyoeebakonoshuhouhayuukouda	r→e
 sub23	academic	substitution	Replacement（隣接キー）	有意な差が見られた	ゆういなさがみられた	yuuinasagamorareta	i→o（もられた は語としてある）
-sub24	academic	substitution	Replacement（隣接キー）	統計的に	とうけいてきに	toukeiyekini	t→y
-sub25	academic	substitution	Replacement（隣接キー）	被験者の数	ひけんしゃのかず	hikennshanokaau	z→a
+sub24	academic	substitution	Replacement（隣接キー）	統計的に有意な差が見られた	とうけいてきにゆういなさがみられた	toukeiyekiniyuuinasagamirareta	t→y
+sub25	academic	substitution	Replacement（隣接キー）	予備実験での被験者の数	よびじっけんでのひけんしゃのかず	yobijikkenndenohikennshanokaau	z→a
 sub26	academic	substitution	Replacement（隣接キー）	図に示すように	ずにしめすように	zunishinesuyouni	m→n
 sub27	business	substitution	Replacement（隣接キー）	社長に報告	しゃちょうにほうこく	shachiunihoukoku	o→i
-sub28	business	substitution	Replacement（隣接キー）	急いでください	いそいでください	isoidekidasai	u→i
-sub29	chat	substitution	Replacement（隣接キー）	普通に考えて	ふつうにかんがえて	fitsuunikanngaete	u→i（fi が ふぃ になる）
-sub30	business	substitution	Replacement（隣接キー）	思います	おもいます	omiimasu	o→i
-sub31	chat	substitution	Replacement（隣接キー）	仕事終わった	しごとおわった	shigitoowatta	o→i
-sub32	chat	substitution	Replacement（隣接キー）	どこにいるの	どこにいるの	dikoniiruno	o→i（di が ぢ になる）
-sub33	daily	substitution	Replacement（隣接キー）	足りないかも	たりないかも	tsrinaikamo	a→s
-sub34	daily	substitution	Replacement（隣接キー）	手紙を書いた	てがみをかいた	trgamiwokaita	e→r
-sub35	chat	substitution	Replacement（隣接キー）	聞こえない	きこえない	kiloenai	k→l（lo が ぉ になる）
-sub36	daily	substitution	Replacement（隣接キー）	地下鉄で	ちかてつで	chijatetsude	k→j
-sub37	business	substitution	Replacement（隣接キー）	始めます	はじめます	gajimemasu	h→g
-sub38	chat	substitution	Replacement（隣接キー）	何もない	なにもない	naninonai	m→n
-sub39	business	substitution	Replacement（隣接キー）	取り組み	とりくみ	totikumi	r→t（論文の R/T）
-sub40	chat	substitution	Replacement（隣接キー）	帰りました	かえりました	kaetimashita	r→t
+sub28	business	substitution	Replacement（隣接キー）	急いでください、締め切りは今日の夕方です	いそいでください、しめきりはきょうのゆうがたです	isoidekidasai,shimekirihakyounoyuugatadesu	u→i
+sub29	chat	substitution	Replacement（隣接キー）	普通に考えてあの値段は高すぎる	ふつうにかんがえてあのねだんはたかすぎる	fitsuunikanngaeteanonedannhatakasugiru	u→i（fi が ふぃ になる）
+sub30	business	substitution	Replacement（隣接キー）	思います、この案で進めてよいと	おもいます、このあんですすめてよいと	omiimasu,konoanndesusumeteyoito	o→i
+sub31	chat	substitution	Replacement（隣接キー）	仕事終わった、駅前のカフェにいるね	しごとおわった、えきまえのかふぇにいるね	shigitoowatta,ekimaenokafeniirune	o→i
+sub32	chat	substitution	Replacement（隣接キー）	どこにいるの、もう着いたよ	どこにいるの、もうついたよ	dikoniiruno,moutsuitayo	o→i（di が ぢ になる）
+sub33	daily	substitution	Replacement（隣接キー）	牛乳が少し足りないかも	ぎゅうにゅうがすこしたりないかも	gyuunyuugasukoshitsrinaikamo	a→s
+sub34	daily	substitution	Replacement（隣接キー）	祖母に久しぶりに手紙を書いた	そぼにひさしぶりにてがみをかいた	sobonihisashiburinitrgamiwokaita	e→r
+sub35	chat	substitution	Replacement（隣接キー）	電波が悪くて声が聞こえない	でんぱがわるくてこえがきこえない	dennpagawarukutekoegakiloenai	k→l（lo が ぉ になる）
+sub36	daily	substitution	Replacement（隣接キー）	地下鉄で三駅だけ行く	ちかてつでさんえきだけいく	chijatetsudesannekidakeiku	k→j
+sub37	business	substitution	Replacement（隣接キー）	始めます、第三回の定例会議を	はじめます、だいさんかいのていれいかいぎを	gajimemasu,daisannkainoteireikaigiwo	h→g
+sub38	chat	substitution	Replacement（隣接キー）	冷蔵庫に何もない	れいぞうこになにもない	reizoukoninaninonai	m→n
+sub39	business	substitution	Replacement（隣接キー）	地域の防災への取り組み	ちいきのぼうさいへのとりくみ	chiikinobousaihenototikumi	r→t（論文の R/T）
+sub40	chat	substitution	Replacement（隣接キー）	無事に家へ帰りました	ぶじにいえへかえりました	bujiniiehekaetimashita	r→t
 sub41	business	substitution	Replacement（隣接キー）	約束の時間	やくそくのじかん	takusokunojikann	y→t
 sub42	chat	substitution	Replacement（隣接キー）	私は行かない	わたしはいかない	qatashihaikanai	w→q（qa が くぁ になる）
-sub43	academic	substitution	Replacement（隣接キー）	勉強中です	べんきょうちゅうです	nennkyouchuudesu	b→n
-sub44	chat	substitution	Replacement（隣接キー）	期待してる	きたいしてる	k8taishiteru	i→8（数字の段）
+sub43	academic	substitution	Replacement（隣接キー）	卒論のために統計を勉強中です	そつろんのためにとうけいをべんきょうちゅうです	sotsuronnnotamenitoukeiwonennkyouchuudesu	b→n
+sub44	chat	substitution	Replacement（隣接キー）	新作の発売を期待してる	しんさくのはつばいをきたいしてる	shinnsakunohatsubaiwok8taishiteru	i→8（数字の段）
 sub45	chat	substitution	Replacement（隣接キー）	待ち合わせしよう	まちあわせしよう	machiawaswshiyou	e→w
-sub46	daily	substitution	Replacement（隣接キー）	天気予報	てんきよほう	tennkiyojou	h→j
-sub47	daily	substitution	Replacement（隣接キー）	駅前で	えきまえで	wkimaede	e→w（先頭）
-sub48	chat	substitution	Replacement（隣接キー）	楽しみにしてる	たのしみにしてる	tanoshiminishiteri	u→i（末尾）
-sub49	business	substitution	Replacement（隣接キー）	お疲れさま	おつかれさま	otsukatesama	r→t
-sub50	chat	substitution	Replacement（隣接キー）	ごめんね	ごめんね	gomennhe	n→h
+sub46	daily	substitution	Replacement（隣接キー）	天気予報では午後から雪	てんきよほうではごごからゆき	tennkiyojoudehagogokarayuki	h→j
+sub47	daily	substitution	Replacement（隣接キー）	駅前で待ち合わせしよう	えきまえでまちあわせしよう	wkimaedemachiawaseshiyou	e→w（先頭）
+sub48	chat	substitution	Replacement（隣接キー）	来週の旅行、楽しみにしてる	らいしゅうのりょこう、たのしみにしてる	raishuunoryokou,tanoshiminishiteri	u→i（末尾）
+sub49	business	substitution	Replacement（隣接キー）	お疲れさま、先に失礼します	おつかれさま、さきにしつれいします	otsukatesama,sakinishitsureishimasu	r→t
+sub50	chat	substitution	Replacement（隣接キー）	ごめんね、昨日の電話に出られなくて	ごめんね、きのうのでんわにでられなくて	gomennhe,kinounodennwaniderarenakute	n→h
 sub51	business	substitution	Replacement（隣接キー）	会議の資料	かいぎのしりょう	kaiginosjiryou	h→j
-sub52	daily	substitution	Replacement（隣接キー）	映画を観に行く	えいがをみにいく	eigawominiiju	k→j
-sub53	daily	substitution	Replacement（隣接キー）	準備ができた	じゅんびができた	junnbigadekira	t→r
+sub52	daily	substitution	Replacement（隣接キー）	週末は弟と映画を観に行く	しゅうまつはおとうととえいがをみにいく	shuumatsuhaotoutotoeigawominiiju	k→j
+sub53	daily	substitution	Replacement（隣接キー）	引っ越しの準備ができた	ひっこしのじゅんびができた	hikkoshinojunnbigadekira	t→r
 sub54	chat	substitution	Replacement（隣接キー）	明日は休み	あしたはやすみ	ashitahayasuni	m→n
 sub55	daily	substitution	Replacement（隣接キー）	冷蔵庫に入れて	れいぞうこにいれて	reizouloniirete	k→l
-sub56	daily	substitution	Replacement（隣接キー）	買ってきてほしい	かってきてほしい	kattekitejoshii	h→j
+sub56	daily	substitution	Replacement（隣接キー）	帰りに洗剤を買ってきてほしい	かえりにせんざいをかってきてほしい	kaerinisennzaiwokattekitejoshii	h→j
 sub57	business	substitution	Replacement（隣接キー）	ご都合いかがですか	ごつごういかがですか	gotsugouilagadesuka	k→l
-sub58	business	substitution	Replacement（隣接キー）	年末年始	ねんまつねんし	nennnatsunennshi	m→n
+sub58	business	substitution	Replacement（隣接キー）	年末年始の営業時間について	ねんまつねんしのえいぎょうじかんについて	nennnatsunennshinoeigyoujikannnitsuite	m→n
 sub59	chat	substitution	Replacement（隣接キー）	電話してもいい	でんわしてもいい	denneashitemoii	w→e
-sub60	chat	substitution	Replacement（隣接キー）	気をつけてね	きをつけてね	kiwotsukeyene	t→y
-far01	chat	key_far	Replacement（離れたキー）	了解です	りょうかいです	ryuukaidesu	o→u（論文 E: ょ/ゅ の取り違え）
+sub60	chat	substitution	Replacement（隣接キー）	帰り道は暗いから気をつけてね	かえりみちはくらいからきをつけてね	kaerimichihakuraikarakiwotsukeyene	t→y
+far01	chat	key_far	Replacement（離れたキー）	了解です、明日は八時に迎えに行く	りょうかいです、あしたははちじにむかえにいく	ryuukaidesu,ashitahahachijinimukaeniiku	o→u（論文 E: ょ/ゅ の取り違え）
 far02	chat	key_far	Replacement（離れたキー）	気をつけて帰ってね	きをつけてかえってね	kinotsuketekaettene	w→n（を→の。JWTD で最多）
-far03	chat	key_far	Replacement（離れたキー）	部屋が寒い	へやがさむい	heyakasamui	g→k（が→か）
+far03	chat	key_far	Replacement（離れたキー）	暖房が壊れて部屋が寒い	だんぼうがこわれてへやがさむい	dannbougakowareteheyakasamui	g→k（が→か）
 far04	daily	key_far	Replacement（離れたキー）	天気がいいから散歩しよう	てんきがいいからさんぽしよう	tennkigaiikarasannboshiyou	p→b
-far05	academic	key_far	Replacement（離れたキー）	分析を行った	ぶんせきをおこなった	bunnsekinookonatta	w→n（を→の）
+far05	academic	key_far	Replacement（離れたキー）	収集したデータの分析を行った	しゅうしゅうしたでーたのぶんせきをおこなった	shuushuushitade-tanobunnsekinookonatta	w→n（を→の）
 far06	business	key_far	Replacement（離れたキー）	会社に行く	かいしゃにいく	kaishoniiku	a→o（論文 H: SHA/SHO）
-far07	chat	key_far	Replacement（離れたキー）	話したかった	はなしたかった	honashitakatta	a→o（論文 H: A/O）
-far08	business	key_far	Replacement（離れたキー）	準備中	じゅんびちゅう	jonnbichuu	u→o（論文 E: U/O）
-far09	daily	key_far	Replacement（離れたキー）	表示されない	ひょうじされない	hyuujisarenai	o→u
-far10	chat	key_far	Replacement（離れたキー）	少しだけ	すこしだけ	susoshidake	k→s（論文 A: K/S）
-far11	chat	key_far	Replacement（離れたキー）	何にする	なににする	naiinisuru	n→i（論文 A: N/I）
+far07	chat	key_far	Replacement（離れたキー）	卒業式の日に話したかった	そつぎょうしきのひにはなしたかった	sotsugyoushikinohinihonashitakatta	a→o（論文 H: A/O）
+far08	business	key_far	Replacement（離れたキー）	新しい資料は準備中	あたらしいしりょうはじゅんびちゅう	atarashiishiryouhajonnbichuu	u→o（論文 E: U/O）
+far09	daily	key_far	Replacement（離れたキー）	スマホで地図が表示されない	すまほでちずがひょうじされない	sumahodechizugahyuujisarenai	o→u
+far10	chat	key_far	Replacement（離れたキー）	少しだけ待っててもらえると助かる	すこしだけまっててもらえるとたすかる	susoshidakemattetemoraerutotasukaru	k→s（論文 A: K/S）
+far11	chat	key_far	Replacement（離れたキー）	今夜のおかず、何にする	こんやのおかず、なににする	konnyanookazu,naiinisuru	n→i（論文 A: N/I）
 far12	business	key_far	Replacement（離れたキー）	詳しいことは後で説明します	くわしいことはあとでせつめいします	kuwashiikotohaatotesetsumeishimasu	d→t
 far13	academic	key_far	Replacement（離れたキー）	図書館で勉強	としょかんでべんきょう	toshokanndepennkyou	b→p
 far14	business	key_far	Replacement（離れたキー）	意見を聞かせて	いけんをきかせて	ikennnokikasete	w→n（を→の）
-ins01	chat	insertion	Insertion / Involvement	楽しみにしてるね	たのしみにしてるね	tanoshimionishiterune	i の後に隣の o
-ins02	business	insertion	Insertion / Involvement	申し訳ございません	もうしわけございません	moushiwajkegozaimasenn	k の前に隣の j
-ins03	business	insertion	Insertion / Involvement	お手数ですが	おてすうですが	otesuudsesuga	d の後に隣の s
-ins04	chat	insertion	Insertion / Involvement	誕生日おめでとう	たんじょうびおめでとう	tannjoubiomedertou	e の後に隣の r
-ins05	business	insertion	Insertion / Involvement	お願いします	おねがいします	oneghaishimasu	g の後に隣の h
+ins01	chat	insertion	Insertion / Involvement	週末の花火大会、楽しみにしてるね	しゅうまつのはなびたいかい、たのしみにしてるね	shuumatsunohanabitaikai,tanoshimionishiterune	i の後に隣の o
+ins02	business	insertion	Insertion / Involvement	申し訳ございません、在庫を切らしております	もうしわけございません、ざいこをきらしております	moushiwajkegozaimasenn,zaikowokirashiteorimasu	k の前に隣の j
+ins03	business	insertion	Insertion / Involvement	お手数ですが同封の用紙をご返送ください	おてすうですがどうふうのようしをごへんそうください	otesuudsesugadoufuunoyoushiwogohennsoukudasai	d の後に隣の s
+ins04	chat	insertion	Insertion / Involvement	妹へ、誕生日おめでとう	いもうとへ、たんじょうびおめでとう	imoutohe,tannjoubiomedertou	e の後に隣の r
+ins05	business	insertion	Insertion / Involvement	お願いします、請求書の再発行を	おねがいします、せいきゅうしょのさいはっこうを	oneghaishimasu,seikyuushonosaihakkouwo	g の後に隣の h
 ins06	chat	insertion	Insertion / Involvement	楽しい時間	たのしいじかん	tanoshiijkikann	j の後に隣の k
-ins07	chat	insertion	Insertion / Involvement	行ってきます	いってきます	iuttekimasu	i の後に隣の u
-ins08	business	insertion	Insertion / Involvement	すみません	すみません	suminmasenn	m の後に隣の n（ん が増える）
-ins09	business	insertion	Insertion / Involvement	教えてください	おしえてください	oshiewtekudasai	e の後に隣の w
-ins10	chat	insertion	Insertion / Involvement	もう一度	もういちど	mouichidpo	o の前に隣の p
-ins11	business	insertion	Insertion / Involvement	今週中に	こんしゅうちゅうに	konnshuuichuuni	u の後に隣の i
-ins12	business	insertion	Insertion / Involvement	お待たせしました	おまたせしました	omatasdeshimashita	s の後に隣の d
-ins13	business	insertion	Insertion / Involvement	確認します	かくにんします	kaskuninnshimasu	a の後に隣の s
-ins14	chat	insertion	Insertion / Involvement	ありがとう	ありがとう	arigfatou	g の後に隣の f
-ins15	chat	insertion	Insertion / Involvement	行こうよ	いこうよ	ikopuyo	o の後に隣の p
+ins07	chat	insertion	Insertion / Involvement	行ってきます、夕飯までには戻るね	いってきます、ゆうはんまでにはもどるね	iuttekimasu,yuuhannmadenihamodorune	i の後に隣の u
+ins08	business	insertion	Insertion / Involvement	すみません、傘を貸してもらえますか	すみません、かさをかしてもらえますか	suminmasenn,kasawokashitemoraemasuka	m の後に隣の n（ん が増える）
+ins09	business	insertion	Insertion / Involvement	返品の手順を教えてください	へんぴんのてじゅんをおしえてください	hennpinnnotejunnwooshiewtekudasai	e の後に隣の w
+ins10	chat	insertion	Insertion / Involvement	もう一度だけ説明してもらえる	もういちどだけせつめいしてもらえる	mouichidpodakesetsumeishitemoraeru	o の前に隣の p
+ins11	business	insertion	Insertion / Involvement	今週中に見積もりを送ります	こんしゅうちゅうにみつもりをおくります	konnshuuichuunimitsumoriwookurimasu	u の後に隣の i
+ins12	business	insertion	Insertion / Involvement	お待たせしました、会議室へご案内します	おまたせしました、かいぎしつへごあんないします	omatasdeshimashita,kaigishitsuhegoannnaishimasu	s の後に隣の d
+ins13	business	insertion	Insertion / Involvement	確認しますので少々お時間ください	かくにんしますのでしょうしょうおじかんください	kaskuninnshimasunodeshoushouojikannkudasai	a の後に隣の s
+ins14	chat	insertion	Insertion / Involvement	ありがとう、荷物を受け取ってくれて	ありがとう、にもつをうけとってくれて	arigfatou,nimotsuwouketottekurete	g の後に隣の f
+ins15	chat	insertion	Insertion / Involvement	今度の連休に温泉へ行こうよ	こんどのれんきゅうにおんせんへいこうよ	konndonorennkyuunionnsennheikopuyo	o の後に隣の p
 ins16	daily	insertion	Insertion / Other	週末の予定	しゅうまつのよてい	shuumatsunokyotei	離れた k
-ins17	chat	insertion	Insertion / Other	忙しい	いそがしい	isogamshii	離れた m
-ins18	daily	insertion	Insertion / Other	映画を見た	えいがをみた	eigawomiwta	離れた w
+ins17	chat	insertion	Insertion / Other	年度末でみんな忙しい	ねんどまつでみんないそがしい	nenndomatsudeminnnaisogamshii	離れた m
+ins18	daily	insertion	Insertion / Other	夜中に怖い映画を見た	よなかにこわいえいがをみた	yonakanikowaieigawomiwta	離れた w
 ins19	business	insertion	Insertion / Other	返事をください	へんじをください	hennjiwobkudasai	離れた b
 ins20	daily	insertion	Insertion / Other	ご飯を作る	ごはんをつくる	gohannwotsukuzru	離れた z
 rep01	chat	repeated_key	Insertion / Repetition	駅に着いたら連絡して	えきについたられんらくして	ekinitsuitararennnrakushite	n を 3 回（論文 F: ん の nnn）
-rep02	chat	repeated_key	Insertion / Repetition	全然大丈夫	ぜんぜんだいじょうぶ	zennnzenndaijoubu	n を 3 回
-rep03	chat	repeated_key	Insertion / Repetition	こんにちは、はじめまして	こんにちは、はじめまして	konnnnichiha,hajimemashite	n を 4 回（論文 Table 1 の Repetition）
-rep04	chat	repeated_key	Insertion / Repetition	もう寝るね	もうねるね	mounerrune	r を重ねて っ
-rep05	chat	repeated_key	Insertion / Repetition	お腹すいた	おなかすいた	onakkasuita	k を重ねて っ
+rep02	chat	repeated_key	Insertion / Repetition	全然大丈夫、気にしないで次いこう	ぜんぜんだいじょうぶ、きにしないでつぎいこう	zennnzenndaijoubu,kinishinaidetsugiikou	n を 3 回
+rep03	chat	repeated_key	Insertion / Repetition	こんにちは、はじめまして、隣に越してきた者です	こんにちは、はじめまして、となりにこしてきたものです	konnnnichiha,hajimemashite,tonarinikoshitekitamonodesu	n を 4 回（論文 Table 1 の Repetition）
+rep04	chat	repeated_key	Insertion / Repetition	明日早いからもう寝るね	あしたはやいからもうねるね	ashitahayaikaramounerrune	r を重ねて っ
+rep05	chat	repeated_key	Insertion / Repetition	部活帰りでお腹すいた	ぶかつがえりでおなかすいた	bukatsugaerideonakkasuita	k を重ねて っ
 rep06	sns	repeated_key	Insertion / Repetition	久しぶりに会えて	ひさしぶりにあえて	hisashiburiniaaete	a を重ねる
-rep07	academic	repeated_key	Insertion / Repetition	今後の課題として	こんごのかだいとして	konngonokaddaitoshite	d を重ねて っ
+rep07	academic	repeated_key	Insertion / Repetition	今後の課題としてデータの蓄積が挙げられる	こんごのかだいとしてでーたのちくせきがあげられる	konngonokaddaitoshitede-tanochikusekigaagerareru	d を重ねて っ
 rep08	news	repeated_key	Insertion / Repetition	政府は発表した	せいふははっぴょうした	seifuhhahappyoushita	h を重ねて っ
-rep09	chat	repeated_key	Insertion / Repetition	今晩は	こんばんは	konnbbannha	b を重ねて っ
-rep10	business	excessive_double_consonant	Insertion / Repetition	待ってください	まってください	matttekudasai	促音の t を 3 回
+rep09	chat	repeated_key	Insertion / Repetition	今晩は、今日も一日お疲れ	こんばんは、きょうもいちにちおつかれ	konnbbannha,kyoumoichinichiotsukare	b を重ねて っ
+rep10	business	excessive_double_consonant	Insertion / Repetition	待ってください、すぐに担当者が参ります	まってください、すぐにたんとうしゃがまいります	matttekudasai,sugunitanntoushagamairimasu	促音の t を 3 回
 rep11	business	repeated_key	Insertion / Repetition	来週の火曜日	らいしゅうのかようび	raishuunokkayoubi	k を重ねて っ
 rep12	business	repeated_key	Insertion / Repetition	締め切りに間に合うように頑張ります	しめきりにまにあうようにがんばります	shimekirinimmaniauyounigannbarimasu	m を重ねて っ
-rep13	chat	repeated_key	Insertion / Repetition	ちょっと考えさせて	ちょっとかんがえさせて	chottokanngaeesasete	e を重ねる
-rep14	chat	repeated_key	Insertion / Repetition	本当にありがとう	ほんとうにありがとう	honntouniarrigatou	r を重ねて っ
-del01	business	deletion	Removal	ありがとうございます	ありがとうございます	arigatougzaimasu	o が抜ける
+rep13	chat	repeated_key	Insertion / Repetition	ちょっと考えさせて、明日には返事するから	ちょっとかんがえさせて、あしたにはへんじするから	chottokanngaeesasete,ashitanihahennjisurukara	e を重ねる
+rep14	chat	repeated_key	Insertion / Repetition	本当にありがとう、おかげで助かったよ	ほんとうにありがとう、おかげでたすかったよ	honntouniarrigatou,okagedetasukattayo	r を重ねて っ
+del01	business	deletion	Removal	ありがとうございます、先日の見積書を拝見しました	ありがとうございます、せんじつのみつもりしょをはいけんしました	arigatougzaimasu,sennjitsunomitsumorishowohaikennshimashita	o が抜ける
 del02	chat	deletion	Removal	写真送るね	しゃしんおくるね	shashinokurune	ん の n が 1 つ（n+o が の になる）
 del03	chat	deletion	Removal	今度ご飯行こう	こんどごはんいこう	konndogohanikou	ん の n が 1 つ（n+i が に）
 del04	business	deletion	Removal	締め切りは金曜です	しめきりはきんようです	shimekirihakinyoudesu	ん の n が 1 つ（n+yo が にょ）
-del05	academic	deletion	Removal	実験の結果	じっけんのけっか	jikkennokekka	nn の後の n が抜ける（ん の後の の が お）
+del05	academic	deletion	Removal	実験の結果をグラフにまとめる	じっけんのけっかをぐらふにまとめる	jikkennokekkawogurafunimatomeru	nn の後の n が抜ける（ん の後の の が お）
 del06	daily	deletion	Removal	駅前のパン屋	えきまえのぱんや	ekimaenopanya	ん の n が 1 つ（n+ya が にゃ）
 del07	academic	deletion	Removal	簡易的な方法	かんいてきなほうほう	kaniitekinahouhou	ん の n が 1 つ（n+i が に）
 del08	business	missing_double_consonant	Removal	打ち合わせの日程	うちあわせのにってい	uchiawasenonitei	促音の t が 1 つ
-del09	chat	missing_double_consonant	Removal	学校に行った	がっこうにいった	gakouniitta	促音の k が 1 つ
-del10	chat	missing_double_consonant	Removal	やっぱりそうか	やっぱりそうか	yaparisouka	促音の p が 1 つ
+del09	chat	missing_double_consonant	Removal	熱があったけど学校に行った	ねつがあったけどがっこうにいった	netsugaattakedogakouniitta	促音の k が 1 つ
+del10	chat	missing_double_consonant	Removal	やっぱりそうか、そんな気がしてた	やっぱりそうか、そんなきがしてた	yaparisouka,sonnnakigashiteta	促音の p が 1 つ
 del11	daily	missing_double_consonant	Removal	切符を買った	きっぷをかった	kipuwokatta	促音の p が 1 つ
-del12	chat	missing_double_consonant	Removal	一緒に行こう	いっしょにいこう	ishoniikou	促音の s が 1 つ
-del13	daily	deletion	Removal	空港まで	くうこうまで	kukoumade	u が抜ける
-del14	sns	deletion	Removal	映画館で見た	えいがかんでみた	eiakanndemita	g が抜ける
+del12	chat	missing_double_consonant	Removal	一緒に行こう、駅で待ってるね	いっしょにいこう、えきでまってるね	ishoniikou,ekidematterune	促音の s が 1 つ
+del13	daily	deletion	Removal	荷物を預けて空港まで	にもつをあずけてくうこうまで	nimotsuwoazuketekukoumade	u が抜ける
+del14	sns	deletion	Removal	話題の新作を映画館で見た	わだいのしんさくをえいがかんでみた	wadainoshinnsakuwoeiakanndemita	g が抜ける
 del15	daily	deletion	Removal	今日の予定	きょうのよてい	kyounootei	y が抜ける
 del16	daily	deletion	Removal	旅行の準備	りょこうのじゅんび	rokounojunnbi	y が抜ける
-del17	business	deletion	Removal	聞いてください	きいてください	kiitekuasai	d が抜ける
-del18	business	deletion	Removal	分かりました	わかりました	wakarmashita	ri の i が抜ける（r だと わかい になり 若い と区別できない）
-del19	business	deletion	Removal	考えておきます	かんがえておきます	kannaeteokimasu	g が抜ける
+del17	business	deletion	Removal	聞いてください、会議の録音を	きいてください、かいぎのろくおんを	kiitekuasai,kaiginorokuonnwo	d が抜ける
+del18	business	deletion	Removal	分かりました、会場の予約を変更します	わかりました、かいじょうのよやくをへんこうします	wakarmashita,kaijounoyoyakuwohennkoushimasu	ri の i が抜ける（r だと わかい になり 若い と区別できない）
+del19	business	deletion	Removal	考えておきます、来月の出張の件	かんがえておきます、らいげつのしゅっちょうのけん	kannaeteokimasu,raigetsunoshucchounokenn	g が抜ける
 del20	academic	deletion	Removal	仮説を検証する	かせつをけんしょうする	kasetswokennshousuru	tsu の u が抜ける
-exc01	business	transposition	Exchange	お疲れさまです	おつかれさまです	otsukaresamdaesu	a と d
+exc01	business	transposition	Exchange	お疲れさまです、資料は共有フォルダにあります	おつかれさまです、しりょうはきょうゆうふぉるだにあります	otsukaresamdaesu,shiryouhakyouyuuforudaniarimasu	a と d
 exc02	business	transposition	Exchange	ご確認をお願いいたします	ごかくにんをおねがいいたします	gokakuninnwoonegaiitahsimasu	s と h
-exc03	business	transposition	Exchange	本日中に	ほんじつちゅうに	honnjitsuhcuuni	c と h
+exc03	business	transposition	Exchange	本日中に折り返しご連絡いたします	ほんじつちゅうにおりかえしごれんらくいたします	honnjitsuhcuuniorikaeshigorennrakuitashimasu	c と h
 exc04	business	transposition	Exchange	議事録を共有します	ぎじろくをきょうゆうします	gijirokuwokyuoyuushimasu	o と u
-exc05	daily	transposition	Exchange	雨が降ってきた	あめがふってきた	amegafutetkita	t と e
+exc05	daily	transposition	Exchange	洗濯物を干したのに雨が降ってきた	せんたくものをほしたのにあめがふってきた	senntakumonowohoshitanoniamegafutetkita	t と e
 exc06	sns	transposition	Exchange	猫がかわいい	ねこがかわいい	nekogakwaaii	a と w
-exc07	news	transposition	Exchange	東京都内の	とうきょうとないの	toukyuotonaino	o と u
+exc07	news	transposition	Exchange	東京都内の病院の空き状況	とうきょうとないのびょういんのあきじょうきょう	toukyuotonainobyouinnnoakijoukyou	o と u
 exc08	chat	transposition	Exchange	また連絡するね	またれんらくするね	matarennraksuurune	u と s
 mul01	chat	substitution+deletion	2 つの誤り	明日は雨らしい	あしたはあめらしい	ashotaaamerashii	i→o と h が抜ける
 mul02	chat	substitution+substitution	2 つの誤り	駅まで迎えに行くよ	えきまでむかえにいくよ	ekimsdemukaenoikuyo	a→s と i→o
 mul03	business	transposition+substitution	2 つの誤り	資料を確認しました	しりょうをかくにんしました	shiryuowokakininnshimashita	o と u の入れ替え と u→i
 mul04	chat	substitution+substitution	2 つの誤り	忘れ物してない	わすれものしてない	wasurenonoshiyenai	m→n と t→y
-cln01	business	none	誤りなし	了解しました	りょうかいしました		
-cln02	chat	none	誤りなし	ちょっと待ってね	ちょっとまってね		促音が 2 つ
-cln03	chat	none	誤りなし	すごーい	すごーい		長音
-cln04	chat	none	誤りなし	やっぱりそうだよね	やっぱりそうだよね		
-cln05	daily	none	誤りなし	ぐるぐる回る	ぐるぐるまわる		正しい繰り返し
+cln01	business	none	誤りなし	了解しました、明日の十時に伺います	りょうかいしました、あしたのじゅうじにうかがいます		
+cln02	chat	none	誤りなし	ちょっと待ってね、今鍵を探してる	ちょっとまってね、いまかぎをさがしてる		促音が 2 つ
+cln03	chat	none	誤りなし	この写真の夕焼け、すごーい	このしゃしんのゆうやけ、すごーい		長音
+cln04	chat	none	誤りなし	やっぱりそうだよね、あの店閉まるの早い	やっぱりそうだよね、あのみせしまるのはやい		
+cln05	daily	none	誤りなし	洗濯機の中で服がぐるぐる回る	せんたくきのなかでふくがぐるぐるまわる		正しい繰り返し
 cln06	chat	none	誤りなし	いよいよ明日	いよいよあした		正しい繰り返し
 cln07	daily	none	誤りなし	のどがからから	のどがからから		正しい繰り返し（からから は二重打ちに見える）
 cln08	chat	none	誤りなし	ここに置いといて	ここにおいといて		正しい繰り返し
-cln09	chat	none	誤りなし	なんでやねん	なんでやねん		方言
+cln09	chat	none	誤りなし	なんでやねん、それ昨日も言うたやん	なんでやねん、それきのうもいうたやん		方言
 cln10	chat	none	誤りなし	そうやけんね	そうやけんね		方言
-cln11	chat	none	誤りなし	めっちゃええやん	めっちゃええやん		方言・母音の連続
-cln12	chat	none	誤りなし	まじでやばい	まじでやばい		くだけた言い方
+cln11	chat	none	誤りなし	その帽子、めっちゃええやん	そのぼうし、めっちゃええやん		方言・母音の連続
+cln12	chat	none	誤りなし	今日の宿題の量、まじでやばい	きょうのしゅくだいのりょう、まじでやばい		くだけた言い方
 cln13	sns	none	誤りなし	ぴえんすぎる	ぴえんすぎる		新語
 cln14	business	none	誤りなし	ファイルを開く	ふぁいるをひらく		小さい仮名の外来語
-cln15	business	none	誤りなし	ウェブサイト	うぇぶさいと		小さい仮名の外来語
+cln15	business	none	誤りなし	ウェブサイトの問い合わせ窓口	うぇぶさいとのといあわせまどぐち		小さい仮名の外来語
 cln16	daily	none	誤りなし	ディスプレイが割れた	でぃすぷれいがわれた		小さい仮名の外来語
-cln17	daily	none	誤りなし	キャンセル待ち	きゃんせるまち		外来語
+cln17	daily	none	誤りなし	キャンセル待ちの番号が届いた	きゃんせるまちのばんごうがとどいた		外来語
 cln18	daily	none	誤りなし	ぽかぽか陽気	ぽかぽかようき		擬態語
 cln19	sns	none	誤りなし	もふもふの猫	もふもふのねこ		擬態語
 cln20	chat	none	誤りなし	えっ、ほんとに	えっ、ほんとに		促音で終わる感動詞
 cln21	chat	none	誤りなし	んー、どうしよう	んー、どうしよう		ん で始まる
-cln22	chat	none	誤りなし	おっけー	おっけー		促音と長音
-cln23	chat	none	誤りなし	はいはい、わかった	はいはい、わかった		正しい繰り返し
-cln24	chat	none	誤りなし	ありがとうね	ありがとうね		
-cln25	business	none	誤りなし	お疲れさまでした	おつかれさまでした		
+cln22	chat	none	誤りなし	明日の件はおっけー	あしたのけんはおっけー		促音と長音
+cln23	chat	none	誤りなし	はいはい、わかった、皿洗いは僕がやる	はいはい、わかった、さらあらいはぼくがやる		正しい繰り返し
+cln24	chat	none	誤りなし	駅まで送ってくれてありがとうね	えきまでおくってくれてありがとうね		
+cln25	business	none	誤りなし	お疲れさまでした、また来週お願いします	おつかれさまでした、またらいしゅうおねがいします		
 cln26	daily	none	誤りなし	佐渡に行きたい	さどにいきたい		さど は さいど の typo に見える（CLAUDE.md の例）
 cln27	business	none	誤りなし	再度確認します	さいどかくにんします		
-cln28	chat	none	誤りなし	きっと大丈夫	きっとだいじょうぶ		
+cln28	chat	none	誤りなし	来週の面接もきっと大丈夫	らいしゅうのめんせつもきっとだいじょうぶ		
 cln29	chat	none	誤りなし	ちゃっかりしてる	ちゃっかりしてる		拗音と促音
-cln30	chat	none	誤りなし	しっかり者	しっかりもの		
-cln31	daily	none	誤りなし	八王子駅	はちおうじえき		地名
-cln32	daily	none	誤りなし	さいたま市	さいたまし		地名
+cln30	chat	none	誤りなし	妹は昔からしっかり者	いもうとはむかしからしっかりもの		
+cln31	daily	none	誤りなし	八王子駅の北口で集合	はちおうじえきのきたぐちでしゅうごう		地名
+cln32	daily	none	誤りなし	さいたま市の図書館に寄る	さいたましのとしょかんによる		地名
 cln33	daily	none	誤りなし	宇都宮の餃子	うつのみやのぎょうざ		地名
 cln34	business	none	誤りなし	三時半ごろ	さんじはんごろ		数の読み
 cln35	daily	none	誤りなし	百二十円	ひゃくにじゅうえん		数の読み
-cln36	business	none	誤りなし	午前中に	ごぜんちゅうに		
+cln36	business	none	誤りなし	午前中に倉庫へ納品予定です	ごぜんちゅうにそうこへのうひんよていです		
 cln37	business	none	誤りなし	本日はお日柄もよく	ほんじつはおひがらもよく		改まった言い方
 cln38	business	none	誤りなし	ご査収ください	ごさしゅうください		まれなビジネス語
 cln39	business	none	誤りなし	取り急ぎご連絡まで	とりいそぎごれんらくまで		
-cln40	business	none	誤りなし	ご無沙汰しております	ごぶさたしております		
-cln41	business	none	誤りなし	検討させていただきます	けんとうさせていただきます		
-cln42	business	none	誤りなし	おかげさまで	おかげさまで		
+cln40	business	none	誤りなし	ご無沙汰しております、営業二課の田中です	ごぶさたしております、えいぎょうにかのたなかです		
+cln41	business	none	誤りなし	検討させていただきます、来期の予算案として	けんとうさせていただきます、らいきのよさんあんとして		
+cln42	business	none	誤りなし	おかげさまで、新しい店舗も順調です	おかげさまで、あたらしいてんぽもじゅんちょうです		
 cln43	academic	none	誤りなし	先行研究を概観する	せんこうけんきゅうをがいかんする		
-cln44	academic	none	誤りなし	有意差は認められなかった	ゆういさはみとめられなかった		
-cln45	academic	none	誤りなし	仮説を支持する	かせつをしじする		
-cln46	news	none	誤りなし	急きょ中止になった	きゅうきょちゅうしになった		きゅうきょ は きょうきょ 等の typo に見える
-cln47	chat	none	誤りなし	しょっちゅうある	しょっちゅうある		拗音と促音
+cln44	academic	none	誤りなし	二つの群の間に有意差は認められなかった	ふたつのぐんのあいだにゆういさはみとめられなかった		
+cln45	academic	none	誤りなし	今回の結果は仮説を支持する	こんかいのけっかはかせつをしじする		
+cln46	news	none	誤りなし	雨のせいで試合が急きょ中止になった	あめのせいでしあいがきゅうきょちゅうしになった		きゅうきょ は きょうきょ 等の typo に見える
+cln47	chat	none	誤りなし	電車の遅延はしょっちゅうある	でんしゃのちえんはしょっちゅうある		拗音と促音
 cln48	chat	none	誤りなし	ぎりぎり間に合った	ぎりぎりまにあった		正しい繰り返し
 cln49	daily	none	誤りなし	ささっと済ませる	ささっとすませる		正しい繰り返し
 cln50	business	none	誤りなし	九日の予定	ここのかのよてい		ここ の繰り返し
-cln51	chat	none	誤りなし	ええと、	ええと、		母音の連続
+cln51	chat	none	誤りなし	ええと、どこまで話したっけ	ええと、どこまではなしたっけ		母音の連続
 cln52	chat	none	誤りなし	あのー、すみません	あのー、すみません		
-cln53	chat	none	誤りなし	いいえ、違います	いいえ、ちがいます		母音の連続
+cln53	chat	none	誤りなし	いいえ、違います、その傘は私のです	いいえ、ちがいます、そのかさはわたしのです		母音の連続
 cln54	daily	none	誤りなし	大きい犬	おおきいいぬ		い が 3 つ続く
-cln55	chat	none	誤りなし	こういうこと	こういうこと		
-cln56	sns	none	誤りなし	初々しい	ういういしい		母音の連続
-cln57	chat	none	誤りなし	いっぱいいっぱい	いっぱいいっぱい		正しい繰り返し
-cln58	chat	none	誤りなし	そうそう、それそれ	そうそう、それそれ		正しい繰り返し
-cln59	business	none	誤りなし	お世話になって	おせわになって		打ちかけ（この後に おります が続く）
-cln60	business	none	誤りなし	確認させて	かくにんさせて		打ちかけ（この後に いただきます が続く）
+cln55	chat	none	誤りなし	言いたかったのはこういうこと	いいたかったのはこういうこと		
+cln56	sns	none	誤りなし	新入社員の挨拶が初々しい	しんにゅうしゃいんのあいさつがういういしい		母音の連続
+cln57	chat	none	誤りなし	締め切り前でいっぱいいっぱい	しめきりまえでいっぱいいっぱい		正しい繰り返し
+cln58	chat	none	誤りなし	そうそう、それそれ、その青いマグカップ	そうそう、それそれ、そのあおいまぐかっぷ		正しい繰り返し
+cln59	business	none	誤りなし	先日は大変お世話になって	せんじつはたいへんおせわになって		打ちかけ（この後に おります が続く）
+cln60	business	none	誤りなし	日程を確認させて	にっていをかくにんさせて		打ちかけ（この後に いただきます が続く）

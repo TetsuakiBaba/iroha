@@ -42,10 +42,11 @@ expected_sha() {
     full/train.jsonl)          echo 0497c2bd69faa5a37a073d48f8c62b85db360493538d49a201e02c91353646c3 ;;
     full/validation.jsonl)     echo 7f822f0e733d7a6dc5e22a36f1eca92c146f64df282f3b5341e47bf03e4a83e1 ;;
     full/test.jsonl)           echo 7aa6b711f72207c404ef3afb4f26a04405601bf8436f13c00c7b100576f7fc47 ;;
-    # 2026-09-25 に作った話し言葉の一覧（config/typo-spoken.yaml の設定を変えたら作り直して更新する）
-    spoken/train.jsonl)        echo 8c618e6cb4eeb89da6b49ddadfcac6403b3fd9cf2322c0651c774b88751c9430 ;;
+    # 2026-09-25 に作った話し言葉の一覧（config/typo-spoken.yaml の設定か testdata/iroha/typo のベンチ
+    # （除外リストに入っている）を変えたら作り直して更新する。これは改訂版のベンチで除外したもの）
+    spoken/train.jsonl)        echo 804a2c2e594b0774e77b0d4fe332552fe1454e984be099929490e67c1190bf76 ;;
     spoken/validation.jsonl)   echo 29d51bd203da3e72159194d027f65e9cd3d13d279745bc5f6ba17bc0d1f20473 ;;
-    spoken/test.jsonl)         echo 2c15377642a33440b72f54736f77d5f427e60e46e5e75b054fc0d90caaf9ac01 ;;
+    spoken/test.jsonl)         echo 40c116dca722f0fad6154cd2fe29f3279e93e6ff944497d3ec85845939bf50aa ;;
   esac
 }
 
