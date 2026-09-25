@@ -382,10 +382,22 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         let ctx = runtime.context
         llama_memory_clear(llama_get_memory(ctx), true)
         if runtime.isEncoderDecoder {
-            var encoderTokens = promptTokens
-            let result = encoderTokens.withUnsafeMutableBufferPointer { buffer in
-                llama_encode(ctx, llama_batch_get_one(buffer.baseAddress, Int32(buffer.count)))
+            // デコーダの交差注意は、エンコード時に同じ系列番号を持っていたトークンにしか向かない
+            // （llama.cpp の llm_graph_input_attn_cross）。一括採点は候補を系列 1 以降にも並べるので、
+            // エンコーダの入力には全系列の番号を付けておく（系列 0 だけだと、系列 1 以降の候補は
+            // エンコーダ出力を見ずに採点される）
+            let sequenceCount = Int32(llama_n_seq_max(ctx))
+            var batch = llama_batch_init(Int32(promptTokens.count), 0, sequenceCount)
+            defer { llama_batch_free(batch) }
+            for (index, token) in promptTokens.enumerated() {
+                batch.token[index] = token
+                batch.pos[index] = Int32(index)
+                batch.n_seq_id[index] = sequenceCount
+                for sequence in 0..<Int(sequenceCount) { batch.seq_id[index]![sequence] = Int32(sequence) }
+                batch.logits[index] = 0
             }
+            batch.n_tokens = Int32(promptTokens.count)
+            let result = llama_encode(ctx, batch)
             guard result == 0 else { throw ConversionError.inferenceFailed("llama_encode=\(result)") }
             var start = [runtime.decoderStartToken]
             try decode(ctx: ctx, tokens: &start)
