@@ -1,0 +1,91 @@
+# typo normalizer の学習データのうち「話し言葉」（2026-09-25）。default.yaml に重ねる。
+#
+#   realpersonachat  RealPersonaChat（nu-dialogue）                        CC BY-SA 4.0
+#   mrmp             Multi-Relational Multi-Party Chat Corpus（nu-dialogue） CC BY-SA 4.0
+#   jmrd             JMRD 映画推薦対話（京都大学）                          CC BY-SA 4.0
+#   newschat         感想付きニュース雑談対話コーパス                        MIT
+#   jcre3            J-CRe3（理化学研究所）                                 CC BY-SA 4.0
+#   open2ch          おーぷん2ちゃんねる対話コーパス                         Apache-2.0（掲示板のクロール。LICENSES.md H 節）
+#
+# 使い方（scripts/build-typo-corpus.sh spoken がまとめて行う）:
+#   ./.venv/bin/python -m iroha download       --config config/typo-spoken.yaml
+#   ./.venv/bin/python -m iroha preprocess     --config config/typo-spoken.yaml   # --source で分けて並列に回せる
+#   ./.venv/bin/python -m iroha build-readings --config config/typo-spoken.yaml
+#   ./.venv/bin/python -m iroha spoken-stats   --config config/typo-spoken.yaml   # ソースごとの件数・除外理由
+#
+# 出力は typo-corpus（書き言葉）と同じ形式の読み一覧 <data_dir>/readings/{train,validation,test}.jsonl。
+# **書き言葉の一覧（readings-balanced / readings-full）とは別に作る**（あちらは SHA-256 で再現を確かめているので
+# 設定を変えない）。混ぜるのは学習の側（プールを作るとき）で行う。
+data_dir: ~/iroha-typo-data/typo-spoken
+raw_dir: ~/iroha-typo-data/raw
+
+sources:
+  tatoeba: { enabled: false }
+  kaken: { enabled: false }
+  aozora: { enabled: false }
+  realpersonachat: { enabled: true }
+  mrmp: { enabled: true }
+  jmrd: { enabled: true }
+  newschat: { enabled: true }
+  jcre3: { enabled: true }
+  open2ch:
+    enabled: true
+    min_chars: 6                # 実況の短い断片（「残塁テーマ」）を落とす
+    min_hiragana_ratio: 0.25    # 漢字・カタカナだけの断片を落とす（普通の文はひらがなを含む）
+    # 清掃・フィルタのあとで 100 万〜300 万発話になるよう、板ごとに対話単位で間引く。
+    # なんでも実況（livejupiter）は野球の実況と掲示板独特の言い回しが多いので薄くし、
+    # ニュース速報+（newsplus）は全部使う。割合は下のコメントの実測から決めた
+    # 2026-09-25 実測（各板の先頭 10 万行）: 清掃後に残る割合 livejupiter 0.653・news4vip 0.670・newsplus 0.605。
+    # 投稿数 livejupiter 1,330 万・news4vip 478 万・newsplus 45 万から、合計約 200 万発話になるように決めた
+    board_ratio: {livejupiter: 0.08, news4vip: 0.4, newsplus: 1.0}
+    slang:
+      # 語尾・自称・呼称（なんJ 語）。前後の文字で普通の語（リンゴ・スイッチ・ワイン）を除けてある
+      - "(?<![リマダサモタャ])ンゴ"
+      - "ニキ(?!ビ)"
+      - "ネキ"
+      - "(?<![スドウビ])イッチ"
+      - "ワイ[はもがのらをやにで的]|(?<![ハ])ワイ(?=[、。！？]|$)"
+      - "ワシ[はもがのら](?:立て|スレ)|今北|乙です|おつかれちゃん|きちげぇ|キチゲェ|基地害"
+      - "ぐう(?:聖|畜|かわ|有能|の音|わか)"
+      - "ファッ|ヒエッ|ンホ|ンミ|ニッコリ|サンガツ|ほならね|はえ[〜ー]|はぇ[〜ー]|やきう|まんさん|ガイジ|なお[、。]|察し"
+      - "定期[。！？]*$|^乙|乙[。！]*$|おつ[。！]*$|模様[。]*$|レス(?:つけ|バ|乞食)"
+      # 掲示板そのものの語
+      - "なんJ|おんJ|J民|VIP|ヴィップ|ニュー速|ν速|嫌儲|(?<![ャカ])スレ(?![ンー])|レスバ|安価|自演|荒らし|>>"
+      - "うp|kwsk|ksk|wktk|gkbr|ktkr|hssm|kwsk|orz"
+      # 差別的・攻撃的な呼称（ng_words.txt に無いもの）
+      - "池沼|ネトウヨ|パヨク|チョン|シナ人|支那|朝鮮人|土人|キチガイ|基地外|ゴミ虫"
+
+filter:
+  min_chars: 4                  # 話し言葉の文は短い（「そうなんだ」）。読みの最低長（typo.min_chars）に合わせる
+
+reading:
+  record_morphemes: false
+
+kkc:
+  enabled: false
+
+typo:
+  # 読み一覧を作る順番。同じ読みは先に出たソースに残るので、人が書いた対話コーパスを先に、open2ch を最後にする
+  source_order: [realpersonachat, mrmp, jmrd, newschat, jcre3, open2ch]
+  units: [sentence, chunk]
+  min_chars: 4
+  max_chars: 64
+  variants_per_clean_sample: 1
+  clean_ratio: 0.176
+  # 既存の評価セットと同じ読みは作らない（typo-corpus.yaml と同じ + 書き下ろしのベンチ）。
+  # **話し言葉のベンチ（testdata/iroha/typo）の読みがそのまま学習に入らないように必ず入れる**
+  exclude_readings_from:
+    - ../../training/typo-normalizer/data/heldout/jwtd-bench/keystroke.jsonl
+    - ../../training/typo-normalizer/data/heldout/jwtd-bench/editing.jsonl
+    - ../../training/typo-normalizer/data/heldout/iroha-dataset-typo/validation.jsonl
+    - ../../training/typo-normalizer/data/heldout/iroha-dataset-typo/test.jsonl
+    - ../../training/typo-normalizer/data/iroha-ds/valid.jsonl
+    - ../../training/typo-normalizer/data/iroha-ds/test.jsonl
+    - ../../training/typo-normalizer/data/kkctx/valid.jsonl
+    - ../../training/typo-normalizer/data/kkctx/test.jsonl
+    - ../../training/typo-normalizer/data/kkctx-jwtd/valid.jsonl
+    - ../../training/typo-normalizer/data/kkctx-jwtd/test.jsonl
+    - ../../training/typo-normalizer/data/master/valid.jsonl
+    - ../../training/typo-normalizer/data/master/test.jsonl
+    - ../../training/typo-normalizer/data/master/test_by_type.jsonl
+    - ../../testdata/iroha/typo/typo_bench.jsonl

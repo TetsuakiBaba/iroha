@@ -513,6 +513,80 @@ typo 付きの example が要るときは従来どおり `build-typo`（`variant
 **ソースの割合（`document_ratio`）は実測で決めたものではない。** 全量のままだと Wikipedia と特許に
 寄るのを避けるために置いた目安で、どの割合が良いかは測っていない。
 
+### 話し言葉のコーパス（`config/typo-spoken.yaml`）
+
+書き言葉だけの typo-corpus で学習したモデルは、話し言葉の正しい入力を書き換える
+（`まじでやばい → まじでやない`、`そうそう、それそれ → それぞれ`）。そのため、対話コーパスと掲示板から
+話し言葉の読みを取り出し、**別の読み一覧** `data/typo-corpus/readings-spoken/` を作る（2026-09-25）。
+書き言葉の一覧（readings-balanced / full）とは混ぜずに作り、混ぜるのは学習の側（プールを作るとき）で行う。
+
+| ソース | 元データ | ライセンス | 使う発話 |
+|---|---|---|---|
+| `realpersonachat` | RealPersonaChat（nu-dialogue） | CC BY-SA 4.0 | 全話者 |
+| `mrmp` | Multi-Relational Multi-Party Chat Corpus（nu-dialogue） | CC BY-SA 4.0 | 全話者（「@参加者名」は取り除く） |
+| `jmrd` | JMRD 映画推薦対話（京都大学） | CC BY-SA 4.0 | 全話者（推薦者が知識文を写した発話は捨てる） |
+| `newschat` | 感想付きニュース雑談対話コーパス | MIT | ユーザ役だけ（システム役はツイート・記事を引用する） |
+| `jcre3` | J-CRe3（理化学研究所） | CC BY-SA 4.0 | 書き起こし（KNP）の 1 文 = 1 発話 |
+| `open2ch` | おーぷん2ちゃんねる対話コーパス | リポジトリは Apache-2.0（掲示板のクロール） | 選別したものだけ（下） |
+
+取得元の URL・版・出典表記・注意事項は [LICENSES.md](LICENSES.md) の H 節。**元データはリポジトリに入れない**。
+`download` が一次配布元から版（コミット）を固定して取り、open2ch の `corpus.zip`（Git LFS）は SHA-256 を照合する。
+
+```sh
+cd dataset/iroha-typo-normalizer
+./scripts/build-typo-corpus.sh spoken     # 取得 → 前処理 → 読み一覧 → 統計 → SHA-256 の照合 → data/typo-corpus/readings-spoken/
+# 個別に回すとき
+./.venv/bin/python -m iroha download       --config config/typo-spoken.yaml
+./.venv/bin/python -m iroha preprocess     --config config/typo-spoken.yaml --source open2ch
+./.venv/bin/python -m iroha build-readings --config config/typo-spoken.yaml
+./.venv/bin/python -m iroha spoken-stats   --config config/typo-spoken.yaml   # → <data_dir>/SPOKEN_REPORT.md
+```
+
+**流れ**（アダプタは `iroha/sources/spoken.py`、清掃は `iroha/spoken/clean.py`）
+
+1. **抽出**: 対話構造は使わず、人の発話を 1 発話 = 1 段落として取り出す。1 対話（掲示板は投稿の連鎖 1 本）を
+   1 文書にするので、split は対話単位で決まり、同じ対話の発話が train と test にまたがらない。前後の発話は文脈に入れない
+2. **清掃**（発話ごと）
+   - 正規化して残す: 絵文字・顔文字・装飾記号を落とす、末尾の笑い（笑・w）を落とす、`！！！`・`。。。`・`ーーー`・
+     同じかなの 4 回以上の繰り返しを詰める、改行は句点に、日本語の間の空白は読点にする
+   - 捨てる: URL・メールアドレス・@ の宛先、日本語を含まない、日本語の割合が低い、短すぎる・長すぎる
+   - 重複を落とす: 同一の発話と、ほぼ同一の発話（記号・空白・長音・かなの繰り返しの違いだけのもの）。
+     **終助詞の違い（そうだね / そうだよ）は別の入力として残す**
+3. **open2ch だけの選別**（`Open2chFilter`）: 笑いの w・草（草原・雑草などの語は除けてある）、なんJ 語などのスラング
+   （`sources.open2ch.slang` の正規表現。「ンゴ」が「リンゴ」に当たらないよう前後の文字を見る）、AA、半角カナ、
+   アンカーと「＞」の引用、配布元の不適切語一覧（`ng_words.txt`）と差別語、コピペ（20 字以上の同じ投稿が 3 回以上）、
+   ひらがなの割合 0.25 未満（実況の断片）。そのうえで板ごとに対話単位で間引く（`board_ratio`。
+   なんでも実況 0.08・ニュー速VIP 0.4・ニュース速報+ 1.0）
+4. **既存の前処理**（preprocess）: 文分割・品質フィルタ（数字・ラテン文字など）・重複除去・Sudachi の読み・文節
+5. **読み一覧**（build-readings）: 文と文節の読み。評価セットに加えて **testdata/iroha/typo のベンチの読みも除く**。
+   同じ読みは `typo.source_order` で先のソースに残す（対話コーパスが先、open2ch が最後）
+
+**統計**（`spoken-stats` が `SPOKEN_REPORT.md` と `_stats.spoken.json` に書く。ソースごとに抽出前後の件数・
+除外理由ごとの件数・前処理での除外・最終サンプル数）。2026-09-25 の実測:
+
+| ソース | 生の発話 | 抽出後の発話 | 前処理後の文 | 読み（文） | 読み（文節） | 最終サンプル |
+|---|---:|---:|---:|---:|---:|---:|
+| realpersonachat | 408,619 | 362,406 | 400,040 | 388,190 | 431,403 | 819,593 |
+| mrmp | 100,680 | 75,072 | 67,764 | 59,652 | 36,842 | 96,494 |
+| jmrd | 114,750 | 48,304 | 47,127 | 41,691 | 44,956 | 86,647 |
+| newschat | 11,256 | 5,008 | 6,860 | 6,062 | 9,606 | 15,668 |
+| jcre3 | 2,652 | 1,637 | 1,534 | 1,400 | 1,338 | 2,738 |
+| open2ch | 3,432,865（間引き後。全体 18,589,859） | 2,093,666 | 2,453,128 | 2,382,539 | 2,848,827 | 5,231,366 |
+| 計 | 4,070,822 | 2,586,093 | 2,976,453 | 2,879,534 | 3,372,972 | 6,252,506 |
+
+split は train 6,126,733 / validation 62,861 / test 62,912。同じ日に `build-typo-corpus.sh spoken` で最初から作り直し、
+3 ファイルとも SHA-256 が一致した（取得済みの状態から約 14 分）。open2ch の除外の内訳（間引き後の 343 万投稿に対して）は
+不適切語 408,076・スラング 239,033・笑い 178,015・コピペ 100,592・短すぎる 88,631・ひらがなの割合 82,413・
+重複 85,008・日本語の割合 65,003・半角カナ 45,569・AA 20,564 など。
+
+**分かっている問題**
+
+- 「私」の読みが Sudachi の辞書どおり「わたくし」になる（`わたくしねちゃう`）。チャットでは「わたし」と打つことが多い。
+  書き言葉の一覧にも同じことが起きているはずだが、直すと既存の一覧の再現性（SHA-256）が変わるので直していない
+- open2ch の不適切語一覧は「死」「殺」「韓」などの 1 字を含む広いもので、普通の発話もかなり落ちる（件数は足りている）
+- 話し言葉の一覧の validation / test の読みは、書き言葉の一覧の train に入っていることがある（一覧ごとに重複を除いているため）。
+  混ぜて学習するときの評価は、今までどおり data/iroha-ds と testdata/iroha/typo で行う
+
 ### split と重複除去
 
 **split は `document_id` 単位**（`iroha/split.py`）。乱数ではなく
@@ -576,6 +650,11 @@ split:
 
 `Document.paragraphs` は「連続した文章のかたまり」のリスト。左文脈は段落の中だけで繋ぐ
 （別の段落の文は前文にしない）。1 文ずつのソースは 1 段落 1 文の Document を返す。
+
+**話し言葉（対話・掲示板）のソース**は `iroha/sources/spoken.py` の `SpokenAdapter` を継承し、
+`documents` の代わりに `dialogues()`（対話 ID と `Utterance` の列）を書く。清掃・重複除去・対話単位の間引き・
+抽出の統計（preprocess の統計の `extraction`、`spoken-stats`）は `SpokenAdapter` が行う。
+ソース固有の除外（知識文の写しなど）は `Utterance.exclude` に理由を入れる。
 
 ## テスト
 

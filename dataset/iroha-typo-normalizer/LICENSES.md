@@ -314,6 +314,68 @@ train_wikipedia.jsonl（Wikipedia 日本語版、CC BY-SA 4.0）。読みを付�
 | CC BY-SA の日本語コーパス | CC BY-SA | **派生物が SA に縛られる**。学習データに混ぜる影響を先に判断すること |
 
 避けるもの: ライセンス不明、NC（非商用限定）、クロール由来で権利が整理されていないもの。
+（例外: H 節の open2ch。2026-09-25 にユーザの判断で入れた。扱いは H 節）
+
+---
+
+## H. 話し言葉のソース（typo normalizer 用、`config/typo-spoken.yaml`）
+
+2026-09-25 に追加。書き言葉だけの typo-corpus（E・F 節）で学習したモデルが話し言葉の正しい入力を
+書き換える（`まじでやばい → まじでやない`）ので、話し言葉の読みを別の一覧（`readings-spoken`）として作る。
+アダプタは `iroha/sources/spoken.py`、清掃は `iroha/spoken/clean.py`。
+
+**共通の扱い**
+
+- 元データは Git に入れず、`download` が一次配布元から**版（コミット）を固定して**取る（各アダプタの `*_REVISION`）
+- 使うのは人の発話の本文だけ。話者 ID・ペルソナ・性格特性・評価・関係などのメタデータは使わない
+- 1 発話 = 1 段落、1 対話 = 1 文書（split は対話単位）。前後の発話を文脈として繋がない
+- URL・メールアドレス・@ の宛先を含む発話は捨てる。絵文字・顔文字・装飾記号は落とす
+- 生成した読み一覧も再配布しない（この文書冒頭の方針どおり）。学習したモデルの重みは CC BY-SA 4.0 で、
+  モデルカードに下の出典表記を並べる
+
+| ソース名 | 元データ | 取得元（版） | ライセンス | 使うもの |
+|---|---|---|---|---|
+| `realpersonachat` | RealPersonaChat（nu-dialogue） | https://github.com/nu-dialogue/real-persona-chat （`28d0b6b`） | **CC BY-SA 4.0** | `utterances[].text`（全話者） |
+| `mrmp` | Multi-Relational Multi-Party Chat Corpus（nu-dialogue） | https://github.com/nu-dialogue/multi-relational-multi-party-chat-corpus （`e6e39cb`） | **CC BY-SA 4.0** | `utterances[].text`（全話者。発話中の「@参加者名」は取り除く） |
+| `jmrd` | JMRD 映画推薦対話（京都大学） | https://github.com/ku-nlp/JMRD （`a20b0a8`） | **CC BY-SA 4.0** | `dialog[].text`（推薦者の発話で知識文を 15 字以上写したものは捨てる） |
+| `newschat` | 感想付きニュース雑談対話コーパス（Fuka Narita） | https://github.com/fukanarita/newschat-with-impression （`fd09d8a`） | **MIT** | `dialog[].utterance` のユーザ役（`U`）だけ |
+| `jcre3` | J-CRe3（理化学研究所 ほか） | https://github.com/riken-grp/J-CRe3 （`6181423`） | **CC BY-SA 4.0** | `textual_annotations/*.knp` の表層（1 文 = 1 発話） |
+| `open2ch` | おーぷん2ちゃんねる対話コーパス（稲葉通将） | https://github.com/1never/open2ch-dialogue-corpus （`a8ccdf2`、`corpus.zip` は Git LFS。SHA-256 を照合） | リポジトリは **Apache-2.0**（下の注意） | `corpus.zip` の投稿（選別したものだけ）、`data/ng_words.txt` |
+
+### attribution 方法
+
+```
+出典: RealPersonaChat（nu-dialogue、https://github.com/nu-dialogue/real-persona-chat）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成
+出典: Multi-Relational Multi-Party Chat Corpus（nu-dialogue、https://github.com/nu-dialogue/multi-relational-multi-party-chat-corpus）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成
+出典: JMRD（京都大学 黒橋・褚・村脇研究室、https://github.com/ku-nlp/JMRD）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成
+出典: 感想付きニュース雑談対話コーパス（Copyright (c) 2023 Fuka Narita、https://github.com/fukanarita/newschat-with-impression）、MIT License。発話の本文だけを取り出し加工して作成
+出典: J-CRe3（理化学研究所 ほか、https://github.com/riken-grp/J-CRe3）、CC BY-SA 4.0。書き起こしの表層だけを取り出し加工して作成
+出典: おーぷん2ちゃんねる対話コーパス（稲葉通将、https://github.com/1never/open2ch-dialogue-corpus）、Apache License 2.0。投稿の本文を選別・加工して作成
+```
+
+canonical record の `attribution` にもソースごとに入る。MIT と Apache-2.0 はモデルの重みを配るときに
+著作権表示とライセンス文を添える（Apache-2.0 は NOTICE があればそれも。このリポジトリには NOTICE は無い）。
+
+### 注意事項
+
+- **RealPersonaChat・MRMP の README の注意**: 「データから個人を特定しようとしないこと」「特定の話者への
+  なりすましに用いないこと」「話者の属性や性格特性の推定に用いる際は話者の権利に留意すること」。
+  IME の打ち間違い訂正の学習はどれにも当たらない。ペルソナ・性格特性のフィールドは読まない
+- **newschat のシステム役（S）は使わない**: 発話に提示されたツイートの本文（`used_tweet`）やニュース記事の
+  文章が入る。ツイートとニュース記事の権利はこのコーパスの MIT の範囲にない
+- **JMRD の推薦者**は知識文（あらすじ・レビューなど、出典は各映画の紹介文）を写して話すことがあるので、
+  知識文と 15 字以上一致する発話は捨てる（`copied_knowledge`）
+- **J-CRe3** は書き起こし（KNP）だけを使う。動画・音声（Box 上の `J-CRe3.zip`）は取得しない
+- **open2ch は掲示板をクロールしたデータ**で、この文書の「避けるもの」（G 節）に当たる。
+  2026-09-25 にユーザの判断で対象に入れた。事情と扱い:
+  - Apache-2.0 はリポジトリ（スクリプトとデータ）に付いたもので、投稿の本文の権利が整理されていることは
+    README に書かれていない。投稿の著作権は原則として投稿者にあり、おーぷん2ちゃんねるの利用規約にも従う
+  - 使い方を「読み（ひらがな）だけを学習に使い、データは再配布しない」に限る。学習は日本国の著作権法 30 条の 4
+    （情報解析）の範囲で行う
+  - 全件は使わない。`Open2chFilter` で掲示板特有の投稿（笑いの w・草、なんJ 語などのスラング、AA、半角カナ、
+    アンカー、配布元の不適切語一覧 `ng_words.txt` と差別語、コピペ = 20 字以上の同じ投稿が 3 回以上）を捨て、
+    `dialogue_ratio` で 100 万〜300 万発話に間引く
+  - モデルを配る前に、open2ch を混ぜたモデルと混ぜないモデルのどちらを配るかを決めること
 
 ---
 

@@ -78,6 +78,11 @@ class SourceAdapter:
         """このソース固有の読みの突き合わせ（無ければ空）。"""
         return []
 
+    def extraction_stats(self) -> dict | None:
+        """``documents()`` の中で数えた抽出の統計（話し言葉のソース）。preprocess の統計の
+        ``extraction`` に入る。数えていなければ None。``documents()`` を回し切ったあとに呼ぶ"""
+        return None
+
 
 _REGISTRY: dict[str, type[SourceAdapter]] = {}
 

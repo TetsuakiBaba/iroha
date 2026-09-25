@@ -112,7 +112,9 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   かな漢字変換の**手前**で「読み → 読み」を直す 3.2M の文字単位 Transformer（実装は Accelerate の
   `cblas_sgemm` だけ。llama.cpp も MLX も通さない）。学習・評価の環境と実験の記録は
   `training/typo-normalizer/`（2026-09-24 に `experiments/` から移した。リポジトリには入っていない。
-  学習データの読み一覧は `dataset/iroha-typo-normalizer/data/typo-corpus/`。実験の経緯と数字は同ディレクトリの README.md）、
+  学習データの読み一覧は `dataset/iroha-typo-normalizer/data/typo-corpus/`（書き言葉の readings-balanced / full と、
+  話し言葉の readings-spoken。話し言葉は `config/typo-spoken.yaml`・LICENSES.md H 節。open2ch は掲示板のクロールで、
+  除外条件の例外として 2026-09-25 にユーザの判断で入れた）。実験の経緯と数字は同ディレクトリの README.md）、
   **移植が正しいかの判定は `iroha-cli typo parity`（PyTorch 実装との照合 200 件）で行う。**
   `training/typo-normalizer/SWIFT-PORT.md` は移植を頼むときに書いた開発機間の伝言メモで、
   実装が進んだ今は内容が古い。ソース中の `training/typo-normalizer/…` への参照も出自を示すもので、

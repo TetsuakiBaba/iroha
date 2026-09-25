@@ -174,6 +174,22 @@ def cmd_stats(args, cfg, paths) -> int:
     return 0
 
 
+def cmd_spoken_stats(args, cfg, paths) -> int:
+    """話し言葉のソースの件数（抽出前後・除外理由・最終サンプル数）。preprocess と build-readings のあとに"""
+    from iroha.sources.spoken import SpokenAdapter
+    from iroha.spoken.report import run_spoken_report
+    paths.ensure()
+    names = [a.name for a in _adapters(cfg, paths, args.source) if isinstance(a, SpokenAdapter)]
+    stats = run_spoken_report(paths, names)
+    _echo({n: {"utterances_raw": s["extraction"].get("utterances_raw", 0),
+               "utterances_kept": s["extraction"].get("utterances_kept", 0),
+               "records": s["preprocess"]["records"], "readings": s["readings"]["total"]}
+           for n, s in stats.items()})
+    print(f"→ {paths.stage_stats('spoken')}")
+    print(f"→ {paths.root / 'SPOKEN_REPORT.md'}")
+    return 0
+
+
 def cmd_samples(args, cfg, paths) -> int:
     from iroha.samples import run_samples
     paths.ensure()
@@ -198,6 +214,7 @@ COMMANDS = {
     "preprocess": cmd_preprocess,
     "build-kkc": cmd_build_kkc,
     "build-typo": cmd_build_typo,
+    "spoken-stats": cmd_spoken_stats,
     "build-readings": cmd_build_readings,
     "build-jwtd": cmd_build_jwtd,
     "estimate-typo-dist": cmd_estimate_typo_dist,

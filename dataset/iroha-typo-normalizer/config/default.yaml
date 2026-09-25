@@ -165,6 +165,68 @@ sources:
     max_documents: 0
     allowed_orthography: ["新字新仮名"]
 
+
+  # ---- 話し言葉（typo normalizer 用。有効にするのは config/typo-spoken.yaml）----
+  # 1 発話 = 1 段落、1 対話 = 1 文書。清掃は iroha/spoken/clean.py（LICENSES.md の H 節）。
+  # 共通のキー: min_chars / max_chars（清掃後の発話の長さ）、min_japanese_ratio、strip_laugh（末尾の笑い・w を落とす）、
+  #             dialogue_ratio（対話単位の間引き。1.0 = 全部）、speakers（使う話者。null = 全員）
+  realpersonachat:              # RealPersonaChat（CC BY-SA 4.0）
+    enabled: false
+    min_chars: 4
+    max_chars: 150
+    min_japanese_ratio: 0.6
+    strip_laugh: true
+    dialogue_ratio: 1.0
+    speakers: null
+  mrmp:                         # Multi-Relational Multi-Party Chat Corpus（CC BY-SA 4.0）
+    enabled: false
+    min_chars: 4
+    max_chars: 150
+    min_japanese_ratio: 0.6
+    strip_laugh: true
+    dialogue_ratio: 1.0
+    speakers: null
+  jmrd:                         # JMRD 映画推薦対話（CC BY-SA 4.0）
+    enabled: false
+    min_chars: 4
+    max_chars: 150
+    min_japanese_ratio: 0.6
+    strip_laugh: true
+    dialogue_ratio: 1.0
+    speakers: null
+    overlap_chars: 15           # 推薦者の発話が知識文とこの字数以上重なれば捨てる（写し）
+  newschat:                     # 感想付きニュース雑談対話コーパス（MIT）
+    enabled: false
+    min_chars: 4
+    max_chars: 150
+    min_japanese_ratio: 0.6
+    strip_laugh: true
+    dialogue_ratio: 1.0
+    speakers: [U]               # システム役（S）はツイート・記事の引用を含むので使わない
+  jcre3:                        # J-CRe3（CC BY-SA 4.0）
+    enabled: false
+    min_chars: 4
+    max_chars: 150
+    min_japanese_ratio: 0.6
+    strip_laugh: true
+    dialogue_ratio: 1.0
+    speakers: null
+  open2ch:                      # おーぷん2ちゃんねる対話コーパス（Apache-2.0、掲示板のクロール）
+    enabled: false
+    min_chars: 4
+    max_chars: 100
+    min_japanese_ratio: 0.7
+    strip_laugh: false          # w・草は落とさず、Open2chFilter で投稿ごと捨てる
+    dialogue_ratio: 1.0
+    speakers: null
+    boards: [livejupiter, news4vip, newsplus]
+    board_ratio: {}             # 板ごとの dialogue_ratio（無い板は dialogue_ratio）
+    min_hiragana_ratio: 0.0     # 清掃の共通オプション（0 = 見ない）
+    copypaste_min_chars: 20     # この長さ以上の投稿が
+    copypaste_min_count: 3      # これ以上の回数出たらコピペとして全部捨てる
+    max_aa_ratio: 0.1           # AA の部品の文字の割合
+    # 捨てる言い回し（掲示板特有の言い回し・自称・定型句）。正規表現で、NFKC 後の本文に search する
+    slang: []
 # ---------------------------------------------------------------- 読み生成
 reading:
   dictionary: full              # full / core / small（SudachiDict）

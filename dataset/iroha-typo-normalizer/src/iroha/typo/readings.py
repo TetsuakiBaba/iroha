@@ -41,6 +41,9 @@ class ReadingsBuilder:
         self.max_chars = int(typo.get("max_chars", 60))
         self.excluded, self.exclude_files = load_readings(
             list(typo.get("exclude_readings_from", []) or []))
+        # ソースを読む順番。同じ読みは先に出たソースに残るので、質の高いソースを先にする。
+        # 無ければ渡された順（ソース名の順）。typo-corpus（書き言葉）の一覧はこれを使わない
+        self.source_order = list(typo.get("source_order", []) or [])
 
     @property
     def out(self):
@@ -57,6 +60,9 @@ class ReadingsBuilder:
         dedup = KeyDeduplicator()
         skipped = {"length": 0, "eval_reading": 0, "not_romanizable": 0, "duplicate": 0}
         per_source: dict[str, dict] = {}
+        if self.source_order:
+            rank = {name: i for i, name in enumerate(self.source_order)}
+            adapters = sorted(adapters, key=lambda a: rank.get(a.name, len(rank)))
         with SplitWriter(self.out, SPLITS) as writer:
             for adapter in adapters:
                 path = self.paths.canonical_for(adapter.name)

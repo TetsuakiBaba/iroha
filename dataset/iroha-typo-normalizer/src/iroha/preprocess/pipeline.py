@@ -46,9 +46,10 @@ class SourceReport:
     duplicates: dict = field(default_factory=dict)
     splits: dict = field(default_factory=dict)
     license_counts: dict = field(default_factory=dict)
+    extraction: dict | None = None
 
     def as_dict(self) -> dict:
-        return {
+        out = {
             "source": self.source,
             "documents": self.documents,
             "skipped_documents": self.skipped_documents,
@@ -64,6 +65,9 @@ class SourceReport:
             "splits": self.splits,
             "licenses": self.license_counts,
         }
+        if self.extraction is not None:
+            out["extraction"] = self.extraction
+        return out
 
 
 def sampled(document_id: str, ratio: float) -> bool:
@@ -128,6 +132,7 @@ class CanonicalBuilder:
         report.reading_failures = dict(sorted(analyzer.failures.items(), key=lambda kv: -kv[1]))
         report.low_reasons = dict(sorted(analyzer.low_reasons.items(), key=lambda kv: -kv[1]))
         report.duplicates = dedup.stats.as_dict()
+        report.extraction = adapter.extraction_stats()
         return report
 
     def _records(self, adapter: SourceAdapter, sentence_filter: SentenceFilter,
