@@ -20,6 +20,9 @@ public enum TrainingRun {
         public var config: TrainingConfig?
         /// 学習後のアダプタなし／あり評価を省く（学習ループだけを見たいとき）
         public var skipEvaluation = false
+        /// N エポックごとの途中のアダプタも `<出力>.ep<N>.gguf` に書き、学習後にそれぞれ評価する
+        /// （エポック数と効果の関係を見る開発用。学習率は一定なので、途中の N エポック目は N エポックで学習したものと同じ）
+        public var checkpointEvery: Int?
         public var log: ConversionLog = .shared
 
         public init(basePath: String, outputPath: String, config: TrainingConfig? = nil) {
@@ -108,9 +111,10 @@ public enum TrainingRun {
         guard !model.loraLayers.isEmpty else { throw TrainableLMError.missingTensor("LoRA 対象の層が見つかりません") }
 
         emit(.stage("train"))
-        try trainAndExport(model: model, examples: examples, config: config, padToken: tokenizer.terminator,
-                           architecture: gguf.architecture ?? "", outputPath: options.outputPath, emit: emit,
-                           shouldStop: shouldStop)
+        let checkpoints = try trainAndExport(model: model, examples: examples, config: config,
+                                             padToken: tokenizer.terminator, architecture: gguf.architecture ?? "",
+                                             outputPath: options.outputPath, checkpointEvery: options.checkpointEvery,
+                                             emit: emit, shouldStop: shouldStop)
 
         // 4. 評価用の記録を、同じ量子化ベースでアダプタなし／ありの両方で変換して並べる。
         // 「なし」は変換し直しの結果（間違い 0 件・正解は全件）と同じになるはずだが、
@@ -124,6 +128,13 @@ public enum TrainingRun {
                 modelPath: options.basePath, adapterPath: nil)
             before = TrainingScores(mistakes: base.mistakes.score, correct: base.correct.score)
             emit(.eval(phase: "before", scores: before))
+            for (epoch, path) in checkpoints {
+                let result = try await TrainingEvaluator.evaluate(
+                    mistakes: split.heldOutMistakes, correct: split.heldOutCorrect,
+                    modelPath: options.basePath, adapterPath: path)
+                emit(.eval(phase: "ep\(epoch)", scores: TrainingScores(mistakes: result.mistakes.score,
+                                                                       correct: result.correct.score)))
+            }
             let adapted = try await TrainingEvaluator.evaluate(
                 mistakes: split.heldOutMistakes, correct: split.heldOutCorrect,
                 modelPath: options.basePath, adapterPath: options.outputPath)
@@ -142,18 +153,27 @@ public enum TrainingRun {
         return path
     }
 
-    /// 型消去された `any TrainableLM` を具体型に開いて学習・書き出しする
+    /// 型消去された `any TrainableLM` を具体型に開いて学習・書き出しする。
+    /// 戻り値は途中で書いたアダプタ（エポック, パス）。最後のエポックの分は `outputPath` なので含めない
     private static func trainAndExport(model: any TrainableLM, examples: [TrainingExample], config: TrainingConfig,
-                                       padToken: Int32, architecture: String, outputPath: String,
-                                       emit: (TrainingEvent) -> Void, shouldStop: () -> Bool) throws {
-        func go<M: TrainableLM>(_ model: M) throws {
+                                       padToken: Int32, architecture: String, outputPath: String, checkpointEvery: Int?,
+                                       emit: (TrainingEvent) -> Void, shouldStop: () -> Bool) throws -> [(Int, String)] {
+        func go<M: TrainableLM>(_ model: M) throws -> [(Int, String)] {
+            var checkpoints: [(Int, String)] = []
             let trainer = LoRATrainer(model: model, config: config, padToken: padToken)
-            trainer.train(examples: examples, progress: { emit(.step($0)) }, shouldStop: shouldStop)
+            try trainer.train(examples: examples, progress: { emit(.step($0)) }, epochEnded: { epoch, _ in
+                guard let every = checkpointEvery, every > 0, epoch % every == 0, epoch < config.epochs else { return }
+                let path = outputPath.replacingOccurrences(of: ".gguf", with: "") + ".ep\(epoch).gguf"
+                try LoraAdapterWriter.write(to: path, architecture: architecture, alpha: config.alpha,
+                                            pairs: try model.exportLoraPairs())
+                checkpoints.append((epoch, path))
+            }, shouldStop: shouldStop)
             if shouldStop() { throw RunError.cancelled }
             emit(.stage("export"))
             try LoraAdapterWriter.write(to: outputPath, architecture: architecture, alpha: config.alpha,
                                         pairs: try model.exportLoraPairs())
+            return checkpoints
         }
-        try go(model)
+        return try go(model)
     }
 }

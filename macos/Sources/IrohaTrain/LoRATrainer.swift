@@ -56,11 +56,12 @@ public final class LoRATrainer<Model: TrainableLM> {
         return (losses * batch.mask).sum() / maximum(batch.mask.sum(), MLXArray(1.0 as Float))
     }
 
-    /// 学習する。`progress` は各ステップの後に呼ばれ、`shouldStop` が真を返したら途中で止める。
-    /// 戻り値は最後のエポックの平均損失
+    /// 学習する。`progress` は各ステップの後、`epochEnded` は各エポックの後（エポック番号と平均損失）に呼ばれ、
+    /// `shouldStop` が真を返したら途中で止める。戻り値は最後のエポックの平均損失
     @discardableResult
     public func train(examples: [TrainingExample], progress: (TrainingStep) -> Void = { _ in },
-                      shouldStop: () -> Bool = { false }) -> Float {
+                      epochEnded: (Int, Float) throws -> Void = { _, _ in },
+                      shouldStop: () -> Bool = { false }) rethrows -> Float {
         model.freezeBase()
         let trainable = model.trainableParameters().flattened().count
         precondition(trainable == model.loraLayers.count * 2, "学習対象が LoRA だけになっていません: \(trainable)")
@@ -95,6 +96,7 @@ public final class LoRATrainer<Model: TrainableLM> {
                                       elapsed: Date().timeIntervalSince(start)))
             }
             lastEpochLoss = epochLoss / Float(max(batches.count, 1))
+            try epochEnded(epoch, lastEpochLoss)
         }
         return lastEpochLoss
     }

@@ -10,6 +10,7 @@ import IrohaTrain
 //   iroha-train info  --base <model.gguf>                       : 記録の件数・対応可否を JSON で出す（MLX に触らない）
 //   iroha-train train --base <model.gguf> --out <adapter.gguf>  : 学習して GGUF アダプタを書く
 //               [--epochs N] [--rank N] [--alpha F] [--lr F] [--batch N] [--no-eval]
+//               [--checkpoint-every N]  : N エポックごとのアダプタも <out>.ep<N>.gguf に書き、学習後に評価する（開発用）
 //   環境変数 IROHA_DATA_DIR でデータフォルダ（記録の場所）を上書き。無ければ IME 本体の設定に従う
 //
 // MLX の Metal カーネル（mlx-swift_Cmlx.bundle/default.metallib）は実行ファイルと同じ場所か
@@ -43,7 +44,7 @@ func usage() -> Never {
     使い方:
       iroha-train info  --base <model.gguf>
       iroha-train train --base <model.gguf> --out <adapter.gguf> [--epochs N] [--rank N] [--alpha F] [--lr F]
-                        [--batch N] [--no-eval]
+                        [--batch N] [--no-eval] [--checkpoint-every N]
 
     """.data(using: .utf8)!)
     exit(2)
@@ -98,6 +99,7 @@ case "train":
     guard let outputPath = arguments.options["out"] else { usage() }
     var options = TrainingRun.Options(basePath: basePath, outputPath: outputPath)
     options.skipEvaluation = arguments.flags.contains("no-eval")
+    options.checkpointEvery = arguments.int("checkpoint-every")
     let tunables = ["epochs", "rank", "alpha", "lr", "batch"]
     if arguments.options.keys.contains(where: tunables.contains) {
         var config = TrainingConfig()

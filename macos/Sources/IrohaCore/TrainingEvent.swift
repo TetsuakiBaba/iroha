@@ -104,7 +104,7 @@ public enum TrainingEvent: Codable, Sendable, Equatable {
     /// 件数で進む処理（記録の確認など）の進捗
     case progress(stage: String, done: Int, total: Int)
     case step(TrainingStep)
-    /// phase は "before"（アダプタなし）/ "after"（アダプタあり）
+    /// phase は "before"（アダプタなし）/ "after"（アダプタあり）/ "ep<N>"（`--checkpoint-every` の途中のアダプタ）
     case eval(phase: String, scores: TrainingScores)
     case done(TrainingResult)
     case error(String)
