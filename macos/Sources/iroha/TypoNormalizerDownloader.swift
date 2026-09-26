@@ -48,13 +48,13 @@ final class TypoNormalizerDownloader: ObservableObject {
             format: "このモデルはアプリに含まれていません。有効にすると約%.0fMBを1回だけダウンロードします",
             megabytes)
         if let license = catalog.license(for: model) {
-            text += "（\(license)"
-            if let attribution = catalog.attribution(for: model) {
-                text += "、学習元: \(attribution)"
-            }
-            text += "）"
+            text += "（モデルのライセンス: \(license)）"
         }
         text += "。保存先はデータの保存場所の中なので、共有フォルダにしていれば1回で済みます。"
+        // 学習元はソースごとに1行（LICENSES.md の「attribution 方法」の書き方）で長いので、段落を分ける
+        if let attribution = catalog.attribution(for: model) {
+            text += "\n\n学習元:\n\(attribution)"
+        }
         return text
     }
 
@@ -69,9 +69,9 @@ final class TypoNormalizerDownloader: ObservableObject {
                 + "削除してからダウンロードすると入れ替わります。"
         }
         var parts: [String] = []
-        if let attribution = catalog.attribution(for: model) { parts.append("学習元: \(attribution)") }
         if let license = catalog.license(for: model) { parts.append("モデルのライセンス: \(license)") }
-        return parts.isEmpty ? nil : parts.joined(separator: "。") + "。"
+        if let attribution = catalog.attribution(for: model) { parts.append("学習元:\n\(attribution)") }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
     }
 
     /// 設定画面を開いたときにモデル一覧を取りにいく。
