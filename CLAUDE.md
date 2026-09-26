@@ -39,6 +39,11 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   /tmpへのファイル直書きヘルパーを一時的に仕込む（調査後に削除）
 - 起動・終了・異常終了の履歴は `<データフォルダ>/logs/launch-<ホスト名>.log`（`LaunchLog`）。
   予期しない再起動やクラッシュの調査はまずここと `~/Library/Logs/DiagnosticReports/iroha-*.ips` を見る
+- **`~/Library/Input Methods/` の中に iroha.app 以外の .app（仮置き・旧バンドル）を置かない。**macOS は
+  このフォルダを監視して入力ソースの情報を作り直すため、同じバンドルIDのものが並ぶと入力メニューから
+  iroha が消え、ログアウトまで戻らない（2026-09-26 実測。install.sh と `SelfInstaller.replaceInstalledBundle` の
+  コメント参照）。入れ替えの数秒後に `iroha --refresh-input-menu` で入力メニューに一覧を読み直させる。
+  `killall TextInputMenuAgent` 等では直らない
 
 ## プロジェクト構成の要点
 

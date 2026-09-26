@@ -146,26 +146,32 @@ enum SelfInstaller {
     /// 消してからコピーすると、コピーが終わるまでの1秒前後バンドルが存在しない状態になる。
     /// その間システムはirohaを入力ソース一覧から外し（選択はABCに落ちる）、戻したあとも
     /// メニューバーの入力メニューが「入力ソースなし」の表示のまま残ることがある。
-    /// 同じ場所が一度も欠けないよう、隣にコピーしてから `replaceItemAt`（アトミックな入れ替え）で置く。
+    /// そこで仮置きへコピーしてから、RENAME_SWAP で2つのパスを入れ替える（インストール先は一度も欠けない）。
+    ///
+    /// 仮置きは Input Methods の**外**（同じボリュームの一時ディレクトリ）に作る。macOS は Input Methods を
+    /// 監視していて、中に置いた .app は隠し名でも入力メソッドとして読む。コピー途中の仮置きや旧バンドルが
+    /// 同じバンドルIDで並ぶと入力ソースの情報が壊れ（iroha がモードなしで登録される、入力メニューから
+    /// 一覧が消える）、ログアウトするまで戻らない（2026-09-26 実測: install.sh のシェルの cp -R / rm -rf で
+    /// 中に仮置きすると15回中14回失敗、外なら0回）。ここの copyItem は APFS のクローンで一瞬で終わるため、
+    /// 中に仮置きした旧実装でも24回壊れなかったが、同じバンドルIDのものを一瞬でも置かないよう外にしている。
     /// 実行中のプロセスは開いているinodeを保持するので、入れ替え自体は安全
     static func replaceInstalledBundle(with newApp: URL) throws {
         let fm = FileManager.default
         try fm.createDirectory(atPath: inputMethodsDir, withIntermediateDirectories: true)
+        // rename は同一ボリューム上でしか使えないので、インストール先と同じボリュームの一時ディレクトリを使う
+        // （配布zipの展開先やApp Translocation中のRO マウントは別ボリュームのことがある）
+        let workDir = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                 appropriateFor: URL(fileURLWithPath: inputMethodsDir), create: true)
+        defer { try? fm.removeItem(at: workDir) }
+        let staging = workDir.appendingPathComponent("iroha.app")
+        try fm.copyItem(at: newApp, to: staging)
         guard fm.fileExists(atPath: installedURL.path) else {
-            try fm.copyItem(at: newApp, to: installedURL)
+            try fm.moveItem(at: staging, to: installedURL)
             return
         }
-        // replaceItemAt は同一ボリューム上の相手を要求するので、まず隣へ置く
-        // （配布zipの展開先やApp Translocation中のRO マウントは別ボリュームのことがある）
-        let staging = URL(fileURLWithPath: inputMethodsDir)
-            .appendingPathComponent(".iroha-staging-\(UUID().uuidString).app")
-        try fm.copyItem(at: newApp, to: staging)
-        do {
-            _ = try fm.replaceItemAt(installedURL, withItemAt: staging, backupItemName: nil,
-                                     options: [.usingNewMetadataOnly])
-        } catch {
-            try? fm.removeItem(at: staging)
-            throw error
+        // 入れ替え後、旧バンドルは staging 側に移り、defer で作業ディレクトリごと消える
+        guard renamex_np(staging.path, installedURL.path, UInt32(RENAME_SWAP)) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
     }
 
@@ -229,6 +235,13 @@ enum SelfInstaller {
             NSWorkspace.shared.open(url)
         }
     }
+}
+
+// バンドルの入れ替え後に呼ぶ: 入力メニューに入力ソースの一覧を読み直させて終了する（IMEとしては起動しない）。
+// install.sh が新しいプロセスの起動から数秒おいて呼ぶ
+if CommandLine.arguments.contains("--refresh-input-menu") {
+    InputMenuRefresher.refresh()
+    exit(0)
 }
 
 let app = NSApplication.shared
