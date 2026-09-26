@@ -222,6 +222,10 @@ private struct TypoNormalizerModelRow: View {
                 Text(downloader.offerDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else if let description = downloader.installedDescription, !downloader.isBusy {
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .onAppear { downloader.refreshCatalogIfNeeded() }
@@ -249,7 +253,8 @@ private struct TypoNormalizerModelRow: View {
         case .idle, .failed:
             if let installed = downloader.installed {
                 HStack(spacing: 6) {
-                    Text(installed.name).foregroundStyle(.secondary)
+                    // 名前（「標準」）だけでは版が分からないので ID（small-v3 など）を添える
+                    Text("\(installed.name)（\(installed.id)）").foregroundStyle(.secondary)
                     Button("削除") { downloader.remove() }
                 }
             } else {

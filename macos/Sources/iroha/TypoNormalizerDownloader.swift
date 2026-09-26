@@ -58,6 +58,22 @@ final class TypoNormalizerDownloader: ObservableObject {
         return text
     }
 
+    /// 入れているモデルの説明（学習元・ライセンス）。カタログに同じ ID があるときだけ出す
+    /// （設置記録には ID と名前しか残していないので、条件はカタログから取る）
+    var installedDescription: String? {
+        guard let installed, let catalog else { return nil }
+        guard let model = catalog.models.first(where: { $0.id == installed.id }) else {
+            // カタログから外れた古いモデル（small-v1 など）。自動では入れ替えないので、やり方を示す
+            guard let latest = catalog.models.first else { return nil }
+            return "カタログには新しいモデル（\(latest.id)）が載っています。"
+                + "削除してからダウンロードすると入れ替わります。"
+        }
+        var parts: [String] = []
+        if let attribution = catalog.attribution(for: model) { parts.append("学習元: \(attribution)") }
+        if let license = catalog.license(for: model) { parts.append("モデルのライセンス: \(license)") }
+        return parts.isEmpty ? nil : parts.joined(separator: "。") + "。"
+    }
+
     /// 設定画面を開いたときにモデル一覧を取りにいく。
     ///
     /// 一覧が要るのは「まだ入れていない」「入れ替える」ときだけなので、**既に入っているなら
