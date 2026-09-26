@@ -1,14 +1,14 @@
 {
   "formatVersion": 1,
   "license": "CC BY-SA 4.0",
-  "attribution": "zenz-v2.5-dataset (Keita Miwa) / Wikipedia 日本語版 / LLM-jp Corpus v4 / RealPersonaChat / Multi-Relational Multi-Party Chat Corpus / JMRD / J-CRe3 / 感想付きニュース雑談対話コーパス (MIT) / おーぷん2ちゃんねる対話コーパス (Apache-2.0)",
+  "attribution": "zenz-v2.5-dataset の Wikipedia 日本語版の部分（Keita Miwa、CC BY-SA 4.0） / LLM-jp Corpus v4 の科研費・e-Gov・特許・青空文庫（LLM-jp、CC BY 4.0） / RealPersonaChat・Multi-Relational Multi-Party Chat Corpus（nu-dialogue、CC BY-SA 4.0） / JMRD（京都大学、CC BY-SA 4.0） / J-CRe3（理化学研究所 ほか、CC BY-SA 4.0） / 感想付きニュース雑談対話コーパス（Fuka Narita、MIT） / おーぷん2ちゃんねる対話コーパス（稲葉通将、Apache-2.0）",
   "models": [
     {
       "id": "small-v3",
       "name": "標準",
       "summary": "3.2M パラメータ・約6MB。CPU 1スレッドで平均4ms",
       "license": "CC BY-SA 4.0",
-      "attribution": "zenz-v2.5-dataset (Keita Miwa) / Wikipedia 日本語版 / LLM-jp Corpus v4 / RealPersonaChat / Multi-Relational Multi-Party Chat Corpus / JMRD / J-CRe3 / 感想付きニュース雑談対話コーパス (MIT) / おーぷん2ちゃんねる対話コーパス (Apache-2.0)",
+      "attribution": "zenz-v2.5-dataset の Wikipedia 日本語版の部分（Keita Miwa、CC BY-SA 4.0） / LLM-jp Corpus v4 の科研費・e-Gov・特許・青空文庫（LLM-jp、CC BY 4.0） / RealPersonaChat・Multi-Relational Multi-Party Chat Corpus（nu-dialogue、CC BY-SA 4.0） / JMRD（京都大学、CC BY-SA 4.0） / J-CRe3（理化学研究所 ほか、CC BY-SA 4.0） / 感想付きニュース雑談対話コーパス（Fuka Narita、MIT） / おーぷん2ちゃんねる対話コーパス（稲葉通将、Apache-2.0）",
       "manifest": {
         "url": "https://github.com/TetsuakiBaba/iroha/releases/download/typo-normalizer-v1/small-v3-manifest.json",
         "bytes": 20977,
