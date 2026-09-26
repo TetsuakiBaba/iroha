@@ -1,23 +1,23 @@
 {
   "formatVersion": 1,
   "license": "CC BY-SA 4.0",
-  "attribution": "zenz-v2.5-dataset (Keita Miwa)",
+  "attribution": "zenz-v2.5-dataset (Keita Miwa) / Wikipedia 日本語版 / LLM-jp Corpus v4 / RealPersonaChat / Multi-Relational Multi-Party Chat Corpus / JMRD / J-CRe3 / 感想付きニュース雑談対話コーパス (MIT) / おーぷん2ちゃんねる対話コーパス (Apache-2.0)",
   "models": [
     {
-      "id": "small-v1",
+      "id": "small-v3",
       "name": "標準",
       "summary": "3.2M パラメータ・約6MB。CPU 1スレッドで平均4ms",
       "license": "CC BY-SA 4.0",
-      "attribution": "zenz-v2.5-dataset (Keita Miwa)",
+      "attribution": "zenz-v2.5-dataset (Keita Miwa) / Wikipedia 日本語版 / LLM-jp Corpus v4 / RealPersonaChat / Multi-Relational Multi-Party Chat Corpus / JMRD / J-CRe3 / 感想付きニュース雑談対話コーパス (MIT) / おーぷん2ちゃんねる対話コーパス (Apache-2.0)",
       "manifest": {
-        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/typo-normalizer-v1/small-v1-manifest.json",
-        "bytes": 20807,
-        "sha256": "7cb819b4298e5cc82089a89f82558fba08c0a0d09f64300e30f515785faa9601"
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/typo-normalizer-v1/small-v3-manifest.json",
+        "bytes": 20977,
+        "sha256": "dba3db469e1d5b6d25f2ea3cc308544cbd16cc5c15cf9dec38f5f368c1db0a59"
       },
       "weights": {
-        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/typo-normalizer-v1/small-v1-weights.bin",
-        "bytes": 6397680,
-        "sha256": "611294661ec15bb328b7b8bdda06196318644622ca0f421c43f80b19d35bf3f8"
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/typo-normalizer-v1/small-v3-weights.bin",
+        "bytes": 6393400,
+        "sha256": "ee9dfccc1667edf11f01aab88813f94972e3fd07a8815f39d1195efe5a7f0768"
       }
     }
   ]
