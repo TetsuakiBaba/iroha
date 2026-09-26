@@ -1288,7 +1288,9 @@ case "typo":
                 }
                 guard let target else { exit(1) }
                 print("\n取得します: \(target.id)")
-                let record = try await TypoNormalizerFetcher.install(target) { progress in
+                let record = try await TypoNormalizerFetcher.install(
+                    target, license: catalog.license(for: target)
+                ) { progress in
                     // 進捗は別スレッドから来る。10%刻みだけ出す
                     ProgressPrinter.shared.report(progress)
                 }

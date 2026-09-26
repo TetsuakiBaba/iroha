@@ -173,7 +173,10 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
     `UpdateChecker` が壊れる）。設置先は `<データフォルダ>/models/typo-normalizer/` で、
     SHA-256 と大きさを照合してからでないと置かない。動作確認は `iroha-cli typo catalog [install]`
   ・**ライセンスをアプリに焼き込まない。**カタログのモデルごとに `license` / `attribution` を持つ。
-    学習元を `dataset/iroha-typo-normalizer/` など別コーパスに替えたモデルは条件が変わりうるため
+    学習元を `dataset/iroha-typo-normalizer/` など別コーパスに替えたモデルは条件が変わりうるため。
+    学習元は `sources`（1件ずつ名称・作者・ライセンス・URL）にも持ち、設定 > 情報 のライセンス一覧に出す
+    （入れたときに設置記録にも写すのでオフラインでも出る）。文面は `dataset/iroha-typo-normalizer/LICENSES.md` の
+    「attribution 方法」に合わせる。訂正モデルの行（入力タブ）には学習元を出さない
   ・訂正率 79%（θなし）は合成 typo 分布の数字で、実使用の数字ではない。UI で約束しない
 - ユーザ定義の変換ルール（User Rewriter、`UserRewriteRule` / `UserRewriteRuleStore`）は
   エンジンのデコレータ鎖に入れず、コントローラが文節の候補ウィンドウを開くときに独立した

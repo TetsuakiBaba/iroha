@@ -50,28 +50,28 @@ final class TypoNormalizerDownloader: ObservableObject {
         if let license = catalog.license(for: model) {
             text += "（モデルのライセンス: \(license)）"
         }
+        // 学習元は 設定 > 情報 のライセンス一覧に出す（ここに並べると長い）
         text += "。保存先はデータの保存場所の中なので、共有フォルダにしていれば1回で済みます。"
-        // 学習元はソースごとに1行（LICENSES.md の「attribution 方法」の書き方）で長いので、段落を分ける
-        if let attribution = catalog.attribution(for: model) {
-            text += "\n\n学習元:\n\(attribution)"
-        }
         return text
     }
 
-    /// 入れているモデルの説明（学習元・ライセンス）。カタログに同じ ID があるときだけ出す
-    /// （設置記録には ID と名前しか残していないので、条件はカタログから取る）
-    var installedDescription: String? {
-        guard let installed, let catalog else { return nil }
-        guard let model = catalog.models.first(where: { $0.id == installed.id }) else {
-            // カタログから外れた古いモデル（small-v1 など）。自動では入れ替えないので、やり方を示す
-            guard let latest = catalog.models.first else { return nil }
-            return "カタログには新しいモデル（\(latest.id)）が載っています。"
-                + "削除してからダウンロードすると入れ替わります。"
-        }
-        var parts: [String] = []
-        if let license = catalog.license(for: model) { parts.append("モデルのライセンス: \(license)") }
-        if let attribution = catalog.attribution(for: model) { parts.append("学習元:\n\(attribution)") }
-        return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
+    /// 入れているモデルがカタログから外れた古いもの（small-v1 など）のときの案内。
+    /// 自動では入れ替えないので、やり方を示す
+    var outdatedNotice: String? {
+        guard let installed, let catalog, catalog.model(id: installed.id) == nil,
+              let latest = catalog.models.first else { return nil }
+        return "カタログには新しいモデル（\(latest.id)）が載っています。"
+            + "削除してからダウンロードすると入れ替わります。"
+    }
+
+    /// 設定 > 情報 のライセンス一覧に出す、入れているモデルのライセンスと学習元。
+    /// 入れたときに記録したものを優先し、無ければ（記録を始める前に入れたもの）カタログの同じ ID から取る
+    var installedLicense: (id: String, license: String?, page: String?, sources: [TypoNormalizerCatalog.Source])? {
+        guard let installed else { return nil }
+        let model = catalog?.model(id: installed.id)
+        let license = installed.license ?? model.flatMap { catalog?.license(for: $0) }
+        let sources = installed.sources ?? model?.sources ?? []
+        return (installed.id, license, installed.page ?? model?.page, sources)
     }
 
     /// 設定画面を開いたときにモデル一覧を取りにいく。
@@ -115,7 +115,9 @@ final class TypoNormalizerDownloader: ObservableObject {
                     throw TypoNormalizerFetcher.FetchError.noModels
                 }
                 self.state = .downloading(progress: 0)
-                let record = try await TypoNormalizerFetcher.install(target) { progress in
+                let record = try await TypoNormalizerFetcher.install(
+                    target, license: catalog.license(for: target)
+                ) { progress in
                     Task { @MainActor [weak self] in
                         guard let self, case .downloading = self.state else { return }
                         self.state = progress >= 1 ? .verifying : .downloading(progress: progress)

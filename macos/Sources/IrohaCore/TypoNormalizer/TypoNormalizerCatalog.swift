@@ -15,6 +15,22 @@ public struct TypoNormalizerCatalog: Decodable, Sendable {
         public let sha256: String
     }
 
+    /// 学習元の1件（設定 > 情報 のライセンス一覧に1行で出す）
+    public struct Source: Codable, Sendable, Equatable {
+        public let name: String
+        /// 作成者・著作権者（「© 」を前に付けて表示する）
+        public let holder: String
+        public let license: String
+        public let url: String
+
+        public init(name: String, holder: String, license: String, url: String) {
+            self.name = name
+            self.holder = holder
+            self.license = license
+            self.url = url
+        }
+    }
+
     public struct Model: Decodable, Sendable, Identifiable, Equatable {
         public let id: String
         /// 設定画面に出す名前
@@ -28,6 +44,11 @@ public struct TypoNormalizerCatalog: Decodable, Sendable {
         /// iroha-dataset から作り直したものは別になりうる）ので、カタログ側に持たせる
         public let license: String?
         public let attribution: String?
+        /// 学習元を1件ずつ分けたもの（`attribution` は1本の文章なので一覧に出せない）。
+        /// 無いカタログ（古い世代）もあるので省略可
+        public let sources: [Source]?
+        /// モデルの配布ページ（ライセンス一覧のリンク先）
+        public let page: String?
 
         public var totalBytes: Int { manifest.bytes + weights.bytes }
 
@@ -73,12 +94,22 @@ public enum TypoNormalizerInstall {
         /// weights.bin の SHA-256。カタログと違っていれば入れ直す
         public let sha256: String
         public let installedAt: Date
+        /// 入れた時点のカタログにあったライセンス・学習元・配布ページ。カタログが取れない
+        /// （オフライン）ときでも設定 > 情報 に出せるように残す。この項目より前に入れたものは nil
+        public let license: String?
+        public let sources: [TypoNormalizerCatalog.Source]?
+        public let page: String?
 
-        public init(id: String, name: String, sha256: String, installedAt: Date = Date()) {
+        public init(id: String, name: String, sha256: String, installedAt: Date = Date(),
+                    license: String? = nil, sources: [TypoNormalizerCatalog.Source]? = nil,
+                    page: String? = nil) {
             self.id = id
             self.name = name
             self.sha256 = sha256
             self.installedAt = installedAt
+            self.license = license
+            self.sources = sources
+            self.page = page
         }
     }
 

@@ -222,8 +222,8 @@ private struct TypoNormalizerModelRow: View {
                 Text(downloader.offerDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else if let description = downloader.installedDescription, !downloader.isBusy {
-                Text(description)
+            } else if let notice = downloader.outdatedNotice, !downloader.isBusy {
+                Text(notice)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1445,6 +1445,44 @@ private struct LicenseRow: View {
     }
 }
 
+/// 打ち間違い訂正モデルとその学習元のライセンス（入れているときだけ出す）。
+///
+/// 学習元はモデルごとに違うので、アプリに焼き込まずカタログ（入れたときの記録）から取る
+private struct TypoNormalizerLicenseRows: View {
+    @ObservedObject private var downloader = TypoNormalizerDownloader.shared
+
+    var body: some View {
+        Group { rows }
+            // 学習元を記録する前に入れたモデルは、カタログから取る（入れていなければ通信しない）
+            .onAppear {
+                if let installed = downloader.installed, installed.sources == nil {
+                    downloader.refreshCatalogIfNeeded()
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var rows: some View {
+        if let installed = downloader.installedLicense {
+            LicenseRow(
+                name: "打ち間違い訂正モデル（\(installed.id)）", holder: "Tetsuaki Baba",
+                license: installed.license ?? "",
+                url: installed.page ?? "https://github.com/TetsuakiBaba/iroha")
+            ForEach(installed.sources, id: \.name) { source in
+                LicenseRow(
+                    name: source.name, holder: source.holder, license: source.license,
+                    note: "打ち間違い訂正モデルの学習元", url: source.url)
+            }
+            if !installed.sources.isEmpty {
+                Text("学習元のデータは、文への分割・読みの付与など加工して学習に使っています。"
+                    + "データそのものはアプリにもモデルにも含めていません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 /// データの保存場所（設定 > 情報）。iCloud Drive / Dropbox のフォルダを指定して他のMacと共有する
 private struct DataDirectorySection: View {
     @State private var pendingURL: URL?
@@ -1590,6 +1628,7 @@ private struct AboutSettingsTab: View {
                     license: "SIL Open Font License 1.1",
                     note: "アプリアイコン・メニューバーアイコンの書体",
                     url: "https://fonts.google.com/specimen/Tsukimi+Rounded")
+                TypoNormalizerLicenseRows()
             }
 
             Section("アンインストール") {

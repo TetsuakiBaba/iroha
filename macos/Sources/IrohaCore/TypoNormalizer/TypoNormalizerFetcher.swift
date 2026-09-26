@@ -54,6 +54,7 @@ public enum TypoNormalizerFetcher {
     @discardableResult
     public static func install(
         _ model: TypoNormalizerCatalog.Model,
+        license: String? = nil,
         session: URLSession = .shared,
         onProgress: @escaping @Sendable (Double) -> Void = { _ in }
     ) async throws -> TypoNormalizerInstall.Record {
@@ -95,7 +96,8 @@ public enum TypoNormalizerFetcher {
             at: directory.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.moveItem(at: staging, to: directory)
         let record = TypoNormalizerInstall.Record(
-            id: model.id, name: model.name, sha256: model.weights.sha256)
+            id: model.id, name: model.name, sha256: model.weights.sha256,
+            license: license ?? model.license, sources: model.sources, page: model.page)
         try TypoNormalizerInstall.writeRecord(record)
         onProgress(1)
         return record

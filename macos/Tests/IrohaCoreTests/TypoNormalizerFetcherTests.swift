@@ -22,7 +22,8 @@ final class TypoNormalizerFetcherTests: XCTestCase {
 
     /// 配る2ファイルを作り、それを指すカタログを書いて返す
     private func makeCatalogFile(
-        manifest: Data, weights: Data, corruptChecksum: Bool = false, wrongSize: Bool = false
+        manifest: Data, weights: Data, corruptChecksum: Bool = false, wrongSize: Bool = false,
+        withSources: Bool = false
     ) throws -> URL {
         let manifestURL = root.appendingPathComponent("small-manifest.json")
         let weightsURL = root.appendingPathComponent("small-weights.bin")
@@ -30,25 +31,33 @@ final class TypoNormalizerFetcherTests: XCTestCase {
         try weights.write(to: weightsURL)
         let weightsHash = corruptChecksum
             ? String(repeating: "0", count: 64) : SHA256.hex(weights)
+        var model: [String: Any] = [
+            "id": "test-v1",
+            "name": "テスト",
+            "summary": "テスト用",
+            "manifest": [
+                "url": manifestURL.absoluteString,
+                "bytes": manifest.count,
+                "sha256": SHA256.hex(manifest),
+            ],
+            "weights": [
+                "url": weightsURL.absoluteString,
+                "bytes": wrongSize ? weights.count + 1 : weights.count,
+                "sha256": weightsHash,
+            ],
+        ]
+        if withSources {
+            model["sources"] = [
+                ["name": "コーパスA", "holder": "作者A", "license": "CC BY 4.0", "url": "https://example.com/a"],
+                ["name": "コーパスB", "holder": "作者B", "license": "MIT License", "url": "https://example.com/b"],
+            ]
+            model["page"] = "https://example.com/model"
+        }
         let json: [String: Any] = [
             "formatVersion": 1,
             "license": "CC BY-SA 4.0",
             "attribution": "テスト",
-            "models": [[
-                "id": "test-v1",
-                "name": "テスト",
-                "summary": "テスト用",
-                "manifest": [
-                    "url": manifestURL.absoluteString,
-                    "bytes": manifest.count,
-                    "sha256": SHA256.hex(manifest),
-                ],
-                "weights": [
-                    "url": weightsURL.absoluteString,
-                    "bytes": wrongSize ? weights.count + 1 : weights.count,
-                    "sha256": weightsHash,
-                ],
-            ]],
+            "models": [model],
         ]
         let catalogURL = root.appendingPathComponent("catalog.json")
         try JSONSerialization.data(withJSONObject: json, options: .prettyPrinted).write(to: catalogURL)
@@ -93,6 +102,30 @@ final class TypoNormalizerFetcherTests: XCTestCase {
         XCTAssertEqual(progress.values.last, 1)
         // 同じものが入っているので入れ直しは要らない
         XCTAssertFalse(TypoNormalizerInstall.needsUpdate(to: model))
+    }
+
+    /// 学習元（sources）とライセンスは設置記録にも残す（オフラインでも 設定 > 情報 に出すため）。
+    /// sources の無い古いカタログ・記録もそのまま読める
+    func testInstallRecordsLicenseAndSources() async throws {
+        let files = sampleFiles()
+        let catalogURL = try makeCatalogFile(
+            manifest: files.manifest, weights: files.weights, withSources: true)
+        let catalog = try await TypoNormalizerFetcher.fetchCatalog(from: catalogURL)
+        let model = try XCTUnwrap(catalog.models.first)
+        XCTAssertEqual(model.sources?.map(\.name), ["コーパスA", "コーパスB"])
+
+        _ = try await TypoNormalizerFetcher.install(model, license: catalog.license(for: model))
+        let record = try XCTUnwrap(TypoNormalizerInstall.installedRecord())
+        XCTAssertEqual(record.license, "CC BY-SA 4.0")   // モデルに無いのでカタログ既定
+        XCTAssertEqual(record.sources?.last?.license, "MIT License")
+        XCTAssertEqual(record.page, "https://example.com/model")
+
+        // 項目を足す前の記録（id・name・sha256・installedAt だけ）
+        let old = #"{"id":"old-v1","name":"標準","sha256":"00","installedAt":"2026-09-22T00:00:00Z"}"#
+        try Data(old.utf8).write(to: TypoNormalizerInstall.recordURL)
+        let oldRecord = try XCTUnwrap(TypoNormalizerInstall.installedRecord())
+        XCTAssertEqual(oldRecord.id, "old-v1")
+        XCTAssertNil(oldRecord.sources)
     }
 
     /// チェックサムが合わなければ設置しない（壊れたモデルを絶対に置かない）
