@@ -10,6 +10,7 @@ import IrohaCore
 public final class GPT2Model: Module, TrainableLM {
 
     public static let architecture = "gpt2"
+    public static let defaultLoRATargets = ["attn_qkv", "attn_output", "ffn_up", "ffn_down"]
 
     /// 重み・バイアス付き LayerNorm（`MLXFast.layerNorm`）
     final class AffineLayerNorm: Module {
@@ -81,6 +82,7 @@ public final class GPT2Model: Module, TrainableLM {
     public let lora = LoRARegistry()
 
     public init(gguf: GGUFFile, lora: LoRASpec?) throws {
+        let lora = lora?.resolved(defaults: Self.defaultLoRATargets)
         guard gguf.architecture == Self.architecture else {
             throw TrainableLMError.unsupportedArchitecture(gguf.architecture ?? "(不明)")
         }
@@ -108,6 +110,11 @@ public final class GPT2Model: Module, TrainableLM {
         super.init()
     }
 
+    public func logits(_ batch: TrainingBatch) -> MLXArray {
+        self(batch.inputs)
+    }
+
+    /// トークン列 [B, T] → ロジット [B, T, V]
     public func callAsFunction(_ tokens: MLXArray) -> MLXArray {
         let length = tokens.dim(1)
         var h = tokenEmbedding[tokens] + positionEmbedding[0 ..< length]

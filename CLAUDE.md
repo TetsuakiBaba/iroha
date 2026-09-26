@@ -205,8 +205,13 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   `./macos/scripts/build-mlx-metallib.sh` が `.build/<config>/mlx-swift_Cmlx.bundle/default.metallib` を生成する
   （install.sh / release.yml が呼ぶ。**Metal Toolchain が必要**: `xcodebuild -downloadComponent MetalToolchain`）。
   テストは `swift test --filter IrohaTrainTests`（metallib が debug 側に無ければスキップ。
-  `./macos/scripts/build-mlx-metallib.sh debug` で作る）。MLX 実装と llama.cpp のロジット一致（`GPT2ParityTests`）を
-  崩さないこと。別アーキ（llama / T5）を足すときは `TrainableLM` の実装を追加して `TrainableModels.load` に登録する
+  `./macos/scripts/build-mlx-metallib.sh debug` で作る）。MLX 実装と llama.cpp のロジット一致（`GPT2ParityTests` / `T5ParityTests`）を
+  崩さないこと。対応アーキは gpt2（zenz）と t5（`T5Model`、training/t5/ の自作モデル。2026-09-26 追加）。
+  T5 はエンコーダ入力 = U+EE01 まで + `</s>`、デコーダ = 開始トークン + 出力 + `</s>` で学習する
+  （`TrainingDataBuilder.encodeEncoderDecoder`。`ZenzEngine` と `train_t5.py` と同じ形）。LoRA の対象層は
+  アーキごとの既定（`TrainableLM.defaultLoRATargets`、ブロック内の線形層すべて）。
+  `T5ParityTests` は training/t5/ の GGUF（リポジトリ外）が無ければスキップする。
+  別アーキ（llama など）を足すときは `TrainableLM` の実装を追加して `TrainableModels.load` に登録する
 - 追加学習の流れは 4 段（`TrainingRun`）: ① 記録をベースモデル（アダプタなし）で1件ずつ変換し直す
   （`TrainingScreener`）→ ② 間違いの一部（1/3・最大25件）と正解の一部（最大40件）を評価用に取り分ける
   （`TrainingDataBuilder.stratify`）→ ③ **残りの記録すべて**を訓練データにして学習 → ④ 評価用をアダプタなし／ありで

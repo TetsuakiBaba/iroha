@@ -4,7 +4,8 @@ import MLXNN
 import MLXOptimizers
 import IrohaCore
 
-/// LoRA の学習ループ。損失は出力部（U+EE01 の次から EOS まで）だけに掛ける（`training/train.py` と同じ）
+/// LoRA の学習ループ。損失は出力部（U+EE01 の次から EOS まで）だけに掛ける（`training/train.py` と同じ。
+/// エンコーダ・デコーダ型ではデコーダ側がちょうど出力部なので、`training/t5/train_t5.py` と同じになる）
 public final class LoRATrainer<Model: TrainableLM> {
 
     public let model: Model
@@ -19,8 +20,9 @@ public final class LoRATrainer<Model: TrainableLM> {
     }
 
     /// 1 バッチ分の配列。`inputs = tokens[:, :-1]`、`targets = tokens[:, 1:]`、
-    /// `mask[t] = 1` は `lossFrom ≤ t < len-1`（= 出力トークンと EOS を予測する位置）
-    static func makeBatch(_ examples: [TrainingExample], padToken: Int32) -> (inputs: MLXArray, targets: MLXArray, mask: MLXArray) {
+    /// `mask[t] = 1` は `lossFrom ≤ t < len-1`（= 出力トークンと EOS を予測する位置）。
+    /// 例が `source` を持つ（エンコーダ・デコーダ型）なら、それも右パディングして有効位置のマスクを付ける
+    static func makeBatch(_ examples: [TrainingExample], padToken: Int32) -> TrainingBatch {
         let length = examples.map(\.tokens.count).max() ?? 0
         var inputs: [Int32] = [], targets: [Int32] = [], mask: [Float] = []
         inputs.reserveCapacity(examples.count * (length - 1))
@@ -33,13 +35,25 @@ public final class LoRATrainer<Model: TrainableLM> {
             }
         }
         let shape = [examples.count, length - 1]
-        return (MLXArray(inputs, shape), MLXArray(targets, shape), MLXArray(mask, shape))
+        guard examples.contains(where: { $0.source != nil }) else {
+            return TrainingBatch(inputs: MLXArray(inputs, shape), targets: MLXArray(targets, shape), mask: MLXArray(mask, shape))
+        }
+        let sourceLength = examples.map { $0.source?.count ?? 0 }.max() ?? 0
+        var source: [Int32] = [], sourceMask: [Float] = []
+        for example in examples {
+            let tokens = example.source ?? []
+            source += tokens + [Int32](repeating: padToken, count: sourceLength - tokens.count)
+            sourceMask += [Float](repeating: 1, count: tokens.count) + [Float](repeating: 0, count: sourceLength - tokens.count)
+        }
+        let sourceShape = [examples.count, sourceLength]
+        return TrainingBatch(inputs: MLXArray(inputs, shape), targets: MLXArray(targets, shape), mask: MLXArray(mask, shape),
+                             source: MLXArray(source, sourceShape), sourceMask: MLXArray(sourceMask, sourceShape))
     }
 
-    static func maskedLoss(model: Model, inputs: MLXArray, targets: MLXArray, mask: MLXArray) -> MLXArray {
-        let logits = model(inputs)
-        let losses = crossEntropy(logits: logits, targets: targets, reduction: .none)
-        return (losses * mask).sum() / maximum(mask.sum(), MLXArray(1.0 as Float))
+    static func maskedLoss(model: Model, batch: TrainingBatch) -> MLXArray {
+        let logits = model.logits(batch)
+        let losses = crossEntropy(logits: logits, targets: batch.targets, reduction: .none)
+        return (losses * batch.mask).sum() / maximum(batch.mask.sum(), MLXArray(1.0 as Float))
     }
 
     /// 学習する。`progress` は各ステップの後に呼ばれ、`shouldStop` が真を返したら途中で止める。
@@ -53,7 +67,7 @@ public final class LoRATrainer<Model: TrainableLM> {
 
         let optimizer = AdamW(learningRate: config.learningRate, weightDecay: 0)
         let lossAndGrad = valueAndGrad(model: model) { (model: Model, arrays: [MLXArray]) -> [MLXArray] in
-            [Self.maskedLoss(model: model, inputs: arrays[0], targets: arrays[1], mask: arrays[2])]
+            [Self.maskedLoss(model: model, batch: TrainingBatch(arrays: arrays))]
         }
 
         // 似た長さをまとめてパディングを減らす（バッチ内は長さ順、バッチの順序は毎エポックシャッフル）
@@ -71,8 +85,7 @@ public final class LoRATrainer<Model: TrainableLM> {
             var epochLoss: Float = 0
             for batch in batches.shuffled(using: &generator) {
                 if shouldStop() { return lastEpochLoss }
-                let (inputs, targets, mask) = Self.makeBatch(batch, padToken: padToken)
-                let (values, gradients) = lossAndGrad(model, [inputs, targets, mask])
+                let (values, gradients) = lossAndGrad(model, Self.makeBatch(batch, padToken: padToken).arrays)
                 optimizer.update(model: model, gradients: gradients)
                 eval(model, optimizer)
                 let loss = values[0].item(Float.self)

@@ -80,8 +80,12 @@ public enum TrainingRun {
         let config = options.config ?? TrainingConfig()
         let split = TrainingDataBuilder.stratify(entries: entries, screening: screening)
         let tokenizer = try VocabTokenizer(modelPath: options.basePath)
-        let examples = try TrainingDataBuilder.encode(lines: split.trainLines, tokenize: { tokenizer.tokenize($0) },
-                                                      eos: tokenizer.terminator, outputTag: tokenizer.outputTagTokens)
+        let examples = tokenizer.isEncoderDecoder
+            ? try TrainingDataBuilder.encodeEncoderDecoder(
+                lines: split.trainLines, tokenize: { tokenizer.tokenize($0, addSpecial: false) }, eos: tokenizer.eos,
+                terminator: tokenizer.terminator, decoderStart: tokenizer.decoderStartToken)
+            : try TrainingDataBuilder.encode(lines: split.trainLines, tokenize: { tokenizer.tokenize($0) },
+                                             eos: tokenizer.terminator, outputTag: tokenizer.outputTagTokens)
         let summary = TrainingDataSummary(records: entries.count,
                                           screened: screening.mistakes.count + screening.correct.count,
                                           mistakes: screening.mistakes.count, trainLines: examples.count,

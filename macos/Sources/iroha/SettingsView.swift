@@ -1170,7 +1170,7 @@ private struct TrainingSection: View {
         }
         if let info = coordinator.info, !info.supported {
             Text("使用中のモデル（\(info.architecture.isEmpty ? "不明" : info.architecture)）は追加学習に対応していません"
-                + "（対応: gpt2 = zenz）。")
+                + "（対応: gpt2 = zenz、t5 = iroha の自作モデル）。")
                 .font(.caption)
                 .foregroundStyle(.orange)
         }

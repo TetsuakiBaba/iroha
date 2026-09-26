@@ -13,8 +13,9 @@ public struct TrainingConfig: Sendable, Codable, Equatable {
     public var learningRate: Float = 1e-4
     public var epochs = 3
     public var batchSize = 16
-    /// LoRA を掛けるテンソル名の末尾（`blk.N.<名前>.weight`）。出力層・埋め込みは対象外
-    public var targets = ["attn_qkv", "attn_output", "ffn_up", "ffn_down"]
+    /// LoRA を掛けるテンソル名の末尾（`blk.N.<名前>.weight`）。出力層・埋め込みは対象外。
+    /// nil ならアーキテクチャごとの既定（ブロック内の線形層すべて。`TrainableLM.defaultLoRATargets`）
+    public var targets: [String]? = nil
 
     public init() {}
 }
@@ -22,16 +23,21 @@ public struct TrainingConfig: Sendable, Codable, Equatable {
 /// 学習 1 例（トークン化済み）
 public struct TrainingExample: Sendable, Equatable {
     public let line: String
-    /// `trainingLine` のトークン列 + 終端トークン
+    /// デコーダに流すトークン列。デコーダ専用モデルは `trainingLine` のトークン列 + 終端トークン、
+    /// エンコーダ・デコーダ型は 開始トークン + U+EE01 の後ろ + 終端トークン
     public let tokens: [Int32]
-    /// 損失を掛け始める位置。`targets[t] = tokens[t+1]` が U+EE01 の次のトークンになる t
-    /// （= U+EE01 を表すトークン列の最後のインデックス）。`training/train.py` の `-100` マスクと同じ
+    /// 損失を掛け始める位置。`targets[t] = tokens[t+1]` が出力の最初のトークンになる t。
+    /// デコーダ専用モデルは U+EE01 を表すトークン列の最後のインデックス（`training/train.py` の `-100` マスクと同じ）、
+    /// エンコーダ・デコーダ型は 0（開始トークンの次から全部が出力）
     public let lossFrom: Int
+    /// エンコーダの入力（U+EE01 まで + 終端トークン）。デコーダ専用モデルは nil
+    public let source: [Int32]?
 
-    public init(line: String, tokens: [Int32], lossFrom: Int) {
+    public init(line: String, tokens: [Int32], lossFrom: Int, source: [Int32]? = nil) {
         self.line = line
         self.tokens = tokens
         self.lossFrom = lossFrom
+        self.source = source
     }
 }
 
@@ -144,6 +150,28 @@ public enum TrainingDataBuilder {
             // タグの直後に終端しか無い（出力が空）例は学習に入れない
             guard tagEnd + 2 < tokens.count else { continue }
             examples.append(TrainingExample(line: line, tokens: tokens, lossFrom: tagEnd))
+        }
+        guard !examples.isEmpty else { throw TrainingDataError.noExamples }
+        return examples
+    }
+
+    /// エンコーダ・デコーダ型（T5）用。行を最後の U+EE01 で切り、エンコーダ入力 = U+EE01 まで（タグ込み）+ `eos`、
+    /// デコーダ = `decoderStart` + U+EE01 の後ろ + `terminator` にする。`training/t5/train_t5.py` と
+    /// `ZenzEngine.tokenizePrompt` の形に合わせる（前半と後半は別々にトークン化する）
+    public static func encodeEncoderDecoder(lines: [String], tokenize: (String) -> [Int32], eos: Int32,
+                                            terminator: Int32, decoderStart: Int32) throws -> [TrainingExample]
+    {
+        var examples: [TrainingExample] = []
+        for line in lines {
+            guard let tag = line.range(of: "\u{EE01}", options: .backwards) else {
+                throw TrainingDataError.outputTagMissing(line)
+            }
+            let output = tokenize(String(line[tag.upperBound...]))
+            // 出力が空の例は学習に入れない
+            guard !output.isEmpty else { continue }
+            let source = tokenize(String(line[..<tag.upperBound])) + [eos]
+            examples.append(TrainingExample(line: line, tokens: [decoderStart] + output + [terminator], lossFrom: 0,
+                                            source: source))
         }
         guard !examples.isEmpty else { throw TrainingDataError.noExamples }
         return examples

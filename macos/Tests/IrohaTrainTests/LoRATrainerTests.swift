@@ -13,11 +13,25 @@ final class LoRATrainerTests: XCTestCase {
     func testMakeBatch() {
         let a = TrainingExample(line: "a", tokens: [10, 11, 99, 20, 21, 2], lossFrom: 2)  // 99 = タグ
         let b = TrainingExample(line: "b", tokens: [10, 99, 30, 2], lossFrom: 1)
-        let (inputs, targets, mask) = LoRATrainer<GPT2Model>.makeBatch([a, b], padToken: 2)
-        XCTAssertEqual(inputs.shape, [2, 5])
-        XCTAssertEqual(inputs.asArray(Int32.self), [10, 11, 99, 20, 21, 10, 99, 30, 2, 2])
-        XCTAssertEqual(targets.asArray(Int32.self), [11, 99, 20, 21, 2, 99, 30, 2, 2, 2])
-        XCTAssertEqual(mask.asArray(Float.self), [0, 0, 1, 1, 1, 0, 1, 1, 0, 0])
+        let batch = LoRATrainer<GPT2Model>.makeBatch([a, b], padToken: 2)
+        XCTAssertEqual(batch.inputs.shape, [2, 5])
+        XCTAssertEqual(batch.inputs.asArray(Int32.self), [10, 11, 99, 20, 21, 10, 99, 30, 2, 2])
+        XCTAssertEqual(batch.targets.asArray(Int32.self), [11, 99, 20, 21, 2, 99, 30, 2, 2, 2])
+        XCTAssertEqual(batch.mask.asArray(Float.self), [0, 0, 1, 1, 1, 0, 1, 1, 0, 0])
+        XCTAssertNil(batch.source)
+    }
+
+    /// エンコーダ・デコーダ型: デコーダ側は開始トークンの次から全部が損失の対象、エンコーダ入力も右パディングされる
+    func testMakeBatchEncoderDecoder() {
+        let a = TrainingExample(line: "a", tokens: [0, 20, 21, 1], lossFrom: 0, source: [5, 6, 7, 1])
+        let b = TrainingExample(line: "b", tokens: [0, 30, 1], lossFrom: 0, source: [8, 1])
+        let batch = LoRATrainer<T5Model>.makeBatch([a, b], padToken: 1)
+        XCTAssertEqual(batch.inputs.asArray(Int32.self), [0, 20, 21, 0, 30, 1])
+        XCTAssertEqual(batch.targets.asArray(Int32.self), [20, 21, 1, 30, 1, 1])
+        XCTAssertEqual(batch.mask.asArray(Float.self), [1, 1, 1, 1, 1, 0])
+        XCTAssertEqual(batch.source?.shape, [2, 4])
+        XCTAssertEqual(batch.source?.asArray(Int32.self), [5, 6, 7, 1, 8, 1, 1, 1])
+        XCTAssertEqual(batch.sourceMask?.asArray(Float.self), [1, 1, 1, 1, 1, 1, 0, 0])
     }
 
     /// 小さな合成データで数ステップ回すと損失が下がり、書き出したアダプタを llama.cpp が読める。

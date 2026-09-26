@@ -38,6 +38,22 @@ public final class VocabTokenizer: @unchecked Sendable {
         llama_model_free(model)
     }
 
+    /// エンコーダ・デコーダ型（T5系）か。`ZenzEngine` と同じ判定
+    public var isEncoderDecoder: Bool { llama_model_has_encoder(model) && llama_model_has_decoder(model) }
+
+    /// デコーダの開始トークン（エンコーダ・デコーダ型）。無ければ BOS（`ZenzEngine` と同じ）。
+    /// 語彙だけの読み込みではハイパーパラメータが入らず `llama_model_decoder_start_token` が -1 を返すので、
+    /// メタデータ（`<arch>.decoder_start_token_id`）を直接読む
+    public var decoderStartToken: Int32 {
+        var buffer = [CChar](repeating: 0, count: 32)
+        if llama_model_meta_val_str(model, "\(architecture).decoder_start_token_id", &buffer, buffer.count) > 0,
+           let token = Int32(String(cString: buffer)) {
+            return token
+        }
+        let token = llama_model_decoder_start_token(model)
+        return token == LLAMA_TOKEN_NULL ? bos : token
+    }
+
     public var vocabSize: Int { Int(llama_vocab_n_tokens(vocab)) }
     public var eos: Int32 { llama_vocab_eos(vocab) }
     public var bos: Int32 { llama_vocab_bos(vocab) }
