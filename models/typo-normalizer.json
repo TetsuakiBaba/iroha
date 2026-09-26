@@ -1,14 +1,14 @@
 {
   "formatVersion": 1,
   "license": "CC BY-SA 4.0",
-  "attribution": "zenz-v2.5-dataset（Keita Miwa、https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset）の train_wikipedia.jsonl（Wikipedia 日本語版、CC BY-SA 4.0）。読みを付け直すなど加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_kaken・ja/ja_e-gov・ja/ja_patent・ja/ja_aozorabunko、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nRealPersonaChat（nu-dialogue、https://github.com/nu-dialogue/real-persona-chat）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\nMulti-Relational Multi-Party Chat Corpus（nu-dialogue、https://github.com/nu-dialogue/multi-relational-multi-party-chat-corpus）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\nJMRD（京都大学 黒橋・褚・村脇研究室、https://github.com/ku-nlp/JMRD）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\n感想付きニュース雑談対話コーパス（Copyright (c) 2023 Fuka Narita、https://github.com/fukanarita/newschat-with-impression）、MIT License。発話の本文だけを取り出し加工して作成\nJ-CRe3（理化学研究所 ほか、https://github.com/riken-grp/J-CRe3）、CC BY-SA 4.0。書き起こしの表層だけを取り出し加工して作成\nおーぷん2ちゃんねる対話コーパス（稲葉通将、https://github.com/1never/open2ch-dialogue-corpus）、Apache License 2.0。投稿の本文を選別・加工して作成",
+  "attribution": "zenz-v2.5-dataset（Keita Miwa、https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset）の train_wikipedia.jsonl（Wikipedia 日本語版、CC BY-SA 4.0）。読みを付け直すなど加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_kaken（KAKEN の研究課題の概要）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_e-gov（e-Gov 法令）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_patent（特許公報）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_aozorabunko（青空文庫）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nRealPersonaChat（nu-dialogue、https://github.com/nu-dialogue/real-persona-chat）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\nMulti-Relational Multi-Party Chat Corpus（nu-dialogue、https://github.com/nu-dialogue/multi-relational-multi-party-chat-corpus）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\nJMRD（京都大学 黒橋・褚・村脇研究室、https://github.com/ku-nlp/JMRD）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\n感想付きニュース雑談対話コーパス（Copyright (c) 2023 Fuka Narita、https://github.com/fukanarita/newschat-with-impression）、MIT License。発話の本文だけを取り出し加工して作成\nJ-CRe3（理化学研究所 ほか、https://github.com/riken-grp/J-CRe3）、CC BY-SA 4.0。書き起こしの表層だけを取り出し加工して作成\nおーぷん2ちゃんねる対話コーパス（稲葉通将、https://github.com/1never/open2ch-dialogue-corpus）、Apache License 2.0。投稿の本文を選別・加工して作成",
   "models": [
     {
       "id": "small-v3",
       "name": "標準",
       "summary": "3.2M パラメータ・約6MB。CPU 1スレッドで平均4ms",
       "license": "CC BY-SA 4.0",
-      "attribution": "zenz-v2.5-dataset（Keita Miwa、https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset）の train_wikipedia.jsonl（Wikipedia 日本語版、CC BY-SA 4.0）。読みを付け直すなど加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_kaken・ja/ja_e-gov・ja/ja_patent・ja/ja_aozorabunko、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nRealPersonaChat（nu-dialogue、https://github.com/nu-dialogue/real-persona-chat）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\nMulti-Relational Multi-Party Chat Corpus（nu-dialogue、https://github.com/nu-dialogue/multi-relational-multi-party-chat-corpus）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\nJMRD（京都大学 黒橋・褚・村脇研究室、https://github.com/ku-nlp/JMRD）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\n感想付きニュース雑談対話コーパス（Copyright (c) 2023 Fuka Narita、https://github.com/fukanarita/newschat-with-impression）、MIT License。発話の本文だけを取り出し加工して作成\nJ-CRe3（理化学研究所 ほか、https://github.com/riken-grp/J-CRe3）、CC BY-SA 4.0。書き起こしの表層だけを取り出し加工して作成\nおーぷん2ちゃんねる対話コーパス（稲葉通将、https://github.com/1never/open2ch-dialogue-corpus）、Apache License 2.0。投稿の本文を選別・加工して作成",
+      "attribution": "zenz-v2.5-dataset（Keita Miwa、https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset）の train_wikipedia.jsonl（Wikipedia 日本語版、CC BY-SA 4.0）。読みを付け直すなど加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_kaken（KAKEN の研究課題の概要）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_e-gov（e-Gov 法令）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_patent（特許公報）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_aozorabunko（青空文庫）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nRealPersonaChat（nu-dialogue、https://github.com/nu-dialogue/real-persona-chat）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\nMulti-Relational Multi-Party Chat Corpus（nu-dialogue、https://github.com/nu-dialogue/multi-relational-multi-party-chat-corpus）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\nJMRD（京都大学 黒橋・褚・村脇研究室、https://github.com/ku-nlp/JMRD）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\n感想付きニュース雑談対話コーパス（Copyright (c) 2023 Fuka Narita、https://github.com/fukanarita/newschat-with-impression）、MIT License。発話の本文だけを取り出し加工して作成\nJ-CRe3（理化学研究所 ほか、https://github.com/riken-grp/J-CRe3）、CC BY-SA 4.0。書き起こしの表層だけを取り出し加工して作成\nおーぷん2ちゃんねる対話コーパス（稲葉通将、https://github.com/1never/open2ch-dialogue-corpus）、Apache License 2.0。投稿の本文を選別・加工して作成",
       "sources": [
         {
           "name": "zenz-v2.5-dataset（train_wikipedia.jsonl、Wikipedia 日本語版）",
@@ -17,10 +17,28 @@
           "url": "https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset"
         },
         {
-          "name": "LLM-jp Corpus v4（ja_kaken・ja_e-gov・ja_patent・ja_aozorabunko）",
+          "name": "LLM-jp Corpus v4 / ja_kaken（KAKEN の研究課題の概要）",
           "holder": "LLM-jp コーパス構築 WG",
           "license": "CC BY 4.0",
-          "url": "https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4"
+          "url": "https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4/-/tree/main/ja/ja_kaken"
+        },
+        {
+          "name": "LLM-jp Corpus v4 / ja_e-gov（e-Gov 法令）",
+          "holder": "LLM-jp コーパス構築 WG",
+          "license": "CC BY 4.0",
+          "url": "https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4/-/tree/main/ja/ja_e-gov"
+        },
+        {
+          "name": "LLM-jp Corpus v4 / ja_patent（特許公報）",
+          "holder": "LLM-jp コーパス構築 WG",
+          "license": "CC BY 4.0",
+          "url": "https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4/-/tree/main/ja/ja_patent"
+        },
+        {
+          "name": "LLM-jp Corpus v4 / ja_aozorabunko（青空文庫）",
+          "holder": "LLM-jp コーパス構築 WG",
+          "license": "CC BY 4.0",
+          "url": "https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4/-/tree/main/ja/ja_aozorabunko"
         },
         {
           "name": "RealPersonaChat",
