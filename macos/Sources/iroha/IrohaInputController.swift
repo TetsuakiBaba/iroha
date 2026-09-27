@@ -152,6 +152,8 @@ final class IrohaInputController: IMKInputController {
     }
     /// 小窓に出している「何をどう直したか」。出ている間は予測を出さない（同じ小窓を奪い合うため）
     private var typoFeedback: NSAttributedString?
+    /// 今の未確定文字列の長さ（UTF-16）。デバッグ表示の窓をその末尾に合わせる
+    private var developerOverlayMarkedLength = 0
     /// 小窓を出しっぱなしにしないための保険
     private var typoFeedbackTask: Task<Void, Never>?
     /// 小窓のヒント。Backspace の記号（U+232B）はシステムフォントに入っている
@@ -455,6 +457,7 @@ final class IrohaInputController: IMKInputController {
 
     override func deactivateServer(_ sender: Any!) {
         commitCurrent(client: sender as? IMKTextInput, suggestsCompletion: false)
+        DeveloperOverlay.shared.hide()
         super.deactivateServer(sender)
     }
 
@@ -1086,8 +1089,10 @@ final class IrohaInputController: IMKInputController {
                 if let cachedConversion {
                     full = cachedConversion
                 } else {
-                    full = try await Self.engine.convert(
-                        reading: reading, context: context, candidateCount: 1).first ?? reading
+                    full = try await Self.measureConversion(.segmenting, reading: reading, controller: self) {
+                        try await Self.engine.convert(
+                            reading: reading, context: context, candidateCount: 1).first ?? reading
+                    }
                 }
                 let aligned = ReadingAligner.segmentReading(reading, conversion: full)
                 guard !Task.isCancelled else { return }
@@ -1218,8 +1223,10 @@ final class IrohaInputController: IMKInputController {
                         && self.composer.text == reading && self.composer.pending.isEmpty
                 }
                 guard stillValid,
-                      let correction = try await normalizer.correction(
-                        for: reading, threshold: threshold),
+                      let correction = try await Self.measureTypoCorrection(
+                        .idle, reading: reading, controller: self, operation: {
+                            try await normalizer.correction(for: reading, threshold: threshold)
+                        }),
                       // 「読みの末尾に足しただけ」は訂正ではなく続きの補完。打ちかけの読みは
                       // 常に終わりが足りなく見えるので、入力中は必ず捨てる
                       !correction.isTrailingInsertionOnly
@@ -1355,9 +1362,11 @@ final class IrohaInputController: IMKInputController {
         guard TypoNormalizerSettings.isEnabled, TypoNormalizerSettings.accepts(reading: reading),
               let normalizer = Self.typoNormalizer() else { return }
         let threshold = TypoNormalizerSettings.threshold
-        typoCorrectionTask = Task.detached(priority: .userInitiated) {
+        typoCorrectionTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                return try await normalizer.correction(for: reading, threshold: threshold)
+                return try await Self.measureTypoCorrection(.conversion, reading: reading, controller: self) {
+                    try await normalizer.correction(for: reading, threshold: threshold)
+                }
             } catch {
                 NSLog("iroha: 打ち間違い訂正エラー: \(error)")
                 return nil
@@ -1464,8 +1473,9 @@ final class IrohaInputController: IMKInputController {
         Task { [weak self] in
             guard let self else { return }
             do {
-                var candidates = try await Self.engine.convert(
-                    reading: reading, context: context, candidateCount: count)
+                var candidates = try await Self.measureConversion(.candidates, reading: reading, controller: self) {
+                    try await Self.engine.convert(reading: reading, context: context, candidateCount: count)
+                }
                 // 今表示している変換結果を先頭に置く（エンジンの並びが確率順で変わっても、
                 // 候補ウィンドウを開いた瞬間に表示が変わらないように）
                 let current = await MainActor.run { self.segments.indices.contains(index) ? self.segments[index].result : "" }
@@ -1554,13 +1564,19 @@ final class IrohaInputController: IMKInputController {
         conversionTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let currentResult = try await Self.engine.convert(
-                    reading: newCurrentReading, context: context, candidateCount: 1).first ?? newCurrentReading
-                var remainderSegments: [BunsetsuSegment] = []
-                if !newRemainderReading.isEmpty {
-                    let remainderFull = try await Self.engine.convert(
-                        reading: newRemainderReading, context: context + currentResult,
+                let (currentResult, remainderFull) = try await Self.measureConversion(
+                    .resegmenting, reading: newCurrentReading + newRemainderReading, controller: self
+                ) {
+                    let current = try await Self.engine.convert(
+                        reading: newCurrentReading, context: context, candidateCount: 1).first ?? newCurrentReading
+                    guard !newRemainderReading.isEmpty else { return (current, nil as String?) }
+                    let remainder = try await Self.engine.convert(
+                        reading: newRemainderReading, context: context + current,
                         candidateCount: 1).first ?? newRemainderReading
+                    return (current, remainder)
+                }
+                var remainderSegments: [BunsetsuSegment] = []
+                if let remainderFull {
                     remainderSegments = ReadingAligner.segmentReading(
                         newRemainderReading, conversion: remainderFull
                     ).map { BunsetsuSegment(reading: $0.reading, result: $0.conversion, candidates: nil) }
@@ -1683,6 +1699,8 @@ final class IrohaInputController: IMKInputController {
             selectionRange: NSRange(location: selectionLocation, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )
+        developerOverlayMarkedLength = attributed.length
+        followDeveloperOverlay(client: client)
     }
 
     private func showPanel(with candidates: [String]) {
@@ -1722,8 +1740,9 @@ final class IrohaInputController: IMKInputController {
         conversionTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let candidates = try await Self.engine.convert(
-                    reading: reading, context: context, candidateCount: 1)
+                let candidates = try await Self.measureConversion(.live, reading: reading, controller: self) {
+                    try await Self.engine.convert(reading: reading, context: context, candidateCount: 1)
+                }
                 guard !Task.isCancelled, let best = candidates.first else { return }
                 await MainActor.run {
                     self.lastConversion = (reading, best)
@@ -1790,6 +1809,8 @@ final class IrohaInputController: IMKInputController {
            let rect = caretRect(client: client, markedTextLength: display.utf16.count) {
             CaretPanel.shared.show(typoFeedback, hint: Self.typoFeedbackHint, near: rect)
         }
+        developerOverlayMarkedLength = display.utf16.count
+        followDeveloperOverlay(client: client)
     }
 
     /// 現在の表示内容（ライブ変換結果 or かな or 文節列）をそのまま確定する。
@@ -1994,6 +2015,7 @@ final class IrohaInputController: IMKInputController {
             selectionRange: NSRange(location: 0, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )
+        developerOverlayMarkedLength = 0
         recentCommitted = String((recentCommitted + text).suffix(LeftContext.maxLength))
         documentContext = nil
         if suggestsCompletion { scheduleCompletion(client: client, committed: text) }
@@ -2129,6 +2151,83 @@ final class IrohaInputController: IMKInputController {
         _ = client.attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)
         guard rect.height > 0 || rect.origin != .zero else { return nil }
         return NSRect(x: rect.minX, y: rect.minY, width: 0, height: rect.height)
+    }
+
+    // MARK: - デバッグ表示（推論時間）
+
+    /// かな漢字変換の要求 1 回を測り、デバッグ表示に出す（設定 > 情報 > デバッグ。OFF なら測らない）。
+    ///
+    /// 「全体」は要求してから結果が返るまで。「NN」はそのうち `ZenzEngine` が計算していた時間の合計で、
+    /// 差は辞書ラティス・学習・ユーザ辞書などの処理と、先に走っている推論（actor）の待ち時間になる。
+    /// 次の入力でタスクが取り消された要求は時間を出さず、次に出す行に取り消しの数として添える
+    private static func measureConversion<T>(
+        _ kind: DeveloperOverlay.ConversionKind, reading: String, controller: IrohaInputController?,
+        _ operation: () async throws -> T
+    ) async throws -> T {
+        guard DeveloperOverlaySettings.isEnabled else { return try await operation() }
+        let timer = InferenceTimer()
+        let start = ContinuousClock.now
+        let result: T
+        do {
+            result = try await InferenceTimer.$current.withValue(timer) { try await operation() }
+        } catch {
+            if Task.isCancelled || error is CancellationError {
+                await MainActor.run { DeveloperOverlay.shared.noteCancelledConversion() }
+            }
+            throw error
+        }
+        let total = start.duration(to: .now)
+        let cancelled = Task.isCancelled
+        let snapshot = timer.snapshot
+        await MainActor.run {
+            if cancelled {
+                DeveloperOverlay.shared.noteCancelledConversion()
+            } else {
+                DeveloperOverlay.shared.reportConversion(
+                    kind, total: total, timer: snapshot, readingLength: reading.count,
+                    near: controller?.developerOverlayCaretRect())
+            }
+        }
+        return result
+    }
+
+    /// 打ち間違いの訂正 1 回を測り、デバッグ表示に出す（OFF なら測らない）。
+    /// 訂正は途中で止められない計算なので、取り消しは数えない
+    private static func measureTypoCorrection(
+        _ trigger: DeveloperOverlay.TypoTrigger, reading: String, controller: IrohaInputController?,
+        operation: () async throws -> TypoCorrection?
+    ) async throws -> TypoCorrection? {
+        guard DeveloperOverlaySettings.isEnabled else { return try await operation() }
+        let timer = InferenceTimer()
+        let start = ContinuousClock.now
+        let correction = try await InferenceTimer.$current.withValue(timer) { try await operation() }
+        let total = start.duration(to: .now)
+        let snapshot = timer.snapshot
+        let outcome: DeveloperOverlay.TypoOutcome
+        if let correction {
+            // 入力の休止で走らせたときは、末尾に足しただけの訂正を呼び出し側で捨てる
+            outcome = trigger == .idle && correction.isTrailingInsertionOnly ? .trailingInsertion : .corrected
+        } else {
+            outcome = .none
+        }
+        await MainActor.run {
+            DeveloperOverlay.shared.reportTypo(
+                trigger, total: total, timer: snapshot, readingLength: reading.count, outcome: outcome,
+                near: controller?.developerOverlayCaretRect())
+        }
+        return correction
+    }
+
+    /// 未確定文字列の末尾（なければカーソル位置）
+    private func developerOverlayCaretRect() -> NSRect? {
+        guard let client = client() else { return nil }
+        return caretRect(client: client, markedTextLength: developerOverlayMarkedLength)
+    }
+
+    private func followDeveloperOverlay(client: IMKTextInput) {
+        // 窓が出ていなければカーソル位置を問い合わせない（毎打鍵でアプリに聞くことになる）
+        guard DeveloperOverlay.shared.isVisible else { return }
+        DeveloperOverlay.shared.follow(caretRect(client: client, markedTextLength: developerOverlayMarkedLength))
     }
 
     // MARK: - インライン補完（確定後）

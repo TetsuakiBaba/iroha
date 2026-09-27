@@ -102,6 +102,11 @@ final class CaretPanel {
         panel.orderFrontRegardless()
     }
 
+    /// 出ているときの位置（デバッグ表示の窓が重ならないように使う）
+    var visibleFrame: NSRect? {
+        panel.isVisible ? panel.frame : nil
+    }
+
     func hide() {
         guard panel.isVisible else { return }
         panel.orderOut(nil)

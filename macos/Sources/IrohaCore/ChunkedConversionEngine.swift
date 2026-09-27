@@ -116,7 +116,10 @@ public actor ChunkedConversionEngine: ConversionEngine {
 
     private func convertCached(_ reading: String, context: String) async throws -> String {
         let key = CacheKey(reading: reading, context: context)
-        if let cached = cache[key] { return cached }
+        if let cached = cache[key] {
+            InferenceTimer.current?.note(.cache)
+            return cached
+        }
         let converted = try await base.convert(reading: reading, context: context, candidateCount: 1).first ?? reading
         if cache[key] == nil {
             cacheOrder.append(key)

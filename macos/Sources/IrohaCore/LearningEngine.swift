@@ -32,7 +32,10 @@ public final class LearningEngine: ConversionEngine {
         }
 
         // ライブ変換・第一候補は学習結果をそのまま返す（エンジンを呼ばない）
-        if candidateCount <= 1 { return [learned] }
+        if candidateCount <= 1 {
+            InferenceTimer.current?.note(.learning)
+            return [learned]
+        }
 
         // 候補ウィンドウ: 学習結果を先頭に、続けてエンジンの候補
         var results = [learned]

@@ -41,7 +41,10 @@ public final class UserDictionaryEngine: ConversionEngine {
             guard !dictionary.isEmptyForLiveConversion else {
                 return try await base.convert(reading: reading, context: context, candidateCount: 1)
             }
-            if let word = dictionary.liveWords(forReading: reading).first { return [word] }
+            if let word = dictionary.liveWords(forReading: reading).first {
+                InferenceTimer.current?.note(.userDictionary)
+                return [word]
+            }
             let chunks = dictionary.split(reading, forLiveConversion: true)
             guard Self.hasWordChunk(chunks) else {
                 return try await base.convert(reading: reading, context: context, candidateCount: 1)

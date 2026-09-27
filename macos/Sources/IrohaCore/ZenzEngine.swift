@@ -88,7 +88,12 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         guard let runtime else {
             throw ConversionError.modelLoadFailed("内部状態が不正です")
         }
+        return try InferenceTimer.measureNeuralNetwork {
+            try convert(runtime: runtime, reading: reading, leftContext: leftContext, candidateCount: candidateCount)
+        }
+    }
 
+    private func convert(runtime: Runtime, reading: String, leftContext: String, candidateCount: Int) throws -> [String] {
         let prompt = Self.buildPrompt(reading: reading, leftContext: leftContext, maxContextLength: maxContextLength)
         let promptTokens = try tokenizePrompt(prompt, runtime: runtime)
 
@@ -423,6 +428,12 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
     public func score(candidates: [String], reading: String, context leftContext: String) async throws -> [Float] {
         try ensureLoaded()
         guard let runtime, !candidates.isEmpty else { return [] }
+        return try InferenceTimer.measureNeuralNetwork {
+            try score(runtime: runtime, candidates: candidates, reading: reading, leftContext: leftContext)
+        }
+    }
+
+    private func score(runtime: Runtime, candidates: [String], reading: String, leftContext: String) throws -> [Float] {
         let prompt = Self.buildPrompt(reading: reading, leftContext: leftContext, maxContextLength: maxContextLength)
         let promptTokens = try tokenizePrompt(prompt, runtime: runtime)
         let tokenized = try candidates.map { try tokenize($0, addSpecial: false) }
@@ -591,6 +602,10 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
 
     private func ensureLoaded() throws {
         guard runtime == nil else { return }
+        try InferenceTimer.measureModelLoad { try loadRuntime() }
+    }
+
+    private func loadRuntime() throws {
         guard FileManager.default.fileExists(atPath: modelPath) else {
             throw ConversionError.modelNotFound(modelPath)
         }

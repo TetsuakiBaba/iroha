@@ -98,7 +98,7 @@ public actor TypoNormalizer {
         if let runtime { return runtime }
         if let loadFailure { throw loadFailure }
         do {
-            let created = try Runtime(directory: directory)
+            let created = try InferenceTimer.measureModelLoad { try Runtime(directory: directory) }
             runtime = created
             return created
         } catch {
@@ -113,12 +113,15 @@ public actor TypoNormalizer {
     ) throws -> TypoCorrection? {
         let runtime = try load()
         guard runtime.supports(reading: reading) else { return nil }
-        guard let corrected = runtime.generate(reading), corrected != reading else { return nil }
-        // どちらも同じ入力に対する完全な系列なので直接比べられる（SWIFT-PORT.md §4）
-        let margin = runtime.logProbability(of: corrected, given: reading)
-            - runtime.logProbability(of: reading, given: reading)
-        guard margin > threshold else { return nil }
-        return TypoCorrection(reading: reading, corrected: corrected, margin: margin)
+        let scored: (corrected: String, margin: Double)? = InferenceTimer.measureNeuralNetwork {
+            guard let corrected = runtime.generate(reading), corrected != reading else { return nil }
+            // どちらも同じ入力に対する完全な系列なので直接比べられる（SWIFT-PORT.md §4）
+            let margin = runtime.logProbability(of: corrected, given: reading)
+                - runtime.logProbability(of: reading, given: reading)
+            return (corrected, margin)
+        }
+        guard let scored, scored.margin > threshold else { return nil }
+        return TypoCorrection(reading: reading, corrected: scored.corrected, margin: scored.margin)
     }
 
     /// しきい値を通さない生の生成結果（検証・実験用）

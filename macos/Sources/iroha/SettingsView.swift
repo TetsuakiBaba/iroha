@@ -1577,6 +1577,7 @@ private struct DataDirectorySection: View {
 
 private struct AboutSettingsTab: View {
     @AppStorage("autoUpdateCheck") private var autoUpdateCheck = true
+    @AppStorage(DeveloperOverlaySettings.enabledKey) private var developerOverlay = false
     @State private var showingUninstallConfirm = false
 
     var body: some View {
@@ -1635,6 +1636,16 @@ private struct AboutSettingsTab: View {
                     note: "アプリアイコン・メニューバーアイコンの書体",
                     url: "https://fonts.google.com/specimen/Tsukimi+Rounded")
                 TypoNormalizerLicenseRows()
+            }
+
+            Section("デバッグ") {
+                Toggle("推論にかかった時間をカーソルの右上に表示する", isOn: $developerOverlay)
+                Text("開発者向けの表示です。かな漢字変換と打ち間違いの訂正を実行するたびに、かかった時間を出します。"
+                    + "「全体」は変換を頼んでから結果が返るまで、「NN」はそのうちニューラルネットの計算だけの時間です"
+                    + "（差は辞書・学習の処理と、先に走っている推論の待ち時間）。"
+                    + "「取り消し」は、前の表示のあと次の入力で打ち切った変換の数です。この設定は他のMacと同期しません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("アンインストール") {
