@@ -272,3 +272,14 @@ def test_default_mora_duplication_doubles_particles():
         doubled = next(c for i, c in enumerate(s["input"]) if s["input"][:i + 1] + s["input"][i + 2:] ==
                        "わたしはあしたのかいぎにでます" and s["input"][i] == s["input"][i + 1])
         assert doubled in allowed
+
+
+def test_reject_i_nuki_can_be_turned_off_for_comparison():
+    import random
+    from iroha.config import load_config
+    from iroha.typo.build import TypoGenerator, is_i_nuki_pair
+    g = TypoGenerator(load_config(overrides=["typo.reject_i_nuki=false"]))
+    rng = random.Random(0)
+    made = sum(is_i_nuki_pair((g.generate("ずっとまっていたよ", rng) or {"input": ""})["input"], "ずっとまっていたよ")
+               for _ in range(5000))
+    assert made > 0

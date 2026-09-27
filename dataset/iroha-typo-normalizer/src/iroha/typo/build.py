@@ -152,6 +152,8 @@ class TypoGenerator:
         dist = typo.get("dist", {}) or {}
         self.dist = dist.data if hasattr(dist, "data") else dict(dist)
         self.repeat_sokuon_bias = float(typo.get("repeat_sokuon_bias", 0.6))
+        # い抜き・い足しになる打ち間違いを捨てる（2026-09-27 から既定 true。false は比較用）
+        self.reject_i_nuki = bool(typo.get("reject_i_nuki", True))
 
     def _bump_retry(self, key: str) -> None:
         self.retries[key] = self.retries.get(key, 0) + 1
@@ -257,7 +259,7 @@ class TypoGenerator:
                 # 直前の typo を打ち消して元に戻った
                 self._bump_retry(f"cancelled:{kind}")
                 continue
-            if is_i_nuki_pair(after, before_kana) or is_i_nuki_pair(after, clean):
+            if self.reject_i_nuki and (is_i_nuki_pair(after, before_kana) or is_i_nuki_pair(after, clean)):
                 # していた → してた は話し言葉として正しい形で、打ち間違いではない
                 # （2 つ目の typo で元の読みとい抜きの関係になる場合も弾く）
                 self._bump_retry(f"i_nuki:{kind}")

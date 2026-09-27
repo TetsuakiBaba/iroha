@@ -332,6 +332,9 @@ typo:
     # どの仮名を二重にするかは下の dist.mora_duplication
     mora_duplication: 0.075
     word_duplication: 0
+  # い抜き・い足し（していた ⇄ してた）になる打ち間違いを捨てる（2026-09-27）。話し言葉として正しい形なので、
+  # 打ち間違いとして学ばせない。false は改良前との比較用
+  reject_i_nuki: true
   # 「ん」の打ち方の個人差。nn = 常に nn、contextual = 子音の前だけ n 1 つ
   romaji_style:
     nn: 0.5
