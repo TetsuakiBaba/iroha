@@ -51,7 +51,7 @@ final class LoRATrainerTests: XCTestCase {
         let model = try GPT2Model(gguf: try GGUFFile(path: f16), lora: LoRASpec(config))
         let trainer = LoRATrainer(model: model, config: config, padToken: tokenizer.terminator)
         var losses: [Float] = []
-        let last = trainer.train(examples: examples) { losses.append($0.loss) }
+        let last = try trainer.train(examples: examples) { losses.append($0.loss) }
         print("losses: \(losses.map { String(format: "%.3f", $0) })")
         XCTAssertEqual(losses.count, 4)
         XCTAssertLessThan(last, losses[0])
