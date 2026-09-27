@@ -326,7 +326,11 @@ typo:
     mora_missing: 0
     mora_extra: 0
     mora_substitution: 0
-    mora_duplication: 0
+    # 仮名 1 つの二重打ち（をを・のの）。JWTD の打鍵系の誤りの 51% を占めるのに、上の論文の分類に無いので
+    # 0 にしていた（v3 は JWTD の二重打ち 286 件のうち 19 件しか直せない）。JWTD の比率（14.5%）は
+    # Wikipedia に残った誤りの比率で多めに出ているはずなので、少しだけ足す: 0.075 / 1.075 ≒ 7%（2026-09-27）。
+    # どの仮名を二重にするかは下の dist.mora_duplication
+    mora_duplication: 0.075
     word_duplication: 0
   # 「ん」の打ち方の個人差。nn = 常に nn、contextual = 子音の前だけ n 1 つ
   romaji_style:
@@ -351,6 +355,24 @@ typo:
     # 余分な打鍵のうち隣接キーでないものの割合。上の論文の Insertion のうち
     # Other 4.2% /（Involvement 12.5% + Other 4.2%）
     insertion_far_ratio: 0.251
+    # 仮名の二重打ちの起こりやすさ（仮名ごと、出現数で正規化、最大 1）。JWTD train の実誤りから推定した
+    # 表（training/typo-normalizer/data/typo-dist/jwtd.yaml）の上位 14 個。助詞と文末の仮名に集中する。
+    # ゔ・ぁ・ぇ などの珍しい仮名は数が少なく値が当てにならないので入れない。ここに無い仮名は二重にしない
+    mora_duplication:
+      を: 1.0
+      に: 0.495869
+      は: 0.345215
+      の: 0.314665
+      が: 0.287573
+      で: 0.236279
+      た: 0.175308
+      と: 0.164966
+      れ: 0.139024
+      て: 0.072417
+      る: 0.0642
+      っ: 0.063253
+      な: 0.056851
+      や: 0.053739
 
 # ---------------------------------------------------------------- JWTD（ワイルドな typo）
 # 日本語 Wikipedia 入力誤りデータセット v2.0 から、typo normalizer の学習データ（打鍵系のみ）と

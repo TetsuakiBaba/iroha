@@ -371,6 +371,19 @@ normalizer が何でも書き換えようとするのを防ぐため、`正常�
 「clean 1 件 + typo 3 件」。届かない設定にすると REPORT の `clean_ratio` と
 `clean_ratio_requested` がずれるので気づける。
 
+
+**2026-09-27 の改良**（JWTD の実 typo と比べて）:
+
+- **仮名 1 つの二重打ち（`mora_duplication`、をを・のの）を既定で約 7% 作る**（`error_types.mora_duplication: 0.075`、
+  ほかの 5 つの型の合計 1.0 に対して）。JWTD の打鍵系の誤りの 51% を占めるのに、Komatsu & Nakatoh 2018 の分類に
+  無いので 0 にしていた。二重にする仮名は `typo.dist.mora_duplication`（JWTD の実測の上位 14 個。を・に・は・の・が…）。
+  JWTD の比率（14.5%）は Wikipedia に残った誤りなので多めに出ているはずで、そのままは使わない
+- **い抜き・い足しになる打ち間違いは作らない**（`is_i_nuki_pair`。片方に「い」が 1 つ多く、直前が「て」か「で」）。
+  していた ⇄ してた・読んでいる ⇄ 読んでる は話し言葉として正しい形で、作ると正しい入力を直すことを学ぶ。
+  「ている」を含む読みでは typo の 0.4〜0.7% がこれだった。2 つ目の typo で元の読みとこの関係になるものも弾く
+  （引き直しの理由は `retries` の `i_nuki:<型>`）
+- 助詞の抜け・余分・置き換え（`mora_missing` / `mora_extra` / `mora_substitution`）と離れたキー（`key_far`）は 0 のまま。
+  JWTD の分布をそのまま使うと過剰訂正が大きく増えた（training/typo-normalizer の kkctx-jwtd、過剰訂正率 18.5%）
 ### 実 typo（JWTD）からの学習データとベンチマーク（`build-jwtd`）
 
 合成 typo だけでは「実際の打ち間違いでどれだけ直せるか」が分からないので、

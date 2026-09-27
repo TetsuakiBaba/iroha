@@ -232,3 +232,43 @@ def test_generator_reads_dist_from_config():
     gen = TypoGenerator(cfg)
     s = gen.generate("しんぶんをよむ", random.Random(0))
     assert s["input"] == "しんぶんがよむ" and s["error_type"] == "mora_substitution"
+
+
+def test_i_nuki_pairs_are_detected_both_ways():
+    from iroha.typo.build import is_i_nuki_pair
+    assert is_i_nuki_pair("してる", "している") and is_i_nuki_pair("している", "してる")
+    assert is_i_nuki_pair("よんでる", "よんでいる")          # で の後も
+    assert not is_i_nuki_pair("いた", "いたい")               # 直前が て / で でない
+    assert not is_i_nuki_pair("かてる", "かいている")         # い の差が 1 つでない
+
+
+def test_generator_never_makes_i_nuki_as_a_typo():
+    """していた → してた は話し言葉として正しい形なので、打ち間違いとして作らない（2026-09-27）。"""
+    import random
+    from iroha.config import load_config
+    from iroha.typo.build import TypoGenerator, is_i_nuki_pair
+    g = TypoGenerator(load_config())
+    rng = random.Random(0)
+    for clean in ("いまなにをしているの", "ずっとまっていたよ", "なにしてたの"):
+        for _ in range(3000):
+            s = g.generate(clean, rng)
+            assert s is None or not is_i_nuki_pair(s["input"], clean), s
+    assert any(k.startswith("i_nuki:") for k in g.retries)
+
+
+def test_default_mora_duplication_doubles_particles():
+    """既定で仮名の二重打ちを約 7% 作り、二重にするのは dist.mora_duplication の仮名だけ。"""
+    import random
+    from iroha.config import load_config
+    from iroha.typo.build import TypoGenerator
+    cfg = load_config()
+    assert abs(cfg.get("typo.error_types.mora_duplication") - 0.075) < 1e-9
+    g = TypoGenerator(load_config(overrides=["typo.second_error_ratio=0"]))   # 1 つだけ入れて見る
+    rng = random.Random(0)
+    allowed = set(cfg.get("typo.dist.mora_duplication"))
+    for _ in range(300):
+        s = g.generate("わたしはあしたのかいぎにでます", rng, force_type="mora_duplication")
+        assert s is not None and s["error_type"] == "mora_duplication"
+        doubled = next(c for i, c in enumerate(s["input"]) if s["input"][:i + 1] + s["input"][i + 2:] ==
+                       "わたしはあしたのかいぎにでます" and s["input"][i] == s["input"][i + 1])
+        assert doubled in allowed

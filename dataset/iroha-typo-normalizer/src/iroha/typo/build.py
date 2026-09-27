@@ -99,6 +99,20 @@ class TypoReport:
         }
 
 
+def is_i_nuki_pair(a: str, b: str) -> bool:
+    """a と b がい抜き・い足しの関係か（片方に「い」が 1 つ多く、その直前が「て」か「で」）。
+
+    していた ⇄ してた・読んでいる ⇄ 読んでる は話し言葉として正しい形なので、打ち間違いとして
+    作らない（作ると、正しいい抜きの入力を「している」に直すことを学ぶ）。JWTD から分布を推定するときも
+    い抜き・い足しは打ち間違いではないとして除いている（iroha/wild/jwtd_dist.py）。
+    """
+    if abs(len(a) - len(b)) != 1:
+        return False
+    long, short = (a, b) if len(a) > len(b) else (b, a)
+    k = next((i for i in range(len(short)) if long[i] != short[i]), len(short))
+    return long[k] == "い" and k > 0 and long[k - 1] in "てで" and long[k + 1:] == short[k:]
+
+
 class TypoGenerator:
     """1 つの clean な読みから typo サンプルを作る。"""
 
@@ -242,6 +256,11 @@ class TypoGenerator:
             if after == clean:
                 # 直前の typo を打ち消して元に戻った
                 self._bump_retry(f"cancelled:{kind}")
+                continue
+            if is_i_nuki_pair(after, before_kana) or is_i_nuki_pair(after, clean):
+                # していた → してた は話し言葉として正しい形で、打ち間違いではない
+                # （2 つ目の typo で元の読みとい抜きの関係になる場合も弾く）
+                self._bump_retry(f"i_nuki:{kind}")
                 continue
             if kind == "missing_double_consonant" and after.count("っ") >= before_kana.count("っ"):
                 self._bump_retry("no_change:missing_double_consonant")
