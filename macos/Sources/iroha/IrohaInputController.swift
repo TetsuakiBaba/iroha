@@ -2027,11 +2027,18 @@ final class IrohaInputController: IMKInputController {
 
     /// 合成が始まる瞬間（未確定文字列がまだ無い）にアプリのカーソル手前のテキストを1回だけ読む。
     /// 合成中は読み直さない（未確定文字列が混ざる・同期IPCが増える）。
-    /// デバッグ表示に残っている前の入力の数字もここで消す（新しい入力の数字と並べないため）
+    /// デバッグ表示に残っている前の入力の数字もここで消し、読めたかどうかを出し直す
+    /// （新しい入力の数字と並べないため）
     private func captureDocumentContextIfStarting(client: IMKTextInput) {
         guard !isComposing else { return }
         DeveloperOverlay.shared.hide()
-        documentContext = DocumentContextSettings.read(from: client)
+        let result = DocumentContextSettings.inspect(from: client)
+        documentContext = result.context
+        if DeveloperOverlaySettings.isEnabled {
+            DeveloperOverlay.shared.reportContext(
+                result, fallback: documentContext == nil ? recentCommitted : nil,
+                near: caretRect(client: client, markedTextLength: 0))
+        }
     }
 
     // MARK: - 予測変換（確定前）

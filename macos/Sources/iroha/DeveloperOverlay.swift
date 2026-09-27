@@ -18,7 +18,9 @@ enum DeveloperOverlaySettings {
 /// そこに相乗りするとその約束が崩れる。こちらはカーソル行の上に出し、`CaretPanel`（行の下。
 /// 画面の下端では行の上）と重なるときは `CaretPanel` のさらに上へ逃がす。
 ///
-/// 行は「かな漢字変換」と「打ち間違いの訂正」の2本で、それぞれ最後の1回を出す。
+/// 行は「左文脈」「かな漢字変換」「打ち間違いの訂正」の3本。左文脈は入力を始めたときに
+/// アプリから読めたか（読めなければその理由と、代わりに使う文字列）を出す。
+/// 変換と訂正はそれぞれ最後の1回を出す。
 /// 時間では閉じない（読んでいる途中で消えないように）。中身は次の推論で入れ替わり、
 /// 確定のあと次の入力を始めたとき・他の場所をクリックしたとき・アプリを切り替えたときに閉じる
 /// （閉じると中身も捨てるので、1枚に出るのは常に同じ入力についての数字になる）。
@@ -52,6 +54,7 @@ final class DeveloperOverlay {
     private let padding = NSEdgeInsets(top: 3, left: 6, bottom: 3, right: 6)
     private let caretGap: CGFloat = 2
 
+    private var contextLine: String?
     private var conversionLine: String?
     private var typoLine: String?
     /// 前回かな漢字変換の行を出してから、結果を使わずに打ち切った変換の数
@@ -92,6 +95,37 @@ final class DeveloperOverlay {
     }
 
     // MARK: - 行の組み立て
+
+    /// 入力を始めたときに左文脈をアプリから読めたか。読めなかったときの `fallback` は
+    /// 代わりに使う iroha 自身の確定文字列の蓄積（読めたときは nil）
+    func reportContext(_ result: DocumentContextSettings.ReadResult, fallback: String?, near caretRect: NSRect?) {
+        var line = "左文脈  "
+        switch result {
+        case .text(let text):
+            line += "アプリから \(text.count)文字 \(Self.quoted(text))"
+        case .atStart:
+            line += "アプリから 0文字（カーソル位置が 0。前に文字があるならアプリが位置を返していない）"
+        case .disabled:
+            line += "アプリから読む設定が OFF"
+        case .noCursor:
+            line += "アプリから読めない（カーソル位置を返さない）"
+        case .noText:
+            line += "アプリから読めない（テキストを返さない）"
+        }
+        if let fallback {
+            line += fallback.isEmpty
+                ? " → 代わりの確定文字列もなし（文脈なし）"
+                : " → 代わりに確定文字列 \(fallback.count)文字 \(Self.quoted(fallback))"
+        }
+        contextLine = line
+        show(near: caretRect)
+    }
+
+    /// 末尾 `quotedLength` 文字を「」で囲む（窓の幅を抑える。長ければ先頭を … にする）
+    private static func quoted(_ text: String) -> String {
+        let quotedLength = 20
+        return text.count > quotedLength ? "「…\(text.suffix(quotedLength))」" : "「\(text)」"
+    }
 
     /// かな漢字変換 1 回ぶんを出す。取り消しの数はここで出して数え直す
     func reportConversion(
@@ -164,6 +198,7 @@ final class DeveloperOverlay {
     }
 
     func hide() {
+        contextLine = nil
         conversionLine = nil
         typoLine = nil
         cancelledConversions = 0
@@ -181,7 +216,7 @@ final class DeveloperOverlay {
 
     private func layout() {
         guard let caretRect = lastCaretRect else { return }
-        label.stringValue = [conversionLine, typoLine].compactMap { $0 }.joined(separator: "\n")
+        label.stringValue = [contextLine, conversionLine, typoLine].compactMap { $0 }.joined(separator: "\n")
         label.sizeToFit()
         let width = padding.left + label.frame.width + padding.right
         let height = padding.top + label.frame.height + padding.bottom
