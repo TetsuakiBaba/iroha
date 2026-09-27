@@ -480,6 +480,10 @@ final class IrohaInputController: IMKInputController {
         if event != .scroll, panelVisible {
             hidePanel()
         }
+        // デバッグ表示はスクロールでは閉じない（読んでいる途中で消えないように）
+        if event != .scroll {
+            DeveloperOverlay.shared.hide()
+        }
     }
 
     // MARK: - 入力メニュー（メニューバーの入力ソースアイコンから開く）
@@ -2022,9 +2026,11 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 合成が始まる瞬間（未確定文字列がまだ無い）にアプリのカーソル手前のテキストを1回だけ読む。
-    /// 合成中は読み直さない（未確定文字列が混ざる・同期IPCが増える）
+    /// 合成中は読み直さない（未確定文字列が混ざる・同期IPCが増える）。
+    /// デバッグ表示に残っている前の入力の数字もここで消す（新しい入力の数字と並べないため）
     private func captureDocumentContextIfStarting(client: IMKTextInput) {
         guard !isComposing else { return }
+        DeveloperOverlay.shared.hide()
         documentContext = DocumentContextSettings.read(from: client)
     }
 
@@ -2227,6 +2233,11 @@ final class IrohaInputController: IMKInputController {
     private func followDeveloperOverlay(client: IMKTextInput) {
         // 窓が出ていなければカーソル位置を問い合わせない（毎打鍵でアプリに聞くことになる）
         guard DeveloperOverlay.shared.isVisible else { return }
+        // 出ている間に設定で OFF にされたら閉じる
+        guard DeveloperOverlaySettings.isEnabled else {
+            DeveloperOverlay.shared.hide()
+            return
+        }
         DeveloperOverlay.shared.follow(caretRect(client: client, markedTextLength: developerOverlayMarkedLength))
     }
 

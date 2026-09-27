@@ -19,7 +19,9 @@ enum DeveloperOverlaySettings {
 /// 画面の下端では行の上）と重なるときは `CaretPanel` のさらに上へ逃がす。
 ///
 /// 行は「かな漢字変換」と「打ち間違いの訂正」の2本で、それぞれ最後の1回を出す。
-/// 最後の更新から `lifetime` たったら閉じて中身も捨てる。
+/// 時間では閉じない（読んでいる途中で消えないように）。中身は次の推論で入れ替わり、
+/// 確定のあと次の入力を始めたとき・他の場所をクリックしたとき・アプリを切り替えたときに閉じる
+/// （閉じると中身も捨てるので、1枚に出るのは常に同じ入力についての数字になる）。
 /// キーボードフォーカスは取らず、マウスも透過する。メインスレッドから使う
 final class DeveloperOverlay {
     static let shared = DeveloperOverlay()
@@ -49,14 +51,12 @@ final class DeveloperOverlay {
     private let label: NSTextField
     private let padding = NSEdgeInsets(top: 3, left: 6, bottom: 3, right: 6)
     private let caretGap: CGFloat = 2
-    private let lifetime: Duration = .seconds(5)
 
     private var conversionLine: String?
     private var typoLine: String?
     /// 前回かな漢字変換の行を出してから、結果を使わずに打ち切った変換の数
     private var cancelledConversions = 0
     private var lastCaretRect: NSRect?
-    private var hideTask: Task<Void, Never>?
 
     private init() {
         panel = NSPanel(
@@ -164,8 +164,6 @@ final class DeveloperOverlay {
     }
 
     func hide() {
-        hideTask?.cancel()
-        hideTask = nil
         conversionLine = nil
         typoLine = nil
         cancelledConversions = 0
@@ -179,12 +177,6 @@ final class DeveloperOverlay {
         guard lastCaretRect != nil else { return }
         layout()
         panel.orderFrontRegardless()
-        hideTask?.cancel()
-        hideTask = Task { [weak self] in
-            try? await Task.sleep(for: self?.lifetime ?? .seconds(5))
-            guard !Task.isCancelled else { return }
-            await MainActor.run { self?.hide() }
-        }
     }
 
     private func layout() {
