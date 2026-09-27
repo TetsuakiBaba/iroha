@@ -256,13 +256,13 @@ def test_generator_never_makes_i_nuki_as_a_typo():
     assert any(k.startswith("i_nuki:") for k in g.retries)
 
 
-def test_default_mora_duplication_doubles_particles():
-    """既定で仮名の二重打ちを約 7% 作り、二重にするのは dist.mora_duplication の仮名だけ。"""
+def test_mora_duplication_is_off_by_default_but_uses_the_particle_table():
+    """既定では仮名の二重打ちを作らない（2026-09-27 に 0 に戻した）。割合を入れたときは dist の仮名だけを二重にする。"""
     import random
     from iroha.config import load_config
     from iroha.typo.build import TypoGenerator
     cfg = load_config()
-    assert abs(cfg.get("typo.error_types.mora_duplication") - 0.075) < 1e-9
+    assert cfg.get("typo.error_types.mora_duplication") == 0
     g = TypoGenerator(load_config(overrides=["typo.second_error_ratio=0"]))   # 1 つだけ入れて見る
     rng = random.Random(0)
     allowed = set(cfg.get("typo.dist.mora_duplication"))
