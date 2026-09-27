@@ -1055,6 +1055,12 @@ private struct ModelSettingsTab: View {
                     Text("モデルファイル（GGUF）のパス")
                     TextField("", text: $modelPath, prompt: Text(ZenzEngine.defaultModelPath))
                         .textFieldStyle(.roundedBorder)
+                    // 消えたモデルを指したままだと変換が一切できなくなるので、入力欄の下で知らせる
+                    if !modelPath.isEmpty, !FileManager.default.fileExists(atPath: modelPath) {
+                        Text("このパスにファイルがありません。変換できないので、モデルを指定し直すか空欄に戻してください。")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                 }
                 HStack {
                     Button("モデルフォルダを開く") {

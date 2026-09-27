@@ -165,14 +165,18 @@ final class IrohaInputController: IMKInputController {
     /// 選ばれたら先頭の固定部分より後ろの文節をまとめて置き換える（`candidateSelected`）
     private var typoWholeSentence: (candidate: String, reading: String, segmentOffset: Int)?
 
-    /// 句読点スタイルを切り替えたときの知らせを小窓に出しているか（予測はこの間だけ小窓を譲る）
-    private var punctuationNoticeVisible = false
+    /// 知らせ（句読点スタイルの切り替え・変換モデルを使えない）を小窓に出しているか
+    /// （予測はこの間だけ小窓を譲る）。どちらも次のキーで閉じる
+    private var noticeVisible = false
     /// 知らせを出しっぱなしにしないためのタイマー
-    private var punctuationNoticeTask: Task<Void, Never>?
+    private var noticeTask: Task<Void, Never>?
     /// 切り替えの知らせの寿命（次のキーでも閉じるので、取り消しを待つ訂正の小窓より短くてよい）
     private static let punctuationNoticeLifetime = Duration.seconds(1.5)
     /// 小窓のヒント。同じキーをもう一度押せば戻せる
     private static let punctuationNoticeHint = "⌃. で戻す"
+    /// 変換モデルを使えない知らせの寿命。変換のたびに出し直すので、打ち続けている間は出たままになる
+    private static let modelProblemNoticeLifetime = Duration.seconds(4)
+    private static let modelProblemNoticeHint = "設定 > モデル"
 
     /// 句読点スタイル（"、。" または "，．"のセット）
     private static let punctuationStyleKey = "punctuationStyle"
@@ -308,7 +312,7 @@ final class IrohaInputController: IMKInputController {
         cancelPrediction()
         dismissCompletion()
         hideTypoFeedback()
-        hidePunctuationNotice()
+        hideNotice()
         // 他アプリでのクリック・スクロール・アプリ切替の合図はアクティブなコントローラ（自分）が受ける
         PointerActivityMonitor.shared.handler = { [weak self] event in
             self?.dismissFloatingWindows(for: event)
@@ -348,7 +352,7 @@ final class IrohaInputController: IMKInputController {
 
         lastKeyEventTime = .now
         // 句読点スタイルの知らせは次のキーで閉じる（この後の Control+. なら出し直す）
-        hidePunctuationNotice()
+        hideNotice()
         let plainTab = Int(event.keyCode) == kVK_Tab
             && event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
 
@@ -469,7 +473,7 @@ final class IrohaInputController: IMKInputController {
         dismissCompletion()
         cancelPrediction()
         hideTypoFeedback()
-        hidePunctuationNotice()
+        hideNotice()
         if event != .scroll, panelVisible {
             hidePanel()
         }
@@ -561,8 +565,12 @@ final class IrohaInputController: IMKInputController {
         menu.addItem(updateItem)
 
         menu.addItem(NSMenuItem.separator())
-        // 変換モデルの取得状況（未取得・ダウンロード中・失敗のときだけ表示）
-        if let status = ModelDownloader.shared.statusMenuText {
+        // 変換モデルの取得状況（未取得・ダウンロード中・失敗のときだけ表示）。
+        // 自分で指定したモデルは取得の対象外なので、ファイルが無いことだけを出す
+        let customModelMissing = Self.engineModelPath != ZenzEngine.defaultModelPath
+            && !FileManager.default.fileExists(atPath: Self.engineModelPath)
+        if let status = customModelMissing
+            ? "変換モデルが見つかりません（設定 > モデル）" : ModelDownloader.shared.statusMenuText {
             let statusItem = NSMenuItem(title: status, action: nil, keyEquivalent: "")
             statusItem.isEnabled = false
             menu.addItem(statusItem)
@@ -633,32 +641,69 @@ final class IrohaInputController: IMKInputController {
     /// 訂正の小窓と同じ1枚を使うので、出す前に相手を閉じる（訂正の取り消し自体は効いたままにする）。
     /// カーソル位置を教えてくれないアプリでは出ない（切り替え自体は効く）
     private func showPunctuationNotice(from oldStyle: String, to newStyle: String) {
-        hidePunctuationNotice()
+        showNotice(
+            Self.attributedPunctuationNotice(from: oldStyle, to: newStyle),
+            hint: Self.punctuationNoticeHint, lifetime: Self.punctuationNoticeLifetime)
+    }
+
+    /// 変換がモデルの問題（ファイルが無い・読み込めない）で失敗したら、その理由を小窓に出す。
+    ///
+    /// 変換できないとライブ変換は読みのまま残り、スペースを押しても何も起きない。ログにしか
+    /// 残らないと、設定のパスが古いだけでも「変換が壊れた」ようにしか見えない（2026-09-27、
+    /// 消えたモデルを指したままの設定で実際に起きた）。モデル以外の失敗は今までどおりログだけにする
+    private func reportConversionError(_ error: Error, context: String) {
+        NSLog("iroha: \(context): \(error)")
+        guard let message = Self.modelProblemMessage(for: error) else { return }
+        showNotice(
+            NSAttributedString(string: message, attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                .foregroundColor: NSColor.labelColor,
+            ]),
+            hint: Self.modelProblemNoticeHint, lifetime: Self.modelProblemNoticeLifetime)
+    }
+
+    /// 小窓に出す文言。既定のモデルが無いのは初回の取得待ちなので、入力メニューと同じ取得状況を出す
+    private static func modelProblemMessage(for error: Error) -> String? {
+        let name = URL(fileURLWithPath: engineModelPath).lastPathComponent
+        switch error as? ConversionError {
+        case .modelNotFound(let path) where path == ZenzEngine.defaultModelPath:
+            return ModelDownloader.shared.statusMenuText ?? "変換モデルを準備中…"
+        case .modelNotFound:
+            return "変換モデルが見つかりません: \(name)"
+        case .modelLoadFailed:
+            return "変換モデルを読み込めません: \(name)"
+        default:
+            return nil
+        }
+    }
+
+    /// 知らせを小窓に出す。訂正の小窓と同じ1枚を使うので、出す前に相手を閉じる
+    /// （訂正の取り消し自体は効いたままにする）。カーソル位置を教えてくれないアプリでは出ない
+    private func showNotice(_ text: NSAttributedString, hint: String, lifetime: Duration) {
+        hideNotice()
         hideTypoFeedback()
         guard let client = client(),
               let rect = caretRect(
                 client: client, markedTextLength: isComposing ? currentDisplay.utf16.count : 0)
         else { return }
-        CaretPanel.shared.show(
-            Self.attributedPunctuationNotice(from: oldStyle, to: newStyle),
-            hint: Self.punctuationNoticeHint, near: rect)
-        punctuationNoticeVisible = true
-        punctuationNoticeTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.punctuationNoticeLifetime)
+        CaretPanel.shared.show(text, hint: hint, near: rect)
+        noticeVisible = true
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: lifetime)
             guard !Task.isCancelled, let self else { return }
             await MainActor.run {
-                self.hidePunctuationNotice()
+                self.hideNotice()
                 // 小窓を譲ったので予測を出せるようになる
                 self.schedulePrediction()
             }
         }
     }
 
-    private func hidePunctuationNotice() {
-        punctuationNoticeTask?.cancel()
-        punctuationNoticeTask = nil
-        guard punctuationNoticeVisible else { return }
-        punctuationNoticeVisible = false
+    private func hideNotice() {
+        noticeTask?.cancel()
+        noticeTask = nil
+        guard noticeVisible else { return }
+        noticeVisible = false
         CaretPanel.shared.hide()
     }
 
@@ -1059,7 +1104,7 @@ final class IrohaInputController: IMKInputController {
                 }
             } catch is CancellationError {
             } catch {
-                NSLog("iroha: 文節分割エラー: \(error)")
+                await MainActor.run { self.reportConversionError(error, context: "文節分割エラー") }
             }
         }
     }
@@ -1463,7 +1508,7 @@ final class IrohaInputController: IMKInputController {
                     self.showPanel(with: finalCandidates)
                 }
             } catch {
-                NSLog("iroha: 候補生成エラー: \(error)")
+                await MainActor.run { self.reportConversionError(error, context: "候補生成エラー") }
             }
         }
     }
@@ -1533,7 +1578,7 @@ final class IrohaInputController: IMKInputController {
                 }
             } catch is CancellationError {
             } catch {
-                NSLog("iroha: 文節再変換エラー: \(error)")
+                await MainActor.run { self.reportConversionError(error, context: "文節再変換エラー") }
             }
         }
     }
@@ -1693,7 +1738,7 @@ final class IrohaInputController: IMKInputController {
             } catch is CancellationError {
                 // 新しい入力に置き換えられた
             } catch {
-                NSLog("iroha: 変換エラー: \(error)")
+                await MainActor.run { self.reportConversionError(error, context: "変換エラー") }
             }
         }
     }
@@ -2060,7 +2105,7 @@ final class IrohaInputController: IMKInputController {
     /// `markedTextLength` は未確定文字列のUTF-16長（カーソルはその末尾。無ければ0）
     private func showPredictionPanel(_ text: String, client: IMKTextInput, markedTextLength: Int) -> Bool {
         // 句読点スタイルの知らせを出している間は同じ小窓を奪わない（数えるほどの時間しか出ていない）
-        guard !punctuationNoticeVisible,
+        guard !noticeVisible,
               let rect = caretRect(client: client, markedTextLength: markedTextLength) else { return false }
         CaretPanel.shared.show(text, near: rect)
         return true
