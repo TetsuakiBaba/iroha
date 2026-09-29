@@ -1653,7 +1653,7 @@ private struct AboutSettingsTab: View {
                 TypoNormalizerLicenseRows()
             }
 
-            Section("デバッグ") {
+            Section("開発者向け") {
                 HelpToggle(
                     title: "推論にかかった時間と左文脈をカーソルの右上に表示する", isOn: $developerOverlay,
                     help: "開発者向けの表示です。入力を始めたときに、カーソルの左の文字をアプリから読めたか"

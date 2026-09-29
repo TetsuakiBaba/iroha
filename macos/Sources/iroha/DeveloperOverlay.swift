@@ -1,7 +1,7 @@
 import Cocoa
 import IrohaCore
 
-/// デバッグ表示の設定（設定 > 情報 > デバッグ）。開発者向けで既定OFF。
+/// デバッグ表示の設定（設定 > 情報 > 開発者向け）。開発者向けで既定OFF。
 /// 他の Mac とは同期しない（`PreferencesSync.syncedKeys` に入れない）
 enum DeveloperOverlaySettings {
     static let enabledKey = "developerOverlay"
