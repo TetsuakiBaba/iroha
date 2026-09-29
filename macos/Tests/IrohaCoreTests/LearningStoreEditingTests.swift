@@ -20,7 +20,7 @@ final class LearningStoreEditingTests: XCTestCase {
     func testReplaceAllUpdatesDictionaryAndFile() throws {
         let store = LearningStore(url: url)
         store.record(reading: "きしゃ", result: "汽車")
-        XCTAssertEqual(store.current.result(forReading: "きしゃ"), "汽車")
+        XCTAssertEqual(store.current.entry(forReading: "きしゃ", engineResult: nil)?.result, "汽車")
 
         // 覚え違いを直す（「汽車」→「貴社」）
         var entries = store.current.entries

@@ -4,7 +4,7 @@ import Foundation
 ///
 /// 記録するのは「ユーザが文節変換で修正して確定した」ときだけで、
 /// エンジンの出力をそのまま確定した場合は何も覚えない。
-/// 1件は「入力の読み全体 → 確定文字列」（`LearningEntry`）。
+/// 1件は「入力の読み全体 → 確定文字列」と、直す前にエンジンが出していた結果（`LearningEntry`）。
 public final class LearningStore: @unchecked Sendable {
 
     public static let didChangeNotification = Notification.Name("iroha.learningDidChange")
@@ -83,13 +83,28 @@ public final class LearningStore: @unchecked Sendable {
 
     /// ユーザの修正を記録する。
     ///
-    /// 覚えるのは入力の読み全体 → 確定文字列だけで、次に同じ読みを丸ごと入力したときに再現する。
+    /// 覚えるのは入力の読み全体 → 確定文字列で、次に同じ読みを丸ごと入力し、エンジンが
+    /// `replaced` と同じ結果を出したときに再現する。
+    /// 同じ読みの「直す前」の記録がない古い学習は、この記録で置き換える
+    /// （条件のある学習と並べて残すと、条件に合わないときに古い方が差し替えてしまう）
     /// - Parameters:
     ///   - reading: 入力全体の読み（ひらがな）
+    ///   - replaced: 直す前にエンジン（学習を除く）が出していた結果。nil は不明
     ///   - result: 確定された文字列
-    public func record(reading: String, result: String) {
-        guard !reading.isEmpty, !result.isEmpty else { return }
-        merge([LearningEntry(reading: reading, result: result)])
+    public func record(reading: String, replaced: String? = nil, result: String) {
+        guard !reading.isEmpty, !result.isEmpty, replaced != result else { return }
+        merge([LearningEntry(reading: reading, replaced: replaced, result: result)]) {
+            replaced != nil && $0.reading == reading && $0.replaced == nil
+        }
+    }
+
+    /// 学習による差し替えを取り消す（差し替えた結果を、ユーザがエンジンの結果に戻して確定したとき）。
+    ///
+    /// エンジンが `engineResult` を出したときに差し替えるエントリのうち、結果が `result` のものを消す
+    public func forget(reading: String, engineResult: String, result: String) {
+        guard let entry = current.entry(forReading: reading, engineResult: engineResult),
+              entry.result == result else { return }
+        remove { $0.key == entry.key }
     }
 
     /// 一覧を丸ごと置き換える（設定画面の編集用）。読み・結果が空のエントリは落とす
@@ -122,9 +137,9 @@ public final class LearningStore: @unchecked Sendable {
 
     // MARK: - 内部
 
-    private func merge(_ recorded: [LearningEntry]) {
+    private func remove(where shouldRemove: (LearningEntry) -> Bool) {
         lock.lock()
-        let entries = Self.merged(base: cached.entries, recorded: recorded)
+        let entries = cached.entries.filter { !shouldRemove($0) }
         cached = LearningDictionary(entries: entries)
         lock.unlock()
 
@@ -137,22 +152,38 @@ public final class LearningStore: @unchecked Sendable {
         postDidChange()
     }
 
-    /// `base` に `recorded` を重ねる。同じ読みは新しい方（updatedAt）を採り、
+    /// - Parameter superseded: 重ねる前に捨てる既存のエントリ
+    private func merge(_ recorded: [LearningEntry], superseded: (LearningEntry) -> Bool = { _ in false }) {
+        lock.lock()
+        let entries = Self.merged(base: cached.entries.filter { !superseded($0) }, recorded: recorded)
+        cached = LearningDictionary(entries: entries)
+        lock.unlock()
+
+        saveQueue.async { [url] in
+            Self.save(entries, to: url)
+            self.lock.lock()
+            self.loadedModificationDate = DataDirectory.modificationDate(of: url)
+            self.lock.unlock()
+        }
+        postDidChange()
+    }
+
+    /// `base` に `recorded` を重ねる。同じ読み・同じ「直す前」は新しい方（updatedAt）を採り、
     /// 上限を超えたら古いものから捨てる
     static func merged(base: [LearningEntry], recorded: [LearningEntry]) -> [LearningEntry] {
-        var byReading: [String: LearningEntry] = [:]
-        var order: [String] = []
+        var byKey: [LearningEntry.Key: LearningEntry] = [:]
+        var order: [LearningEntry.Key] = []
         for entry in base + recorded {
-            if let existing = byReading[entry.reading] {
+            if let existing = byKey[entry.key] {
                 // ユーザの今回の修正（recorded側）は同時刻でも優先する
                 guard entry.updatedAt >= existing.updatedAt else { continue }
             } else {
-                order.append(entry.reading)
+                order.append(entry.key)
             }
-            byReading[entry.reading] = entry
+            byKey[entry.key] = entry
         }
 
-        var entries = order.compactMap { byReading[$0] }
+        var entries = order.compactMap { byKey[$0] }
         if entries.count > Self.maxEntries {
             entries = Array(entries.sorted { $0.updatedAt > $1.updatedAt }.prefix(Self.maxEntries))
         }
@@ -179,6 +210,7 @@ public final class LearningStore: @unchecked Sendable {
     private struct StoredEntry: Decodable {
         var kind: String?
         var reading: String
+        var replaced: String?
         var result: String
         var updatedAt: Date
     }
@@ -192,7 +224,7 @@ public final class LearningStore: @unchecked Sendable {
         // 旧形式の文節のエントリ（読みの一部）は捨てる。読み全体の学習として扱うと
         // 文中の一部を覚えた語が入力全体の変換結果になってしまう
         let entries = contents.entries.filter { $0.kind != "segment" }.map {
-            LearningEntry(reading: $0.reading, result: $0.result, updatedAt: $0.updatedAt)
+            LearningEntry(reading: $0.reading, replaced: $0.replaced, result: $0.result, updatedAt: $0.updatedAt)
         }
         return LearningDictionary(entries: entries)
     }

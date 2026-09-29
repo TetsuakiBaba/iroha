@@ -56,7 +56,7 @@ final class IrohaInputController: IMKInputController {
     /// （学習・辞書が空で読みが短ければ素通しなのでふるまいは変わらない）。
     /// 辞書ラティス（azooKey辞書）は候補ウィンドウの候補を読みが正しい語に限るために使う。
     /// 辞書がバンドルに無ければzenz単体で動く
-    private static let engine: any ConversionEngine = LearningEngine(
+    private static let engine = LearningEngine(
         base: UserDictionaryEngine(
             base: ChunkedConversionEngine(base: VariantKanjiEngine(base: makeCoreEngine()))),
         dictionary: { LearningSettings.dictionary })
@@ -258,6 +258,9 @@ final class IrohaInputController: IMKInputController {
     /// 文節変換に入った時点のエンジンの変換結果。
     /// これと違う内容で確定されたら「ユーザによる修正」とみなして学習する
     private var segmentBaseline: String?
+    /// `segmentBaseline` のうち、学習が差し替える前のエンジンの変換結果（学習が差し替えていなければ同じ）。
+    /// 学習の「直す前」として記録する
+    private var segmentEngineBaseline: String?
     private var currentSegmentIndex = 0
     /// 非同期の文節処理が古い状態に適用されるのを防ぐ世代カウンタ
     private var segmentGeneration = 0
@@ -1071,6 +1074,9 @@ final class IrohaInputController: IMKInputController {
             : [BunsetsuSegment(reading: reading, result: interim, candidates: nil)])
         let cachedConversion = (lastConversion?.reading == reading) ? lastConversion?.result : nil
         segmentBaseline = cachedConversion.map { fixedPrefix + $0 }
+        segmentEngineBaseline = cachedConversion.map {
+            fixedPrefix + (Self.engine.engineResult(forReading: reading, shown: $0) ?? $0)
+        }
         // 英字入力からSpaceで来たときは、その英字の文節を選択して候補を出せるようにする
         currentSegmentIndex = alphabetSegmentIndex ?? min(fixedSegments.count, segments.count - 1)
         refreshSegmentDisplay(client: client)
@@ -1103,6 +1109,8 @@ final class IrohaInputController: IMKInputController {
                 await MainActor.run {
                     guard self.mode == .segmenting, generation == self.segmentGeneration else { return }
                     self.segmentBaseline = fixedPrefix + full
+                    self.segmentEngineBaseline = fixedPrefix
+                        + (Self.engine.engineResult(forReading: reading, shown: full) ?? full)
                     self.segments = fixedSegments + aligned.map {
                         BunsetsuSegment(reading: $0.reading, result: $0.conversion, candidates: nil)
                     }
@@ -1613,6 +1621,7 @@ final class IrohaInputController: IMKInputController {
         mode = .composing
         segments = []
         segmentBaseline = nil
+        segmentEngineBaseline = nil
         hidePanel()
         cancelConversion()
         updateMarkedText(client: client, display: kanaDisplay)
@@ -1627,7 +1636,9 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 文節変換の結果がエンジンの出力と違っていたら、ユーザによる修正として学習する。
-    /// 覚えるのは入力の読み全体 → 確定文字列で、次に同じ読みを丸ごと入力したときだけ再現する
+    /// 覚えるのは入力の読み全体 → 確定文字列と、直す前にエンジンが出していた結果で、
+    /// 次に同じ読みを丸ごと入力し、エンジンがまた同じ結果を出したときだけ再現する。
+    /// 学習が差し替えた結果を、ユーザがエンジンの結果に戻して確定したら、その学習を消す
     private func learnIfCorrected(committed: String) {
         guard LearningSettings.isEnabled, !segments.isEmpty, !committed.isEmpty,
               let baseline = segmentBaseline, committed != baseline else { return }
@@ -1636,8 +1647,13 @@ final class IrohaInputController: IMKInputController {
         // ライブ変換から除外したハッシュタグが学習経由でライブ変換に出てしまう
         guard !segments.contains(where: { $0.unlearnableCandidates.contains($0.result) }) else { return }
         let reading = segments.map(\.reading).joined()
+        let engineResult = segmentEngineBaseline ?? baseline
         Task.detached(priority: .utility) {
-            LearningStore.shared.record(reading: reading, result: committed)
+            if committed == engineResult {
+                LearningStore.shared.forget(reading: reading, engineResult: engineResult, result: baseline)
+            } else {
+                LearningStore.shared.record(reading: reading, replaced: engineResult, result: committed)
+            }
         }
     }
 
@@ -2003,6 +2019,7 @@ final class IrohaInputController: IMKInputController {
         alphabetRun = nil
         segments = []
         segmentBaseline = nil
+        segmentEngineBaseline = nil
         typoCorrectionTask?.cancel()
         typoCorrectionTask = nil
         typoWholeSentence = nil

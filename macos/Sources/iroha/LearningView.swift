@@ -3,6 +3,7 @@ import SwiftUI
 
 /// 変換の学習（learning.json）の確認・編集画面（設定ウィンドウからシートで開く）。
 ///
+/// 1行は「よみ」を丸ごと入力し、エンジンが「直す前」と同じ結果を出したときに「変換結果」へ差し替える学習。
 /// 学習は変換のたびに引かれる辞書なので、覚え違いが残っていると同じ誤変換が出続ける。
 /// ここで中身を見て直す・消すことができる。変更は `LearningStore` に即時保存され、次の変換から反映される
 struct LearningView: View {
@@ -23,6 +24,7 @@ struct LearningView: View {
         guard !query.isEmpty else { return rows }
         return rows.filter {
             $0.entry.reading.contains(query) || $0.entry.result.contains(query)
+                || ($0.entry.replaced ?? "").contains(query)
         }
     }
 
@@ -34,7 +36,7 @@ struct LearningView: View {
             Divider()
             footer
         }
-        .frame(width: 640, height: 460)
+        .frame(width: 720, height: 460)
         // 新しく覚えたものから見せる（直したいのは直近の覚え違い）
         .onAppear {
             rows = LearningStore.shared.current.entries
@@ -67,7 +69,8 @@ struct LearningView: View {
             } else {
                 List {
                     HStack(spacing: 8) {
-                        Text("よみ").frame(width: 220, alignment: .leading)
+                        Text("よみ").frame(width: 200, alignment: .leading)
+                        Text("直す前").frame(width: 200, alignment: .leading)
                         Text("変換結果").frame(maxWidth: .infinity, alignment: .leading)
                         Spacer().frame(width: 20)
                     }
@@ -86,8 +89,12 @@ struct LearningView: View {
     private func row(for row: Row) -> some View {
         HStack(spacing: 8) {
             TextField("よみ", text: binding(for: row.id, keyPath: \.reading))
-                .frame(width: 220)
-                .help("この読みを丸ごと入力したときに、右の変換結果を返します")
+                .frame(width: 200)
+                .help("この読みを丸ごと入力したときに学習を使います")
+            TextField("記録なし", text: replacedBinding(for: row.id))
+                .frame(width: 200)
+                .help("エンジンがこの結果を出したときだけ、右の変換結果に差し替えます。"
+                      + "空欄（記録なし）なら、読みが一致すれば常に差し替えます")
             TextField("変換結果", text: binding(for: row.id, keyPath: \.result))
                 .frame(maxWidth: .infinity)
             Button {
@@ -142,7 +149,19 @@ struct LearningView: View {
             set: { newValue in
                 guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
                 rows[index].entry[keyPath: keyPath] = newValue
-                // 直した内容を新しい学習として扱う（同じ読み・文脈の古い記録より優先される）
+                // 直した内容を新しい学習として扱う（同じ読み・同じ「直す前」の古い記録より優先される）
+                rows[index].entry.updatedAt = Date()
+                save()
+            })
+    }
+
+    /// 「直す前」の欄。空欄は記録なし（nil）として保存する
+    private func replacedBinding(for id: UUID) -> Binding<String> {
+        Binding(
+            get: { rows.first { $0.id == id }?.entry.replaced ?? "" },
+            set: { newValue in
+                guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
+                rows[index].entry.replaced = newValue.isEmpty ? nil : newValue
                 rows[index].entry.updatedAt = Date()
                 save()
             })

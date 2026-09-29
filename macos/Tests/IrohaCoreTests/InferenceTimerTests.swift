@@ -36,8 +36,8 @@ final class InferenceTimerTests: XCTestCase {
         XCTAssertTrue(snapshot.shortcuts.isEmpty)
     }
 
-    /// 読み全体が学習と一致したら NN を通さず、その理由が残る
-    func testNotesLearningShortcut() async throws {
+    /// 学習は差し替えるかをエンジンの結果で決めるので、読み全体が一致しても NN を通る
+    func testLearningStillRunsNeuralNetwork() async throws {
         let base = SleepingEngine()
         let dictionary = LearningDictionary(entries: [LearningEntry(reading: "きしゃ", result: "貴社")])
         let engine = LearningEngine(base: base, dictionary: { dictionary })
@@ -46,8 +46,8 @@ final class InferenceTimerTests: XCTestCase {
             try await engine.convert(reading: "きしゃ", context: "", candidateCount: 1)
         }
         XCTAssertEqual(result, ["貴社"])
-        XCTAssertEqual(timer.snapshot.neuralNetworkCalls, 0)
-        XCTAssertEqual(timer.snapshot.shortcuts, [.learning])
+        XCTAssertEqual(timer.snapshot.neuralNetworkCalls, 1)
+        XCTAssertTrue(timer.snapshot.shortcuts.isEmpty)
     }
 
     /// 長い読みの区切りがキャッシュに当たったら NN の回数は増えず、その理由が残る

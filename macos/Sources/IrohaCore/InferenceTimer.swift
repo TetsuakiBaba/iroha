@@ -19,7 +19,7 @@ public final class InferenceTimer: @unchecked Sendable {
 
     /// NN を通さずに結果を返した理由（NN の回数が 0 のときの説明に使う）
     public enum Shortcut: String, Sendable, CaseIterable {
-        /// 学習（読み全体が過去の修正と一致）
+        /// 学習（エンジンが失敗し、読み全体が一致した学習の結果だけで返した）
         case learning
         /// ユーザ辞書（読み全体が 1 語と一致）
         case userDictionary
