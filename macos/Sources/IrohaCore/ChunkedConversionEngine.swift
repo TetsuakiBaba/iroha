@@ -5,8 +5,14 @@ import Foundation
 /// zenz-v3はおおむね80文字を超える読みで途中や末尾を飛ばし始める（学習データの読みは
 /// 90%が53文字以下）。読み制約（`ReadingConstraint`）で終端を止めても、モデル自身が
 /// 読みを追えなくなると意味のない文字列を出すだけなので、モデルに渡す読みの長さを
-/// `maxChunkLength` 以下に保つのが唯一の対策になる。zenzai公式ベンチ（AJIMEE-Bench）も
-/// 長い入力は50文字以下に分割して評価している。
+/// `maxChunkLength` 以下に保つのが唯一の対策になる。azooKeyのzenzaiは読みを区切らないが、
+/// 辞書ラティスで出力を縛っているので長い読みでも欠けない（irohaのNN経路にはその縛りがない）。
+///
+/// 長さは80文字（2026-09-29、AJIMEEの問題をつないだ51〜200文字の読み 各25件で実測）。
+/// 区切らないと zenz-v3.1-small は81〜120文字で半数、自作T5は121〜160文字で半数の出力が
+/// 1割以上欠けた。一方で51〜80文字は区切らないほうが正確だった（区切りの前後で文脈が途切れる）
+/// ため、50文字から延ばした。ただし区切りの中は打鍵ごとに丸ごと変換し直すので、
+/// 1打鍵あたりの時間は区切りの長さに比例して伸びる。
 ///
 /// 区切り方（先頭から順に決める）:
 /// 1. 先頭 `maxChunkLength` 文字の窓の中に句読点があれば、その直後で切る
@@ -22,8 +28,8 @@ import Foundation
 /// `maxChunkLength` 以下の読みはそのまま素通しする（既定のふるまいは変わらない）。
 public actor ChunkedConversionEngine: ConversionEngine {
 
-    /// モデルに渡す読みの最大文字数。zenzの学習データ分布とAJIMEE-Benchの分割長に合わせた
-    public static let defaultMaxChunkLength = 50
+    /// モデルに渡す読みの最大文字数。zenz-v3.1-small が区切らずに読みを追えた長さの上限（上記の実測）
+    public static let defaultMaxChunkLength = 80
 
     private let base: any ConversionEngine
     private let maxChunkLength: Int

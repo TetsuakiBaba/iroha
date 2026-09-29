@@ -509,7 +509,7 @@ CC BY-SA 4.0（一部は llm-jp-corpus-v3 由来で ODC-BY と Common Crawl の�
 - zenzのn-best（辞書が無いときの候補ウィンドウ）は先頭トークンを上位から分岐して貪欲に補完し、
   系列の対数確率で並べ、最良候補から8nat以上離れた候補は捨てる
 - 長い読みは区切って順に変換する（[ChunkedConversionEngine](macos/Sources/IrohaCore/ChunkedConversionEngine.swift)）。
-  zenzはおおむね80文字を超える読みで途中や末尾を飛ばし始めるため、モデルに渡す読みを50文字以下に保つ。
+  zenzはおおむね80文字を超える読みで途中や末尾を飛ばし始めるため、モデルに渡す読みを80文字以下に保つ。
   区切りは句読点の直後、なければ窓を変換して文節境界（ReadingAligner）で切り、前の区切りの結果を左文脈にする。
   先頭側の区切りはキャッシュするので、ライブ変換で打鍵ごとに再変換されるのは末尾の区切りだけ
 - llama.cppにはzenzのpre-tokenizer名（`gpt2-small-japanese-char`）を認識させる
