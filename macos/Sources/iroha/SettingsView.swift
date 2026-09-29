@@ -93,101 +93,87 @@ private struct InputSettingsTab: View {
                 Toggle("ライブ変換", isOn: $liveConversion)
                 Stepper(value: $candidateCount, in: 3...16) {
                     HStack {
-                        Text("候補ウィンドウでモデルが並べる候補数")
+                        HelpLabel(
+                            title: "候補ウィンドウでモデルが並べる候補数",
+                            help: "この数の下に、読みが一致する辞書の残りの候補（単漢字・異体字・人名など）が続きます。")
                         Spacer()
                         Text("\(candidateCount)").foregroundStyle(.secondary)
                     }
                 }
-                Text("この数の下に、読みが一致する辞書の残りの候補（単漢字・異体字・人名など）が続きます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Toggle("アプリの文章を文脈に使う", isOn: $documentContext)
-                Text("入力を始めた位置の手前にある文章（最大40文字）をアプリから読み取り、変換と予測の文脈にします。"
-                    + "文章の途中に書き足すときや、別のアプリに移った直後でも前後に合った変換になります。"
-                    + "文章を返さないアプリでは、irohaで直前に確定した文字列を文脈にします。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HelpToggle(
+                    title: "アプリの文章を文脈に使う", isOn: $documentContext,
+                    help: "入力を始めた位置の手前にある文章（最大40文字）をアプリから読み取り、変換と予測の文脈にします。"
+                        + "文章の途中に書き足すときや、別のアプリに移った直後でも前後に合った変換になります。"
+                        + "文章を返さないアプリでは、irohaで直前に確定した文字列を文脈にします。")
             }
 
             Section("打ち間違いの訂正") {
-                Toggle("打ち間違いを自動で直す", isOn: $typoNormalizer)
-                Text("入力の手が止まったとき、読みの打ち間違い（隣のキー・抜け・重複・入れ替え・"
-                    + "「っ」の過不足）を直してから変換します。直したときは何をどう直したかを"
-                    + "カーソルの下に表示し、そのままBackspaceを押すと打ったとおりの読みに戻せます。"
-                    + "休止を待たずにスペースを押したときは、"
-                    + "読みは変えずに候補ウィンドウに訂正を足します。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HelpToggle(
+                    title: "打ち間違いを自動で直す", isOn: $typoNormalizer,
+                    help: "入力の手が止まったとき、読みの打ち間違い（隣のキー・抜け・重複・入れ替え・"
+                        + "「っ」の過不足）を直してから変換します。直したときは何をどう直したかを"
+                        + "カーソルの下に表示し、そのままBackspaceを押すと打ったとおりの読みに戻せます。"
+                        + "休止を待たずにスペースを押したときは、"
+                        + "読みは変えずに候補ウィンドウに訂正を足します。")
                 // 訂正モデルはアプリに同梱していない。ONにした時点で取得する
                 TypoNormalizerModelRow(isEnabled: typoNormalizer)
-                TypoDelayRow(milliseconds: $typoDelayMs)
-                    .disabled(!typoNormalizer)
-                Text("キーを離してからこの時間だけ何も押さなければ訂正します。"
-                    + "短いほど早く直りますが、語の途中で考えているだけのときにも動きます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Stepper(value: $typoMinLength, in: TypoNormalizerSettings.minimumLengthRange) {
+                TypoDelayRow(milliseconds: $typoDelayMs, isDisabled: !typoNormalizer)
+                LabeledContent {
                     HStack {
-                        Text("訂正する読みの最低文字数")
-                        Spacer()
                         Text("\(typoMinLength)文字").foregroundStyle(.secondary).monospacedDigit()
+                        Stepper("訂正する読みの最低文字数", value: $typoMinLength,
+                                in: TypoNormalizerSettings.minimumLengthRange)
+                            .labelsHidden()
+                            .disabled(!typoNormalizer)
                     }
+                } label: {
+                    HelpLabel(
+                        title: "訂正する読みの最低文字数",
+                        help: "読みがこの文字数に満たないときは直しません。短い読みは正しく打っていても"
+                            + "別の語の打ち間違いに見えやすいためです（例:「さど」が「さいど」に直る）。",
+                        isDisabled: !typoNormalizer)
                 }
-                .disabled(!typoNormalizer)
-                Text("読みがこの文字数に満たないときは直しません。短い読みは正しく打っていても"
-                    + "別の語の打ち間違いに見えやすいためです（例:「さど」が「さいど」に直る）。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TypoThresholdRow(threshold: $typoThreshold)
-                    .disabled(!typoNormalizer)
-                Text("大きくするほど、モデルがよほど確信したときしか直しません。"
-                    + "小さくすると打ち間違いをよく拾いますが、正しく打った読みも直してしまいます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                TypoThresholdRow(threshold: $typoThreshold, isDisabled: !typoNormalizer)
             }
 
             Section("予測") {
-                Toggle("予測変換（入力中）", isOn: $predictiveConversion)
-                    .disabled(!liveConversion)
-                Text("入力を止めると、変換結果の続き（次の文節）をカーソルの下の小さなウィンドウに表示します。"
-                    + "Tabで取り入れ、そのまま入力を続けられます。取り入れた部分はBackspaceで取り消せます。"
-                    + "ライブ変換がONのときだけ動きます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Toggle("インライン補完（確定後）", isOn: $inlineCompletion)
-                Text("確定したあと操作を止めると、文章の続き（次の文節）を同じウィンドウに表示します。"
-                    + "Tabで確定、それ以外のキーで消えます。Tabを押すまでアプリの文字は変わりません。"
-                    + "句読点が出たらそこまでを予測します。使うモデルは「モデル」タブで変えられます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                PredictionDelayRow(milliseconds: $predictionDelayMs)
-                    .disabled(!predictiveConversion && !inlineCompletion)
-                Text("キーを離してからこの時間だけ何も押さなければ予測を出します。短いほど早く出ますが、"
-                    + "入力中に頻繫に出て煩わしくなります。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HelpToggle(
+                    title: "予測変換（入力中）", isOn: $predictiveConversion,
+                    help: "入力を止めると、変換結果の続き（次の文節）をカーソルの下の小さなウィンドウに表示します。"
+                        + "Tabで取り入れ、そのまま入力を続けられます。取り入れた部分はBackspaceで取り消せます。"
+                        + "ライブ変換がONのときだけ動きます。",
+                    isDisabled: !liveConversion)
+                HelpToggle(
+                    title: "インライン補完（確定後）", isOn: $inlineCompletion,
+                    help: "確定したあと操作を止めると、文章の続き（次の文節）を同じウィンドウに表示します。"
+                        + "Tabで確定、それ以外のキーで消えます。Tabを押すまでアプリの文字は変わりません。"
+                        + "句読点が出たらそこまでを予測します。使うモデルは「モデル」タブで変えられます。")
+                PredictionDelayRow(
+                    milliseconds: $predictionDelayMs, isDisabled: !predictiveConversion && !inlineCompletion)
             }
 
             Section("句読点") {
-                Picker("句読点スタイル", selection: $punctuationStyle) {
+                Picker(selection: $punctuationStyle) {
                     Text("、。").tag("、。")
                     Text("，．").tag("，．")
+                } label: {
+                    HelpLabel(
+                        title: "句読点スタイル",
+                        help: "変更は次の入力から反映されます。入力中は ⌃.（control + ピリオド）でも切り替えられます。")
                 }
                 .pickerStyle(.segmented)
-                Text("変更は次の入力から反映されます。入力中は ⌃.（control + ピリオド）でも切り替えられます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             // 未確定文字列をAIに渡して確定する（使うAIサービスは「モデル」タブで選ぶ）
-            Section("AI変換して確定") {
-                Text("修飾キー+Returnで、入力中の未確定文字列をAIに渡し、返ってきた結果を確定します。"
-                    + "使うAIサービスは「モデル」タブで選びます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Section {
                 AICommitPresetEditor(index: 0)
                 AICommitPresetEditor(index: 1)
                 AICommitPresetEditor(index: 2)
+            } header: {
+                HelpSectionHeader(
+                    title: "AI変換して確定",
+                    help: "修飾キー+Returnで、入力中の未確定文字列をAIに渡し、返ってきた結果を確定します。"
+                        + "使うAIサービスは「モデル」タブで選びます。")
             }
         }
         .formStyle(.grouped)
@@ -206,7 +192,7 @@ private struct TypoNormalizerModelRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("訂正モデル")
+                HelpLabel(title: "訂正モデル", help: downloader.offerDescription)
                 Spacer()
                 content
             }
@@ -218,11 +204,7 @@ private struct TypoNormalizerModelRow: View {
                     .font(.caption)
                     .foregroundStyle(.red)
             }
-            if downloader.installed == nil, !downloader.isBusy {
-                Text(downloader.offerDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if let notice = downloader.outdatedNotice, !downloader.isBusy {
+            if let notice = downloader.outdatedNotice, !downloader.isBusy {
                 Text(notice)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -267,6 +249,7 @@ private struct TypoNormalizerModelRow: View {
 /// 打ち間違いの訂正を走らせるまでの休止時間（ミリ秒）
 private struct TypoDelayRow: View {
     @Binding var milliseconds: Int
+    var isDisabled = false
     private static let step = 50.0
     private static let range = Double(TypoNormalizerSettings.delayMillisecondsRange.lowerBound)
         ... Double(TypoNormalizerSettings.delayMillisecondsRange.upperBound)
@@ -274,13 +257,18 @@ private struct TypoDelayRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("訂正するまでの休止時間")
+                HelpLabel(
+                    title: "訂正するまでの休止時間",
+                    help: "キーを離してからこの時間だけ何も押さなければ訂正します。"
+                        + "短いほど早く直りますが、語の途中で考えているだけのときにも動きます。",
+                    isDisabled: isDisabled)
                 Spacer()
                 Text("\(milliseconds) ms")
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
             Slider(value: sliderValue, in: Self.range, step: Self.step)
+                .disabled(isDisabled)
         }
     }
 
@@ -299,6 +287,7 @@ private struct TypoDelayRow: View {
 /// 分布ではないため、UIでは割合を約束しない（SWIFT-PORT.md §1）
 private struct TypoThresholdRow: View {
     @Binding var threshold: Double
+    var isDisabled = false
 
     /// しきい値の目安。境目は test 10,000 件で測った曲線の形に合わせてある
     /// （2.0 付近から過剰訂正が 1% を切り、5.0 を超えると訂正がほとんど出なくなる）
@@ -314,7 +303,11 @@ private struct TypoThresholdRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("訂正を出す確信の強さ")
+                HelpLabel(
+                    title: "訂正を出す確信の強さ",
+                    help: "大きくするほど、モデルがよほど確信したときしか直しません。"
+                        + "小さくすると打ち間違いをよく拾いますが、正しく打った読みも直してしまいます。",
+                    isDisabled: isDisabled)
                 Spacer()
                 Text(String(format: "%.1f", threshold))
                     .foregroundStyle(.secondary)
@@ -333,6 +326,7 @@ private struct TypoThresholdRow: View {
                 Button("既定") { threshold = TypoNormalizer.defaultThreshold }
                     .disabled(threshold == TypoNormalizer.defaultThreshold)
             }
+            .disabled(isDisabled)
         }
     }
 }
@@ -340,6 +334,7 @@ private struct TypoThresholdRow: View {
 /// 予測を出すまでの休止時間（ミリ秒）のスライダー行
 private struct PredictionDelayRow: View {
     @Binding var milliseconds: Int
+    var isDisabled = false
     private static let step = 50.0
     private static let range = Double(PredictionSettings.delayMillisecondsRange.lowerBound)
         ... Double(PredictionSettings.delayMillisecondsRange.upperBound)
@@ -347,13 +342,18 @@ private struct PredictionDelayRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("予測を出すまでの休止時間")
+                HelpLabel(
+                    title: "予測を出すまでの休止時間",
+                    help: "キーを離してからこの時間だけ何も押さなければ予測を出します。短いほど早く出ますが、"
+                        + "入力中に頻繫に出て煩わしくなります。",
+                    isDisabled: isDisabled)
                 Spacer()
                 Text("\(milliseconds) ms")
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
             Slider(value: sliderValue, in: Self.range, step: Self.step)
+                .disabled(isDisabled)
         }
     }
 
@@ -390,31 +390,38 @@ private struct DictionarySettingsTab: View {
                         Button("編集...") { uiState.showingUserDictionary = true }
                     }
                 }
-                Toggle("起動時にmacOSのユーザ辞書を取り込む", isOn: $syncSystemDictionary)
-                Text("「システム設定 > キーボード > ユーザ辞書」に登録した単語を取り込みます"
-                    + "（読み取りのみ。macOS側の辞書は変更しません）。"
-                    + "取り込んだ単語をirohaで編集すると、以後の取り込みでは上書きされません。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HelpToggle(
+                    title: "起動時にmacOSのユーザ辞書を取り込む", isOn: $syncSystemDictionary,
+                    help: "「システム設定 > キーボード > ユーザ辞書」に登録した単語を取り込みます"
+                        + "（読み取りのみ。macOS側の辞書は変更しません）。"
+                        + "取り込んだ単語をirohaで編集すると、以後の取り込みでは上書きされません。")
             }
 
-            Section("変換ルール") {
+            Section {
                 LabeledContent("登録ルール") {
                     HStack {
                         Text("\(rewriteRuleCount) 件").foregroundStyle(.secondary)
                         Button("編集...") { uiState.showingRewriteRules = true }
                     }
                 }
-                Text("トリガー（よみ）と出力の組を登録すると、文節の読みがトリガーに一致したとき"
-                    + "出力を変換候補に加えます。出力には {{date:yyyy/MM/dd}} や {{time:HH:mm}} の"
-                    + "ようなプレースホルダを書けて、変換のたびに今の日付・時刻に置き換わります"
-                    + "（例:「きょう」→ 2026/09/06）。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            } header: {
+                HelpSectionHeader(
+                    title: "変換ルール",
+                    help: "トリガー（よみ）と出力の組を登録すると、文節の読みがトリガーに一致したとき"
+                        + "出力を変換候補に加えます。出力には {{date:yyyy/MM/dd}} や {{time:HH:mm}} の"
+                        + "ようなプレースホルダを書けて、変換のたびに今の日付・時刻に置き換わります"
+                        + "（例:「きょう」→ 2026/09/06）。")
             }
 
             Section("変換の学習") {
-                Toggle("変換の修正を学習する", isOn: $learningEnabled)
+                HelpToggle(
+                    title: "変換の修正を学習する", isOn: $learningEnabled,
+                    help: "文節変換（スペースキー）で候補を選び直して確定すると、入力した読みの全体・"
+                        + "確定した文字列・直す前の変換結果を覚えます。次に同じ読みを入力して、変換結果が"
+                        + "直す前と同じになったときに、覚えた文字列に差し替えます"
+                        + "（「きしゃ」を「貴社」に直すと、次から「きしゃ」はそう変換されます）。"
+                        + "前の文章によって変換結果が変わったときは差し替えず、候補ウィンドウに出します。"
+                        + "読みの一部には当てはめません。")
                 LabeledContent("学習した変換") {
                     HStack {
                         Text("\(learningCount) 件").foregroundStyle(.secondary)
@@ -436,16 +443,21 @@ private struct DictionarySettingsTab: View {
                             .disabled(learningCount == 0)
                     }
                 }
-                Text("文節変換（スペースキー）で候補を選び直して確定すると、入力した読みの全体と"
-                    + "確定した文字列を覚えて、次に同じ読みを入力したとき最初に出します"
-                    + "（「きしゃ」を「貴社」に直すと、次から「きしゃ」はそう変換されます）。"
-                    + "読みの一部には当てはめません。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Section("変換記録") {
-                Toggle("確定した変換を記録する", isOn: $conversionLogEnabled)
+                HelpToggle(
+                    title: "確定した変換を記録する", isOn: $conversionLogEnabled,
+                    help: "確定した変換を、そのときモデルに渡した文脈（カーソル手前の文章の末尾40文字）・読み・"
+                        + "モデルの出力・確定した文字列とともに1件ずつ記録します。"
+                        + "追加学習は「この文脈でこの読みならこう変換する」を学ぶので、"
+                        + "左文脈のない確定（起動直後やフォーカス移動直後の1語目）は記録しません。"
+                        + "「確認・編集...」で中身を見て、打ち間違いをそのまま確定した行は直すか削除できます。"
+                        + "記録はデータフォルダ内の logs/conversions/ にこのMacのファイルとして残るだけで、"
+                        + "どこにも送信されません。あとでこの記録を使って、自分の入力に合わせた変換モデルの"
+                        + "追加学習（LoRAなど）ができます。上の「変換の学習」とは別のもので、"
+                        + "記録しても変換の動作は変わりません。書いていた文章の一部がそのまま残るため、"
+                        + "この設定は他のMacには同期されません。")
                 Picker("記録する範囲", selection: $conversionLogScope) {
                     ForEach(ConversionLogSettings.Scope.allCases) { scope in
                         Text(scope.label).tag(scope.rawValue)
@@ -462,18 +474,6 @@ private struct DictionarySettingsTab: View {
                             .disabled(conversionLogSize == 0)
                     }
                 }
-                Text("確定した変換を、そのときモデルに渡した文脈（カーソル手前の文章の末尾40文字）・読み・"
-                    + "モデルの出力・確定した文字列とともに1件ずつ記録します。"
-                    + "追加学習は「この文脈でこの読みならこう変換する」を学ぶので、"
-                    + "左文脈のない確定（起動直後やフォーカス移動直後の1語目）は記録しません。"
-                    + "「確認・編集...」で中身を見て、打ち間違いをそのまま確定した行は直すか削除できます。"
-                    + "記録はデータフォルダ内の logs/conversions/ にこのMacのファイルとして残るだけで、"
-                    + "どこにも送信されません。あとでこの記録を使って、自分の入力に合わせた変換モデルの"
-                    + "追加学習（LoRAなど）ができます。上の「変換の学習」とは別のもので、"
-                    + "記録しても変換の動作は変わりません。書いていた文章の一部がそのまま残るため、"
-                    + "この設定は他のMacには同期されません。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -528,11 +528,12 @@ private struct SelectionSettingsTab: View {
 
     var body: some View {
         Form {
-            Section("選択テキストのAI編集") {
+            Section {
                 SelectionIntroRows(selectionEnabled: $selectionEnabled)
-                Text("処理に使うAIサービス（Apple Intelligence・Ollamaなど）は「モデル」タブで設定します。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            } header: {
+                HelpSectionHeader(
+                    title: "選択テキストのAI編集",
+                    help: "処理に使うAIサービス（Apple Intelligence・Ollamaなど）は「モデル」タブで設定します。")
             }
 
             Section("マウスで選択したとき") {
@@ -544,49 +545,51 @@ private struct SelectionSettingsTab: View {
                 .disabled(!selectionEnabled)
             }
 
-            Section("その場でAIに指示") {
+            Section {
                 HotkeyField(label: "ショートカット", hotkey: $onDemandHotkey)
                     .disabled(!selectionEnabled)
-                Text("選択テキストに自由な指示を出せます（選択なしで押すとテキスト生成になります）。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            } header: {
+                HelpSectionHeader(
+                    title: "その場でAIに指示",
+                    help: "選択テキストに自由な指示を出せます（選択なしで押すとテキスト生成になります）。")
             }
 
-            Section("プリセット") {
-                Text("プリセットのショートカットは、テキストを選択していないときに押すと"
-                    + "「テキストを生成」の入力欄になり、結果をカーソル位置へ挿入します。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Section {
                 SelectionPresetEditor(index: 0)
                 SelectionPresetEditor(index: 1)
                 SelectionPresetEditor(index: 2)
                 SelectionPresetEditor(index: 3)
                 SelectionPresetEditor(index: 4)
+            } header: {
+                HelpSectionHeader(
+                    title: "プリセット",
+                    help: "プリセットのショートカットは、テキストを選択していないときに押すと"
+                        + "「テキストを生成」の入力欄になり、結果をカーソル位置へ挿入します。")
             }
 
-            Section("除外するアプリ") {
+            Section {
                 TextField(
                     "", text: $excludedBundleIds,
                     prompt: Text("com.example.app, com.example.other"))
                     .textFieldStyle(.roundedBorder)
                     .disabled(!selectionEnabled)
-                Text("ここに書いたバンドルIDのアプリでは、マウス選択のトリガーを出しません"
-                    + "（カンマまたは改行区切り）。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            } header: {
+                HelpSectionHeader(
+                    title: "除外するアプリ",
+                    help: "ここに書いたバンドルIDのアプリでは、マウス選択のトリガーを出しません"
+                        + "（カンマまたは改行区切り）。")
             }
 
             // AI編集とは独立した機能（マウスで選択した文字数を選択範囲の近くに出す）。
             // アクセシビリティ権限と除外するアプリの設定はAI編集と共通なのでこのタブに置く
             Section("選択した文字数の表示") {
-                Toggle("選択した文字数を表示する", isOn: $characterCount)
-                Text("マウスで選択（ドラッグ・ダブルクリック）すると、選択範囲の近くに文字数を数秒表示します"
-                    + "（改行は数えず、空白があれば空白を除いた数も併記）。"
-                    + "AI編集がONのときはアイコンに添えて表示します。"
-                    + "アクセシビリティ権限が必要で、除外するアプリの設定も共通です。"
-                    + "キーボードでの選択（Shift+矢印・⌘A）には反応しません。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HelpToggle(
+                    title: "選択した文字数を表示する", isOn: $characterCount,
+                    help: "マウスで選択（ドラッグ・ダブルクリック）すると、選択範囲の近くに文字数を数秒表示します"
+                        + "（改行は数えず、空白があれば空白を除いた数も併記）。"
+                        + "AI編集がONのときはアイコンに添えて表示します。"
+                        + "アクセシビリティ権限が必要で、除外するアプリの設定も共通です。"
+                        + "キーボードでの選択（Shift+矢印・⌘A）には反応しません。")
             }
         }
         .formStyle(.grouped)
@@ -614,15 +617,14 @@ private struct SelectionIntroRows: View {
     @State private var accessibilityGranted = AXIsProcessTrusted()
 
     var body: some View {
-        Toggle("選択テキストのAI編集を有効にする", isOn: $selectionEnabled)
+        HelpToggle(
+            title: "選択テキストのAI編集を有効にする", isOn: $selectionEnabled,
+            help: "どのアプリでも、選択したテキストをショートカットやマウス操作からAIで"
+                + "処理して置き換えられます。"
+                + "ショートカットはirohaが起動している間だけ有効です"
+                + "（ログイン後に一度日本語入力すると起動します）。")
             .onAppear { accessibilityGranted = AXIsProcessTrusted() }
-        Text("どのアプリでも、選択したテキストをショートカットやマウス操作からAIで"
-            + "処理して置き換えられます。"
-            + "ショートカットはirohaが起動している間だけ有効です"
-            + "（ログイン後に一度日本語入力すると起動します）。")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        LabeledContent("アクセシビリティ権限") {
+        LabeledContent {
             HStack {
                 if accessibilityGranted {
                     Label("許可済み", systemImage: "checkmark.circle.fill")
@@ -640,10 +642,9 @@ private struct SelectionIntroRows: View {
                 }
                 Button("再確認") { accessibilityGranted = AXIsProcessTrusted() }
             }
+        } label: {
+            HelpLabel(title: "アクセシビリティ権限", help: "選択テキストの取得と置換にアクセシビリティ権限が必要です。")
         }
-        Text("選択テキストの取得と置換にアクセシビリティ権限が必要です。")
-            .font(.caption)
-            .foregroundStyle(.secondary)
     }
 }
 
@@ -705,11 +706,13 @@ private struct AIServiceSection: View {
 
     var body: some View {
         Section("AIサービス") {
-            Picker("サービス", selection: $translationService) {
+            Picker(selection: $translationService) {
                 Text("Apple Intelligence（オンデバイス）").tag("apple")
                 Text("Ollama").tag("ollama")
                 Text("LM Studio").tag("lmstudio")
                 Text("OpenAI互換（外部API）").tag("openai")
+            } label: {
+                HelpLabel(title: "サービス", help: translationCaption)
             }
             if translationService == "openai" {
                 VStack(alignment: .leading, spacing: 4) {
@@ -754,9 +757,12 @@ private struct AIServiceSection: View {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
             }
-            Text(translationCaption)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            // 外部への送信は説明に隠さず常に見せる
+            if translationService == "openai" {
+                Text("未確定文字列や選択テキストが外部サービスへ送信されます。")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
         }
         .onChange(of: translationService) { fetchRemoteModels() }
         .onAppear { fetchRemoteModels() }
@@ -893,10 +899,6 @@ private struct AICommitPresetEditor: View {
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(Color(nsColor: .separatorColor)))
                 HStack(alignment: .top) {
-                    Text("\(AICommitSettings.textPlaceholder) と書くとその位置に未確定文字列が"
-                        + "入ります（無ければプロンプトに続けて渡されます）。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                     Spacer()
                     Button("既定に戻す") {
                         name = AICommitSettings.defaults[index].name
@@ -908,7 +910,10 @@ private struct AICommitPresetEditor: View {
                 }
             } label: {
                 HStack(spacing: 6) {
-                    Text("プロンプト")
+                    HelpLabel(
+                        title: "プロンプト",
+                        help: "\(AICommitSettings.textPlaceholder) と書くとその位置に未確定文字列が"
+                            + "入ります（無ければプロンプトに続けて渡されます）。")
                     if !expanded {
                         Text(prompt.replacingOccurrences(of: "\n", with: " "))
                             .font(.caption)
@@ -999,13 +1004,12 @@ private struct SelectionPresetEditor: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(Color(nsColor: .separatorColor)))
-                Text("\(AICommitSettings.textPlaceholder) と書くとその位置に選択テキストが"
-                    + "入ります（無ければプロンプトに続けて渡されます）。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             } label: {
                 HStack(spacing: 6) {
-                    Text("プロンプト")
+                    HelpLabel(
+                        title: "プロンプト",
+                        help: "\(AICommitSettings.textPlaceholder) と書くとその位置に選択テキストが"
+                            + "入ります（無ければプロンプトに続けて渡されます）。")
                     if !expanded {
                         Text(prompt.replacingOccurrences(of: "\n", with: " "))
                             .font(.caption)
@@ -1052,7 +1056,7 @@ private struct ModelSettingsTab: View {
                 }
                 // 長いパスが切れないよう、ラベルは上に置いて入力欄に幅を全部使わせる
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("モデルファイル（GGUF）のパス")
+                    HelpLabel(title: "モデルファイル（GGUF）のパス", help: "モデルの変更はirohaの再起動後に反映されます。")
                     TextField("", text: $modelPath, prompt: Text(ZenzEngine.defaultModelPath))
                         .textFieldStyle(.roundedBorder)
                     // 消えたモデルを指したままだと変換が一切できなくなるので、入力欄の下で知らせる
@@ -1080,9 +1084,6 @@ private struct ModelSettingsTab: View {
                         }
                     }
                 }
-                Text("モデルの変更はirohaの再起動後に反映されます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Button("irohaを再起動") {
                     // 終了処理の詳細（_exitを使う理由等）はAppRestarterのコメントを参照
                     AppRestarter.restartInstalledApp()
@@ -1091,16 +1092,17 @@ private struct ModelSettingsTab: View {
 
             TrainingSection()
 
-            Section("予測変換・インライン補完のモデル") {
-                Text("入力中の予測変換と確定後のインライン補完は、かな漢字変換とは別のモデルを使えます。"
-                    + "空欄ならかな漢字変換と同じモデルを共有します（zenz-v3は文章の続きも生成できます）。"
-                    + "変更はirohaの再起動後に反映されます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Section {
                 PredictionModelPathField(
                     title: "予測変換（入力中）", key: PredictionSettings.predictiveModelPathKey)
                 PredictionModelPathField(
                     title: "インライン補完（確定後）", key: PredictionSettings.completionModelPathKey)
+            } header: {
+                HelpSectionHeader(
+                    title: "予測変換・インライン補完のモデル",
+                    help: "入力中の予測変換と確定後のインライン補完は、かな漢字変換とは別のモデルを使えます。"
+                        + "空欄ならかな漢字変換と同じモデルを共有します（zenz-v3は文章の続きも生成できます）。"
+                        + "変更はirohaの再起動後に反映されます。")
             }
 
             AIServiceSection()
@@ -1123,7 +1125,7 @@ private struct TrainingSection: View {
     private var basePath: String { IrohaInputController.engineModelPath }
 
     var body: some View {
-        Section("自分の入力で追加学習") {
+        Section {
             if !TrainingCoordinator.isSupportedHardware {
                 Text("追加学習は Apple Silicon の Mac で使えます。").foregroundStyle(.secondary)
             } else if !TrainingCoordinator.isAvailable {
@@ -1134,14 +1136,15 @@ private struct TrainingSection: View {
                 trainingRow
             }
             adapterField
-            Text("確定した変換の記録（辞書・学習タブの「変換記録」）で、使用中のモデルに自分の文章の癖を"
-                + "追加学習します。ベースのモデルは変えず、小さなアダプタファイルを models/adapters/ に作ります。"
-                + "手順は 4 つ: ① 記録を1件ずつ今のモデルで変換し直す ② 間違えたものと正しかったものの一部を"
-                + "評価用に取り分ける ③ 残りの記録すべてで学習する ④ 評価用の記録をアダプタなし／ありで変換して"
-                + "結果を並べる。使った記録は .train.tsv / .mistakes.tsv / .correct.tsv としてアダプタの隣に残ります。"
-                + "学習は数十秒〜数分かかり、その間 GPU を使います。アダプタの変更は再起動後に反映されます。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        } header: {
+            HelpSectionHeader(
+                title: "自分の入力で追加学習",
+                help: "確定した変換の記録（辞書・学習タブの「変換記録」）で、使用中のモデルに自分の文章の癖を"
+                    + "追加学習します。ベースのモデルは変えず、小さなアダプタファイルを models/adapters/ に作ります。"
+                    + "手順は 4 つ: ① 記録を1件ずつ今のモデルで変換し直す ② 間違えたものと正しかったものの一部を"
+                    + "評価用に取り分ける ③ 残りの記録すべてで学習する ④ 評価用の記録をアダプタなし／ありで変換して"
+                    + "結果を並べる。使った記録は .train.tsv / .mistakes.tsv / .correct.tsv としてアダプタの隣に残ります。"
+                    + "学習は数十秒〜数分かかり、その間 GPU を使います。アダプタの変更は再起動後に反映されます。")
         }
         .onAppear { coordinator.refreshInfo(basePath: basePath) }
         .onReceive(NotificationCenter.default.publisher(for: ConversionLog.didChangeNotification)) { _ in
@@ -1193,8 +1196,15 @@ private struct TrainingSection: View {
     }
 
     /// エポック数と学習率。常に見せる（折りたたみに隠すと見つからない）。学習中は変えられない
+    /// エポック数・学習率の両方の説明に付ける共通の注意
+    private var parameterCaution: String {
+        "どちらも増やすほど強く覚えますが、元からできていた変換が崩れることもあります。"
+            + "結果の「できていた変換」が減ったら弱めてください。既定はエポック \(TrainingSettings.defaultEpochs)・学習率 "
+            + "\(TrainingSettings.format(learningRate: TrainingSettings.defaultLearningRate))。"
+    }
+
     @ViewBuilder private var parameterRows: some View {
-        LabeledContent("エポック数") {
+        LabeledContent {
             HStack(spacing: 4) {
                 TextField("", value: $epochs, format: .number)
                     .textFieldStyle(.roundedBorder)
@@ -1204,12 +1214,16 @@ private struct TrainingSection: View {
                         epochs = min(max(value, TrainingSettings.epochsRange.lowerBound), TrainingSettings.epochsRange.upperBound)
                     }
                 Stepper("", value: $epochs, in: TrainingSettings.epochsRange).labelsHidden()
-                Text("記録全体を何周学習するか（\(TrainingSettings.epochsRange.lowerBound)〜\(TrainingSettings.epochsRange.upperBound)）")
-                    .font(.caption).foregroundStyle(.secondary)
             }
+            .disabled(!isIdle)
+        } label: {
+            HelpLabel(
+                title: "エポック数",
+                help: "記録全体を何周学習するか（\(TrainingSettings.epochsRange.lowerBound)〜"
+                    + "\(TrainingSettings.epochsRange.upperBound)）。" + parameterCaution,
+                isDisabled: !isIdle)
         }
-        .disabled(!isIdle)
-        LabeledContent("学習率") {
+        LabeledContent {
             HStack(spacing: 4) {
                 LearningRateField(learningRate: $learningRate)
                 Menu("プリセット") {
@@ -1218,17 +1232,17 @@ private struct TrainingSection: View {
                     }
                 }
                 .frame(width: 110)
-                Text("1e-4 や 0.0001 のように入力（\(TrainingSettings.format(learningRate: TrainingSettings.learningRateRange.lowerBound))"
-                    + "〜\(TrainingSettings.format(learningRate: TrainingSettings.learningRateRange.upperBound))）")
-                    .font(.caption).foregroundStyle(.secondary)
             }
+            .disabled(!isIdle)
+        } label: {
+            HelpLabel(
+                title: "学習率",
+                help: "1e-4 や 0.0001 のように入力します"
+                    + "（\(TrainingSettings.format(learningRate: TrainingSettings.learningRateRange.lowerBound))"
+                    + "〜\(TrainingSettings.format(learningRate: TrainingSettings.learningRateRange.upperBound))）。"
+                    + parameterCaution,
+                isDisabled: !isIdle)
         }
-        .disabled(!isIdle)
-        Text("どちらも増やすほど強く覚えますが、元からできていた変換が崩れることもあります。"
-            + "結果の「できていた変換」が減ったら弱めてください。既定はエポック \(TrainingSettings.defaultEpochs)・学習率 "
-            + "\(TrainingSettings.format(learningRate: TrainingSettings.defaultLearningRate))。")
-            .font(.caption)
-            .foregroundStyle(.secondary)
     }
 
     @ViewBuilder private var trainingRow: some View {
@@ -1495,7 +1509,7 @@ private struct DataDirectorySection: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        Section("データの保存場所") {
+        Section {
             VStack(alignment: .leading, spacing: 4) {
                 Text("フォルダ")
                 Text(DataDirectorySettings.displayPath)
@@ -1515,11 +1529,12 @@ private struct DataDirectorySection: View {
                     NSWorkspace.shared.open(DataDirectory.url)
                 }
             }
-            Text("ユーザ辞書・変換ルール・学習・変換記録・変換モデル・設定をこのフォルダに保存します。"
-                 + "iCloud DriveやDropboxのフォルダを指定すると、複数のMacで同じデータを共有できます。"
-                 + "変更するとirohaが再起動します。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        } header: {
+            HelpSectionHeader(
+                title: "データの保存場所",
+                help: "ユーザ辞書・変換ルール・学習・変換記録・変換モデル・設定をこのフォルダに保存します。"
+                    + "iCloud DriveやDropboxのフォルダを指定すると、複数のMacで同じデータを共有できます。"
+                    + "変更するとirohaが再起動します。")
         }
         .alert(
             "データの保存場所を変更しますか？",
@@ -1639,24 +1654,23 @@ private struct AboutSettingsTab: View {
             }
 
             Section("デバッグ") {
-                Toggle("推論にかかった時間と左文脈をカーソルの右上に表示する", isOn: $developerOverlay)
-                Text("開発者向けの表示です。入力を始めたときに、カーソルの左の文字をアプリから読めたか"
-                    + "（読めなければその理由と、代わりに使う確定済みの文字列）を出します。"
-                    + "かな漢字変換と打ち間違いの訂正を実行するたびに、かかった時間を出します。"
-                    + "「全体」は変換を頼んでから結果が返るまで、「NN」はそのうちニューラルネットの計算だけの時間です"
-                    + "（差は辞書・学習の処理と、先に走っている推論の待ち時間）。"
-                    + "「取り消し」は、前の表示のあと次の入力で打ち切った変換の数です。この設定は他のMacと同期しません。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HelpToggle(
+                    title: "推論にかかった時間と左文脈をカーソルの右上に表示する", isOn: $developerOverlay,
+                    help: "開発者向けの表示です。入力を始めたときに、カーソルの左の文字をアプリから読めたか"
+                        + "（読めなければその理由と、代わりに使う確定済みの文字列）を出します。"
+                        + "かな漢字変換と打ち間違いの訂正を実行するたびに、かかった時間を出します。"
+                        + "「全体」は変換を頼んでから結果が返るまで、「NN」はそのうちニューラルネットの計算だけの時間です"
+                        + "（差は辞書・学習の処理と、先に走っている推論の待ち時間）。"
+                        + "「取り消し」は、前の表示のあと次の入力で打ち切った変換の数です。この設定は他のMacと同期しません。")
             }
 
             Section("アンインストール") {
-                Button("irohaをアンインストール...", role: .destructive) {
-                    showingUninstallConfirm = true
+                HStack(spacing: 4) {
+                    Button("irohaをアンインストール...", role: .destructive) {
+                        showingUninstallConfirm = true
+                    }
+                    HelpButton("入力ソースの一覧からirohaを外し、アプリ本体を削除して終了します。")
                 }
-                Text("入力ソースの一覧からirohaを外し、アプリ本体を削除して終了します。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

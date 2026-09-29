@@ -91,6 +91,10 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   他アプリの選択テキストをAIで置換する。GenGoの機能を移植。既定OFF・要アクセシビリティ権限）
 - `macos/Sources/IrohaCore/` — 変換エンジン（Swift 6モード）: zenz + llama.cpp。
   Foundationのみ依存でmacOS専用APIは不使用（将来のWindows移植候補）
+- 設定画面（`SettingsView.swift`）の項目の細かな説明は画面に並べず、「?」ボタン（`SettingsHelp.swift` の
+  `HelpButton` / `HelpLabel` / `HelpToggle` / `HelpSectionHeader`）に入れ、押したときにポップオーバーで出す
+  （2026-09-30）。状態・警告・エラーの表示は「?」に入れず画面に出す。無効にするのは操作部品だけにして、
+  機能が OFF でも説明は読めるようにする
 - FoundationModelsはmacOS 26+のため `#if canImport` + `@available(macOS 26.0, *)` ガード必須
   （パッケージのフロアはmacOS 14）
 - llama.cppの静的ライブラリは `./macos/scripts/build-llama.sh` で `vendor/dist` に生成（未コミット）
