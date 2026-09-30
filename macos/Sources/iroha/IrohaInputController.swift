@@ -780,7 +780,12 @@ final class IrohaInputController: IMKInputController {
 
         switch Int(event.keyCode) {
         case kVK_Return, kVK_ANSI_KeypadEnter:
-            guard isComposing else { return false }
+            guard isComposing else {
+                // アプリ側で改行される。左文脈はカーソルのある行だけなので、確定文字列の蓄積も捨てる
+                // （アプリから読めたときの `LeftContext.normalize` と同じ形にそろえる）
+                recentCommitted = ""
+                return false
+            }
             commitCurrent(client: client)
             return true
         case kVK_Delete:

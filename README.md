@@ -175,7 +175,7 @@ iroha側の対応は不要。
 
 上の学習とは別に、確定した変換を1件ずつファイルに記録できる
 （**設定 > 辞書・学習 > 変換記録**）。修正の有無にかかわらず、ライブ変換の確定・文節変換の確定・
-F6〜F10による確定を、そのときモデルに渡した左文脈（カーソル手前の文章の末尾40文字）・読み・
+F6〜F10による確定を、そのときモデルに渡した左文脈（カーソルのある行の、カーソル手前の末尾40文字）・読み・
 モデルが提示していた変換結果・確定した文字列とともに残す。変換の動作には影響しない。
 記録はこのMacの中に残るだけでどこにも送信せず、あとで自分の入力に合わせた変換モデルの
 追加学習（LoRAなど）の素材に使うためのもの。
@@ -476,10 +476,11 @@ CC BY-SA 4.0（一部は llm-jp-corpus-v3 由来で ODC-BY と Common Crawl の�
 - zenzのプロンプト形式: `[U+EE02 + 左文脈] + U+EE00 + カタカナ読み + U+EE01 → 変換結果`
 - 左文脈の取得（[DocumentContextSettings](macos/Sources/iroha/DocumentContextSettings.swift)、設定 `documentContext`、既定ON）:
   合成を始める瞬間（未確定文字列がまだ無いとき）に1回だけ、IMKの `selectedRange` / `attributedSubstring`
-  でアプリのカーソル手前のテキストを読み、改行を除いた末尾40文字を文脈にする（[LeftContext](macos/Sources/IrohaCore/LeftContext.swift)）。
+  でアプリのカーソル手前のテキストを読み、カーソルのある行（最後の改行より後ろ、行頭の空白を除く）の
+  末尾40文字を文脈にする（[LeftContext](macos/Sources/IrohaCore/LeftContext.swift)。azooKeyと同じく前の行は使わない）。
   インライン補完は確定直後に読み直す（確定した文字列で終わっていることを確認する）。
   カーソル位置やテキストを返さないアプリ（Electron系・ターミナル等）や設定OFFでは、
-  irohaが確定した文字列の蓄積（`recentCommitted`、フォーカス移動で空になる）に代える。
+  irohaが確定した文字列の蓄積（`recentCommitted`、フォーカス移動と、合成していないときのEnter（改行）で空になる）に代える。
   合成中は読み直さない（未確定文字列が混ざる・同期IPCが増える）
 - 予測変換・インライン補完は [PredictionEngine](macos/Sources/IrohaCore/PredictionEngine.swift)
   プロトコルで抽象化し、かな漢字変換とは別モデルを設定できる（既定は同じzenzインスタンスを共有）。
