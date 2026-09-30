@@ -32,7 +32,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// 編集メニュー（⌘X / ⌘C / ⌘V / ⌘A / ⌘Z / ⇧⌘Z）を用意する。
+    /// irohaはメニューバーを出さない（LSUIElement）のでメニューが無く、そのままでは設定ウィンドウや
+    /// そのシートのテキスト欄でコピー・貼り付けのキーが効かない。メニューは表示されないが、
+    /// キーの割り当ては表に出ているウィンドウの入力欄に届く
+    private func installEditMenu() {
+        let edit = NSMenu(title: "編集")
+        edit.addItem(withTitle: "取り消す", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "やり直す", action: Selector(("redo:")), keyEquivalent: "z")
+            .keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "カット", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "コピー", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "ペースト", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "すべてを選択", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let editItem = NSMenuItem(title: "編集", action: nil, keyEquivalent: "")
+        editItem.submenu = edit
+        let mainMenu = NSMenu()
+        // 先頭の項目はアプリケーションメニューの位置になるので空けておく
+        mainMenu.addItem(NSMenuItem(title: "iroha", action: nil, keyEquivalent: ""))
+        mainMenu.addItem(editItem)
+        NSApp.mainMenu = mainMenu
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installEditMenu()
+
         // データの保存場所（iCloud/Dropbox等に変更可）。各ストアの初期化より前に確定させる
         DataDirectorySettings.applyAtLaunch()
 

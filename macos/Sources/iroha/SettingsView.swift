@@ -648,7 +648,7 @@ private struct SelectionIntroRows: View {
     }
 }
 
-/// 予測変換・インライン補完に使うモデル（GGUF）のパス入力欄（空ならかな漢字変換と同じモデル）
+/// 予測変換・インライン補完に使うモデル（GGUF）のパス欄（空ならかな漢字変換と同じモデル）
 private struct PredictionModelPathField: View {
     let title: String
     let key: String
@@ -670,8 +670,7 @@ private struct PredictionModelPathField: View {
                     .foregroundStyle(.secondary)
             }
             HStack {
-                TextField("", text: $path, prompt: Text("かな漢字変換と同じモデル"))
-                    .textFieldStyle(.roundedBorder)
+                PathDisplay(path: path, placeholder: "かな漢字変換と同じモデル")
                     .onChange(of: path) { _, newValue in
                         UserDefaults.standard.set(newValue, forKey: key)
                     }
@@ -685,6 +684,8 @@ private struct PredictionModelPathField: View {
                         path = url.path
                     }
                 }
+                Button("共有に戻す") { path = "" }
+                    .disabled(path.isEmpty)
             }
         }
     }
@@ -1031,6 +1032,21 @@ private struct SelectionPresetEditor: View {
 
 // MARK: - モデル（かな漢字変換モデル + AIサービス）
 
+/// ファイルのパスの表示。書き換えはさせず「ファイルを選択...」で選ぶ（手で打つ必要がなく、打ち間違えると
+/// 変換できなくなるため）。選んでコピーはできる。長いパスは折り返して全部見せる。空なら既定の説明を薄く出す
+private struct PathDisplay: View {
+    let path: String
+    let placeholder: String
+
+    var body: some View {
+        Text(path.isEmpty ? placeholder : path)
+            .foregroundStyle(path.isEmpty ? .secondary : .primary)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct ModelSettingsTab: View {
     @AppStorage("modelPath") private var modelPath = ""
     @ObservedObject private var modelDownloader = ModelDownloader.shared
@@ -1054,14 +1070,13 @@ private struct ModelSettingsTab: View {
                     Text(IrohaInputController.engineModelDisplayName)
                         .foregroundStyle(.secondary)
                 }
-                // 長いパスが切れないよう、ラベルは上に置いて入力欄に幅を全部使わせる
+                // 長いパスが切れないよう、ラベルは上に置いてパスに幅を全部使わせる
                 VStack(alignment: .leading, spacing: 4) {
                     HelpLabel(title: "モデルファイル（GGUF）のパス", help: "モデルの変更はirohaの再起動後に反映されます。")
-                    TextField("", text: $modelPath, prompt: Text(ZenzEngine.defaultModelPath))
-                        .textFieldStyle(.roundedBorder)
-                    // 消えたモデルを指したままだと変換が一切できなくなるので、入力欄の下で知らせる
+                    PathDisplay(path: modelPath, placeholder: ZenzEngine.defaultModelPath)
+                    // 消えたモデルを指したままだと変換が一切できなくなるので、パスの下で知らせる
                     if !modelPath.isEmpty, !FileManager.default.fileExists(atPath: modelPath) {
-                        Text("このパスにファイルがありません。変換できないので、モデルを指定し直すか空欄に戻してください。")
+                        Text("このパスにファイルがありません。変換できないので、モデルを選び直すか「既定に戻す」を押してください。")
                             .font(.caption)
                             .foregroundStyle(.red)
                     }
@@ -1083,6 +1098,8 @@ private struct ModelSettingsTab: View {
                             modelPath = url.path
                         }
                     }
+                    Button("既定に戻す") { modelPath = "" }
+                        .disabled(modelPath.isEmpty)
                 }
                 Button("irohaを再起動") {
                     // 終了処理の詳細（_exitを使う理由等）はAppRestarterのコメントを参照
@@ -1304,8 +1321,7 @@ private struct TrainingSection: View {
     @ViewBuilder private var adapterField: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("使用する LoRA アダプタ（GGUF）のパス")
-            TextField("", text: $adapterPath, prompt: Text("なし（ベースモデルのまま）"))
-                .textFieldStyle(.roundedBorder)
+            PathDisplay(path: adapterPath, placeholder: "なし（ベースモデルのまま）")
         }
         HStack {
             Button("アダプタフォルダを開く") {
