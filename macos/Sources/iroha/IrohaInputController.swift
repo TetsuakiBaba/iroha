@@ -261,6 +261,9 @@ final class IrohaInputController: IMKInputController {
     /// `segmentBaseline` のうち、学習が差し替える前のエンジンの変換結果（学習が差し替えていなければ同じ）。
     /// 学習の「直す前」として記録する
     private var segmentEngineBaseline: String?
+    /// 今の文節列がAI変換の結果から作ったものか（`presentAIResultAsSegments`）。
+    /// 真なら確定しても学習・変換記録に残さない
+    private var segmentsFromAI = false
     private var currentSegmentIndex = 0
     /// 非同期の文節処理が古い状態に適用されるのを防ぐ世代カウンタ
     private var segmentGeneration = 0
@@ -1627,6 +1630,7 @@ final class IrohaInputController: IMKInputController {
         segments = []
         segmentBaseline = nil
         segmentEngineBaseline = nil
+        segmentsFromAI = false
         hidePanel()
         cancelConversion()
         updateMarkedText(client: client, display: kanaDisplay)
@@ -1645,7 +1649,7 @@ final class IrohaInputController: IMKInputController {
     /// 次に同じ読みを丸ごと入力し、エンジンがまた同じ結果を出したときだけ再現する。
     /// 学習が差し替えた結果を、ユーザがエンジンの結果に戻して確定したら、その学習を消す
     private func learnIfCorrected(committed: String) {
-        guard LearningSettings.isEnabled, !segments.isEmpty, !committed.isEmpty,
+        guard LearningSettings.isEnabled, !segmentsFromAI, !segments.isEmpty, !committed.isEmpty,
               let baseline = segmentBaseline, committed != baseline else { return }
         // 変換ルールの出力（日付・時刻など）や、候補ウィンドウ専用のユーザ辞書語を選んだ確定は
         // 学習しない。覚えると「きょう → 2026/09/06」が翌日以降も第一候補になったり、
@@ -1668,7 +1672,7 @@ final class IrohaInputController: IMKInputController {
     /// 学習と同じく変換ルールの出力や候補ウィンドウ専用の語（`unlearnableCandidates`）を含む確定は残さない
     /// （毎回変わる日付や、読みと対応しない定型文は学習例にならない）
     private func logSegmentsCommit(committed: String) {
-        guard ConversionLogSettings.isEnabled, !segments.isEmpty, !committed.isEmpty,
+        guard ConversionLogSettings.isEnabled, !segmentsFromAI, !segments.isEmpty, !committed.isEmpty,
               !segments.contains(where: { $0.unlearnableCandidates.contains($0.result) }) else { return }
         logConversion(
             mode: .segments, context: conversionContext, reading: segments.map(\.reading).joined(),
@@ -1906,10 +1910,16 @@ final class IrohaInputController: IMKInputController {
     // MARK: - AIで処理して確定（修飾キー+Enter）
 
     /// 現在の未確定文字列をAI（プリセットのプロンプト）で変換して確定する。
-    /// 合成状態はリセットせず生かしたまま結果を待つ（Escで通常の未確定状態に戻れる）
+    /// 合成状態はリセットせず生かしたまま結果を待つ（Escで通常の未確定状態に戻れる）。
+    /// 結果が日本語（校正・言い換えなど）なら確定せず、文節に区切った未確定文字列として返す
+    /// （`presentAIResultAsSegments`。Enterで確定、Space・矢印で文節ごとに直せる）。英訳など日本語でない結果はそのまま確定する
     private func handleAICommit(_ preset: AICommitPreset, client: IMKTextInput) -> Bool {
         if mode == .segmenting { hidePanel() }
         guard let japanese = resolveCommitText(), !japanese.isEmpty else { return true }
+        // 結果を文節に区切るための読み（resolveCommitText が未解決ローマ字を flush した後の値）
+        let reading = mode == .segmenting
+            ? segments.map(\.reading).joined()
+            : fixedChunks.map(\.reading).joined() + composer.text + (alphabetRun ?? "")
         guard TranslationService.isAvailable else {
             // macOS 26未満 / Apple Intelligence無効 / モデル未選択: 通常の確定にフォールバック
             commitText(japanese, client: client)
@@ -1946,11 +1956,54 @@ final class IrohaInputController: IMKInputController {
                 guard self.isTranslating,
                       generation == self.translationGeneration else { return }
                 self.isTranslating = false
+                if let output, Self.containsJapanese(output), let client = self.client() {
+                    self.presentAIResultAsSegments(output, reading: reading, client: client)
+                    return
+                }
                 // 失敗・タイムアウト時は日本語をそのまま確定（テキストを失わない）
                 self.commitText(output ?? japanese, client: self.client())
             }
         }
         return true
+    }
+
+    /// AIの結果（日本語）を、確定せずに文節に区切った未確定文字列として出す。
+    /// 読みとの対応は `ReadingAligner` で取る（校正で語や句読点が変わって対応が取れなければ全体で1文節）。
+    /// AIの結果は学習にも変換記録にも残さない（`segmentsFromAI`）。読みと対応しない言い換えを覚えると、
+    /// ライブ変換に戻ってきて読みと違う文字列が出るため
+    private func presentAIResultAsSegments(_ output: String, reading: String, client: IMKTextInput) {
+        translationTask = nil
+        stopTranslationSpinner()
+        conversionTask?.cancel()
+        typoWholeSentence = nil
+        mode = .segmenting
+        segmentGeneration += 1
+        segments = ReadingAligner.segmentReading(reading, conversion: output).map {
+            BunsetsuSegment(reading: $0.reading, result: $0.conversion, candidates: nil)
+        }
+        segmentBaseline = output
+        segmentEngineBaseline = output
+        segmentsFromAI = true
+        currentSegmentIndex = 0
+        refreshSegmentDisplay(client: client)
+    }
+
+    /// ひらがな・カタカナ・漢字を1文字でも含むか（AIの結果を確定せずに文節で返すかの判定）
+    static func containsJapanese(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3040...0x30FF,  // ひらがな・カタカナ
+                 0x31F0...0x31FF,  // カタカナ拡張
+                 0x3400...0x4DBF,  // CJK統合漢字拡張A
+                 0x4E00...0x9FFF,  // CJK統合漢字
+                 0xF900...0xFAFF,  // CJK互換漢字
+                 0xFF66...0xFF9F,  // 半角カタカナ
+                 0x20000...0x2FA1F: // CJK統合漢字拡張B以降・互換漢字補助
+                return true
+            default:
+                return false
+            }
+        }
     }
 
     /// 処理中の表示: 「日本語 ⇢ (途中までの結果)スピナー」をグレー下線で表示。
@@ -2025,6 +2078,7 @@ final class IrohaInputController: IMKInputController {
         segments = []
         segmentBaseline = nil
         segmentEngineBaseline = nil
+        segmentsFromAI = false
         typoCorrectionTask?.cancel()
         typoCorrectionTask = nil
         typoWholeSentence = nil

@@ -17,20 +17,6 @@ enum TranslationBackend: String, CaseIterable {
             rawValue: UserDefaults.standard.string(forKey: userDefaultsKey) ?? "apple"
         ) ?? .apple
     }
-
-    var displayName: String {
-        switch self {
-        case .apple: return "Apple Intelligence"
-        case .ollama: return "Ollama"
-        case .lmstudio: return "LM Studio"
-        case .openai: return "OpenAI互換"
-        }
-    }
-}
-
-/// AI処理が失敗した理由（選択テキストの結果画面に出す。AI確定は理由を出さず日本語のまま確定する）
-struct AIFailure: Error {
-    let message: String
 }
 
 /// AI確定（英訳・AI変換）のディスパッチャ。
@@ -96,15 +82,6 @@ enum TranslationService {
         _ request: AIRequest,
         onPartial: @escaping @Sendable (String) -> Void = { _ in }
     ) async -> String? {
-        try? await runReportingFailure(request, onPartial: onPartial).get()
-    }
-
-    /// `run` と同じ処理を、失敗したときの理由（HTTPの番号とサーバのエラー文・接続できない理由・
-    /// 応答が止まった秒数）つきで返す
-    static func runReportingFailure(
-        _ request: AIRequest,
-        onPartial: @escaping @Sendable (String) -> Void = { _ in }
-    ) async -> Result<String, AIFailure> {
         switch TranslationBackend.current {
         case .apple:
             return await runWithApple(request, stallTimeout: 10, onPartial: onPartial)
@@ -125,11 +102,9 @@ enum TranslationService {
         _ request: AIRequest,
         stallTimeout: TimeInterval,
         onPartial: @escaping @Sendable (String) -> Void
-    ) async -> Result<String, AIFailure> {
+    ) async -> String? {
         #if canImport(FoundationModels)
-        guard #available(macOS 26.0, *), appleAvailable else {
-            return .failure(AIFailure(message: "Apple Intelligence が使えません"))
-        }
+        guard #available(macOS 26.0, *), appleAvailable else { return nil }
         // セッションは毎回作る: 履歴が結果に影響しないよう常にステートレスにする
         let session = LanguageModelSession(instructions: request.instructions)
         return await runWithStallWatchdog(stallTimeout: stallTimeout) { progress in
@@ -146,17 +121,17 @@ enum TranslationService {
             return latest
         }
         #else
-        return .failure(AIFailure(message: "Apple Intelligence が使えません"))
+        return nil
         #endif
     }
 
     /// ストール監視付きで生成処理を実行する共通ヘルパー。
-    /// stallTimeoutの間progressが進まなければ処理をキャンセルして失敗にする。
-    /// エラー（ガードレール拒否・接続失敗・HTTPエラー）も理由つきの失敗にする
+    /// stallTimeoutの間progressが進まなければ処理をキャンセルしnilを返す。
+    /// エラー（ガードレール拒否・接続失敗・キャンセル）もnilに落とす
     static func runWithStallWatchdog(
         stallTimeout: TimeInterval,
         _ body: @escaping @Sendable (ProgressBox) async throws -> String
-    ) async -> Result<String, AIFailure> {
+    ) async -> String? {
         let progress = ProgressBox()
         let task = Task { try await body(progress) }
         let watchdog = Task {
@@ -166,7 +141,6 @@ enum TranslationService {
                 if Task.isCancelled { return }
                 let now = progress.value
                 if now == last {
-                    progress.markStalled()
                     task.cancel()
                     return
                 }
@@ -177,13 +151,10 @@ enum TranslationService {
         do {
             let text = try await task.value
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            return text.isEmpty ? .failure(AIFailure(message: "空の応答が返りました")) : .success(text)
+            return text.isEmpty ? nil : text
         } catch {
             NSLog("iroha: AI確定エラー: \(error)")
-            if progress.stalled {
-                return .failure(AIFailure(message: "\(Int(stallTimeout))秒間応答がありませんでした"))
-            }
-            return .failure(AIFailure(message: error.localizedDescription))
+            return nil
         }
     }
 }
@@ -192,7 +163,6 @@ enum TranslationService {
 final class ProgressBox: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
-    private var didStall = false
     func bump() {
         lock.lock()
         count += 1
@@ -202,16 +172,5 @@ final class ProgressBox: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return count
-    }
-    /// ストール監視が打ち切った（失敗の理由を「応答なし」と区別するため）
-    func markStalled() {
-        lock.lock()
-        didStall = true
-        lock.unlock()
-    }
-    var stalled: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return didStall
     }
 }

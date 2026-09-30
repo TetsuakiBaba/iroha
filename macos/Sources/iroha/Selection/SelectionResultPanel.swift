@@ -172,16 +172,7 @@ final class SelectionPanelController: NSWindowController {
             with: NSSize(width: width - chromeWidth, height: .greatestFiniteMagnitude),
             options: options)
         let textHeight = max(ceil(wrappedRect.height), ceil(font.boundingRectForFont.height))
-        // 失敗の理由（出力欄の下の赤字）はその分だけ伸ばす。長いエラー文でも全部見えるように
-        var noticeHeight: CGFloat = 0
-        if let notice = model.notice, model.phase == .done {
-            let noticeRect = NSAttributedString(
-                string: notice, attributes: [.font: NSFont.preferredFont(forTextStyle: .caption1)]
-            ).boundingRect(
-                with: NSSize(width: width - 24, height: .greatestFiniteMagnitude), options: options)
-            noticeHeight = ceil(noticeRect.height) + 8
-        }
-        let height = min(maxHeight, textHeight + chromeHeight) + noticeHeight
+        let height = min(maxHeight, textHeight + chromeHeight)
         return NSSize(width: width, height: height)
     }
 }
@@ -342,8 +333,6 @@ private struct SelectionPanelView: View {
                 Text(notice)
                     .font(.caption)
                     .foregroundStyle(.red)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
         case .notice:
