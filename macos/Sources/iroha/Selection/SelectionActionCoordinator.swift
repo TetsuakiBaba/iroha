@@ -335,7 +335,7 @@ final class SelectionActionCoordinator {
         }
 
         Task { [weak self] in
-            let output = await TranslationService.run(request, onPartial: { partial in
+            let result = await TranslationService.runReportingFailure(request, onPartial: { partial in
                 Task { @MainActor [weak self] in
                     guard let self, gen == self.generation else { return }
                     self.model.outputText = partial.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -346,11 +346,13 @@ final class SelectionActionCoordinator {
             await MainActor.run {
                 guard gen == self.generation else { return }
                 self.running = false
-                if let output {
+                switch result {
+                case .success(let output):
                     self.model.outputText = AIOutputCleaner.clean(output)
-                } else {
-                    // 失敗・タイムアウト: 部分結果があればそのまま残す（コピーはできる）
-                    self.model.notice = "AI処理に失敗しました（サービス未起動またはタイムアウト）"
+                case .failure(let failure):
+                    // 失敗・タイムアウト: 部分結果があればそのまま残す（コピーはできる）。
+                    // 理由（HTTPエラーの文など）をそのまま出す。設定の見直しに要るので丸めない
+                    self.model.notice = "AI処理に失敗しました（\(TranslationBackend.current.displayName): \(failure.message)）"
                 }
                 self.model.phase = .done
                 self.panelController.refreshSize()

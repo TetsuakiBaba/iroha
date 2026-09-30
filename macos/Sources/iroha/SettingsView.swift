@@ -171,8 +171,10 @@ private struct InputSettingsTab: View {
                 AICommitPresetEditor(index: 2)
             } header: {
                 HelpSectionHeader(
-                    title: "AI変換して確定",
-                    help: "修飾キー+Returnで、入力中の未確定文字列をAIに渡し、返ってきた結果を確定します。"
+                    title: "AI変換",
+                    help: "修飾キー+Returnで、入力中の未確定文字列をAIに渡します。"
+                        + "結果が日本語なら文節に区切った未確定文字列で返し、もう一度Returnで確定します。"
+                        + "英訳など日本語を含まない結果はそのまま確定します。"
                         + "使うAIサービスは「モデル」タブで選びます。")
             }
         }
@@ -692,7 +694,7 @@ private struct PredictionModelPathField: View {
 }
 
 /// AIサービス（バックエンド）の設定セクション。「モデル」タブに置き、
-/// 入力タブの「AI変換して確定」と選択テキストのAI編集が共通で使う
+/// 入力タブの「AI変換」と選択テキストのAI編集が共通で使う
 private struct AIServiceSection: View {
     @AppStorage(TranslationBackend.userDefaultsKey) private var translationService = "apple"
     @AppStorage("ollamaModel") private var ollamaModel = ""
@@ -787,7 +789,7 @@ private struct AIServiceSection: View {
     }
 
     private var translationCaption: String {
-        let common = "「AI変換して確定」と「選択テキストのAI編集」はここで選んだサービスを使います。"
+        let common = "「AI変換」と「選択テキストのAI編集」はここで選んだサービスを使います。"
         switch translationService {
         case "openai":
             return common + "OpenAI互換API（\(RemoteTranslator.openAIEndpoint)）に接続します。"

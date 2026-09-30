@@ -439,7 +439,7 @@ final class IrohaInputController: IMKInputController {
             }
         }
 
-        // 修飾キー+Enter: 未確定文字列をAIで変換して確定（プリセットは設定で変更可能）
+        // 修飾キー+Enter: 未確定文字列をAIで変換する（AI変換。プリセットは設定で変更可能）
         if Int(event.keyCode) == kVK_Return || Int(event.keyCode) == kVK_ANSI_KeypadEnter,
            isComposing || mode == .segmenting,
            let preset = AICommitSettings.preset(
@@ -1859,7 +1859,7 @@ final class IrohaInputController: IMKInputController {
     /// 通常確定で挿入されるはずの文字列を解決する（composer.flushの副作用あり。
     /// 呼び出し後は必ずcommitTextするか、状態を破棄/維持したまま確定を待つこと）。
     /// `logging` が真なら、解決した内容をそのまま確定するものとして学習用ログに記録する
-    /// （AI確定のように別の文字列を確定する呼び出しでは偽にする）
+    /// （AI変換のように別の文字列を確定する呼び出しでは偽にする）
     private func resolveCommitText(logging: Bool = false) -> String? {
         if mode == .segmenting {
             let text = segments.map(\.result).joined()
@@ -1909,7 +1909,7 @@ final class IrohaInputController: IMKInputController {
 
     // MARK: - AIで処理して確定（修飾キー+Enter）
 
-    /// 現在の未確定文字列をAI（プリセットのプロンプト）で変換して確定する。
+    /// AI変換: 現在の未確定文字列をAI（プリセットのプロンプト）で変換する。
     /// 合成状態はリセットせず生かしたまま結果を待つ（Escで通常の未確定状態に戻れる）。
     /// 結果が日本語（校正・言い換えなど）なら確定せず、文節に区切った未確定文字列として返す
     /// （`presentAIResultAsSegments`。Enterで確定、Space・矢印で文節ごとに直せる）。英訳など日本語でない結果はそのまま確定する

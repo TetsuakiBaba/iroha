@@ -21,7 +21,7 @@ struct AIRequest: Sendable {
     }
 }
 
-/// 「AI変換して確定」に割り当てられる修飾キー+Return。
+/// 「AI変換」に割り当てられる修飾キー+Return。
 /// rawValueがUserDefaultsに保存される（旧設定の "control" 等とも互換）
 enum AICommitShortcut: String, CaseIterable, Identifiable {
     case off
@@ -63,7 +63,7 @@ enum AICommitShortcut: String, CaseIterable, Identifiable {
     }
 }
 
-/// 「AI変換して確定」の1つ分の設定。
+/// 「AI変換」の1つ分の設定。
 ///
 /// 英訳もユーザ定義の変換も、AIに違うプロンプトを渡しているだけで仕組みは同じなので
 /// 同じ形で3つ持つ（1つ目は既定で英訳のプロンプトが入っている）。
@@ -93,7 +93,7 @@ struct AICommitPreset: Identifiable, Equatable {
     }
 }
 
-/// AI確定まわりの設定（UserDefaults）。
+/// AI変換まわりの設定（UserDefaults）。
 enum AICommitSettings {
 
     /// 設定できるプリセットの数

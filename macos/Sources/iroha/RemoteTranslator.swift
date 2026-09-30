@@ -93,7 +93,7 @@ enum RemoteTranslator {
         service: Service,
         stallTimeout: TimeInterval,
         onPartial: @escaping @Sendable (String) -> Void
-    ) async -> String? {
+    ) async -> Result<String, AIFailure> {
         await TranslationService.runWithStallWatchdog(stallTimeout: stallTimeout) { progress in
             switch service {
             case .ollama:
@@ -104,10 +104,11 @@ enum RemoteTranslator {
                     // LM Studioでthinkingを止める唯一効くフラグ（実測: qwen3で
                     // reasoning_tokensが58→0。chat_template_kwargsもlowも効かなかった）。
                     // 非thinkingモデルではLM Studio側が黙って無視する
-                    extraBody: ["reasoning_effort": "none"],
+                    extraBody: ["reasoning_effort": "none", "temperature": 0.3],
                     progress: progress, onPartial: onPartial)
             case .openai:
-                // reasoning_effortは送らない（OpenAI本家は "none" を受け付けず400になる）
+                // reasoning_effort・temperatureは送らない（OpenAI本家は reasoning_effort "none" を受け付けず、
+                // 推論型のモデルは temperature 1 以外を受け付けない。どちらも400になる。2026-09-30 実測）
                 return try await streamOpenAICompatible(
                     request, endpoint: openAIEndpoint, model: openAIModel, apiKey: openAIAPIKey,
                     extraBody: [:],
@@ -149,9 +150,7 @@ enum RemoteTranslator {
         }
 
         let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw RemoteError.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
-        }
+        try await checkStatus(response, bytes: bytes)
         var accumulated = ""
         for try await line in bytes.lines {
             progress.bump()  // thinking中など本文が来ない間もサーバ活動があれば待ち続ける
@@ -190,7 +189,6 @@ enum RemoteTranslator {
             "model": model,
             "messages": chatMessages(request),
             "stream": true,
-            "temperature": 0.3,
         ]
         body.merge(extraBody) { _, new in new }
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -204,9 +202,7 @@ enum RemoteTranslator {
         }
 
         let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw RemoteError.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
-        }
+        try await checkStatus(response, bytes: bytes)
         var accumulated = ""
         for try await line in bytes.lines {
             progress.bump()  // reasoning中も接続が生きていれば待ち続ける
@@ -223,13 +219,43 @@ enum RemoteTranslator {
         return stripThinking(accumulated)
     }
 
+    /// 200以外なら、応答の本文からサーバのエラー文を取り出して投げる
+    private static func checkStatus(_ response: URLResponse, bytes: URLSession.AsyncBytes) async throws {
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard code != 200 else { return }
+        var body = ""
+        do {
+            for try await line in bytes.lines {
+                body += line + "\n"
+                if body.count > 4000 { break }
+            }
+        } catch {}
+        throw RemoteError.httpError(code, errorMessage(fromBody: body))
+    }
+
+    /// エラー応答の本文からメッセージを取り出す（OpenAI: {"error":{"message":…}}、
+    /// Ollama・LM Studio: {"error":"…"}）。JSONでなければ本文の先頭を返す
+    static func errorMessage(fromBody body: String) -> String? {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let data = trimmed.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let error = json["error"] as? [String: Any], let message = error["message"] as? String {
+                return message
+            }
+            if let message = json["error"] as? String { return message }
+        }
+        return String(trimmed.prefix(300))
+    }
+
     enum RemoteError: LocalizedError {
-        case httpError(Int)
+        case httpError(Int, String?)
         case serverError(String)
 
         var errorDescription: String? {
             switch self {
-            case .httpError(let code): return "HTTP \(code)"
+            case .httpError(let code, let message):
+                return message.map { "HTTP \(code): \($0)" } ?? "HTTP \(code)"
             case .serverError(let message): return message
             }
         }
