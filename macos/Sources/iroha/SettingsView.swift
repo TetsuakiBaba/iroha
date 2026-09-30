@@ -1720,7 +1720,7 @@ private struct AboutSettingsTab: View {
 
             Section("開発者向け") {
                 HelpToggle(
-                    title: "推論にかかった時間と左文脈をカーソルの右上に表示する", isOn: $developerOverlay,
+                    title: "推論にかかった時間と左文脈をカーソルの右下に表示する", isOn: $developerOverlay,
                     help: "開発者向けの表示です。入力を始めたときに、カーソルの左の文字をアプリから読めたか"
                         + "（読めなければその理由と、代わりに使う確定済みの文字列）を出します。"
                         + "かな漢字変換と打ち間違いの訂正を実行するたびに、かかった時間を出します。"

@@ -100,6 +100,8 @@ final class CaretPanel {
         }
         panel.setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
         panel.orderFrontRegardless()
+        // デバッグ表示も行の下に出るので、この窓を避けて置き直させる
+        DeveloperOverlay.shared.relayoutIfVisible()
     }
 
     /// 出ているときの位置（デバッグ表示の窓が重ならないように使う）
@@ -110,5 +112,7 @@ final class CaretPanel {
     func hide() {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
+        // 避けていたデバッグ表示をカーソルのそばへ戻す
+        DeveloperOverlay.shared.relayoutIfVisible()
     }
 }

@@ -11,12 +11,13 @@ enum DeveloperOverlaySettings {
     }
 }
 
-/// 推論のたびに、かかった時間をカーソルの右上に小さく出す窓（デバッグ表示）。
+/// 推論のたびに、かかった時間をカーソルの右下に小さく出す窓（デバッグ表示）。
 ///
 /// 予測・打ち間違いの知らせを出す `CaretPanel` とは別の窓にする。`CaretPanel` は1枚を
 /// 使い回すことで「訂正の小窓が出ている ⇒ Backspace で取り消せる」を保っているので、
-/// そこに相乗りするとその約束が崩れる。こちらはカーソル行の上に出し、`CaretPanel`（行の下。
-/// 画面の下端では行の上）と重なるときは `CaretPanel` のさらに上へ逃がす。
+/// そこに相乗りするとその約束が崩れる。こちらはカーソル行の下（右寄り）に出す。行の上に出すと
+/// 書き終えた上の行が隠れて読み返せないため（2026-09-30 に右上から変更）。`CaretPanel`（行の下。
+/// 画面の下端では行の上）と重なるときは `CaretPanel` のさらに外側へ逃がす。
 ///
 /// 行は「左文脈」「かな漢字変換」「打ち間違いの訂正」の3本。左文脈は入力を始めたときに
 /// アプリから読めたか（読めなければその理由と、代わりに使う文字列）を出す。
@@ -197,6 +198,12 @@ final class DeveloperOverlay {
         layout()
     }
 
+    /// `CaretPanel` が出た・消えたときに、重ならない位置へ置き直す
+    func relayoutIfVisible() {
+        guard panel.isVisible else { return }
+        layout()
+    }
+
     func hide() {
         contextLine = nil
         conversionLine = nil
@@ -222,17 +229,19 @@ final class DeveloperOverlay {
         let height = padding.top + label.frame.height + padding.bottom
         label.frame.origin = NSPoint(x: padding.left, y: padding.bottom)
 
-        // カーソルの右上。`CaretPanel` と重なるならその上へ、画面の上に収まらなければ行の下へ
-        var frame = NSRect(x: caretRect.maxX + caretGap, y: caretRect.maxY + caretGap, width: width, height: height)
+        // カーソルの右下。`CaretPanel` と重なるならその下へ、画面の下に収まらなければ行の上へ
+        // （行の上で `CaretPanel` と重なるならその上へ）
+        var frame = NSRect(
+            x: caretRect.maxX + caretGap, y: caretRect.minY - caretGap - height, width: width, height: height)
         if let other = CaretPanel.shared.visibleFrame, frame.intersects(other) {
-            frame.origin.y = other.maxY + caretGap
+            frame.origin.y = other.minY - caretGap - height
         }
         let screen = NSScreen.screens.first { $0.frame.contains(caretRect.origin) } ?? NSScreen.main
         if let visible = screen?.visibleFrame {
-            if frame.maxY > visible.maxY {
-                frame.origin.y = caretRect.minY - caretGap - height
+            if frame.minY < visible.minY {
+                frame.origin.y = caretRect.maxY + caretGap
                 if let other = CaretPanel.shared.visibleFrame, frame.intersects(other) {
-                    frame.origin.y = other.minY - caretGap - height
+                    frame.origin.y = other.maxY + caretGap
                 }
             }
             frame.origin.x = min(max(frame.origin.x, visible.minX), max(visible.minX, visible.maxX - width))
