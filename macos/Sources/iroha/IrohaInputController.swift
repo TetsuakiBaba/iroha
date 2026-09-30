@@ -416,6 +416,14 @@ final class IrohaInputController: IMKInputController {
             break
         }
 
+        // AI変換のショートカット（プリセットごとに設定で自由に決める）: 未確定文字列をAIで変換する。
+        // ユーザが決めたキーなので、下の Control+. や Control+U 等の組み込みより先に見る
+        if isComposing || mode == .segmenting,
+           let preset = AICommitSettings.preset(
+            matchingKeyCode: event.keyCode, modifierFlags: event.modifierFlags) {
+            return handleAICommit(preset, client: client)
+        }
+
         // Control+. : 句読点スタイル（、。⇄，．）の切り替え（モードに関わらず有効）
         if event.modifierFlags.contains(.control), !event.modifierFlags.contains(.command),
            !event.modifierFlags.contains(.option),
@@ -437,14 +445,6 @@ final class IrohaInputController: IMKInputController {
             case "t": return applyFunctionKeyConversion(keyCode: kVK_F10, client: client)
             default: break
             }
-        }
-
-        // 修飾キー+Enter: 未確定文字列をAIで変換する（AI変換。プリセットは設定で変更可能）
-        if Int(event.keyCode) == kVK_Return || Int(event.keyCode) == kVK_ANSI_KeypadEnter,
-           isComposing || mode == .segmenting,
-           let preset = AICommitSettings.preset(
-            matching: event.modifierFlags.intersection([.command, .control, .option, .shift])) {
-            return handleAICommit(preset, client: client)
         }
 
         // Command/Control付きのキーはIMEでは扱わない（未確定文字列は確定して逃がす）

@@ -63,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 「英訳して確定」「AI変換して確定」が別設定だった頃の値をプリセットへ移す
         AICommitSettings.migrateIfNeeded()
-        AICommitSettings.migrateControlShortcut()
+        AICommitSettings.migrateHotkeysIfNeeded()
 
         // 開発用: 設定ウィンドウだけを開く（IMEとしては接続しない）。UIの確認に使う
         //   "~/Library/Input Methods/iroha.app/Contents/MacOS/iroha" --settings [タブ名]

@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Foundation
 
 /// AIバックエンドへの1回の依頼（system指示 + 入力テキスト）
@@ -21,44 +22,63 @@ struct AIRequest: Sendable {
     }
 }
 
-/// 「AI変換」に割り当てられる修飾キー+Return。
-/// rawValueがUserDefaultsに保存される。
-/// ⌃Return は選べない: macOS 15 以降、AppKit のアプリ（テキストエディット等）はこれを右クリックメニューを
-/// 出すキーとして入力メソッドに渡す前に使うため、iroha に届かない（2026-09-30 実測。Slack・Teams では届く）。
-/// 以前の設定に残った "control" は `migrateControlShortcut` が移す
-enum AICommitShortcut: String, CaseIterable, Identifiable {
-    case off
-    case option
-    case shift
-    case command
-    case shiftControl = "shift+control"
-    case shiftOption = "shift+option"
-    case shiftCommand = "shift+command"
+/// 「AI変換」のショートカット（修飾キー+キー）。
+/// 保存形式は選択テキストのショートカットと同じ "Option+Return" のような文字列で、`GlobalShortcut.parse` で解釈する
+/// （空なら割り当てなし）。選択テキストと違いグローバルには登録せず、入力中に IME に届いたキーと照らし合わせる。
+/// ⌃Return は macOS 15 以降、AppKit のアプリ（テキストエディット等）が右クリックメニューを出すキーとして
+/// 入力メソッドに渡す前に使うので、入力しても効かないアプリがある（2026-09-30 実測。Slack・Teams では届く）
+struct AICommitShortcut: Equatable {
+    let rawValue: String
 
-    var id: String { rawValue }
+    var isEmpty: Bool { rawValue.trimmingCharacters(in: .whitespaces).isEmpty }
 
-    /// nilなら割り当てなし
-    var flags: NSEvent.ModifierFlags? {
-        switch self {
-        case .off: return nil
-        case .option: return .option
-        case .shift: return .shift
-        case .command: return .command
-        case .shiftControl: return [.shift, .control]
-        case .shiftOption: return [.shift, .option]
-        case .shiftCommand: return [.shift, .command]
-        }
+    /// 書式として解釈できるか（空は割り当てなしとして有効扱いにしない）
+    var isValid: Bool { GlobalShortcut.isValid(rawValue) }
+
+    /// 押されたキーがこのショートカットか。Return はテンキーの Enter でも一致させる
+    func matches(keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        guard let parsed = GlobalShortcut.parse(rawValue) else { return false }
+        let code = Int(keyCode)
+        let keyMatches = Int(parsed.keyCode) == code
+            || (Int(parsed.keyCode) == kVK_Return && code == kVK_ANSI_KeypadEnter)
+        return keyMatches
+            && Self.flags(carbonModifiers: parsed.carbonModifiers)
+                == modifierFlags.intersection([.command, .control, .option, .shift])
     }
 
-    var label: String {
-        switch self {
-        case .off: return "オフ"
-        case .option: return "⌥ option + Return"
-        case .shift: return "⇧ shift + Return"
-        case .command: return "⌘ command + Return"
-        case .shiftControl: return "⇧⌃ shift + control + Return"
-        case .shiftOption: return "⇧⌥ shift + option + Return"
-        case .shiftCommand: return "⇧⌘ shift + command + Return"
+    /// 同じキーの組み合わせか（"Opt+Return" と "Option+Return" のような書き方の違いは同じとみなす）
+    func isSameKey(as other: AICommitShortcut) -> Bool {
+        guard let lhs = GlobalShortcut.parse(rawValue), let rhs = GlobalShortcut.parse(other.rawValue)
+        else { return false }
+        return lhs.keyCode == rhs.keyCode && lhs.carbonModifiers == rhs.carbonModifiers
+    }
+
+    /// ⌃Return（Shift なども付かない Control だけ）か。AppKit のアプリで効かないので設定画面で注意を出す
+    var isControlReturn: Bool {
+        guard let parsed = GlobalShortcut.parse(rawValue) else { return false }
+        return Int(parsed.keyCode) == kVK_Return && parsed.carbonModifiers == UInt32(controlKey)
+    }
+
+    private static func flags(carbonModifiers: UInt32) -> NSEvent.ModifierFlags {
+        var flags: NSEvent.ModifierFlags = []
+        if carbonModifiers & UInt32(cmdKey) != 0 { flags.insert(.command) }
+        if carbonModifiers & UInt32(controlKey) != 0 { flags.insert(.control) }
+        if carbonModifiers & UInt32(optionKey) != 0 { flags.insert(.option) }
+        if carbonModifiers & UInt32(shiftKey) != 0 { flags.insert(.shift) }
+        return flags
+    }
+
+    /// 以前の保存形式（修飾キーの選択肢。`aiPreset{n}Shortcut`）を今の書式にする
+    static func fromLegacy(_ legacy: String) -> String {
+        switch legacy {
+        case "control": return "Ctrl+Return"
+        case "option": return "Option+Return"
+        case "shift": return "Shift+Return"
+        case "command": return "Cmd+Return"
+        case "shift+control": return "Shift+Ctrl+Return"
+        case "shift+option": return "Shift+Option+Return"
+        case "shift+command": return "Shift+Cmd+Return"
+        default: return ""  // "off" など
         }
     }
 }
@@ -107,15 +127,18 @@ enum AICommitSettings {
         "出力は変換後のテキストのみ。説明・注釈・引用符・前置きを付けないこと。"
 
     /// 各プリセットの既定（名前・プロンプト・ショートカット）
-    static let defaults: [(name: String, prompt: String, shortcut: AICommitShortcut)] = [
-        ("英訳", TranslationService.translateInstructions, .option),
-        ("敬語", "次の日本語を、意味を変えずに丁寧なビジネス文体に書き直してください。", .off),
-        ("要約", "次の日本語を、要点を保ったまま短く言い換えてください。", .off),
+    static let defaults: [(name: String, prompt: String, shortcut: String)] = [
+        ("英訳", TranslationService.translateInstructions, "Option+Return"),
+        ("敬語", "次の日本語を、意味を変えずに丁寧なビジネス文体に書き直してください。", ""),
+        ("要約", "次の日本語を、要点を保ったまま短く言い換えてください。", ""),
     ]
 
     static func nameKey(_ index: Int) -> String { "aiPreset\(index)Name" }
     static func promptKey(_ index: Int) -> String { "aiPreset\(index)Prompt" }
-    static func shortcutKey(_ index: Int) -> String { "aiPreset\(index)Shortcut" }
+    /// ショートカット（"Option+Return" 形式の文字列）
+    static func hotkeyKey(_ index: Int) -> String { "aiPreset\(index)Hotkey" }
+    /// 以前のショートカットの保存先（修飾キーの選択肢。`migrateHotkeysIfNeeded` で読み替える）
+    static func legacyShortcutKey(_ index: Int) -> String { "aiPreset\(index)Shortcut" }
 
     static func preset(_ index: Int) -> AICommitPreset {
         let defaults = UserDefaults.standard
@@ -124,16 +147,14 @@ enum AICommitSettings {
             name: defaults.string(forKey: nameKey(index)) ?? Self.defaults[index].name,
             prompt: defaults.string(forKey: promptKey(index)) ?? Self.defaults[index].prompt,
             shortcut: AICommitShortcut(
-                rawValue: defaults.string(forKey: shortcutKey(index)) ?? "")
-                ?? Self.defaults[index].shortcut)
+                rawValue: defaults.string(forKey: hotkeyKey(index)) ?? Self.defaults[index].shortcut))
     }
 
     static var presets: [AICommitPreset] { (0..<count).map(preset) }
 
-    /// 押された修飾キーに対応するプリセット（無ければnil）
-    static func preset(matching flags: NSEvent.ModifierFlags) -> AICommitPreset? {
-        guard !flags.isEmpty else { return nil }
-        return presets.first { $0.shortcut.flags == flags }
+    /// 押されたキーに対応するプリセット（無ければnil。同じキーが複数にあれば番号の小さいほう）
+    static func preset(matchingKeyCode keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags) -> AICommitPreset? {
+        presets.first { $0.shortcut.matches(keyCode: keyCode, modifierFlags: modifierFlags) }
     }
 
     // MARK: - 旧設定からの移行
@@ -147,10 +168,10 @@ enum AICommitSettings {
         defaults.set(true, forKey: migratedKey)
 
         if let old = defaults.string(forKey: "translateCommitModifier") {
-            defaults.set(old, forKey: shortcutKey(0))
+            defaults.set(old, forKey: legacyShortcutKey(0))
         }
         if let old = defaults.string(forKey: "aiCommitModifier") {
-            defaults.set(old, forKey: shortcutKey(1))
+            defaults.set(old, forKey: legacyShortcutKey(1))
         }
         if let old = defaults.string(forKey: "aiCommitPrompt"),
            !old.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -159,21 +180,13 @@ enum AICommitSettings {
         }
     }
 
-    /// ⌃Return（"control"）に割り当てたままのプリセットを ⌥Return に移す（⌥Return を別のプリセットが
-    /// 使っていればオフにする）。⌃Return は選択肢から外したので、残しておくと設定画面に出せず、
-    /// 既定へのフォールバックで ⌥Return が二重になる。起動のたびに呼んでよい（該当がなければ何もしない。
-    /// 古い版の iroha が同期で "control" を書き戻しても次の起動で直る）
-    static func migrateControlShortcut() {
+    /// 修飾キーの選択肢だった頃のショートカット（`aiPreset{n}Shortcut`）を、自由に書ける形式
+    /// （`aiPreset{n}Hotkey`）へ読み替える。新しいキーが既にあるプリセットには触らない
+    static func migrateHotkeysIfNeeded() {
         let defaults = UserDefaults.standard
-        for index in 0..<count where defaults.string(forKey: shortcutKey(index)) == "control" {
-            let optionInUse = (0..<count).contains { other in
-                other != index
-                    && (defaults.string(forKey: shortcutKey(other))
-                        ?? Self.defaults[other].shortcut.rawValue) == AICommitShortcut.option.rawValue
-            }
-            defaults.set(
-                optionInUse ? AICommitShortcut.off.rawValue : AICommitShortcut.option.rawValue,
-                forKey: shortcutKey(index))
+        for index in 0..<count where defaults.string(forKey: hotkeyKey(index)) == nil {
+            guard let legacy = defaults.string(forKey: legacyShortcutKey(index)) else { continue }
+            defaults.set(AICommitShortcut.fromLegacy(legacy), forKey: hotkeyKey(index))
         }
     }
 }

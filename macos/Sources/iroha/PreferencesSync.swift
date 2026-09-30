@@ -39,7 +39,7 @@ final class PreferencesSync {
         for i in 0..<AICommitSettings.count {
             keys.formUnion([
                 AICommitSettings.nameKey(i), AICommitSettings.promptKey(i),
-                AICommitSettings.shortcutKey(i),
+                AICommitSettings.hotkeyKey(i),
             ])
         }
         for i in 0..<SelectionSettings.count {

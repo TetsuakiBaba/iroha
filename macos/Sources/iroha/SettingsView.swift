@@ -175,8 +175,9 @@ private struct InputSettingsTab: View {
                     help: "修飾キー+Returnで、入力中の未確定文字列をAIに渡します。"
                         + "結果が日本語なら文節に区切った未確定文字列で返し、もう一度Returnで確定します。"
                         + "英訳など日本語を含まない結果はそのまま確定します。"
-                        + "⌃Returnは選べません（macOSがテキストエディットなど多くのアプリで右クリックメニューに使うため、"
-                        + "irohaに届きません）。"
+                        + "ショートカットは「Option+Return」「Shift+Cmd+J」のように修飾キー（Cmd・Ctrl・Option・Shift）と"
+                        + "キーを + でつないで書きます。入力中（未確定文字列があるとき）だけ効きます。"
+                        + "⌃Returnは、テキストエディットなど多くのアプリでmacOSが右クリックメニューに使うため効きません。"
                         + "使うAIサービスは「モデル」タブで選びます。")
             }
         }
@@ -852,7 +853,7 @@ private struct AICommitPresetEditor: View {
     private let index: Int
     @AppStorage private var name: String
     @AppStorage private var prompt: String
-    @AppStorage private var shortcut: String
+    @AppStorage private var hotkey: String
     @State private var expanded = false
 
     init(index: Int) {
@@ -860,39 +861,21 @@ private struct AICommitPresetEditor: View {
         let defaults = AICommitSettings.defaults[index]
         _name = AppStorage(wrappedValue: defaults.name, AICommitSettings.nameKey(index))
         _prompt = AppStorage(wrappedValue: defaults.prompt, AICommitSettings.promptKey(index))
-        _shortcut = AppStorage(
-            wrappedValue: defaults.shortcut.rawValue, AICommitSettings.shortcutKey(index))
+        _hotkey = AppStorage(wrappedValue: defaults.shortcut, AICommitSettings.hotkeyKey(index))
     }
 
     var body: some View {
         FormSubheader("\(index + 1). \(headerName)")
-            // 同じショートカットを複数のプリセットに割り当てられないようにする
-            .onChange(of: shortcut) {
-                guard shortcut != AICommitShortcut.off.rawValue else { return }
-                for other in 0..<AICommitSettings.count where other != index {
-                    let key = AICommitSettings.shortcutKey(other)
-                    let current = UserDefaults.standard.string(forKey: key)
-                        ?? AICommitSettings.defaults[other].shortcut.rawValue
-                    if current == shortcut {
-                        UserDefaults.standard.set(AICommitShortcut.off.rawValue, forKey: key)
-                    }
-                }
-            }
             HStack {
                 // ラベルを別に置く（TextFieldのタイトルにすると値が右寄せになる）
                 Text("名前")
                 TextField("", text: $name)
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 140)
                 Spacer()
-                Picker("", selection: $shortcut) {
-                    ForEach(AICommitShortcut.allCases) { option in
-                        Text(option.label).tag(option.rawValue)
-                    }
-                }
-                .labelsHidden()
-                .frame(maxWidth: 250)
             }
+            AICommitShortcutField(index: index, hotkey: $hotkey)
 
             DisclosureGroup(isExpanded: $expanded) {
                 TextEditor(text: $prompt)
@@ -941,6 +924,68 @@ private struct AICommitPresetEditor: View {
     }
 }
 
+
+/// AI変換のショートカット入力欄（"Option+Return" 形式。形式のチェックと、重なり・⌃Return の注意つき）。
+/// 同じキーがほかのプリセットにあれば番号の小さいほうが、選択テキストのショートカットと同じなら
+/// そちら（どのアプリでも先に受け取るグローバルショートカット）が動く
+private struct AICommitShortcutField: View {
+    let index: Int
+    @Binding var hotkey: String
+    // ほかのプリセットの欄を書き換えたときも重なりの注意を出し直すため、3つとも見張る（値は使わない）
+    @AppStorage(AICommitSettings.hotkeyKey(0)) private var watch0 = ""
+    @AppStorage(AICommitSettings.hotkeyKey(1)) private var watch1 = ""
+    @AppStorage(AICommitSettings.hotkeyKey(2)) private var watch2 = ""
+
+    // 入力欄の行は Form の行として直接並べる（VStack で包むと指定した幅が効かず、中身の長さで幅が変わる）
+    var body: some View {
+        HStack {
+            Text("ショートカット")
+            // labelsHidden: Form の中では空の見出しが幅を取り、入力欄が中身の長さまで縮むため
+            TextField("", text: $hotkey, prompt: Text("例: Option+Return"))
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 180)
+            Group {
+                if shortcut.isEmpty {
+                    Text("なし").font(.caption).foregroundStyle(.secondary)
+                } else if shortcut.isValid {
+                    Image(systemName: "checkmark.circle").foregroundStyle(.green)
+                } else {
+                    Text("認識できない形式です").font(.caption).foregroundStyle(.red)
+                }
+            }
+            Spacer()
+        }
+        ForEach(warnings, id: \.self) { warning in
+            Text(warning).font(.caption).foregroundStyle(.orange)
+        }
+    }
+
+    private var shortcut: AICommitShortcut { AICommitShortcut(rawValue: hotkey) }
+
+    private var warnings: [String] {
+        guard shortcut.isValid else { return [] }
+        var result: [String] = []
+        if let other = AICommitSettings.presets.first(where: {
+            $0.index != index && $0.shortcut.isSameKey(as: shortcut)
+        }) {
+            let first = min(other.index, index) + 1
+            result.append("\(other.index + 1). \(other.displayName) と同じキーです（\(first) 番が動きます）")
+        }
+        if SelectionSettings.isEnabled {
+            let selectionHotkeys = SelectionSettings.presets
+                .filter { $0.enabled && !$0.hotkey.isEmpty }.map(\.hotkey)
+                + [SelectionSettings.onDemandHotkey]
+            if selectionHotkeys.contains(where: { AICommitShortcut(rawValue: $0).isSameKey(as: shortcut) }) {
+                result.append("選択テキストのショートカットと同じキーです（選択テキストのほうが動きます）")
+            }
+        }
+        if shortcut.isControlReturn {
+            result.append("⌃Returnは、テキストエディットなど多くのアプリでmacOSが右クリックメニューに使うため効きません")
+        }
+        return result
+    }
+}
 
 /// "Ctrl+1" 形式のグローバルショートカット入力欄（形式チェック付き）
 private struct HotkeyField: View {
