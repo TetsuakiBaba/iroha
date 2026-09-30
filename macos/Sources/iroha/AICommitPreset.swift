@@ -22,10 +22,12 @@ struct AIRequest: Sendable {
 }
 
 /// 「AI変換」に割り当てられる修飾キー+Return。
-/// rawValueがUserDefaultsに保存される（旧設定の "control" 等とも互換）
+/// rawValueがUserDefaultsに保存される。
+/// ⌃Return は選べない: macOS 15 以降、AppKit のアプリ（テキストエディット等）はこれを右クリックメニューを
+/// 出すキーとして入力メソッドに渡す前に使うため、iroha に届かない（2026-09-30 実測。Slack・Teams では届く）。
+/// 以前の設定に残った "control" は `migrateControlShortcut` が移す
 enum AICommitShortcut: String, CaseIterable, Identifiable {
     case off
-    case control
     case option
     case shift
     case command
@@ -39,7 +41,6 @@ enum AICommitShortcut: String, CaseIterable, Identifiable {
     var flags: NSEvent.ModifierFlags? {
         switch self {
         case .off: return nil
-        case .control: return .control
         case .option: return .option
         case .shift: return .shift
         case .command: return .command
@@ -52,7 +53,6 @@ enum AICommitShortcut: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .off: return "オフ"
-        case .control: return "⌃ control + Return"
         case .option: return "⌥ option + Return"
         case .shift: return "⇧ shift + Return"
         case .command: return "⌘ command + Return"
@@ -108,7 +108,7 @@ enum AICommitSettings {
 
     /// 各プリセットの既定（名前・プロンプト・ショートカット）
     static let defaults: [(name: String, prompt: String, shortcut: AICommitShortcut)] = [
-        ("英訳", TranslationService.translateInstructions, .control),
+        ("英訳", TranslationService.translateInstructions, .option),
         ("敬語", "次の日本語を、意味を変えずに丁寧なビジネス文体に書き直してください。", .off),
         ("要約", "次の日本語を、要点を保ったまま短く言い換えてください。", .off),
     ]
@@ -156,6 +156,24 @@ enum AICommitSettings {
            !old.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             defaults.set(old, forKey: promptKey(1))
             defaults.set("AI変換", forKey: nameKey(1))
+        }
+    }
+
+    /// ⌃Return（"control"）に割り当てたままのプリセットを ⌥Return に移す（⌥Return を別のプリセットが
+    /// 使っていればオフにする）。⌃Return は選択肢から外したので、残しておくと設定画面に出せず、
+    /// 既定へのフォールバックで ⌥Return が二重になる。起動のたびに呼んでよい（該当がなければ何もしない。
+    /// 古い版の iroha が同期で "control" を書き戻しても次の起動で直る）
+    static func migrateControlShortcut() {
+        let defaults = UserDefaults.standard
+        for index in 0..<count where defaults.string(forKey: shortcutKey(index)) == "control" {
+            let optionInUse = (0..<count).contains { other in
+                other != index
+                    && (defaults.string(forKey: shortcutKey(other))
+                        ?? Self.defaults[other].shortcut.rawValue) == AICommitShortcut.option.rawValue
+            }
+            defaults.set(
+                optionInUse ? AICommitShortcut.off.rawValue : AICommitShortcut.option.rawValue,
+                forKey: shortcutKey(index))
         }
     }
 }
