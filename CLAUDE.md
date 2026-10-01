@@ -211,7 +211,7 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   （`<データフォルダ>/logs/conversions/`）。修正なしの確定も含めて、モデルに渡した左文脈・読み・提示・確定を残す。
   `learning.json` は辞書なので上書き・上限・マージがあり、学習データ用途にはそのまま使えない
 - 変換記録からの追加学習（LoRA）は `macos/Sources/IrohaTrain/`（MLX Swift、mlx-swift **0.31.4 固定**）と
-  実行ファイル `iroha-train`（`Contents/MacOS/`、IME 本体は MLX をリンクしない）。学習した LoRA は llama.cpp の
+  実行ファイル `iroha-train`（`Contents/MacOS/`。学習そのものは別プロセス）。学習した LoRA は llama.cpp の
   アダプタ形式 GGUF（`LoraAdapterWriter`）に書き、`ZenzEngine(adapterPath:)` が適用する（設定キー `modelAdapterPath`、
   `modelPath` と同じく再起動で反映）。MLX の Metal カーネルは `swift build` では作れないので
   `./macos/scripts/build-mlx-metallib.sh` が `.build/<config>/mlx-swift_Cmlx.bundle/default.metallib` を生成する
@@ -224,6 +224,27 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   アーキごとの既定（`TrainableLM.defaultLoRATargets`、ブロック内の線形層すべて）。
   `T5ParityTests` は training/t5/ の GGUF（リポジトリ外）が無ければスキップする。
   別アーキ（llama など）を足すときは `TrainableLM` の実装を追加して `TrainableModels.load` に登録する
+- かな漢字変換の推論は llama.cpp（`ZenzEngine`、既定）と MLX（`MLXConversionEngine`、`macos/Sources/IrohaMLX/`）から
+  選べる（設定 > モデル > 推論エンジン、キー `inferenceBackend`。機械ごとの設定で同期しない・再起動で反映。2026-10-01 追加）。
+  **MLX は T5 だけ**。デコーダ 2 層の T5 では 1 ステップの手間が llama.cpp より小さく、生成が約 2 割速い
+  （T5 e12d2 最終で 30.6 → 24.0ms、AJIMEE 2 条件とも出力が全問一致。`training/t5/MAC-AJIMEE-MLX-2026-10-01.md`・
+  `MAC-SPEED-MLX-vs-LLAMA-2026-10-01.md`）。12 層の zenz では逆に遅いので対応しない（MLX を選んでいても
+  T5 以外は `InferenceBackend.resolve` が llama.cpp に戻し、設定画面に理由を出す）。IrohaCore は MLX に依存させない
+  （Windows 移植の候補のため。MLX 版は IrohaMLX → IrohaTrain の `T5Model` を使う）。守ること:
+  ・プロンプト・読み制約・終端・n-best・一括採点の規則は `ZenzEngine` と同じにする。一致は `MLXConversionEngineTests`
+    （f32 で ZenzEngine と突き合わせ）と `T5ParityTests` で確かめる。片方だけ変えない
+  ・計算は bf16。**T5 は f16 だと途中の値が溢れて全問空の出力になる**（llama.cpp は途中を f32 で計算するので起きない）
+  ・配列の形は刻みにそろえる（KV は 64 単位で確保して位置を差し替える、エンコーダ入力は 16 の倍数、採点は候補数 2 の累乗・
+    長さ 16 の倍数、出力層は使う位置だけ）。MLX は解放したメモリをほぼ同じ大きさにしか使い回さない。
+    KV の書き込みに MLXArray の添字代入を使わない（オブジェクトをその場で書き換えるので、分岐した状態が壊れる）
+  ・使い回し用のメモリは `Memory.cacheLimit` で縛らず、変換の切れ目で 128MB を超えていたら手放す（`trimCache`）。
+    上限で縛ると生成の小さな配列が使い回されず llama.cpp より遅くなる。何もしないと 1GB 近くまで膨らむ
+  ・重みは f16 のまま 1 テンソルずつ読んで bf16 にし、読み込みは `autoreleasepool` で包む（FileHandle の Data が
+    自動解放のまま全テンソルぶん残り、常駐メモリが 200MB 余り増えた）。llama.cpp は重みをファイルからマップするので
+    プロセスの使用量は MLX より小さい（AJIMEE 中のピーク: llama.cpp 80MB、MLX 447MB。MLX は重みをメモリに持つ）
+  ・LoRA アダプタは読み込み時に重みへ足し込む（`LoRAAdapterMerger`。当たらないテンソルがあれば例外）。
+    量子化済み GGUF は `ModelRequantizer.ensureF16` の f16 版を読む
+  ・CLI は `IROHA_BACKEND=mlx`（`IROHA_MLX_DTYPE=f32` で f32）
 - 追加学習の流れは 4 段（`TrainingRun`）: ① 記録をベースモデル（アダプタなし）で1件ずつ変換し直す
   （`TrainingScreener`）→ ② 間違いの一部（1/3・最大25件）と正解の一部（最大40件）を評価用に取り分ける
   （`TrainingDataBuilder.stratify`）→ ③ **残りの記録すべて**を訓練データにして学習 → ④ 評価用をアダプタなし／ありで

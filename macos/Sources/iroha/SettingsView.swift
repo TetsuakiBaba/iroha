@@ -1,6 +1,7 @@
 import ApplicationServices
 import SwiftUI
 import IrohaCore
+import IrohaMLX
 
 /// 設定ウィンドウのタブ
 enum SettingsTab: Hashable {
@@ -1098,7 +1099,26 @@ private struct PathDisplay: View {
 
 private struct ModelSettingsTab: View {
     @AppStorage("modelPath") private var modelPath = ""
+    @AppStorage(InferenceBackend.userDefaultsKey) private var backend = InferenceBackend.llamaCpp.rawValue
     @ObservedObject private var modelDownloader = ModelDownloader.shared
+
+    /// 推論エンジンの状態の知らせ（選んだものと動いているものが違う理由）。無ければ nil
+    private var backendNotice: (text: String, isWarning: Bool)? {
+        let running = IrohaInputController.engineBackend
+        let path = modelPath.isEmpty ? ZenzEngine.defaultModelPath : modelPath
+        if backend == InferenceBackend.mlx.rawValue {
+            if !InferenceBackend.isMLXSupportedHardware {
+                return ("MLX は Apple Silicon の Mac でだけ使えます。llama.cpp で動きます。", true)
+            }
+            if FileManager.default.fileExists(atPath: path), !MLXConversionEngine.supports(modelPath: path) {
+                return ("MLX は T5 のモデルにだけ対応しています。このモデルは llama.cpp で動きます。", true)
+            }
+        }
+        if InferenceBackend.resolve(modelPath: path) != running {
+            return ("変更は iroha の再起動後に反映されます。", false)
+        }
+        return nil
+    }
 
     var body: some View {
         Form {
@@ -1118,6 +1138,25 @@ private struct ModelSettingsTab: View {
                 LabeledContent("使用中のモデル") {
                     Text(IrohaInputController.engineModelDisplayName)
                         .foregroundStyle(.secondary)
+                }
+                Picker(selection: $backend) {
+                    ForEach(InferenceBackend.allCases) { Text($0.displayName).tag($0.rawValue) }
+                } label: {
+                    HelpLabel(
+                        title: "推論エンジン",
+                        help: "モデルを動かす仕組みです。既定は llama.cpp です。"
+                            + "MLX は T5 のモデルにだけ対応していて、1 回の変換が 2 割ほど速くなります（変換の結果は同じです）。"
+                            + "zenz のモデルでは MLX を選んでも llama.cpp で動きます。"
+                            + "変更は iroha の再起動後に反映されます。")
+                }
+                LabeledContent("使用中の推論エンジン") {
+                    Text(IrohaInputController.engineBackend.displayName)
+                        .foregroundStyle(.secondary)
+                }
+                if let notice = backendNotice {
+                    Text(notice.text)
+                        .font(.caption)
+                        .foregroundStyle(notice.isWarning ? .orange : .secondary)
                 }
                 // 長いパスが切れないよう、ラベルは上に置いてパスに幅を全部使わせる
                 VStack(alignment: .leading, spacing: 4) {

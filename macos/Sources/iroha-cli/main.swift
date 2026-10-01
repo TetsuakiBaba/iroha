@@ -1,5 +1,6 @@
 import Foundation
 import IrohaCore
+import IrohaMLX
 
 // 変換エンジンの検証用CLIハーネス。
 //
@@ -43,6 +44,8 @@ import IrohaCore
 //   IROHA_NO_LATIN=1 で読みにラテン文字がないときの英字出力を禁じる（実験用。USB等も出なくなる）
 //   IROHA_NO_CONSTRAINT=1 で読み制約（constrained decoding）を丸ごと切り素の貪欲生成にする
 //   （実験用。Python側の制約なし計測と突き合わせるとき）
+//   IROHA_BACKEND=mlx でかな漢字変換を MLX 版エンジン（MLXConversionEngine、T5 のみ）で動かす
+//   （IME 本体の 設定 > モデル > 推論エンジン と同じ。IROHA_MLX_DTYPE=f32 で bf16 ではなく f32 にする）
 //   データフォルダはIME本体の設定（保存場所の変更）に従う。IROHA_DATA_DIR で上書き可能
 
 /// IME本体と同じデータフォルダを使う（設定 > 情報 > データの保存場所 で変えた場所を追う）
@@ -144,14 +147,22 @@ func makeEngine(userData: UserDataMode = .ime) -> any ConversionEngine {
         FileHandle.standardError.write("\(note)\n".data(using: .utf8)!)
     }
     // 辞書ラティス + zenz採点（IME本体と同じ構成）。辞書が無い・OFF指定ならzenz単体
-    let core: any ConversionEngine
     let latticeMode = ProcessInfo.processInfo.environment["IROHA_LATTICE"] ?? ""
-    if latticeMode != "off", let dictionaryURL = LatticeConverter.defaultDictionaryURL() {
-        core = LatticeRescoringEngine(
-            base: zenz, lattice: LatticeConverter(dictionaryURL: dictionaryURL),
+    func withLattice<Base: ConversionEngine & CandidateScorer>(_ base: Base) -> any ConversionEngine {
+        guard latticeMode != "off", let dictionaryURL = LatticeConverter.defaultDictionaryURL() else { return base }
+        return LatticeRescoringEngine(
+            base: base, lattice: LatticeConverter(dictionaryURL: dictionaryURL),
             usesLatticeForFirstCandidate: latticeMode == "always")
+    }
+    let core: any ConversionEngine
+    if env["IROHA_BACKEND"] == "mlx" {
+        FileHandle.standardError.write("推論エンジン: MLX（IROHA_BACKEND=mlx）\n".data(using: .utf8)!)
+        let path = env["IROHA_MODEL"].flatMap { $0.isEmpty ? nil : $0 } ?? ZenzEngine.defaultModelPath
+        core = withLattice(MLXConversionEngine(
+            modelPath: path, adapterPath: env["IROHA_LORA"], restrictLatinToReading: restrictLatin,
+            usesReadingConstraint: usesConstraint))
     } else {
-        core = zenz
+        core = withLattice(zenz)
     }
     return LearningEngine(
         base: UserDictionaryEngine(

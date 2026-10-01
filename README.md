@@ -444,6 +444,10 @@ CC BY-SA 4.0（一部は llm-jp-corpus-v3 由来で ODC-BY と Common Crawl の�
   mlx-swift は 0.31.4 に固定（0.31.5 以降は swift-tools-version 6.3 が必要）。
   CLI では `IROHA_LORA=<adapter.gguf>` でアダプタを適用でき、`scripts/bench-compare.sh model.gguf:adapter.gguf`
   でアダプタ有無を同じ表に並べられる
+- かな漢字変換の推論は llama.cpp（[ZenzEngine](macos/Sources/IrohaCore/ZenzEngine.swift)、既定）と
+  MLX（[MLXConversionEngine](macos/Sources/IrohaMLX/MLXConversionEngine.swift)）から選べる（設定 > モデル > 推論エンジン）。
+  MLX は T5 のモデルだけに対応し、変換の規則は ZenzEngine と同じ（出力も同じ）で、生成が約 2 割速い。
+  zenz（GPT-2）のモデルでは MLX を選んでも llama.cpp で動く。CLI では `IROHA_BACKEND=mlx`
 - 打ち間違いの訂正は [macos/Sources/IrohaCore/TypoNormalizer/](macos/Sources/IrohaCore/TypoNormalizer/)。
   3.2M パラメータの文字単位 Transformer encoder–decoder を Accelerate（`cblas_sgemm`）だけで実装したもので、
   llama.cpp も MLX も通さない。学習と重みの書き出しは `training/typo-normalizer/`。

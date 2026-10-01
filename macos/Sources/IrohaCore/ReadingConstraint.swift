@@ -15,7 +15,7 @@ import Foundation
 /// - 終端は読みを使い切ったときのみ許可する
 ///
 /// 消費位置は「ありうる位置の集合」をビットマスクで持つ（bit p = 読みをp文字消費した状態）。
-struct ReadingConstraint {
+public struct ReadingConstraint: Sendable {
 
     /// 漢字1文字が持ちうる読みの最大長（承る=うけたまわ など）
     private static let maxSpan = 8
@@ -33,7 +33,7 @@ struct ReadingConstraint {
     private let allowsLatin: Bool
 
     /// 読みが空、または長すぎて追跡できない場合はnil（制約なしで生成する）
-    init?(reading: String, restrictLatinToReading: Bool = false) {
+    public init?(reading: String, restrictLatinToReading: Bool = false) {
         let characters = Array(katakanaToHiragana(reading))
         guard !characters.isEmpty, characters.count <= Self.maxReadingLength else { return nil }
         readingLength = characters.count
@@ -46,15 +46,15 @@ struct ReadingConstraint {
     }
 
     /// 何も消費していない初期状態
-    var initialMask: UInt64 { 1 }
+    public var initialMask: UInt64 { 1 }
 
     /// 読みを使い切った状態を含むか（終端を許可してよいか）
-    func isComplete(_ mask: UInt64) -> Bool {
+    public func isComplete(_ mask: UInt64) -> Bool {
         mask & (UInt64(1) << UInt64(readingLength)) != 0
     }
 
     /// 出力文字列を1つ消費した後の状態。0なら制約違反（ありうる位置がない）
-    func advance(_ mask: UInt64, text: String) -> UInt64 {
+    public func advance(_ mask: UInt64, text: String) -> UInt64 {
         var current = mask
         for character in text {
             current = advance(current, character: character)

@@ -2,6 +2,7 @@ import Cocoa
 
 import InputMethodKit
 import IrohaCore
+import IrohaMLX
 
 /// キーイベントを処理するIMEコントローラ。
 ///
@@ -51,6 +52,10 @@ final class IrohaInputController: IMKInputController {
         return engineModelName
     }
 
+    /// かな漢字変換のニューラルネットを動かす仕組み（設定 "inferenceBackend"。プロセス起動時に確定し、
+    /// 変更は再起動後に反映）。MLX を選んでいても T5 以外のモデルでは llama.cpp
+    static let engineBackend: InferenceBackend = InferenceBackend.resolve(modelPath: engineModelPath)
+
     /// 変換エンジンはプロセスで1つを共有する（モデルは初回変換時にロード）。
     /// 学習 → ユーザ辞書 → 長い読みの区切り → 異体字の補完 → 辞書ラティス+zenz の順にデコレータで包む
     /// （学習・辞書が空で読みが短ければ素通しなのでふるまいは変わらない）。
@@ -61,19 +66,27 @@ final class IrohaInputController: IMKInputController {
             base: ChunkedConversionEngine(base: VariantKanjiEngine(base: makeCoreEngine()))),
         dictionary: { LearningSettings.dictionary })
 
-    /// zenzモデルの実体。かな漢字変換と、同じモデルを指定した予測変換・インライン補完で共有する
-    /// （モデルを二重にロードしない）
+    /// zenzモデルの実体（llama.cpp）。かな漢字変換と、同じモデルを指定した予測変換・インライン補完で共有する
+    /// （モデルを二重にロードしない）。`engineBackend` が MLX なら作られない（static let は初回参照時に作る）
     private static let zenz = ZenzEngine(modelPath: engineModelPath, adapterPath: engineAdapterPath)
+
+    /// MLX で動かす場合のモデルの実体（`engineBackend == .mlx` のときだけ作られる）
+    private static let mlxEngine = MLXConversionEngine(modelPath: engineModelPath, adapterPath: engineAdapterPath)
+
+    /// かな漢字変換のモデルの実体（予測変換・インライン補完が同じモデルを指すときに共有する）
+    private static var sharedModelEngine: any PredictionEngine {
+        engineBackend == .mlx ? mlxEngine : zenz
+    }
 
     /// 予測変換（確定前）とインライン補完（確定後）のエンジン。かな漢字変換とは別のモデルを
     /// 設定できる（`PredictionSettings`）。既定はどちらもかな漢字変換のzenzを共有する
     private static let predictionEngine: any PredictionEngine = PredictionSettings.engine(
         forKey: PredictionSettings.predictiveModelPathKey, fallbackPath: engineModelPath,
-        sharing: [(engineModelPath, zenz)])
+        sharing: [(engineModelPath, sharedModelEngine)])
     private static let completionEngine: any PredictionEngine = PredictionSettings.engine(
         forKey: PredictionSettings.completionModelPathKey, fallbackPath: engineModelPath,
         sharing: [
-            (engineModelPath, zenz),
+            (engineModelPath, sharedModelEngine),
             (PredictionSettings.resolvedModelPath(
                 forKey: PredictionSettings.predictiveModelPathKey, fallback: engineModelPath), predictionEngine),
         ])
@@ -109,11 +122,18 @@ final class IrohaInputController: IMKInputController {
     }
 
     private static func makeCoreEngine() -> any ConversionEngine {
+        switch engineBackend {
+        case .llamaCpp: return withLattice(zenz)
+        case .mlx: return withLattice(mlxEngine)
+        }
+    }
+
+    private static func withLattice<Base: ConversionEngine & CandidateScorer>(_ base: Base) -> any ConversionEngine {
         guard let dictionaryURL = LatticeConverter.defaultDictionaryURL() else {
             NSLog("iroha: 辞書ラティスの辞書が見つかりません。zenz単体で変換します")
-            return zenz
+            return base
         }
-        return LatticeRescoringEngine(base: zenz, lattice: LatticeConverter(dictionaryURL: dictionaryURL))
+        return LatticeRescoringEngine(base: base, lattice: LatticeConverter(dictionaryURL: dictionaryURL))
     }
 
     private enum Mode {

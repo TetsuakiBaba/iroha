@@ -95,6 +95,20 @@ public final class VocabTokenizer: @unchecked Sendable {
         return Array(tokens.prefix(Int(count)))
     }
 
+    /// 生成で使う語彙表（`ZenzEngine` と同じ規則）。`texts` は出力文字列（出さないトークンは nil）、
+    /// `terminators` は生成を終わらせるトークン（EOG と私用領域 U+EE00-U+EE0F を含むもの）
+    public func generationTable() -> (texts: [String?], terminators: [Bool]) {
+        ZenzEngine.buildTokenTable(vocab: vocab)
+    }
+
+    /// トークンのバイト列（`ZenzEngine` が出力に足すものと同じ。多バイト文字の途中で切れていることがある）
+    public func pieceBytes(_ token: Int32) -> [UInt8] {
+        var buffer = [CChar](repeating: 0, count: 128)
+        let length = llama_token_to_piece(vocab, token, &buffer, Int32(buffer.count), 0, true)
+        guard length > 0 else { return [] }
+        return buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }
+    }
+
     /// トークンの文字列表現（デバッグ・テスト用）
     public func piece(_ token: Int32) -> String {
         var buffer = [CChar](repeating: 0, count: 64)

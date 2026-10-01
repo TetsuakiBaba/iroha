@@ -98,6 +98,46 @@ final class T5ParityTests: XCTestCase {
         compare(mlxLogits(model, source: source, decoder: decoder), withAdapter, label: "T5 LoRA")
     }
 
+    /// アダプタを重みに足し込んで読んだモデル（MLX 版エンジンの経路）が、llama.cpp がアダプタを適用した結果と一致する
+    func testMergedAdapterMatchesLlamaCpp() throws {
+        let path = try TestSupport.requireT5Model()
+        let tokenizer = try VocabTokenizer(modelPath: path)
+        let (source, decoder) = sequences(tokenizer)
+        let spec = LoRASpec(rank: 4, alpha: 8, targets: nil)
+        let trained = try T5Model(gguf: try GGUFFile(path: path), lora: spec)
+        for (_, layer) in trained.loraLayers {
+            layer.loraB._updateInternal(MLXRandom.normal(layer.loraB.shape, scale: 0.02))
+        }
+        let adapterPath = TestSupport.temporaryPath("t5-merge")
+        defer { try? FileManager.default.removeItem(atPath: adapterPath) }
+        try LoraAdapterWriter.write(to: adapterPath, architecture: "t5", alpha: spec.alpha, pairs: try trained.exportLoraPairs())
+
+        let merger = try LoRAAdapterMerger(path: adapterPath, baseArchitecture: "t5")
+        let merged = try T5Model(gguf: try GGUFFile(path: path), lora: nil, adapter: merger, dtype: nil)
+        let withAdapter = try TestSupport.llamaT5Logits(modelPath: path, adapterPath: adapterPath, source: source,
+                                                        decoderTokens: decoder)
+        compare(mlxLogits(merged, source: source, decoder: decoder), withAdapter, label: "T5 merged adapter")
+    }
+
+    /// 1 トークンずつのデコード（KV キャッシュ）が、全位置をまとめて流した `decode` と同じロジットを出す
+    func testDecodeStepMatchesFullDecode() throws {
+        let path = try TestSupport.requireT5Model()
+        let tokenizer = try VocabTokenizer(modelPath: path)
+        let (source, decoder) = sequences(tokenizer)
+        let model = try T5Model(gguf: try GGUFFile(path: path), lora: nil)
+        let full = mlxLogits(model, source: source, decoder: decoder)
+        let memory = model.encode(MLXArray(source, [1, source.count]), sourceMask: MLXArray.ones([1, source.count]))
+        var state = model.startDecoding(memory: memory, capacity: 64)
+        let bias = model.decoderSelfBias(length: 64)
+        for (position, token) in decoder.enumerated() {
+            let logits = model.decodeStep(token, state: &state, selfBias: bias).asType(.float32)
+            eval(logits)
+            let stepped = logits.asArray(Float.self)
+            XCTAssertEqual(TestSupport.argmax(stepped), TestSupport.argmax(full[position]), "位置 \(position)")
+            XCTAssertLessThan(TestSupport.maxAbsDifference(stepped, full[position]), 1e-3, "位置 \(position)")
+        }
+    }
+
     /// 凍結後の学習対象は LoRA の A/B だけ（相対位置バイアス・ノルム・埋め込みは動かない）
     func testFreezeLeavesOnlyLoraTrainable() throws {
         let path = try TestSupport.requireT5Model()

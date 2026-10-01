@@ -169,7 +169,7 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
     /// 実測では同音異義語どうしの差は6nat以内に収まる（きしゃ: 記者 −1.3 〜 樹舎 −5.9）。
     /// 文脈で確信が高いときは読みの合わない候補が大きく離れる
     /// （ガイドする＋ないようを: 内容を −0.0、活用を −16.4、NIPPON −18.4）
-    static let nbestLogProbWindow: Float = 8
+    public static let nbestLogProbWindow: Float = 8
 
     /// プロンプト評価直後のlogitsから上位トークンを対数確率つきで返す
     private func topTokens(runtime: Runtime, count: Int) -> [(token: llama_token, logProb: Float)] {
@@ -346,7 +346,7 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
     /// 制約なし生成ではバイト単位のトークンが選ばれることがあり、多バイト文字の途中で
     /// 終端や生成上限に達すると末尾に不完全なバイト列が残る。これをエラーにすると
     /// ライブ変換の表示が更新されず古い結果のまま止まるため、断片は捨てて返す
-    static func decodeUTF8DroppingFragments(_ data: Data) -> String {
+    public static func decodeUTF8DroppingFragments(_ data: Data) -> String {
         var bytes = data
         // 末尾の断片は最大3バイト（4バイト文字の先頭3バイト）
         for _ in 0..<4 {
@@ -364,7 +364,7 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
         return ReadingConstraint(reading: reading, restrictLatinToReading: restrictLatinToReading)
     }
 
-    static func buildPrompt(reading: String, leftContext: String, maxContextLength: Int) -> String {
+    public static func buildPrompt(reading: String, leftContext: String, maxContextLength: Int) -> String {
         var prompt = ""
         if !leftContext.isEmpty {
             prompt += "\u{EE02}" + String(leftContext.suffix(maxContextLength))
@@ -682,7 +682,7 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer, PredictionEngine {
     }
 
     /// 語彙全体の出力文字列を1度だけ取り出しておく（制約判定を毎トークン安く行うため）
-    private static func buildTokenTable(vocab: OpaquePointer) -> (texts: [String?], terminators: [Bool]) {
+    static func buildTokenTable(vocab: OpaquePointer) -> (texts: [String?], terminators: [Bool]) {
         let vocabSize = Int(llama_vocab_n_tokens(vocab))
         var texts = [String?](repeating: nil, count: vocabSize)
         var terminators = [Bool](repeating: false, count: vocabSize)

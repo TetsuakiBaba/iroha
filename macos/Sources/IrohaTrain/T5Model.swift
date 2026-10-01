@@ -43,10 +43,12 @@ public final class T5Model: Module, TrainableLM {
     struct Loader {
         let gguf: GGUFFile
         let lora: LoRASpec?
+        let adapter: LoRAAdapterMerger?
+        let dtype: DType?
         let register: (String, LoRALinear) -> Void
 
         func linear(_ prefix: String) throws -> UnaryLayer {
-            let result = try GGUFWeights.linear(gguf, prefix, lora: lora)
+            let result = try GGUFWeights.linear(gguf, prefix, lora: lora, adapter: adapter, dtype: dtype)
             if let wrapped = result.lora { register(prefix + ".weight", wrapped) }
             return result.layer
         }
@@ -56,7 +58,11 @@ public final class T5Model: Module, TrainableLM {
         }
 
         func norm(_ name: String, eps: Float) throws -> RMSNorm {
-            RMSNorm(weight: try GGUFWeights.array(gguf, name), eps: eps)
+            RMSNorm(weight: try GGUFWeights.array(gguf, name, dtype: dtype), eps: eps)
+        }
+
+        func array(_ name: String) throws -> MLXArray {
+            try GGUFWeights.array(gguf, name, dtype: dtype)
         }
     }
 
@@ -174,7 +180,13 @@ public final class T5Model: Module, TrainableLM {
     public let decoderStartToken: Int32
     public let lora = LoRARegistry()
 
-    public init(gguf: GGUFFile, lora: LoRASpec?) throws {
+    public convenience init(gguf: GGUFFile, lora: LoRASpec?) throws {
+        try self.init(gguf: gguf, lora: lora, adapter: nil, dtype: nil)
+    }
+
+    /// 推論用の読み込み（`MLXConversionEngine` が使う）。`adapter` を渡すと、その LoRA アダプタ（llama.cpp 形式の
+    /// GGUF）をベースの重みに足し込む。`dtype` を渡すと重みをその型で持つ（nil なら学習と同じ f32）
+    public init(gguf: GGUFFile, lora: LoRASpec?, adapter: LoRAAdapterMerger?, dtype: DType?) throws {
         let lora = lora?.resolved(defaults: Self.defaultLoRATargets)
         guard gguf.architecture == Self.architecture else {
             throw TrainableLMError.unsupportedArchitecture(gguf.architecture ?? "(不明)")
@@ -193,20 +205,21 @@ public final class T5Model: Module, TrainableLM {
         decoderStartToken = Int32(gguf.uint32("t5.decoder_start_token_id") ?? 0)
 
         let registry = self.lora
-        let loader = Loader(gguf: gguf, lora: lora) { registry.register($0, $1) }
-        tokenEmbedding = try GGUFWeights.array(gguf, "token_embd.weight")
-        encoderRelativeBias = try GGUFWeights.array(gguf, "enc.blk.0.attn_rel_b.weight")
-        decoderRelativeBias = try GGUFWeights.array(gguf, "dec.blk.0.attn_rel_b.weight")
+        let loader = Loader(gguf: gguf, lora: lora, adapter: adapter, dtype: dtype) { registry.register($0, $1) }
+        tokenEmbedding = try loader.array("token_embd.weight")
+        encoderRelativeBias = try loader.array("enc.blk.0.attn_rel_b.weight")
+        decoderRelativeBias = try loader.array("dec.blk.0.attn_rel_b.weight")
         encoderBlocks = try (0..<Int(layers)).map { try EncoderBlock(loader, index: $0, heads: Int(heads), eps: eps) }
         decoderBlocks = try (0..<Int(decoderLayers)).map { try DecoderBlock(loader, index: $0, heads: Int(heads), eps: eps) }
         encoderOutputNorm = try loader.norm("enc.output_norm.weight", eps: eps)
         decoderOutputNorm = try loader.norm("dec.output_norm.weight", eps: eps)
         // output が無いモデルは token_embd と共有（tied。llama.cpp も同じテンソルをそのまま使う）
         if gguf.tensor(named: "output.weight") != nil {
-            output = try GGUFWeights.linear(gguf, "output", lora: nil).layer
+            output = try GGUFWeights.linear(gguf, "output", lora: nil, dtype: dtype).layer
         } else {
             output = Linear(weight: tokenEmbedding)
         }
+        try adapter?.verifyAllMerged()
         super.init()
     }
 
@@ -269,6 +282,17 @@ public final class T5Model: Module, TrainableLM {
 
     /// デコーダ入力 [B, T] の各位置のロジット [B, T, V]
     public func decode(_ tokens: MLXArray, memory: MLXArray, sourceMask: MLXArray) -> MLXArray {
+        outputLogits(decodeHidden(tokens, memory: memory, sourceMask: sourceMask))
+    }
+
+    /// 出力層の重み [V, D] を掛けてロジットにする（`decodeHidden` の後半）
+    public func outputLogits(_ hidden: MLXArray) -> MLXArray {
+        output(hidden)
+    }
+
+    /// `decode` の出力層の手前（最後の正規化の後）[B, T, D]。使う位置だけを選んでから `outputLogits` に
+    /// 通せば、語彙ぶんの大きな配列を全位置について作らずに済む（MLX 版エンジンの一括採点）
+    public func decodeHidden(_ tokens: MLXArray, memory: MLXArray, sourceMask: MLXArray) -> MLXArray {
         let length = tokens.dim(1)
         let selfBias = positionBias(decoderRelativeBias, queryLength: length, keyLength: length, bidirectional: false)
             + MultiHeadAttention.createAdditiveCausalMask(length)
@@ -277,7 +301,96 @@ public final class T5Model: Module, TrainableLM {
         for block in decoderBlocks {
             h = block(h, selfBias: selfBias, memory: memory, memoryBias: memoryBias)
         }
-        return output(decoderOutputNorm(h))
+        return decoderOutputNorm(h)
+    }
+
+    // MARK: - 推論（KV キャッシュで 1 トークンずつ）
+
+    /// 1 トークンずつのデコードの状態。交差注意のキー・バリューはエンコード後に 1 回だけ作り、
+    /// 自己注意のキー・バリューは `capacity` 位置ぶんの配列で持ち、位置が進むたびにその位置だけを
+    /// 差し替えた新しい配列にする（MLXArray の添字代入はオブジェクトをその場で書き換えるので使わない。
+    /// 分岐した状態どうしが同じ配列を指していても壊れない）。
+    /// まだ書いていない位置は `decoderSelfBias` の因果マスクで隠れる。
+    ///
+    /// 配列の形を位置によらず一定にしているのは MLX のメモリの使い回しのため（解放したメモリは
+    /// ほぼ同じ大きさの要求にしか使われないので、毎ステップ形が変わると確保し直しになり遅い。
+    /// llama.cpp が KV の長さを 256 単位に切り上げているのと同じ考え方）。
+    /// MLXArray は不変なので、分岐（n-best）はこの構造体のコピーで済む
+    public struct DecoderState {
+        let crossKeys: [MLXArray]
+        let crossValues: [MLXArray]
+        /// エンコーダ入力のパディング位置を隠す加算マスク [1, 1, 1, S]（パディングが無ければ nil）
+        let crossBias: MLXArray?
+        var keys: [MLXArray]
+        var values: [MLXArray]
+        /// 位置の番号 [1, 1, capacity, 1]（書き込む位置を選ぶのに使う）
+        let slots: MLXArray
+        /// 入れられるトークンの数（`decoderSelfBias` の長さもこれ以上にする）
+        public let capacity: Int
+        /// 次に入れるトークンの位置
+        public internal(set) var position = 0
+
+        /// 評価（`eval`）しておくべき配列（キャッシュをグラフのまま持ち越さないため）
+        public var arrays: [MLXArray] { keys + values }
+    }
+
+    private func splitHeads(_ a: MLXArray, heads: Int) -> MLXArray {
+        a.reshaped(a.dim(0), a.dim(1), heads, -1).transposed(0, 2, 1, 3)
+    }
+
+    /// `Attention.callAsFunction` と同じ式（1/√d のスケールなし）を、分けたヘッドで行う
+    private func attend(_ q: MLXArray, _ k: MLXArray, _ v: MLXArray, bias: MLXArray?) -> MLXArray {
+        var scores = matmul(q, k.transposed(0, 1, 3, 2))
+        if let bias { scores = scores + bias }
+        let out = matmul(softmax(scores, axis: -1, precise: true), v)
+        return out.transposed(0, 2, 1, 3).reshaped(q.dim(0), q.dim(2), -1)
+    }
+
+    /// エンコーダ出力 [1, S, D] からデコードを始める（交差注意のキー・バリューを作り、自己注意の KV を確保する）。
+    /// `sourceMask`（[1, S]、1 = 実トークン）を渡すと、エンコーダ入力のパディング位置を交差注意から隠す
+    public func startDecoding(memory: MLXArray, sourceMask: MLXArray? = nil, capacity: Int) -> DecoderState {
+        let heads = decoderBlocks[0].attn.heads
+        let crossKeys = decoderBlocks.map { splitHeads($0.cross.k(memory), heads: heads) }
+        let headDim = crossKeys[0].dim(3)
+        let empty = MLXArray.zeros([1, heads, capacity, headDim], dtype: memory.dtype)
+        return DecoderState(
+            crossKeys: crossKeys,
+            crossValues: decoderBlocks.map { splitHeads($0.cross.v(memory), heads: heads) },
+            crossBias: sourceMask.map { Self.keyPaddingBias($0).asType(memory.dtype) },
+            keys: Array(repeating: empty, count: decoderBlocks.count),
+            values: Array(repeating: empty, count: decoderBlocks.count),
+            slots: MLXArray(Array(0 ..< Int32(capacity)), [1, 1, capacity, 1]),
+            capacity: capacity)
+    }
+
+    /// デコーダの自己注意のバイアス [1, H, length, length]（相対位置バイアス + 因果マスク）。
+    /// `decodeStep` に渡す。長さは `DecoderState.capacity` 以上にする（作り置きしてよい）
+    public func decoderSelfBias(length: Int) -> MLXArray {
+        let bias = positionBias(decoderRelativeBias, queryLength: length, keyLength: length, bidirectional: false)
+        return bias + MultiHeadAttention.createAdditiveCausalMask(length).asType(bias.dtype)
+    }
+
+    /// デコーダに 1 トークン入れ、次のトークンのロジット [V] を返す。`decode` を最後の 1 位置に絞ったもの
+    /// （過去の位置は `state` のキャッシュを使う）。`selfBias` は `decoderSelfBias` で作ったもの
+    public func decodeStep(_ token: Int32, state: inout DecoderState, selfBias: MLXArray) -> MLXArray {
+        let t = state.position
+        precondition(t < state.capacity, "DecoderState の容量（\(state.capacity)）を超えた")
+        let bias = selfBias[0..., 0..., t ..< t + 1, 0 ..< state.capacity]
+        let heads = decoderBlocks[0].attn.heads
+        let slot = state.slots .== MLXArray(Int32(t))
+        var h = tokenEmbedding[MLXArray([token], [1, 1])]
+        for (i, block) in decoderBlocks.enumerated() {
+            let normed = block.attnNorm(h)
+            let q = splitHeads(block.attn.q(normed), heads: heads)
+            state.keys[i] = which(slot, splitHeads(block.attn.k(normed), heads: heads), state.keys[i])
+            state.values[i] = which(slot, splitHeads(block.attn.v(normed), heads: heads), state.values[i])
+            h = h + block.attn.o(attend(q, state.keys[i], state.values[i], bias: bias))
+            let crossQuery = splitHeads(block.cross.q(block.crossNorm(h)), heads: heads)
+            h = h + block.cross.o(attend(crossQuery, state.crossKeys[i], state.crossValues[i], bias: state.crossBias))
+            h = h + block.ffn(block.ffnNorm(h))
+        }
+        state.position += 1
+        return output(decoderOutputNorm(h))[0, 0]
     }
 
     public func logits(_ batch: TrainingBatch) -> MLXArray {

@@ -20,7 +20,7 @@ let package = Package(
         // 辞書ラティスによるかな漢字変換（azooKey）。候補の読みを辞書で保証するために使う。
         // 辞書データ（Apache-2.0）は vendor/azooKey_dictionary_storage から別途バンドルする
         .package(url: "https://github.com/azooKey/AzooKeyKanaKanjiConverter", .upToNextMinor(from: "0.11.2")),
-        // オンデバイス追加学習（LoRA）。iroha-train だけがリンクする（IME本体には入れない）。
+        // オンデバイス追加学習（LoRA・iroha-train）と、MLX 版のかな漢字変換エンジン（IrohaMLX、IME 本体と iroha-cli）。
         // 0.31.5 以降は swift-tools-version 6.3 を要求し Xcode 26.2 で読めないため固定
         .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.31.4"),
     ],
@@ -40,7 +40,7 @@ let package = Package(
         // IME本体（InputMethodKit）。scripts/install.shで.appバンドルに組み立てる
         .executableTarget(
             name: "iroha",
-            dependencies: ["IrohaCore"],
+            dependencies: ["IrohaCore", "IrohaMLX"],
             swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
             // sqlite3: macOSのユーザ辞書（TextReplacements.db）の読み取りに使う
             linkerSettings: llamaLinkerSettings + [.linkedLibrary("sqlite3")]
@@ -48,12 +48,13 @@ let package = Package(
         // 変換エンジンをコマンドラインで試す検証用ハーネス
         .executableTarget(
             name: "iroha-cli",
-            dependencies: ["IrohaCore"],
+            dependencies: ["IrohaCore", "IrohaMLX"],
             swiftSettings: [.unsafeFlags(llamaHeaderFlags)],
             linkerSettings: llamaLinkerSettings
         ),
-        // 変換記録からの追加学習（MLX で LoRA を学習し GGUF アダプタを書く）。MLX 依存はここに閉じ込め、
-        // IME 本体にはリンクしない。学習中は GPU/CPU を占有するので別プロセス iroha-train で動かす
+        // 変換記録からの追加学習（MLX で LoRA を学習し GGUF アダプタを書く）と、MLX のモデル実装（T5Model / GPT2Model）。
+        // 学習中は GPU/CPU を占有するので学習そのものは別プロセス iroha-train で動かす。
+        // IrohaCore は MLX に依存させない（Foundation + llama.cpp だけ。Windows 移植の候補）
         .target(
             name: "IrohaTrain",
             dependencies: [
@@ -73,9 +74,21 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
             linkerSettings: llamaLinkerSettings
         ),
+        // MLX 版のかな漢字変換エンジン（推論だけを MLX にした ZenzEngine。対応は T5 のみ）。
+        // 設定で選んだときだけ使う（IrohaInputController.engineBackend）
+        .target(
+            name: "IrohaMLX",
+            dependencies: [
+                "IrohaCore", "IrohaTrain",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
+            linkerSettings: llamaLinkerSettings
+        ),
         .testTarget(
             name: "IrohaTrainTests",
-            dependencies: ["IrohaTrain"],
+            dependencies: ["IrohaTrain", "IrohaMLX"],
             swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
             linkerSettings: llamaLinkerSettings
         ),
