@@ -7,7 +7,6 @@ import SwiftUI
 // システムがInfo.plistのInputMethodConnectionNameを介して接続してくる。
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var server: IMKServer?
-    private(set) var candidatesPanel: IMKCandidates?
     private var settingsWindowController: NSWindowController?
 
     /// 設定ウィンドウを開く（IMEはLSBackgroundOnlyなのでレベルを上げて前面に出す）
@@ -112,9 +111,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let server = IMKServer(name: connectionName, bundleIdentifier: Bundle.main.bundleIdentifier)
         self.server = server
-        if let server {
-            candidatesPanel = IMKCandidates(server: server, panelType: kIMKSingleColumnScrollingCandidatePanel)
-        }
         NSLog("iroha: IMKServer 起動 connection=\(connectionName) server=\(server != nil)")
         // 他アプリでのクリック・スクロール・アプリ切替で候補ウィンドウ・予測の小窓を閉じる
         PointerActivityMonitor.shared.start()

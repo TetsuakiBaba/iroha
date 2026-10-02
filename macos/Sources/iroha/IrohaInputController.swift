@@ -164,7 +164,7 @@ final class IrohaInputController: IMKInputController {
     private var typoRejectedReading: String?
 
     /// 差分が文節境界をまたいでいて 1 文節では直せないときに出す「文全体を訂正した候補」。
-    /// 選ばれたら先頭の固定部分より後ろの文節をまとめて置き換える（`candidateSelected`）
+    /// 選ばれたら先頭の固定部分より後ろの文節をまとめて置き換える（`applyTypoWholeSentenceIfSelected`）
     private var typoWholeSentence: (candidate: String, reading: String, segmentOffset: Int)?
 
     /// 知らせ（句読点スタイルの切り替え・変換モデルを使えない）を小窓に出しているか
@@ -269,9 +269,10 @@ final class IrohaInputController: IMKInputController {
     private var currentSegmentIndex = 0
     /// 非同期の文節処理が古い状態に適用されるのを防ぐ世代カウンタ
     private var segmentGeneration = 0
-    /// 候補ウィンドウに表示中の候補（candidates(_:)が返す）
+    /// 候補ウィンドウ（`CandidateWindow`）に表示中の候補と、その並び・選択
     private var panelCandidates: [String] = []
-    private var panelVisible = false
+    private var panelGrid: CandidateGrid?
+    private var panelVisible: Bool { panelGrid != nil }
 
     /// 英訳確定の進行中フラグと世代（Escや他経路のcommitTextで無効化する）
     private var isTranslating = false
@@ -298,10 +299,6 @@ final class IrohaInputController: IMKInputController {
 
     /// 変換をやめてかなで見せるときの表示（固定部分 + 入力中のかな）
     private var kanaDisplay: String { fixedText + composer.display + (alphabetRun ?? "") }
-
-    private var candidatesPanel: IMKCandidates? {
-        (NSApp.delegate as? AppDelegate)?.candidatesPanel
-    }
 
     // MARK: - IMKInputController
 
@@ -710,29 +707,39 @@ final class IrohaInputController: IMKInputController {
         Task { await UpdateChecker.shared.checkAndPresent() }
     }
 
-    // MARK: - 候補ウィンドウ（IMKCandidatesからの通知）
+    // MARK: - 候補ウィンドウ（CandidateWindow）
 
-    override func candidates(_ sender: Any!) -> [Any]! {
-        panelCandidates
-    }
-
-    override func candidateSelectionChanged(_ candidateString: NSAttributedString!) {
-        guard let candidateString, mode == .segmenting,
+    /// 候補ウィンドウで選んでいる候補を文節の結果にする（ウィンドウは開いたまま）。
+    /// 選んだだけで未確定文字列に出るので、Return・Escape・文節移動のどれで閉じても最後に選んでいた候補が残る
+    private func applyPanelSelection(_ grid: CandidateGrid) {
+        panelGrid = grid
+        CandidateWindow.shared.update(grid)
+        guard mode == .segmenting, panelCandidates.indices.contains(grid.selected),
               segments.indices.contains(currentSegmentIndex) else { return }
-        segments[currentSegmentIndex].result = candidateString.string
+        segments[currentSegmentIndex].result = panelCandidates[grid.selected]
         if let client = client() {
             refreshSegmentDisplay(client: client)
         }
     }
 
-    override func candidateSelected(_ candidateString: NSAttributedString!) {
-        guard let candidateString, mode == .segmenting,
-              segments.indices.contains(currentSegmentIndex) else { return }
-        segments[currentSegmentIndex].result = candidateString.string
+    /// 番号キー・クリックで候補を決める: その候補を文節の結果にしてウィンドウを閉じる（確定はしない）
+    private func choosePanelCandidate(at index: Int) {
+        guard panelVisible, panelCandidates.indices.contains(index),
+              mode == .segmenting, segments.indices.contains(currentSegmentIndex) else { return }
+        segments[currentSegmentIndex].result = panelCandidates[index]
         hidePanel()
         if let client = client() {
             refreshSegmentDisplay(client: client)
         }
+    }
+
+    /// 候補ウィンドウが開いているときの番号キー（1〜9。テンキーも同じ）。修飾キーつきは対象外
+    private static func candidateNumber(of event: NSEvent) -> Int? {
+        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+              let character = event.charactersIgnoringModifiers?.first,
+              let number = character.wholeNumberValue, character.isASCII,
+              (1...CandidateGrid.rowsPerColumn).contains(number) else { return nil }
+        return number
     }
 
     // MARK: - 入力・ライブ変換中のキー処理
@@ -1093,20 +1100,29 @@ final class IrohaInputController: IMKInputController {
         let shift = event.modifierFlags.contains(.shift)
         switch Int(event.keyCode) {
         case kVK_Space, kVK_DownArrow:
-            if panelVisible {
-                candidatesPanel?.interpretKeyEvents([Self.syntheticArrowEvent(keyCode: kVK_DownArrow)])
+            if var grid = panelGrid {
+                grid.next()
+                applyPanelSelection(grid)
             } else {
                 openSegmentCandidates(client: client)
             }
             return true
         case kVK_UpArrow:
-            if panelVisible {
-                candidatesPanel?.interpretKeyEvents([Self.syntheticArrowEvent(keyCode: kVK_UpArrow)])
+            if var grid = panelGrid {
+                grid.previous()
+                applyPanelSelection(grid)
+            }
+            return true
+        case kVK_Tab where panelVisible:
+            // 候補が 1 列に収まらないときだけ、列を横に並べた表に広げる・1 列に戻す。
+            // 開いている間の Tab はアプリに渡さない（タブ文字が入らないように）
+            if var grid = panelGrid, grid.toggleExpanded() {
+                applyPanelSelection(grid)
             }
             return true
         case kVK_Return, kVK_ANSI_KeypadEnter:
             if panelVisible {
-                // 候補を採用して選択を続ける（結果はcandidateSelectionChangedで反映済み）
+                // 候補を採用して選択を続ける（結果はapplyPanelSelectionで反映済み）
                 hidePanel()
                 refreshSegmentDisplay(client: client)
             } else {
@@ -1125,6 +1141,9 @@ final class IrohaInputController: IMKInputController {
         case kVK_LeftArrow:
             if shift {
                 resizeCurrentSegment(by: -1, client: client)
+            } else if var grid = panelGrid, grid.isExpanded {
+                // 表に広げている間だけ ←→ は隣の列の候補へ移る（文節は動かさない）
+                if grid.moveColumn(by: -1) { applyPanelSelection(grid) }
             } else {
                 hidePanel()
                 moveSegmentSelection(by: -1, client: client)
@@ -1133,6 +1152,8 @@ final class IrohaInputController: IMKInputController {
         case kVK_RightArrow:
             if shift {
                 resizeCurrentSegment(by: +1, client: client)
+            } else if var grid = panelGrid, grid.isExpanded {
+                if grid.moveColumn(by: +1) { applyPanelSelection(grid) }
             } else {
                 hidePanel()
                 moveSegmentSelection(by: +1, client: client)
@@ -1143,6 +1164,14 @@ final class IrohaInputController: IMKInputController {
             exitSegmentModeToKana(client: client)
             return true
         default:
+            // 候補ウィンドウが開いていれば、番号キーはその列の番号の候補を選ぶ
+            // （文字として入れない。その番号の候補が無いときも何もしない）
+            if let grid = panelGrid, let number = Self.candidateNumber(of: event) {
+                if let index = grid.index(forNumber: number) {
+                    choosePanelCandidate(at: index)
+                }
+                return true
+            }
             // 文字入力なら全文節を確定して新しい入力を始める
             if let characters = event.characters, let first = characters.first,
                let scalar = first.unicodeScalars.first, scalar.isASCII,
@@ -1404,7 +1433,7 @@ final class IrohaInputController: IMKInputController {
 
     /// 「文全体を訂正した候補」を今選んでいるか。
     ///
-    /// 候補の反映は `candidateSelectionChanged` が「その文節の結果を書き換える」形で行うので、
+    /// 候補の反映は `applyPanelSelection` が「その文節の結果を書き換える」形で行うので、
     /// この候補を選んだ瞬間は「先頭の文節＝文全体の訂正」＋「後ろに元のままの文節」という
     /// 半端な状態になる。表示では後ろを隠し（`refreshSegmentDisplay`）、
     /// 候補ウィンドウを閉じるときに文節ごと差し替える（`applyTypoWholeSentenceIfSelected`）
@@ -1690,18 +1719,24 @@ final class IrohaInputController: IMKInputController {
         followDeveloperOverlay(client: client)
     }
 
+    /// 候補ウィンドウを今の文節の先頭の下に開く。選んでいるのは先頭（今の表示）
     private func showPanel(with candidates: [String]) {
+        guard !candidates.isEmpty else { return }
         panelCandidates = candidates
-        guard let panel = candidatesPanel else { return }
-        panel.update()
-        panel.show(kIMKLocateCandidatesBelowHint)
-        panelVisible = true
+        let grid = CandidateGrid(count: candidates.count)
+        panelGrid = grid
+        let segmentStart = segments[..<min(currentSegmentIndex, segments.count)]
+            .reduce(0) { $0 + $1.result.utf16.count }
+        let anchor = client().flatMap { caretRect(client: $0, markedTextLength: segmentStart) }
+        CandidateWindow.shared.show(candidates, grid: grid, near: anchor) { [weak self] index in
+            self?.choosePanelCandidate(at: index)
+        }
     }
 
     private func hidePanel() {
         applyTypoWholeSentenceIfSelected()
-        candidatesPanel?.hide()
-        panelVisible = false
+        CandidateWindow.shared.hide()
+        panelGrid = nil
         panelCandidates = []
     }
 
@@ -2316,30 +2351,6 @@ final class IrohaInputController: IMKInputController {
             return
         }
         DeveloperOverlay.shared.follow(caretRect(client: client, markedTextLength: developerOverlayMarkedLength))
-    }
-
-    /// 候補ウィンドウ操作用の合成キーイベント。
-    /// interpretKeyEventsはcharactersの関数キーコード（U+F700系）を見て
-    /// moveUp:/moveDown:に振り分けるため、実際の矢印キーと同じ文字を入れる必要がある
-    private static func syntheticArrowEvent(keyCode: Int) -> NSEvent {
-        let functionKey: String
-        switch keyCode {
-        case kVK_UpArrow: functionKey = "\u{F700}"    // NSUpArrowFunctionKey
-        case kVK_DownArrow: functionKey = "\u{F701}"  // NSDownArrowFunctionKey
-        default: functionKey = ""
-        }
-        return NSEvent.keyEvent(
-            with: .keyDown,
-            location: .zero,
-            modifierFlags: .function,
-            timestamp: ProcessInfo.processInfo.systemUptime,
-            windowNumber: 0,
-            context: nil,
-            characters: functionKey,
-            charactersIgnoringModifiers: functionKey,
-            isARepeat: false,
-            keyCode: UInt16(keyCode)
-        )!
     }
 }
 
