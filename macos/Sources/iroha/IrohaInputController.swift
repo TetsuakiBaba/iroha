@@ -407,6 +407,19 @@ final class IrohaInputController: IMKInputController {
             return true
         }
 
+        // JISキーボードの ¥ キー: 設定で決めた文字（¥ か \、Option でもう一方）を入れる（モードに関わらず）。
+        // 読みには入れず、入力中なら確定してから入れる。Shift+¥（|）は対象外。
+        // 入力していなくて、キーのままの文字と同じならアプリに任せる（設定を足す前と同じ動き）
+        if Int(event.keyCode) == kVK_JIS_Yen,
+           event.modifierFlags.intersection([.command, .control, .shift]).isEmpty {
+            let text = KeyInputSettings.yenKeyText(option: event.modifierFlags.contains(.option))
+            let composing = isComposing || mode == .segmenting
+            if !composing, text == event.characters { return false }
+            if composing { commitCurrent(client: client) }
+            commitText(text, client: client)
+            return true
+        }
+
         guard japaneseMode else { return false }
 
         // Windows IME互換ショートカット（Ctrl+U/I/O/P/T = ひらがな/カタカナ/半角カナ/全角英数/半角英数）
@@ -819,7 +832,15 @@ final class IrohaInputController: IMKInputController {
             }
             return true
         case kVK_Space:
-            guard isComposing else { return false }
+            guard isComposing else {
+                // 入力していないときのスペース。設定で常に半角にしていなければ全角を入れる
+                // （Shift+スペースは半角のままアプリに任せる）
+                guard !KeyInputSettings.alwaysHalfWidthSpace,
+                      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
+                else { return false }
+                commitText("\u{3000}", client: client)
+                return true
+            }
             enterSegmentMode(client: client)
             return true
         case kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10:
@@ -2368,6 +2389,7 @@ private let kVK_F9 = 0x65
 private let kVK_F10 = 0x6D
 private let kVK_JIS_Eisu = 0x66
 private let kVK_JIS_Kana = 0x68
+private let kVK_JIS_Yen = 0x5D
 private let kVK_LeftArrow = 0x7B
 private let kVK_RightArrow = 0x7C
 private let kVK_DownArrow = 0x7D

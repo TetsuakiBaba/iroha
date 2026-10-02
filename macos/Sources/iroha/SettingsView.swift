@@ -78,6 +78,8 @@ private struct InputSettingsTab: View {
     @AppStorage(DocumentContextSettings.enabledKey) private var documentContext = true
     @AppStorage("candidateCount") private var candidateCount = 8
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
+    @AppStorage(KeyInputSettings.yenKeyCharacterKey) private var yenKeyCharacter = KeyInputSettings.yen
+    @AppStorage(KeyInputSettings.alwaysHalfWidthSpaceKey) private var alwaysHalfWidthSpace = true
     @AppStorage(PredictionSettings.predictiveEnabledKey) private var predictiveConversion = false
     @AppStorage(TypoNormalizerSettings.enabledKey) private var typoNormalizer = false
     @AppStorage(TypoNormalizerSettings.thresholdKey)
@@ -151,7 +153,7 @@ private struct InputSettingsTab: View {
                 InputHistoryRow(isEnabled: predictiveConversion)
             }
 
-            Section("句読点") {
+            Section("句読点・記号・スペース") {
                 Picker(selection: $punctuationStyle) {
                     Text("、。").tag("、。")
                     Text("，．").tag("，．")
@@ -161,6 +163,22 @@ private struct InputSettingsTab: View {
                         help: "変更は次の入力から反映されます。入力中は ⌃.（control + ピリオド）でも切り替えられます。")
                 }
                 .pickerStyle(.segmented)
+                Picker(selection: $yenKeyCharacter) {
+                    Text("¥（円記号）").tag(KeyInputSettings.yen)
+                    Text("\\（バックスラッシュ）").tag(KeyInputSettings.backslash)
+                } label: {
+                    HelpLabel(
+                        title: "¥キーで入力する文字",
+                        help: "JISキーボードの ¥ キーで入る文字です。Option+¥ ではもう一方が入ります。"
+                            + "ひらがな・英数のどちらのモードでも効きます。入力中に押すと、入力中の文字を確定してから入ります。"
+                            + "USキーボードの \\ キーには関係しません。")
+                }
+                .pickerStyle(.segmented)
+                HelpToggle(
+                    title: "スペースを常に半角にする", isOn: $alwaysHalfWidthSpace,
+                    help: "ONでは、ひらがなモードで入力していないときのスペースも半角になります。"
+                        + "OFFにすると全角スペースが入り、Shift+スペースで半角が入ります。"
+                        + "入力中のスペースは変換に使うので、この設定には関係しません。英数モードでは常に半角です。")
             }
 
             // 未確定文字列をAIに渡して確定する（使うAIサービスは「モデル」タブで選ぶ）

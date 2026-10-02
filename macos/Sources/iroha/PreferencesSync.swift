@@ -22,6 +22,7 @@ final class PreferencesSync {
     static let syncedKeys: Set<String> = {
         var keys: Set<String> = [
             "liveConversion", "candidateCount", "punctuationStyle",
+            KeyInputSettings.yenKeyCharacterKey, KeyInputSettings.alwaysHalfWidthSpaceKey,
             DocumentContextSettings.enabledKey,
             PredictionSettings.predictiveEnabledKey,
             LearningSettings.enabledKey, UserDictionarySync.autoSyncKey,
