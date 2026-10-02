@@ -23,8 +23,7 @@ final class PreferencesSync {
         var keys: Set<String> = [
             "liveConversion", "candidateCount", "punctuationStyle",
             DocumentContextSettings.enabledKey,
-            PredictionSettings.predictiveEnabledKey, PredictionSettings.completionEnabledKey,
-            PredictionSettings.delayMillisecondsKey,
+            PredictionSettings.predictiveEnabledKey,
             LearningSettings.enabledKey, UserDictionarySync.autoSyncKey,
             TypoNormalizerSettings.enabledKey, TypoNormalizerSettings.thresholdKey,
             TypoNormalizerSettings.delayMillisecondsKey, TypoNormalizerSettings.minimumLengthKey,

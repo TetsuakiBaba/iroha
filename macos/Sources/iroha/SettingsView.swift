@@ -8,7 +8,7 @@ enum SettingsTab: Hashable {
     case input       // 入力・変換のふるまい
     case dictionary  // ユーザ辞書・変換ルール・変換の学習・変換記録
     case selection   // 他アプリの選択テキストのAI編集 + 選択した文字数の表示
-    case model       // かな漢字変換・予測に使うモデルとAIサービス
+    case model       // かな漢字変換に使うモデルとAIサービス
     case about       // アップデートとバージョン情報
 }
 
@@ -22,6 +22,7 @@ final class SettingsUIState: ObservableObject {
     @Published var showingRewriteRules = false
     @Published var showingConversionLog = false
     @Published var showingLearning = false
+    @Published var showingInputHistory = false
 
     /// メニューの「ユーザ辞書...」から呼ぶ: 辞書・学習タブを開いて編集シートを出す
     func openUserDictionary() {
@@ -66,6 +67,7 @@ struct SettingsView: View {
         .sheet(isPresented: $uiState.showingRewriteRules) { UserRewriteRulesView() }
         .sheet(isPresented: $uiState.showingConversionLog) { ConversionLogView() }
         .sheet(isPresented: $uiState.showingLearning) { LearningView() }
+        .sheet(isPresented: $uiState.showingInputHistory) { InputHistoryView() }
     }
 }
 
@@ -77,9 +79,6 @@ private struct InputSettingsTab: View {
     @AppStorage("candidateCount") private var candidateCount = 8
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
     @AppStorage(PredictionSettings.predictiveEnabledKey) private var predictiveConversion = false
-    @AppStorage(PredictionSettings.completionEnabledKey) private var inlineCompletion = false
-    @AppStorage(PredictionSettings.delayMillisecondsKey)
-    private var predictionDelayMs = PredictionSettings.defaultDelayMilliseconds
     @AppStorage(TypoNormalizerSettings.enabledKey) private var typoNormalizer = false
     @AppStorage(TypoNormalizerSettings.thresholdKey)
     private var typoThreshold = TypoNormalizer.defaultThreshold
@@ -103,7 +102,7 @@ private struct InputSettingsTab: View {
                 }
                 HelpToggle(
                     title: "アプリの文章を文脈に使う", isOn: $documentContext,
-                    help: "入力を始めた位置の手前にある文章（最大40文字）をアプリから読み取り、変換と予測の文脈にします。"
+                    help: "入力を始めた位置の手前にある文章（最大40文字）をアプリから読み取り、変換の文脈にします。"
                         + "文章の途中に書き足すときや、別のアプリに移った直後でも前後に合った変換になります。"
                         + "文章を返さないアプリでは、irohaで直前に確定した文字列を文脈にします。")
             }
@@ -137,20 +136,19 @@ private struct InputSettingsTab: View {
                 TypoThresholdRow(threshold: $typoThreshold, isDisabled: !typoNormalizer)
             }
 
-            Section("予測") {
+            Section("予測変換") {
                 HelpToggle(
-                    title: "予測変換（入力中）", isOn: $predictiveConversion,
-                    help: "入力を止めると、変換結果の続き（次の文節）をカーソルの下の小さなウィンドウに表示します。"
-                        + "Tabで取り入れ、そのまま入力を続けられます。取り入れた部分はBackspaceで取り消せます。"
-                        + "ライブ変換がONのときだけ動きます。",
-                    isDisabled: !liveConversion)
-                HelpToggle(
-                    title: "インライン補完（確定後）", isOn: $inlineCompletion,
-                    help: "確定したあと操作を止めると、文章の続き（次の文節）を同じウィンドウに表示します。"
-                        + "Tabで確定、それ以外のキーで消えます。Tabを押すまでアプリの文字は変わりません。"
-                        + "句読点が出たらそこまでを予測します。使うモデルは「モデル」タブで変えられます。")
-                PredictionDelayRow(
-                    milliseconds: $predictionDelayMs, isDisabled: !predictiveConversion && !inlineCompletion)
+                    title: "入力履歴から予測する", isOn: $predictiveConversion,
+                    help: "入力中、読みの先頭が一致する語を、これまでに確定した語（入力履歴）から"
+                        + "最大3件カーソルの下に表示します。読みを2文字打つと出ます。"
+                        + "Tabで選び（押すたびに次の候補、Shift+Tabで前の候補）、選んだまま続きを打つと"
+                        + "その候補が入ります。Returnで入れて確定、Escで選ぶのをやめます。クリックでも入ります。"
+                        + "入れた部分はBackspaceで打った読みに戻せます。"
+                        + "入力履歴はこの設定がONの間だけ、ローマ字で入力して確定した語を記録します"
+                        + "（Shift+英字で入れた英字やF9・F10で英数にした部分は記録しません）。"
+                        + "記録はデータフォルダの input-history/ にMacごとのファイルとして残り、"
+                        + "同じデータフォルダを使うMacの間で合算されます。")
+                InputHistoryRow(isEnabled: predictiveConversion)
             }
 
             Section("句読点") {
@@ -183,6 +181,44 @@ private struct InputSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// 入力履歴の件数と、確認・編集・変換記録からの取り込み
+private struct InputHistoryRow: View {
+    let isEnabled: Bool
+    @ObservedObject private var uiState = SettingsUIState.shared
+    @State private var count = InputHistoryStore.shared.count
+    @State private var importMessage: String?
+
+    var body: some View {
+        LabeledContent {
+            HStack {
+                Text("\(count) 語").foregroundStyle(.secondary)
+                Button("確認・編集...") { uiState.showingInputHistory = true }
+                    .disabled(count == 0)
+                Button("変換記録から取り込む") {
+                    let imported = InputHistoryStore.shared.importConversionLog()
+                    importMessage = imported == 0 ? "新しい記録はありません" : "\(imported) 件の確定を取り込みました"
+                }
+                .disabled(!isEnabled)
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                HelpLabel(
+                    title: "入力履歴",
+                    help: "「変換記録から取り込む」は、辞書・学習タブの「変換記録」に残っている"
+                        + "このMacの確定を入力履歴に足します。前回取り込んだ後の記録だけを足すので、"
+                        + "何度押しても二重には数えません。",
+                    isDisabled: !isEnabled)
+                if let importMessage {
+                    Text(importMessage).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: InputHistoryStore.didChangeNotification)) { _ in
+            count = InputHistoryStore.shared.count
+        }
     }
 }
 
@@ -334,40 +370,6 @@ private struct TypoThresholdRow: View {
             }
             .disabled(isDisabled)
         }
-    }
-}
-
-/// 予測を出すまでの休止時間（ミリ秒）のスライダー行
-private struct PredictionDelayRow: View {
-    @Binding var milliseconds: Int
-    var isDisabled = false
-    private static let step = 50.0
-    private static let range = Double(PredictionSettings.delayMillisecondsRange.lowerBound)
-        ... Double(PredictionSettings.delayMillisecondsRange.upperBound)
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                HelpLabel(
-                    title: "予測を出すまでの休止時間",
-                    help: "キーを離してからこの時間だけ何も押さなければ予測を出します。短いほど早く出ますが、"
-                        + "入力中に頻繫に出て煩わしくなります。",
-                    isDisabled: isDisabled)
-                Spacer()
-                Text("\(milliseconds) ms")
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            Slider(value: sliderValue, in: Self.range, step: Self.step)
-                .disabled(isDisabled)
-        }
-    }
-
-    private var sliderValue: Binding<Double> {
-        Binding(
-            get: { Double(milliseconds) },
-            set: { milliseconds = Int(($0 / Self.step).rounded() * Self.step) }
-        )
     }
 }
 
@@ -650,49 +652,6 @@ private struct SelectionIntroRows: View {
             }
         } label: {
             HelpLabel(title: "アクセシビリティ権限", help: "選択テキストの取得と置換にアクセシビリティ権限が必要です。")
-        }
-    }
-}
-
-/// 予測変換・インライン補完に使うモデル（GGUF）のパス欄（空ならかな漢字変換と同じモデル）
-private struct PredictionModelPathField: View {
-    let title: String
-    let key: String
-    @State private var path: String
-
-    init(title: String, key: String) {
-        self.title = title
-        self.key = key
-        _path = State(initialValue: UserDefaults.standard.string(forKey: key) ?? "")
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title)
-                Spacer()
-                Text(PredictionSettings.modelDisplayName(forKey: key))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            HStack {
-                PathDisplay(path: path, placeholder: "かな漢字変換と同じモデル")
-                    .onChange(of: path) { _, newValue in
-                        UserDefaults.standard.set(newValue, forKey: key)
-                    }
-                Button("選択...") {
-                    let panel = NSOpenPanel()
-                    panel.allowedContentTypes = []
-                    panel.allowsOtherFileTypes = true
-                    panel.canChooseDirectories = false
-                    panel.directoryURL = DataDirectory.modelsURL
-                    if panel.runModal() == .OK, let url = panel.url {
-                        path = url.path
-                    }
-                }
-                Button("共有に戻す") { path = "" }
-                    .disabled(path.isEmpty)
-            }
         }
     }
 }
@@ -1196,19 +1155,6 @@ private struct ModelSettingsTab: View {
             }
 
             TrainingSection()
-
-            Section {
-                PredictionModelPathField(
-                    title: "予測変換（入力中）", key: PredictionSettings.predictiveModelPathKey)
-                PredictionModelPathField(
-                    title: "インライン補完（確定後）", key: PredictionSettings.completionModelPathKey)
-            } header: {
-                HelpSectionHeader(
-                    title: "予測変換・インライン補完のモデル",
-                    help: "入力中の予測変換と確定後のインライン補完は、かな漢字変換とは別のモデルを使えます。"
-                        + "空欄ならかな漢字変換と同じモデルを共有します（zenz-v3は文章の続きも生成できます）。"
-                        + "変更はirohaの再起動後に反映されます。")
-            }
 
             AIServiceSection()
         }

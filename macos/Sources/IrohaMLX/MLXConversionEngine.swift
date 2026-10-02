@@ -17,7 +17,7 @@ import IrohaTrain
 ///   計測用に `IROHA_MLX_DTYPE=f32` で f32 にできる
 /// - 量子化済みの GGUF（Q5_K_M など）は f16 に戻した版（`ModelRequantizer.ensureF16`、キャッシュ）を読む
 /// - LoRA アダプタ（llama.cpp 形式の GGUF）は読み込み時に重みへ足し込む（`LoRAAdapterMerger`）
-public actor MLXConversionEngine: ConversionEngine, CandidateScorer, PredictionEngine {
+public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
 
     /// このエンジンが読めるアーキテクチャ（`general.architecture`）
     public static let supportedArchitectures = [T5Model.architecture]
@@ -411,12 +411,5 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer, PredictionE
             index += 1
         }
         return scores
-    }
-
-    // MARK: - PredictionEngine
-
-    /// 予測変換（左文脈の続きの生成）はエンコーダ・デコーダ型では行わない（`ZenzEngine` と同じく空を返す）
-    public func predict(context leftContext: String, maxLength: Int) async throws -> String {
-        ""
     }
 }

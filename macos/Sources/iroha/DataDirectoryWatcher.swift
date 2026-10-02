@@ -58,6 +58,8 @@ final class DataDirectoryWatcher {
         if UserDictionaryStore.shared.reloadIfChanged() { reloaded.append("ユーザ辞書") }
         if LearningStore.shared.reloadIfChanged() { reloaded.append("学習") }
         if UserRewriteRuleStore.shared.reloadIfChanged() { reloaded.append("変換ルール") }
+        // 入力履歴はサブフォルダにあるのでフォルダの監視には掛からず、定期確認で拾う
+        if InputHistoryStore.shared.reloadIfChanged() { reloaded.append("入力履歴") }
         DispatchQueue.main.async {
             if PreferencesSync.shared.importIfNewer() { reloaded.append("設定") }
             if !reloaded.isEmpty {
