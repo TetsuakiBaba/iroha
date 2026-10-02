@@ -22,7 +22,7 @@ public struct TypoCorrection: Sendable, Equatable {
 /// 打鍵 → ローマ字→かな変換 → [ TypoNormalizer ] → 辞書ラティス → かな漢字変換NN
 /// ```
 ///
-/// 3.2M パラメータの文字単位 Transformer encoder–decoder。学習と書き出しは
+/// 11.6M パラメータ（iroha-typo-v1）の文字単位 Transformer encoder–decoder。学習と書き出しは
 /// `training/typo-normalizer/`、移植の仕様は同ディレクトリの SWIFT-PORT.md が正。
 ///
 /// ## 使いかたの制約（SWIFT-PORT.md §5・§9）

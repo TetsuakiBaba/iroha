@@ -4,9 +4,9 @@
   "attribution": "zenz-v2.5-dataset（Keita Miwa、https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset）の train_wikipedia.jsonl（Wikipedia 日本語版、CC BY-SA 4.0）。読みを付け直すなど加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_kaken（KAKEN の研究課題の概要）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_e-gov（e-Gov 法令）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_patent（特許公報）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_aozorabunko（青空文庫）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nRealPersonaChat（nu-dialogue、https://github.com/nu-dialogue/real-persona-chat）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\nMulti-Relational Multi-Party Chat Corpus（nu-dialogue、https://github.com/nu-dialogue/multi-relational-multi-party-chat-corpus）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\nJMRD（京都大学 黒橋・褚・村脇研究室、https://github.com/ku-nlp/JMRD）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\n感想付きニュース雑談対話コーパス（Copyright (c) 2023 Fuka Narita、https://github.com/fukanarita/newschat-with-impression）、MIT License。発話の本文だけを取り出し加工して作成\nJ-CRe3（理化学研究所 ほか、https://github.com/riken-grp/J-CRe3）、CC BY-SA 4.0。書き起こしの表層だけを取り出し加工して作成\nおーぷん2ちゃんねる対話コーパス（稲葉通将、https://github.com/1never/open2ch-dialogue-corpus）、Apache License 2.0。投稿の本文を選別・加工して作成",
   "models": [
     {
-      "id": "small-v3",
+      "id": "iroha-typo-v1",
       "name": "標準",
-      "summary": "3.2M パラメータ・約6MB。CPU 1スレッドで平均4ms",
+      "summary": "11.6M パラメータ・約23MB。CPU 1スレッドで平均5ms",
       "license": "CC BY-SA 4.0",
       "attribution": "zenz-v2.5-dataset（Keita Miwa、https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset）の train_wikipedia.jsonl（Wikipedia 日本語版、CC BY-SA 4.0）。読みを付け直すなど加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_kaken（KAKEN の研究課題の概要）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_e-gov（e-Gov 法令）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_patent（特許公報）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nLLM-jp Corpus v4（https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4）ja/ja_aozorabunko（青空文庫）、LLM-jp コーパス構築 WG、CC BY 4.0。文への分割・読みの付与など加工して作成\nRealPersonaChat（nu-dialogue、https://github.com/nu-dialogue/real-persona-chat）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\nMulti-Relational Multi-Party Chat Corpus（nu-dialogue、https://github.com/nu-dialogue/multi-relational-multi-party-chat-corpus）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\nJMRD（京都大学 黒橋・褚・村脇研究室、https://github.com/ku-nlp/JMRD）、CC BY-SA 4.0。発話の本文だけを取り出し加工して作成\n感想付きニュース雑談対話コーパス（Copyright (c) 2023 Fuka Narita、https://github.com/fukanarita/newschat-with-impression）、MIT License。発話の本文だけを取り出し加工して作成\nJ-CRe3（理化学研究所 ほか、https://github.com/riken-grp/J-CRe3）、CC BY-SA 4.0。書き起こしの表層だけを取り出し加工して作成\nおーぷん2ちゃんねる対話コーパス（稲葉通将、https://github.com/1never/open2ch-dialogue-corpus）、Apache License 2.0。投稿の本文を選別・加工して作成",
       "sources": [
@@ -79,14 +79,14 @@
       ],
       "page": "https://github.com/TetsuakiBaba/iroha/releases/tag/typo-normalizer-v1",
       "manifest": {
-        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/typo-normalizer-v1/small-v3-manifest.json",
-        "bytes": 20977,
-        "sha256": "dba3db469e1d5b6d25f2ea3cc308544cbd16cc5c15cf9dec38f5f368c1db0a59"
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/typo-normalizer-v1/iroha-typo-v1-manifest.json",
+        "bytes": 27194,
+        "sha256": "2a8a66ab43ee533c842185f3714da0be25f85e8202e8aaf237cc3434d7886948"
       },
       "weights": {
-        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/typo-normalizer-v1/small-v3-weights.bin",
-        "bytes": 6393400,
-        "sha256": "ee9dfccc1667edf11f01aab88813f94972e3fd07a8815f39d1195efe5a7f0768"
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/typo-normalizer-v1/iroha-typo-v1-weights.bin",
+        "bytes": 23291704,
+        "sha256": "10e79ddcfe017d223caa5c2e07d657af83443f1de99092d5caa9fd8d2fd45afe"
       }
     }
   ]

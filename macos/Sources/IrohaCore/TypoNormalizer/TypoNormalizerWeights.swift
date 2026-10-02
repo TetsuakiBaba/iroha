@@ -59,7 +59,7 @@ struct TypoNormalizerManifest: Decodable {
 /// weights.bin をメモリに展開して、テンソル名から先頭ポインタを引けるようにしたもの。
 ///
 /// float16 で書かれていれば読み込み時に float32 へ戻す（計算は常に float32。
-/// 3.2M パラメータなので展開しても 12.8MB で、推論中の変換コストを持ち込む意味がない）。
+/// iroha-typo-v1 は 11.6M パラメータで展開しても 46.6MB なので、推論中の変換コストを持ち込む意味がない）。
 final class TypoNormalizerWeights {
 
     enum LoadError: Error, CustomStringConvertible {
