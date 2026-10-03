@@ -10,7 +10,7 @@
 - **変換ルール**: よみ（トリガー）と出力の組を登録し、一致したとき出力を候補に加える。`{{date:yyyy/MM/dd}}` `{{time:HH:mm}}` のように変換のたびに変わる動的な出力が書ける（「きょう」→ 2026/09/06）
 - **選択した文字数の表示**: どのアプリでも、マウスで選択したテキストの文字数を選択範囲の近くに表示（設定でON・要アクセシビリティ権限）
 - **AI変換**: 修飾キー+Returnで、未確定文字列をAIに渡す（日本語の結果は文節で返し、Returnで確定）。プロンプトを3つまで登録でき、1つ目は英訳が入っている（Apple Intelligence / Ollama / LM Studio）
-- **ローカル動作**: 変換モデルは [zenz-v3.1-small](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf)（GPT-2系95M・GGUF・約70MB）を llama.cpp（Metal）で実行。実測レイテンシは1変換あたり15〜30ms程度（Apple Silicon）
+- **ローカル動作**: 既定の変換モデルは iroha-t5-alpha（自作の文字単位 T5・GGUF Q8_0・約121MB）を llama.cpp（Metal）で実行（設定で MLX も選べる）。[zenz-v3.1-small](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf) など zenz の GGUF も設定で指定して使える
 
 ## インストール
 
@@ -21,7 +21,8 @@
 3. **システム設定 > キーボード > 入力ソース > 編集 > + > 日本語 > iroha** を追加
    （一覧に出ない場合は一度ログアウト/ログインする）
 
-変換モデル [zenz-v3.1-small](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf)（約72MB、CC-BY-SA-4.0）は初回起動時に自動ダウンロードされる。
+既定の変換モデル iroha-t5-alpha（約121MB、CC BY-SA 4.0）は初回起動時に自動ダウンロードされる
+（配布元は Release の専用タグ [kkc-model-v1](https://github.com/TetsuakiBaba/iroha/releases/tag/kkc-model-v1)）。
 アップデートは新バージョン公開時に自動で通知される（メニューバーの入力ソースアイコン >
 「アップデートを確認...」で手動確認も可能）。
 
@@ -45,7 +46,7 @@
 # 1. llama.cppをスタティックビルド（初回のみ、zenz対応パッチを適用）
 ./macos/scripts/build-llama.sh
 
-# 2. 変換モデル(zenz-v3.1-small)をダウンロード（初回のみ、約70MB）
+# 2. 既定の変換モデル(iroha-t5-alpha)をダウンロード（初回のみ、約121MB）
 ./macos/scripts/fetch-model.sh
 
 # 3. ビルドして ~/Library/Input Methods/ にインストール
@@ -564,7 +565,8 @@ git tag v0.4.0 && git push origin v0.4.0
 ## ライセンスと帰属
 
 - 本リポジトリのコード: [MIT](LICENSE)
-- 変換モデル [zenz-v3.1](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf)（Keita Miwa氏）: CC-BY-SA-4.0
+- 既定の変換モデル iroha-t5-alpha（Tetsuaki Baba）: CC BY-SA 4.0。学習元 [zenz-v2.5-dataset](https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset)（Keita Miwa氏）: CC BY-SA 4.0
+- 変換モデル [zenz-v3.1](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf)（Keita Miwa氏、設定で指定したときに使う）: CC-BY-SA-4.0
 - [llama.cpp](https://github.com/ggml-org/llama.cpp): MIT
 - 辞書ラティス [AzooKeyKanaKanjiConverter](https://github.com/azooKey/AzooKeyKanaKanjiConverter)（ensan / azooKey）: MIT
   （依存の [swift-algorithms](https://github.com/apple/swift-algorithms)・[swift-collections](https://github.com/apple/swift-collections)・

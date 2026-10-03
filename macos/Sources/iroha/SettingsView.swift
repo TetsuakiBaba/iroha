@@ -1770,9 +1770,13 @@ private struct AboutSettingsTab: View {
                     name: "iroha", holder: "Tetsuaki Baba", license: "MIT License",
                     url: "https://github.com/TetsuakiBaba/iroha")
                 LicenseRow(
-                    name: "zenz-v3.1", holder: "Keita Miwa", license: "CC BY-SA 4.0",
+                    name: "iroha-t5-alpha", holder: "Tetsuaki Baba", license: "CC BY-SA 4.0",
                     note: "既定の変換モデル",
-                    url: "https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf")
+                    url: "https://github.com/TetsuakiBaba/iroha/releases/tag/kkc-model-v1")
+                LicenseRow(
+                    name: "zenz-v2.5-dataset", holder: "Keita Miwa", license: "CC BY-SA 4.0",
+                    note: "既定の変換モデルの学習元",
+                    url: "https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset")
                 LicenseRow(
                     name: "llama.cpp", holder: "ggml-org", license: "MIT License",
                     note: "変換モデルの推論エンジン",
