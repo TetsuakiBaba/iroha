@@ -1050,8 +1050,11 @@ final class IrohaInputController: IMKInputController {
         let reading = composer.text
         wholeReplacements = []
         // 英数モードへの切り替え忘れの保険。打鍵どおりの英字を候補ウィンドウに足す（自動では切り替えない）
-        englishCandidate = reading.isEmpty ? nil
-            : EnglishCandidateSettings.candidate(for: composer).map { (reading, $0) }
+        let englishOutcome = reading.isEmpty ? nil : EnglishCandidateSettings.evaluate(composer)
+        englishCandidate = englishOutcome?.candidate.map { (reading, $0) }
+        if let englishOutcome, DeveloperOverlaySettings.isEnabled {
+            DeveloperOverlay.shared.reportEnglish(englishOutcome.description, near: developerOverlayCaretRect())
+        }
         // 固定部分はそのまま先頭の文節にする（変換し直さない）
         // 英字入力中ならその英字を末尾の固定文節にする（候補は大文字/小文字/全角の変種。エンジンは呼ばない）
         let alphabetSegments = alphabetRun.map {

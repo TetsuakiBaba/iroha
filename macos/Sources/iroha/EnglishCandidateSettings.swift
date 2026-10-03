@@ -14,12 +14,39 @@ enum EnglishCandidateSettings {
         UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
     }
 
-    /// 合成中の打鍵から英字の候補を作る。設定OFF・打鍵と読みの対応が崩れているときは nil。
+    /// 判定の結果（候補にしなかったときは理由。デバッグ表示に出す）
+    enum Outcome {
+        case candidate(EnglishInputDetector.Candidate)
+        /// 途中でかなを消した・固定した部分を読みに戻したので、打鍵が読み全体に対応しない
+        case rawLost
+        case rejected(EnglishInputDetector.Rejection)
+
+        var candidate: EnglishInputDetector.Candidate? {
+            if case .candidate(let candidate) = self { return candidate }
+            return nil
+        }
+
+        var description: String {
+            switch self {
+            case .candidate(let candidate):
+                let place = candidate.placement == .near ? "第一候補の近く" : "採点した上位の後ろ"
+                return "「\(candidate.word)」を候補に出す（\(place)）"
+            case .rawLost: return "出さない（かなを消した・読みを戻したので打鍵が残っていない）"
+            case .rejected(.notWordShaped): return "出さない（英字以外を含む・2文字未満）"
+            case .rejected(.romaji): return "出さない（ローマ字として読め、英単語でもない）"
+            }
+        }
+    }
+
+    /// 合成中の打鍵から英字の候補を判定する。設定OFFなら nil。
     /// `NSSpellChecker` はメインスレッドで使うので、キー処理の中から呼ぶ
-    static func candidate(for composer: RomajiComposer) -> EnglishInputDetector.Candidate? {
-        guard isEnabled, composer.rawIsReliable else { return nil }
-        return EnglishInputDetector.candidate(
-            raw: composer.raw, reading: composer.text, isEnglishWord: isEnglishWord)
+    static func evaluate(_ composer: RomajiComposer) -> Outcome? {
+        guard isEnabled else { return nil }
+        guard composer.rawCoversInput else { return .rawLost }
+        switch EnglishInputDetector.detect(raw: composer.raw, isEnglishWord: isEnglishWord) {
+        case .candidate(let candidate): return .candidate(candidate)
+        case .rejected(let rejection): return .rejected(rejection)
+        }
     }
 
     private static func isEnglishWord(_ word: String) -> Bool {

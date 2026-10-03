@@ -14,6 +14,10 @@ public struct RomajiComposer: Sendable, Equatable {
     public private(set) var raw: String = ""
     /// rawが表示内容と対応しているか（かな部分を削除するとずれるためfalseになる）
     public private(set) var rawIsReliable: Bool = true
+    /// rawが今の入力全体を打った打鍵列か。打ち間違いの訂正で読みを丸ごと置き換えても真のまま
+    /// （打鍵は変わっていない）で、かなを消す・読みを先頭に足すと偽になる。
+    /// 打鍵どおりの英字の候補（英数モードへの切り替え忘れの保険）に使う
+    public private(set) var rawCoversInput: Bool = true
 
     /// 変換テーブル（句読点スタイルを反映したもの）
     private let table: [String: String]
@@ -55,6 +59,7 @@ public struct RomajiComposer: Sendable, Equatable {
             text.removeLast()
             // かな1文字は複数打鍵に対応するためrawとの対応が崩れる
             rawIsReliable = false
+            rawCoversInput = false
         }
     }
 
@@ -82,13 +87,14 @@ public struct RomajiComposer: Sendable, Equatable {
         // 挿入したかなは打鍵列と対応しないためrawは使えなくなる
         raw = ""
         rawIsReliable = false
+        rawCoversInput = false
     }
 
     /// 確定済みかなを丸ごと置き換える（打ち間違いの自動訂正で読みを直すときに使う）。
-    /// 置き換えた読みは打鍵列と対応しなくなるので `raw`（F9/F10の英数変換）は捨てる
+    /// 置き換えた読みは打鍵列と対応しなくなるので F9/F10 の英数変換には `raw` を使わせない。
+    /// 打鍵そのものは変わらないので `raw` は残す（`rawCoversInput`）
     public mutating func replaceText(_ kana: String) {
         text = kana
-        raw = ""
         rawIsReliable = false
     }
 
@@ -97,6 +103,7 @@ public struct RomajiComposer: Sendable, Equatable {
         pending = ""
         raw = ""
         rawIsReliable = true
+        rawCoversInput = true
     }
 
     // MARK: - 変換規則
