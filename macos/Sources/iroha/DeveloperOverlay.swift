@@ -2,12 +2,14 @@ import Cocoa
 import IrohaCore
 
 /// デバッグ表示の設定（設定 > 情報 > 開発者向け）。開発者向けで既定OFF。
+/// 開発者モード（`DeveloperModeSettings`）が ON のときだけ効く（OFF にしたら表示も止める）。
 /// 他の Mac とは同期しない（`PreferencesSync.syncedKeys` に入れない）
 enum DeveloperOverlaySettings {
     static let enabledKey = "developerOverlay"
 
     static var isEnabled: Bool {
-        UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
+        DeveloperModeSettings.isEnabled
+            && UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
     }
 }
 

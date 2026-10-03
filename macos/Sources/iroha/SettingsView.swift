@@ -76,6 +76,7 @@ struct SettingsView: View {
 private struct InputSettingsTab: View {
     @AppStorage("liveConversion") private var liveConversion = true
     @AppStorage(DocumentContextSettings.enabledKey) private var documentContext = true
+    @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
     @AppStorage("candidateCount") private var candidateCount = 8
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
     @AppStorage(KeyInputSettings.yenKeyCharacterKey) private var yenKeyCharacter = KeyInputSettings.yen
@@ -102,11 +103,13 @@ private struct InputSettingsTab: View {
                         Text("\(candidateCount)").foregroundStyle(.secondary)
                     }
                 }
-                HelpToggle(
-                    title: "アプリの文章を文脈に使う", isOn: $documentContext,
-                    help: "入力を始めた位置の手前にある文章（最大40文字）をアプリから読み取り、変換の文脈にします。"
-                        + "文章の途中に書き足すときや、別のアプリに移った直後でも前後に合った変換になります。"
-                        + "文章を返さないアプリでは、irohaで直前に確定した文字列を文脈にします。")
+                if developerMode {
+                    HelpToggle(
+                        title: "アプリの文章を文脈に使う", isOn: $documentContext,
+                        help: "入力を始めた位置の手前にある文章（最大40文字）をアプリから読み取り、変換の文脈にします。"
+                            + "文章の途中に書き足すときや、別のアプリに移った直後でも前後に合った変換になります。"
+                            + "文章を返さないアプリでは、irohaで直前に確定した文字列を文脈にします。")
+                }
             }
 
             Section("打ち間違いの訂正") {
@@ -119,23 +122,26 @@ private struct InputSettingsTab: View {
                         + "読みは変えずに候補ウィンドウに訂正を足します。")
                 // 訂正モデルはアプリに同梱していない。ONにした時点で取得する
                 TypoNormalizerModelRow(isEnabled: typoNormalizer)
-                TypoDelayRow(milliseconds: $typoDelayMs, isDisabled: !typoNormalizer)
-                LabeledContent {
-                    HStack {
-                        Text("\(typoMinLength)文字").foregroundStyle(.secondary).monospacedDigit()
-                        Stepper("訂正する読みの最低文字数", value: $typoMinLength,
-                                in: TypoNormalizerSettings.minimumLengthRange)
-                            .labelsHidden()
-                            .disabled(!typoNormalizer)
+                // 訂正の細かな調整は開発者モードだけで出す
+                if developerMode {
+                    TypoDelayRow(milliseconds: $typoDelayMs, isDisabled: !typoNormalizer)
+                    LabeledContent {
+                        HStack {
+                            Text("\(typoMinLength)文字").foregroundStyle(.secondary).monospacedDigit()
+                            Stepper("訂正する読みの最低文字数", value: $typoMinLength,
+                                    in: TypoNormalizerSettings.minimumLengthRange)
+                                .labelsHidden()
+                                .disabled(!typoNormalizer)
+                        }
+                    } label: {
+                        HelpLabel(
+                            title: "訂正する読みの最低文字数",
+                            help: "読みがこの文字数に満たないときは直しません。短い読みは正しく打っていても"
+                                + "別の語の打ち間違いに見えやすいためです（例:「さど」が「さいど」に直る）。",
+                            isDisabled: !typoNormalizer)
                     }
-                } label: {
-                    HelpLabel(
-                        title: "訂正する読みの最低文字数",
-                        help: "読みがこの文字数に満たないときは直しません。短い読みは正しく打っていても"
-                            + "別の語の打ち間違いに見えやすいためです（例:「さど」が「さいど」に直る）。",
-                        isDisabled: !typoNormalizer)
+                    TypoThresholdRow(threshold: $typoThreshold, isDisabled: !typoNormalizer)
                 }
-                TypoThresholdRow(threshold: $typoThreshold, isDisabled: !typoNormalizer)
             }
 
             Section("予測変換") {
@@ -551,6 +557,7 @@ private struct SelectionSettingsTab: View {
     @AppStorage(SelectionSettings.onDemandHotkeyKey) private var onDemandHotkey = "Ctrl+0"
     @AppStorage(SelectionSettings.excludedBundleIdsKey) private var excludedBundleIds = ""
     @AppStorage(SelectionSettings.characterCountKey) private var characterCount = false
+    @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
 
     var body: some View {
         Form {
@@ -593,17 +600,19 @@ private struct SelectionSettingsTab: View {
                         + "「テキストを生成」の入力欄になり、結果をカーソル位置へ挿入します。")
             }
 
-            Section {
-                TextField(
-                    "", text: $excludedBundleIds,
-                    prompt: Text("com.example.app, com.example.other"))
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(!selectionEnabled)
-            } header: {
-                HelpSectionHeader(
-                    title: "除外するアプリ",
-                    help: "ここに書いたバンドルIDのアプリでは、マウス選択のトリガーを出しません"
-                        + "（カンマまたは改行区切り）。")
+            if developerMode {
+                Section {
+                    TextField(
+                        "", text: $excludedBundleIds,
+                        prompt: Text("com.example.app, com.example.other"))
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(!selectionEnabled)
+                } header: {
+                    HelpSectionHeader(
+                        title: "除外するアプリ",
+                        help: "ここに書いたバンドルIDのアプリでは、マウス選択のトリガーを出しません"
+                            + "（カンマまたは改行区切り）。")
+                }
             }
 
             // AI編集とは独立した機能（マウスで選択した文字数を選択範囲の近くに出す）。
@@ -1077,6 +1086,7 @@ private struct PathDisplay: View {
 private struct ModelSettingsTab: View {
     @AppStorage("modelPath") private var modelPath = ""
     @AppStorage(InferenceBackend.userDefaultsKey) private var backend = InferenceBackend.llamaCpp.rawValue
+    @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
     @ObservedObject private var modelDownloader = ModelDownloader.shared
 
     /// 推論エンジンの状態の知らせ（選んだものと動いているものが違う理由）。無ければ nil
@@ -1116,63 +1126,77 @@ private struct ModelSettingsTab: View {
                     Text(IrohaInputController.engineModelDisplayName)
                         .foregroundStyle(.secondary)
                 }
-                Picker(selection: $backend) {
-                    ForEach(InferenceBackend.allCases) { Text($0.displayName).tag($0.rawValue) }
-                } label: {
-                    HelpLabel(
-                        title: "推論エンジン",
-                        help: "モデルを動かす仕組みです。既定は llama.cpp です。"
-                            + "MLX は T5 のモデルにだけ対応していて、1 回の変換が 2 割ほど速くなります（変換の結果は同じです）。"
-                            + "zenz のモデルでは MLX を選んでも llama.cpp で動きます。"
-                            + "変更は iroha の再起動後に反映されます。")
-                }
-                LabeledContent("使用中の推論エンジン") {
-                    Text(IrohaInputController.engineBackend.displayName)
-                        .foregroundStyle(.secondary)
-                }
-                if let notice = backendNotice {
-                    Text(notice.text)
-                        .font(.caption)
-                        .foregroundStyle(notice.isWarning ? .orange : .secondary)
-                }
-                // 長いパスが切れないよう、ラベルは上に置いてパスに幅を全部使わせる
-                VStack(alignment: .leading, spacing: 4) {
-                    HelpLabel(title: "モデルファイル（GGUF）のパス", help: "モデルの変更はirohaの再起動後に反映されます。")
-                    PathDisplay(path: modelPath, placeholder: ZenzEngine.defaultModelPath)
-                    // 消えたモデルを指したままだと変換が一切できなくなるので、パスの下で知らせる
-                    if !modelPath.isEmpty, !FileManager.default.fileExists(atPath: modelPath) {
-                        Text("このパスにファイルがありません。変換できないので、モデルを選び直すか「既定に戻す」を押してください。")
+                if developerMode {
+                    Picker(selection: $backend) {
+                        ForEach(InferenceBackend.allCases) { Text($0.displayName).tag($0.rawValue) }
+                    } label: {
+                        HelpLabel(
+                            title: "推論エンジン",
+                            help: "モデルを動かす仕組みです。既定は llama.cpp です。"
+                                + "MLX は T5 のモデルにだけ対応していて、1 回の変換が 2 割ほど速くなります（変換の結果は同じです）。"
+                                + "zenz のモデルでは MLX を選んでも llama.cpp で動きます。"
+                                + "変更は iroha の再起動後に反映されます。")
+                    }
+                    LabeledContent("使用中の推論エンジン") {
+                        Text(IrohaInputController.engineBackend.displayName)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let notice = backendNotice {
+                        Text(notice.text)
                             .font(.caption)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(notice.isWarning ? .orange : .secondary)
                     }
-                }
-                HStack {
-                    Button("モデルフォルダを開く") {
-                        let dir = DataDirectory.modelsURL
-                        try? FileManager.default.createDirectory(
-                            at: dir, withIntermediateDirectories: true)
-                        NSWorkspace.shared.open(dir)
-                    }
-                    Button("ファイルを選択...") {
-                        let panel = NSOpenPanel()
-                        panel.allowedContentTypes = []
-                        panel.allowsOtherFileTypes = true
-                        panel.canChooseDirectories = false
-                        panel.directoryURL = DataDirectory.modelsURL
-                        if panel.runModal() == .OK, let url = panel.url {
-                            modelPath = url.path
+                    // 長いパスが切れないよう、ラベルは上に置いてパスに幅を全部使わせる
+                    VStack(alignment: .leading, spacing: 4) {
+                        HelpLabel(title: "モデルファイル（GGUF）のパス", help: "モデルの変更はirohaの再起動後に反映されます。")
+                        PathDisplay(path: modelPath, placeholder: ZenzEngine.defaultModelPath)
+                        // 消えたモデルを指したままだと変換が一切できなくなるので、パスの下で知らせる
+                        if !modelPath.isEmpty, !FileManager.default.fileExists(atPath: modelPath) {
+                            Text("このパスにファイルがありません。変換できないので、モデルを選び直すか「既定に戻す」を押してください。")
+                                .font(.caption)
+                                .foregroundStyle(.red)
                         }
                     }
-                    Button("既定に戻す") { modelPath = "" }
-                        .disabled(modelPath.isEmpty)
-                }
-                Button("irohaを再起動") {
-                    // 終了処理の詳細（_exitを使う理由等）はAppRestarterのコメントを参照
-                    AppRestarter.restartInstalledApp()
+                    HStack {
+                        Button("モデルフォルダを開く") {
+                            let dir = DataDirectory.modelsURL
+                            try? FileManager.default.createDirectory(
+                                at: dir, withIntermediateDirectories: true)
+                            NSWorkspace.shared.open(dir)
+                        }
+                        Button("ファイルを選択...") {
+                            let panel = NSOpenPanel()
+                            panel.allowedContentTypes = []
+                            panel.allowsOtherFileTypes = true
+                            panel.canChooseDirectories = false
+                            panel.directoryURL = DataDirectory.modelsURL
+                            if panel.runModal() == .OK, let url = panel.url {
+                                modelPath = url.path
+                            }
+                        }
+                        Button("既定に戻す") { modelPath = "" }
+                            .disabled(modelPath.isEmpty)
+                    }
+                    Button("irohaを再起動") {
+                        // 終了処理の詳細（_exitを使う理由等）はAppRestarterのコメントを参照
+                        AppRestarter.restartInstalledApp()
+                    }
+                } else if !modelPath.isEmpty, !FileManager.default.fileExists(atPath: modelPath) {
+                    // 開発者モードで指定したモデルが消えていると変換が一切できなくなるので、
+                    // 開発者モードでなくても知らせて既定に戻せるようにする
+                    Text("指定したモデルファイルがありません。変換できないので、既定のモデルに戻して再起動してください。")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                    Button("既定のモデルに戻してirohaを再起動") {
+                        modelPath = ""
+                        AppRestarter.restartInstalledApp()
+                    }
                 }
             }
 
-            TrainingSection()
+            if developerMode {
+                TrainingSection()
+            }
 
             AIServiceSection()
         }
@@ -1661,6 +1685,7 @@ private struct DataDirectorySection: View {
 private struct AboutSettingsTab: View {
     @AppStorage("autoUpdateCheck") private var autoUpdateCheck = true
     @AppStorage(DeveloperOverlaySettings.enabledKey) private var developerOverlay = false
+    @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
     @State private var showingUninstallConfirm = false
 
     var body: some View {
@@ -1723,13 +1748,23 @@ private struct AboutSettingsTab: View {
 
             Section("開発者向け") {
                 HelpToggle(
-                    title: "推論にかかった時間と左文脈をカーソルの右下に表示する", isOn: $developerOverlay,
-                    help: "開発者向けの表示です。入力を始めたときに、カーソルの左の文字をアプリから読めたか"
-                        + "（読めなければその理由と、代わりに使う確定済みの文字列）を出します。"
-                        + "かな漢字変換と打ち間違いの訂正を実行するたびに、かかった時間を出します。"
-                        + "「全体」は変換を頼んでから結果が返るまで、「NN」はそのうちニューラルネットの計算だけの時間です"
-                        + "（差は辞書・学習の処理と、先に走っている推論の待ち時間）。"
-                        + "「取り消し」は、前の表示のあと次の入力で打ち切った変換の数です。この設定は他のMacと同期しません。")
+                    title: "開発者モード", isOn: $developerMode,
+                    help: "ONにすると、細かな調整や開発者向けの項目を設定画面に表示します"
+                        + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の休止時間／最低文字数／確信の強さ、"
+                        + "選択テキスト: 除外するアプリ、モデル: 推論エンジン・モデルファイルの指定・irohaを再起動・"
+                        + "自分の入力で追加学習、情報: 推論の時間の表示）。"
+                        + "OFFにしても項目が見えなくなるだけで、変えた設定はそのまま効きます"
+                        + "（推論の時間の表示だけは止まります）。この設定は他のMacと同期しません。")
+                if developerMode {
+                    HelpToggle(
+                        title: "推論にかかった時間と左文脈をカーソルの右下に表示する", isOn: $developerOverlay,
+                        help: "開発者向けの表示です。入力を始めたときに、カーソルの左の文字をアプリから読めたか"
+                            + "（読めなければその理由と、代わりに使う確定済みの文字列）を出します。"
+                            + "かな漢字変換と打ち間違いの訂正を実行するたびに、かかった時間を出します。"
+                            + "「全体」は変換を頼んでから結果が返るまで、「NN」はそのうちニューラルネットの計算だけの時間です"
+                            + "（差は辞書・学習の処理と、先に走っている推論の待ち時間）。"
+                            + "「取り消し」は、前の表示のあと次の入力で打ち切った変換の数です。この設定は他のMacと同期しません。")
+                }
             }
 
             Section("アンインストール") {
