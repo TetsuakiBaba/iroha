@@ -21,7 +21,7 @@ enum DeveloperOverlaySettings {
 /// 書き終えた上の行が隠れて読み返せないため（2026-09-30 に右上から変更）。`CaretPanel`（行の下。
 /// 画面の下端では行の上）と重なるときは `CaretPanel` のさらに外側へ逃がす。
 ///
-/// 行は「左文脈」「かな漢字変換」「打ち間違いの訂正」「英字の候補」の4本（英字の候補は設定が ON のときだけ）。左文脈は入力を始めたときに
+/// 行は「左文脈」「かな漢字変換」「打ち間違いの訂正」の3本。左文脈は入力を始めたときに
 /// アプリから読めたか（読めなければその理由と、代わりに使う文字列）を出す。
 /// 変換と訂正はそれぞれ最後の1回を出す。
 /// 時間では閉じない（読んでいる途中で消えないように）。中身は次の推論で入れ替わり、
@@ -60,7 +60,6 @@ final class DeveloperOverlay {
     private var contextLine: String?
     private var conversionLine: String?
     private var typoLine: String?
-    private var englishLine: String?
     /// 前回かな漢字変換の行を出してから、結果を使わずに打ち切った変換の数
     private var cancelledConversions = 0
     private var lastCaretRect: NSRect?
@@ -171,12 +170,6 @@ final class DeveloperOverlay {
         show(near: caretRect)
     }
 
-    /// 打鍵どおりの英字を候補に出すかの判定（`EnglishCandidateSettings`、文節変換に入ったとき）
-    func reportEnglish(_ description: String, near caretRect: NSRect?) {
-        englishLine = "英字の候補  \(description)"
-        show(near: caretRect)
-    }
-
     private static func neuralNetworkPart(_ timer: InferenceTimer.Snapshot, showsCount: Bool) -> String {
         guard timer.neuralNetworkCalls > 0 else {
             // NN を通さずに返した。理由がわかれば添える（読み全体が学習・ユーザ辞書と一致した、など）
@@ -217,7 +210,6 @@ final class DeveloperOverlay {
         contextLine = nil
         conversionLine = nil
         typoLine = nil
-        englishLine = nil
         cancelledConversions = 0
         guard panel.isVisible else { return }
         panel.orderOut(nil)
@@ -233,7 +225,7 @@ final class DeveloperOverlay {
 
     private func layout() {
         guard let caretRect = lastCaretRect else { return }
-        label.stringValue = [contextLine, conversionLine, typoLine, englishLine].compactMap { $0 }.joined(separator: "\n")
+        label.stringValue = [contextLine, conversionLine, typoLine].compactMap { $0 }.joined(separator: "\n")
         label.sizeToFit()
         let width = padding.left + label.frame.width + padding.right
         let height = padding.top + label.frame.height + padding.bottom
