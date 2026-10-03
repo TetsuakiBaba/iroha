@@ -55,13 +55,37 @@ final class TypoNormalizerDownloader: ObservableObject {
         return text
     }
 
-    /// 入れているモデルがカタログから外れた古いもの（small-v1 など）のときの案内。
-    /// 自動では入れ替えないので、やり方を示す
+    /// 入れているモデルがカタログから外れた古いもの（small-v1 など）か。カタログ未取得なら偽
+    var isOutdated: Bool {
+        guard let installed, let catalog, !catalog.models.isEmpty else { return false }
+        return catalog.model(id: installed.id) == nil
+    }
+
+    /// 古いモデルを入れているときの案内（開発者モードの画面用。こちらは自動では入れ替えないので、やり方を示す）
     var outdatedNotice: String? {
-        guard let installed, let catalog, catalog.model(id: installed.id) == nil,
-              let latest = catalog.models.first else { return nil }
+        guard isOutdated, let latest = catalog?.models.first else { return nil }
         return "カタログには新しいモデル（\(latest.id)）が載っています。"
             + "削除してからダウンロードすると入れ替わります。"
+    }
+
+    /// 一般ユーザの画面用: 機能をONにしているのにモデルが無ければ入れ、カタログから外れた古いモデルなら入れ替える。
+    /// 開発者モードでない画面にはモデルの欄が無く、手で入れ替えられないため。
+    /// 既に入っているときの一覧の取得は黙って行う（オフラインで設定を開いただけで赤い字を出さない）
+    func ensureCurrentModel() {
+        guard !isBusy else { return }
+        guard installed != nil else {
+            install()
+            return
+        }
+        if catalog != nil {
+            if isOutdated { install() }
+            return
+        }
+        task = Task { [weak self] in
+            guard let self, let catalog = try? await TypoNormalizerFetcher.fetchCatalog() else { return }
+            self.catalog = catalog
+            if self.isOutdated { self.install() }
+        }
     }
 
     /// 設定 > 情報 のライセンス一覧に出す、入れているモデルのライセンスと学習元。

@@ -83,6 +83,7 @@ private struct InputSettingsTab: View {
     @AppStorage(KeyInputSettings.alwaysHalfWidthSpaceKey) private var alwaysHalfWidthSpace = true
     @AppStorage(PredictionSettings.predictiveEnabledKey) private var predictiveConversion = false
     @AppStorage(TypoNormalizerSettings.enabledKey) private var typoNormalizer = false
+    @ObservedObject private var typoDownloader = TypoNormalizerDownloader.shared
     @AppStorage(TypoNormalizerSettings.thresholdKey)
     private var typoThreshold = TypoNormalizer.defaultThreshold
     @AppStorage(TypoNormalizerSettings.delayMillisecondsKey)
@@ -119,10 +120,23 @@ private struct InputSettingsTab: View {
                         + "「っ」の過不足）を直してから変換します。直したときは何をどう直したかを"
                         + "カーソルの下に表示し、そのままBackspaceを押すと打ったとおりの読みに戻せます。"
                         + "休止を待たずにスペースを押したときは、"
-                        + "読みは変えずに候補ウィンドウに訂正を足します。")
-                // 訂正モデルはアプリに同梱していない。ONにした時点で取得する
-                TypoNormalizerModelRow(isEnabled: typoNormalizer)
-                // 訂正の細かな調整は開発者モードだけで出す
+                        + "読みは変えずに候補ウィンドウに訂正を足します。"
+                        + "訂正に使うモデルはアプリに含まれていないので、ONにしたときに1回だけダウンロードします。")
+                .onChange(of: typoNormalizer) { _, enabled in
+                    // 訂正モデルはアプリに同梱していない。ONにした時点で取りにいく（OFFのまま勝手に通信しない）
+                    if enabled {
+                        if typoDownloader.installed == nil { typoDownloader.install() }
+                    } else if typoDownloader.isBusy {
+                        typoDownloader.cancel()
+                    }
+                }
+                // モデルの欄（版・削除・入れ替え）と訂正の細かな調整は開発者モードだけで出す。
+                // 一般ユーザの画面では、取得中と失敗のときだけ状態を出す
+                if developerMode {
+                    TypoNormalizerModelRow()
+                } else {
+                    TypoNormalizerStatusRow(isEnabled: typoNormalizer)
+                }
                 if developerMode {
                     TypoDelayRow(milliseconds: $typoDelayMs, isDisabled: !typoNormalizer)
                     LabeledContent {
@@ -251,8 +265,48 @@ private struct InputHistoryRow: View {
 /// 重みは本体コード(MIT)と別ライセンス（CC BY-SA 4.0）なので、配布物を分けてある。
 /// 取得したものは `<データフォルダ>/models/typo-normalizer/` に入り、保存場所を共有フォルダに
 /// している人は1回落とせば全部のMacで使える
-private struct TypoNormalizerModelRow: View {
+/// 一般ユーザの画面の訂正モデルの状態。取得中と失敗のときだけ出す（入っていれば何も出さない）。
+/// 画面を開いたときに、ONなのにモデルが無い・古いモデルのままなら入れ直す
+private struct TypoNormalizerStatusRow: View {
     let isEnabled: Bool
+    @ObservedObject private var downloader = TypoNormalizerDownloader.shared
+
+    var body: some View {
+        Group {
+            switch downloader.state {
+            case .loadingCatalog:
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("訂正モデルを準備中…").foregroundStyle(.secondary)
+                }
+            case .downloading(let progress):
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("訂正モデルをダウンロード中 \(Int(progress * 100))%").foregroundStyle(.secondary)
+                    ProgressView(value: progress)
+                }
+            case .verifying:
+                Text("訂正モデルを検証中…").foregroundStyle(.secondary)
+            case .failed(let message):
+                HStack {
+                    Text("訂正モデルを取得できませんでした: \(message)")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                    Spacer()
+                    if isEnabled {
+                        Button("再試行") { downloader.ensureCurrentModel() }
+                    }
+                }
+            case .idle:
+                EmptyView()
+            }
+        }
+        .onAppear {
+            if isEnabled { downloader.ensureCurrentModel() }
+        }
+    }
+}
+
+private struct TypoNormalizerModelRow: View {
     @ObservedObject private var downloader = TypoNormalizerDownloader.shared
 
     var body: some View {
@@ -277,10 +331,6 @@ private struct TypoNormalizerModelRow: View {
             }
         }
         .onAppear { downloader.refreshCatalogIfNeeded() }
-        // トグルをONにした時点で取りにいく（OFFのまま勝手に通信しない）
-        .onChange(of: isEnabled) { _, enabled in
-            if enabled, downloader.installed == nil { downloader.install() }
-        }
     }
 
     @ViewBuilder
@@ -1750,7 +1800,7 @@ private struct AboutSettingsTab: View {
                 HelpToggle(
                     title: "開発者モード", isOn: $developerMode,
                     help: "ONにすると、細かな調整や開発者向けの項目を設定画面に表示します"
-                        + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の休止時間／最低文字数／確信の強さ、"
+                        + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ、"
                         + "選択テキスト: 除外するアプリ、モデル: 推論エンジン・モデルファイルの指定・irohaを再起動・"
                         + "自分の入力で追加学習、情報: 推論の時間の表示）。"
                         + "OFFにしても項目が見えなくなるだけで、変えた設定はそのまま効きます"
