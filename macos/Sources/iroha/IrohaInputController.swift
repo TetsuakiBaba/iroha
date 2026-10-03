@@ -163,9 +163,20 @@ final class IrohaInputController: IMKInputController {
     /// ユーザが取り消した読み。同じ読みをもう一度直しにいかない
     private var typoRejectedReading: String?
 
-    /// 差分が文節境界をまたいでいて 1 文節では直せないときに出す「文全体を訂正した候補」。
-    /// 選ばれたら先頭の固定部分より後ろの文節をまとめて置き換える（`applyTypoWholeSentenceIfSelected`）
-    private var typoWholeSentence: (candidate: String, reading: String, segmentOffset: Int)?
+    /// 選ばれたら、その文節から後ろの文節をまとめて置き換える候補（`applyWholeReplacementIfSelected`）。
+    /// 1 文節には収まらない候補に使う:
+    /// - 打ち間違いの訂正で、差分が文節境界をまたぐとき（文全体を訂正した候補）
+    /// - 打鍵どおりの英字の候補で、読みが複数の文節に分かれたとき（`EnglishCandidateSettings`）
+    private struct WholeReplacement {
+        var candidate: String
+        var segmentOffset: Int
+        var segments: [BunsetsuSegment]
+    }
+    private var wholeReplacements: [WholeReplacement] = []
+
+    /// 文節変換に入ったときの読みと、それに対する打鍵どおりの英字の候補（`EnglishCandidateSettings`）。
+    /// 文節の列のうち、後ろの文節の読みをつないだものが `reading` に一致する先頭の文節に候補を出す
+    private var englishCandidate: (reading: String, candidate: EnglishInputDetector.Candidate)?
 
     /// 知らせ（句読点スタイルの切り替え・変換モデルを使えない）を小窓に出しているか
     /// （予測はこの間だけ小窓を譲る）。どちらも次のキーで閉じる
@@ -1037,6 +1048,10 @@ final class IrohaInputController: IMKInputController {
         lockDisplayOverride()
         composer.flush()
         let reading = composer.text
+        wholeReplacements = []
+        // 英数モードへの切り替え忘れの保険。打鍵どおりの英字を候補ウィンドウに足す（自動では切り替えない）
+        englishCandidate = reading.isEmpty ? nil
+            : EnglishCandidateSettings.candidate(for: composer).map { (reading, $0) }
         // 固定部分はそのまま先頭の文節にする（変換し直さない）
         // 英字入力中ならその英字を末尾の固定文節にする（候補は大文字/小文字/全角の変種。エンジンは呼ばない）
         let alphabetSegments = alphabetRun.map {
@@ -1079,7 +1094,6 @@ final class IrohaInputController: IMKInputController {
         cancelTypoCorrection()
         // 休止を待たずにスペースを押した場合の保険。こちらは読みを書き換えず候補ウィンドウに出す。
         // 休止で既に直っていれば訂正は出ない（同じ読みをもう一度見るだけ）
-        typoWholeSentence = nil
         startTypoCorrection(reading: reading)
 
         let context = conversionContext + fixedPrefix
@@ -1434,7 +1448,7 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 文全体を訂正した候補（差分が文節境界をまたぐときだけ）。
-    /// 出すのは訂正対象の先頭の文節だけ。選ばれたときの置き換えに使う情報を控えておく
+    /// 出すのは訂正対象の先頭の文節だけ。選ばれたときに置き換える文節を控えておく
     private func typoWholeSentenceCandidate(
         correction: TypoCorrection, segmentIndex: Int, segmentReadings: [String], context: String
     ) async -> [String] {
@@ -1446,41 +1460,50 @@ final class IrohaInputController: IMKInputController {
                 reading: correction.corrected, context: context, candidateCount: 1).first,
               !converted.isEmpty
         else { return [] }
+        // 訂正由来なので確定しても学習しない（打ち間違えた読みを覚えると
+        // ライブ変換に戻ってきてしまう。1文節の訂正候補と同じ扱い）
+        let replacement = ReadingAligner.segmentReading(correction.corrected, conversion: converted).map {
+            BunsetsuSegment(reading: $0.reading, result: $0.conversion,
+                            candidates: nil, unlearnableCandidates: [$0.conversion])
+        }
+        guard !replacement.isEmpty else { return [] }
         await MainActor.run {
-            self.typoWholeSentence = (converted, correction.corrected, offset)
+            self.addWholeReplacement(
+                WholeReplacement(candidate: converted, segmentOffset: offset, segments: replacement))
         }
         return [converted]
     }
 
-    /// 「文全体を訂正した候補」を今選んでいるか。
-    ///
-    /// 候補の反映は `applyPanelSelection` が「その文節の結果を書き換える」形で行うので、
-    /// この候補を選んだ瞬間は「先頭の文節＝文全体の訂正」＋「後ろに元のままの文節」という
-    /// 半端な状態になる。表示では後ろを隠し（`refreshSegmentDisplay`）、
-    /// 候補ウィンドウを閉じるときに文節ごと差し替える（`applyTypoWholeSentenceIfSelected`）
-    private var isSelectingTypoWholeSentence: Bool {
-        guard let whole = typoWholeSentence, currentSegmentIndex == whole.segmentOffset,
-              segments.indices.contains(currentSegmentIndex) else { return false }
-        return segments[currentSegmentIndex].result == whole.candidate
+    private func addWholeReplacement(_ replacement: WholeReplacement) {
+        wholeReplacements.removeAll {
+            $0.segmentOffset == replacement.segmentOffset && $0.candidate == replacement.candidate
+        }
+        wholeReplacements.append(replacement)
     }
 
-    /// 「文全体を訂正した候補」を選んだまま候補ウィンドウを閉じたら、訂正対象の文節を
-    /// まとめて差し替える。Return でも Escape でも文節移動でも同じ（irohaは
+    /// 後ろの文節をまとめて置き換える候補（`WholeReplacement`）のうち、今選んでいるもの。
+    ///
+    /// 候補の反映は `applyPanelSelection` が「その文節の結果を書き換える」形で行うので、
+    /// この候補を選んだ瞬間は「先頭の文節＝置き換え後の全体」＋「後ろに元のままの文節」という
+    /// 半端な状態になる。表示では後ろを隠し（`refreshSegmentDisplay`）、
+    /// 候補ウィンドウを閉じるときに文節ごと差し替える（`applyWholeReplacementIfSelected`）
+    private var selectedWholeReplacement: WholeReplacement? {
+        guard segments.indices.contains(currentSegmentIndex) else { return nil }
+        let result = segments[currentSegmentIndex].result
+        return wholeReplacements.first {
+            $0.segmentOffset == currentSegmentIndex && $0.candidate == result
+        }
+    }
+
+    /// 後ろの文節をまとめて置き換える候補を選んだまま候補ウィンドウを閉じたら、その文節から
+    /// 後ろをまとめて差し替える。Return でも Escape でも文節移動でも同じ（irohaは
     /// 「最後に選んでいた候補を残す」動きなので、閉じ方で結果を変えない）
-    private func applyTypoWholeSentenceIfSelected() {
-        guard isSelectingTypoWholeSentence, let whole = typoWholeSentence,
+    private func applyWholeReplacementIfSelected() {
+        guard let whole = selectedWholeReplacement, !whole.segments.isEmpty,
               whole.segmentOffset <= segments.count else { return }
-        let replacement = ReadingAligner.segmentReading(whole.reading, conversion: whole.candidate)
-            .map {
-                // 訂正由来なので確定しても学習しない（打ち間違えた読みを覚えると
-                // ライブ変換に戻ってきてしまう。1文節の訂正候補と同じ扱い）
-                BunsetsuSegment(reading: $0.reading, result: $0.conversion,
-                                candidates: nil, unlearnableCandidates: [$0.conversion])
-            }
-        guard !replacement.isEmpty else { return }
-        segments = Array(segments[..<whole.segmentOffset]) + replacement
+        segments = Array(segments[..<whole.segmentOffset]) + whole.segments
         currentSegmentIndex = min(whole.segmentOffset, segments.count - 1)
-        typoWholeSentence = nil
+        wholeReplacements = []
     }
 
     /// 現在の文節の候補ウィンドウを開く
@@ -1497,6 +1520,12 @@ final class IrohaInputController: IMKInputController {
         let count = candidateCount
         let segmentReadings = segments.map(\.reading)
         let correctionTask = typoCorrectionTask
+        // 打鍵どおりの英字は、文節変換に入ったときの読みの先頭の文節にだけ出す（読みが複数の文節に
+        // 分かれていたら、選んだときに後ろの文節ごと 1 文節に置き換える）
+        let english = englishCandidate.flatMap { english in
+            segments[index...].map(\.reading).joined() == english.reading ? english : nil
+        }
+        let englishSpansSegments = segments.count - index > 1
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -1523,6 +1552,18 @@ final class IrohaInputController: IMKInputController {
                     segmentReadings: segmentReadings, context: context
                 ).filter { !candidates.contains($0) }
                 candidates.insert(contentsOf: typoFixes, at: min(1 + rewrites.count, candidates.count))
+                // 英数モードへの切り替え忘れの保険（打鍵どおりの英字）。英字が残り英単語としても通るなら
+                // 変換ルールのすぐ後ろ、どちらか一方だけならモデルが採点した上位の後ろに置く
+                // （「kore」「made」のようにローマ字のまま英単語として通る語があるため）
+                var englishWords: [String] = []
+                if let english, !candidates.contains(english.candidate.word) {
+                    let position = switch english.candidate.placement {
+                    case .near: 1 + rewrites.count
+                    case .late: count + rewrites.count + typoFixes.count
+                    }
+                    candidates.insert(english.candidate.word, at: min(position, candidates.count))
+                    englishWords = [english.candidate.word]
+                }
                 // 定番のフォールバック候補（ひらがな・カタカナ）を末尾に追加
                 for extra in [reading, hiraganaToKatakana(reading)] where !candidates.contains(extra) {
                     candidates.append(extra)
@@ -1533,7 +1574,9 @@ final class IrohaInputController: IMKInputController {
                 // 打ち間違いの訂正を選んだ確定も学習しない。学習は読み全体 → 確定文字列を覚えるので、
                 // 覚えると打ち間違えた読みがライブ変換で勝手に直るようになる
                 // （過剰訂正を候補ウィンドウの中に閉じ込めた意味がなくなる）
-                let unlearnable = Set(rewrites).union(typoFixes).union(candidates.filter { candidate in
+                // 英字の候補も学習しない。覚えると、ローマ字としても読める語（「make」→「まけ」）が
+                // ライブ変換で英字になってしまう（自動では切り替えない段階のため）
+                let unlearnable = Set(rewrites).union(typoFixes).union(englishWords).union(candidates.filter { candidate in
                     candidateOnlyWords.contains { candidate.contains($0) }
                 })
                 let finalCandidates = candidates
@@ -1542,6 +1585,12 @@ final class IrohaInputController: IMKInputController {
                           self.currentSegmentIndex == index else { return }
                     self.segments[index].candidates = finalCandidates
                     self.segments[index].unlearnableCandidates = unlearnable
+                    if let english, englishSpansSegments, let word = englishWords.first {
+                        self.addWholeReplacement(WholeReplacement(
+                            candidate: word, segmentOffset: index,
+                            segments: [BunsetsuSegment(reading: english.reading, result: word, candidates: nil,
+                                                       unlearnableCandidates: [word])]))
+                    }
                     self.showPanel(with: finalCandidates)
                 }
             } catch {
@@ -1631,7 +1680,8 @@ final class IrohaInputController: IMKInputController {
         conversionTask?.cancel()
         typoCorrectionTask?.cancel()
         typoCorrectionTask = nil
-        typoWholeSentence = nil
+        wholeReplacements = []
+        englishCandidate = nil
         segmentGeneration += 1
         mode = .composing
         segments = []
@@ -1714,9 +1764,9 @@ final class IrohaInputController: IMKInputController {
     private func refreshSegmentDisplay(client: IMKTextInput) {
         let attributed = NSMutableAttributedString()
         var selectionLocation = 0
-        // 「文全体を訂正した候補」を選んでいる間は、その候補が後ろの文節ぶんまで含んでいるので、
-        // 元のままの文節を並べると二重に見えてしまう。確定するまでは隠しておく
-        let visibleSegments = isSelectingTypoWholeSentence
+        // 後ろの文節をまとめて置き換える候補（文全体の訂正・英字）を選んでいる間は、その候補が
+        // 後ろの文節ぶんまで含んでいるので、元のままの文節を並べると二重に見えてしまう。確定するまでは隠しておく
+        let visibleSegments = selectedWholeReplacement != nil
             ? Array(segments[...currentSegmentIndex]) : segments
         for (index, segment) in visibleSegments.enumerated() {
             let underline: NSUnderlineStyle = (index == currentSegmentIndex) ? .thick : .single
@@ -1755,7 +1805,7 @@ final class IrohaInputController: IMKInputController {
     }
 
     private func hidePanel() {
-        applyTypoWholeSentenceIfSelected()
+        applyWholeReplacementIfSelected()
         CandidateWindow.shared.hide()
         panelGrid = nil
         panelCandidates = []
@@ -1989,7 +2039,8 @@ final class IrohaInputController: IMKInputController {
         translationTask = nil
         stopTranslationSpinner()
         conversionTask?.cancel()
-        typoWholeSentence = nil
+        wholeReplacements = []
+        englishCandidate = nil
         mode = .segmenting
         segmentGeneration += 1
         segments = ReadingAligner.segmentReading(reading, conversion: output).map {
@@ -2093,7 +2144,8 @@ final class IrohaInputController: IMKInputController {
         segmentsFromAI = false
         typoCorrectionTask?.cancel()
         typoCorrectionTask = nil
-        typoWholeSentence = nil
+        wholeReplacements = []
+        englishCandidate = nil
         cancelTypoCorrection()
         // 候補ウィンドウを閉じる。文節変換中に文字を打って確定した場合など、
         // hidePanelを経由しない確定経路でパネルが残るのを防ぐ
