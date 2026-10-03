@@ -78,6 +78,7 @@ private struct InputSettingsTab: View {
     @AppStorage(DocumentContextSettings.enabledKey) private var documentContext = true
     @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
     @AppStorage(EnglishCandidateSettings.enabledKey) private var englishCandidates = false
+    @AppStorage(EnglishCandidateSettings.autoRewriteKey) private var englishAutoRewrite = false
     @AppStorage("candidateCount") private var candidateCount = 8
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
     @AppStorage(KeyInputSettings.yenKeyCharacterKey) private var yenKeyCharacter = KeyInputSettings.yen
@@ -119,6 +120,16 @@ private struct InputSettingsTab: View {
                             + "上のほうに、どちらか一方だけのとき（make →「まけ」）は後ろのほうに出します。"
                             + "英単語かどうかはmacOSのスペルチェッカー（英語）で見ます。"
                             + "途中でかなを Backspace で消した入力では出ません。この候補を選んで確定しても学習しません。")
+                    HelpToggle(
+                        title: "英単語を入力の休止で英字にする", isOn: $englishAutoRewrite,
+                        help: "入力の手が止まったとき、打った中にある英単語を英字にしてから変換します"
+                            + "（例: kyouhacomputerwo →「今日はcomputerを」）。打ち間違いの訂正より先に行います。"
+                            + "対象は、ローマ字では読めない綴りを含み、macOSのスペルチェッカー（英語）で英単語として通る"
+                            + "3文字以上の語だけです。make（まけ）のようにローマ字として読める語は英字にしません。"
+                            + "英字にしたときは何をどう変えたかをカーソルの下に表示し、そのままBackspaceを押すと"
+                            + "打ったとおりの読みに戻せます（戻した語は、その入力の間は英字にしません）。"
+                            + "英字にした語を含む入力では、打ち間違いの訂正は行いません。"
+                            + "途中でかなを Backspace で消した入力では行いません。")
                 }
             }
 

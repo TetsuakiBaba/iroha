@@ -59,4 +59,59 @@ final class EnglishInputDetectorTests: XCTestCase {
         composer.deleteBackward()
         XCTAssertFalse(composer.rawCoversInput)
     }
+
+    // MARK: - 読みの中の英単語を英字に書き換える
+
+    private static let rewriteWords: Set<String> = [
+        "computer", "test", "make", "word", "comp", "out", "apple", "hello", "notes", "email", "woo",
+    ]
+
+    private func rewrite(_ raw: String, excluding: Set<String> = []) -> EnglishInputDetector.Rewrite? {
+        EnglishInputDetector.rewrite(raw: raw, excluding: excluding, isEnglishWord: { Self.rewriteWords.contains($0) })
+    }
+
+    func testRewriteWholeWord() {
+        XCTAssertEqual(rewrite("computer"), .init(reading: "computer", words: ["computer"]))
+    }
+
+    func testRewriteWordInsideJapanese() {
+        XCTAssertEqual(rewrite("kyouhacomputerwotukau"),
+                       .init(reading: "きょうはcomputerをつかう", words: ["computer"]))
+        XCTAssertEqual(rewrite("sonotestnokekka"), .init(reading: "そのtestのけっか", words: ["test"]))
+    }
+
+    func testRewriteSeveralWords() {
+        XCTAssertEqual(rewrite("testtoword"), .init(reading: "testとword", words: ["test", "word"]))
+    }
+
+    func testRomajiReadableWordsAreNotRewritten() {
+        // 「まけ」はローマ字として読めるので英字にしない
+        XCTAssertNil(rewrite("makeru"))
+        XCTAssertNil(rewrite("kyouhamake"))
+    }
+
+    func testTypoLeftoverWithoutEnglishWordIsNotRewritten() {
+        // 「とうきょうtぽ」: 残る英字を含む英単語の区間がない（「out」は音節の途中で切れる）
+        XCTAssertNil(rewrite("toukyoutpo"))
+    }
+
+    func testExcludedWordsAreNotRewritten() {
+        XCTAssertNil(rewrite("computer", excluding: ["computer"]))
+    }
+
+    func testPrefixOfLongerWordIsRewrittenThenExtended() {
+        // 打ちかけの「comp」で休止すると「comp」になり、続きを打った次の休止で「computer」になる
+        XCTAssertEqual(rewrite("comp"), .init(reading: "comp", words: ["comp"]))
+        XCTAssertEqual(rewrite("computer"), .init(reading: "computer", words: ["computer"]))
+    }
+
+    func testPrefersSpanCoveringMoreLeftoverLetters() {
+        // 「そのてstの」: 「notes」は残る s だけ、「test」は s と t を含む
+        XCTAssertEqual(rewrite("sonotestnokekka"), .init(reading: "そのtestのけっか", words: ["test"]))
+    }
+
+    func testLeftoverIsOnlyTheLetterThatStays() {
+        // 「lw」は「lwa（ゎ）」の打ちかけなので l は o が来た時点で解決されるが、残るのは l だけ（「woo」は英字にしない）
+        XCTAssertEqual(rewrite("emailwookuru"), .init(reading: "emailをおくる", words: ["email"]))
+    }
 }

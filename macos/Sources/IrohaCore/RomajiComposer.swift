@@ -98,6 +98,14 @@ public struct RomajiComposer: Sendable, Equatable {
         rawIsReliable = false
     }
 
+    /// 未解決のローマ字も含めて読みを丸ごと置き換える（打鍵の中の英単語を英字にするときに使う。
+    /// 「こmぷて」+ 未解決の「r」→「computer」）。打鍵は変わらないので `raw` は残す
+    public mutating func replaceReading(_ reading: String) {
+        text = reading
+        pending = ""
+        rawIsReliable = false
+    }
+
     public mutating func clear() {
         text = ""
         pending = ""

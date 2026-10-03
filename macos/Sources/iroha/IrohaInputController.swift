@@ -143,8 +143,10 @@ final class IrohaInputController: IMKInputController {
     /// 入力中の休止で走らせる打ち間違い訂正（読みそのものを直す本線）
     private var typoIdleTask: Task<Void, Never>?
     private var typoIdleGeneration = 0
-    /// 直前に自動で直した内容（`original` に戻すため）。直後の Backspace でだけ使える
-    private var lastTypoCorrection: (original: String, corrected: String)?
+    /// 直前に自動で直した内容（`original` に戻すため）。直後の Backspace でだけ使える。
+    /// `englishWords` は打鍵の中の英単語を英字にしたとき（`applyEnglishRewriteIfFound`）の語で、
+    /// 打ち間違いの訂正なら空
+    private var lastTypoCorrection: (original: String, corrected: String, englishWords: [String])?
     /// 直後の Backspace で取り消せる状態か（訂正のあと何か打たれたら消える）。
     /// 小窓の寿命はこれに合わせる（出ている ⇒ Backspace で戻せる）
     private var typoUndoAvailable = false {
@@ -162,6 +164,11 @@ final class IrohaInputController: IMKInputController {
     private static let typoFeedbackLifetime = Duration.seconds(4)
     /// ユーザが取り消した読み。同じ読みをもう一度直しにいかない
     private var typoRejectedReading: String?
+    /// 入力の休止で英字にした語（`EnglishCandidateSettings.autoRewriteKey`）。読みにこの語が入っている間は
+    /// 打ち間違いの訂正を走らせない（英字を「直して」しまうため）
+    private var englishRewrittenWords: Set<String> = []
+    /// 英字にしたのを Backspace で取り消された語。同じ入力の間は英字にしない
+    private var englishRejectedWords: Set<String> = []
 
     /// 選ばれたら、その文節から後ろの文節をまとめて置き換える候補（`applyWholeReplacementIfSelected`）。
     /// 1 文節には収まらない候補に使う:
@@ -1050,7 +1057,9 @@ final class IrohaInputController: IMKInputController {
         let reading = composer.text
         wholeReplacements = []
         // 英数モードへの切り替え忘れの保険。打鍵どおりの英字を候補ウィンドウに足す（自動では切り替えない）
-        let englishOutcome = reading.isEmpty ? nil : EnglishCandidateSettings.evaluate(composer)
+        // 休止で英単語を英字にした読みには、打鍵まるごとの英字の候補は出さない（「kyouhacomputerwo」が出てしまう）
+        let rewrittenToEnglish = englishRewrittenWords.contains { reading.contains($0) }
+        let englishOutcome = reading.isEmpty || rewrittenToEnglish ? nil : EnglishCandidateSettings.evaluate(composer)
         englishCandidate = englishOutcome?.candidate.map { (reading, $0) }
         if let englishOutcome, DeveloperOverlaySettings.isEnabled {
             DeveloperOverlay.shared.reportEnglish(englishOutcome.description, near: developerOverlayCaretRect())
@@ -1242,15 +1251,22 @@ final class IrohaInputController: IMKInputController {
     private func scheduleTypoCorrection() {
         typoIdleTask?.cancel()
         typoIdleTask = nil
-        guard TypoNormalizerSettings.isEnabled, let normalizer = Self.typoNormalizer(),
-              mode == .composing, alphabetRun == nil, displayOverride == nil,
-              composer.pending.isEmpty
-        else { return }
+        guard mode == .composing, alphabetRun == nil, displayOverride == nil, !composer.isEmpty else { return }
+        // 打鍵の中の英単語を英字にする（`EnglishCandidateSettings.autoRewriteKey`）。打ち間違いの訂正より先に見る。
+        // 英字にする語の判定は休止のあとで行う（スペルチェッカーを毎打鍵では引かない）
+        let englishReady = EnglishCandidateSettings.isAutoRewriteEnabled && composer.rawCoversInput
         let reading = composer.text
-        guard TypoNormalizerSettings.accepts(reading: reading),
-              // 直した直後の読み・ユーザが取り消した読みは触らない（直し合いを起こさない）
-              reading != lastTypoCorrection?.corrected, reading != typoRejectedReading
-        else { return }
+        let typoNormalizer: TypoNormalizer? = {
+            guard TypoNormalizerSettings.isEnabled, composer.pending.isEmpty,
+                  TypoNormalizerSettings.accepts(reading: reading),
+                  // 直した直後の読み・ユーザが取り消した読みは触らない（直し合いを起こさない）
+                  reading != lastTypoCorrection?.corrected, reading != typoRejectedReading,
+                  // 英字にした語を含む読みは直さない
+                  !englishRewrittenWords.contains(where: { reading.contains($0) })
+            else { return nil }
+            return Self.typoNormalizer()
+        }()
+        guard englishReady || typoNormalizer != nil else { return }
         let threshold = TypoNormalizerSettings.threshold
         let delay = remainingTypoIdleDelay()
         typoIdleGeneration += 1
@@ -1259,6 +1275,14 @@ final class IrohaInputController: IMKInputController {
             guard let self else { return }
             do {
                 try await Task.sleep(for: delay)
+                if englishReady {
+                    let handled = await MainActor.run {
+                        guard generation == self.typoIdleGeneration, self.mode == .composing else { return true }
+                        return self.applyEnglishRewriteIfFound()
+                    }
+                    if handled { return }
+                }
+                guard let normalizer = typoNormalizer else { return }
                 // 休止中に入力が進んでいたら推論しない（ライブ変換と計算を取り合わない）
                 let stillValid = await MainActor.run {
                     generation == self.typoIdleGeneration && self.mode == .composing
@@ -1286,10 +1310,36 @@ final class IrohaInputController: IMKInputController {
         }
     }
 
+    /// 打鍵の中の英単語（ローマ字で読めない英字を含むもの）を、読みのうえで英字にする
+    /// （「きょうはこmぷてrを」→「きょうはcomputerを」）。打ち間違いの訂正と同じく小窓で知らせ、
+    /// 直後の Backspace で打ったとおりの読みに戻せる。読みは打鍵からかなに作り直すので、
+    /// それまでに打ち間違いの訂正で直した部分は打ったとおりに戻る。
+    /// 英字にする語があれば（書き換えたか、すでに英字なら）true を返し、そのときは打ち間違いの訂正を走らせない
+    private func applyEnglishRewriteIfFound() -> Bool {
+        guard alphabetRun == nil, displayOverride == nil,
+              let rewrite = EnglishCandidateSettings.rewrite(composer, excluding: englishRejectedWords)
+        else { return false }
+        let current = composer.text + composer.pending
+        guard rewrite.reading != current, let client = client() else { return true }
+        composer.replaceReading(rewrite.reading)
+        englishRewrittenWords.formUnion(rewrite.words)
+        lastTypoCorrection = (original: current, corrected: rewrite.reading, englishWords: rewrite.words)
+        typoUndoAvailable = true
+        cancelPrediction()
+        composerDidChange(client: client)
+        showTypoFeedback(TypoCorrection(reading: current, corrected: rewrite.reading, margin: .infinity),
+                         client: client)
+        if DeveloperOverlaySettings.isEnabled {
+            DeveloperOverlay.shared.reportEnglish(
+                "休止で英字にした（\(rewrite.words.joined(separator: "、"))）", near: developerOverlayCaretRect())
+        }
+        return true
+    }
+
     /// 読みを訂正後のものに差し替え、その読みで変換し直す
     private func applyTypoCorrection(_ correction: TypoCorrection, client: IMKTextInput) {
         composer.replaceText(correction.corrected)
-        lastTypoCorrection = (original: correction.reading, corrected: correction.corrected)
+        lastTypoCorrection = (original: correction.reading, corrected: correction.corrected, englishWords: [])
         typoUndoAvailable = true
         cancelPrediction()
         composerDidChange(client: client)
@@ -1374,6 +1424,8 @@ final class IrohaInputController: IMKInputController {
               composer.text == last.corrected, composer.pending.isEmpty else { return false }
         composer.replaceText(last.original)
         typoRejectedReading = last.original
+        englishRejectedWords.formUnion(last.englishWords)
+        englishRewrittenWords.subtract(last.englishWords)
         lastTypoCorrection = nil
         typoUndoAvailable = false
         cancelPrediction()
@@ -1396,6 +1448,8 @@ final class IrohaInputController: IMKInputController {
         lastTypoCorrection = nil
         typoUndoAvailable = false
         typoRejectedReading = nil
+        englishRewrittenWords = []
+        englishRejectedWords = []
     }
 
     /// 読み全体を打ち間違い訂正モデルに 1 回だけ通す（結果は候補ウィンドウで使う）。
@@ -1583,12 +1637,13 @@ final class IrohaInputController: IMKInputController {
                     candidateOnlyWords.contains { candidate.contains($0) }
                 })
                 let finalCandidates = candidates
+                let englishWord = englishWords.first
                 await MainActor.run {
                     guard self.mode == .segmenting, generation == self.segmentGeneration,
                           self.currentSegmentIndex == index else { return }
                     self.segments[index].candidates = finalCandidates
                     self.segments[index].unlearnableCandidates = unlearnable
-                    if let english, englishSpansSegments, let word = englishWords.first {
+                    if let english, englishSpansSegments, let word = englishWord {
                         self.addWholeReplacement(WholeReplacement(
                             candidate: word, segmentOffset: index,
                             segments: [BunsetsuSegment(reading: english.reading, result: word, candidates: nil,
