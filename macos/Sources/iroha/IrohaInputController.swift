@@ -235,12 +235,24 @@ final class IrohaInputController: IMKInputController {
         var kind: Kind = .display
         /// `.prediction` で、候補を入れる前に打っていた読み（Backspace・Escでこの読みに戻す）
         var typedReading: String?
+        /// `.alphabet` で、区切り記号で囲んで入れた英字か（Backspace で開き直すときも区切り記号の英字入力に戻す）
+        var delimited = false
     }
     private var fixedChunks: [FixedChunk] = []
     /// Shift+英字で入力中の英字（合成の末尾に付く。nilなら英字入力中でない）。
     /// Shiftを押している間だけ続き、Shiftを離して小文字などを打つと `.alphabet` の固定部分になって
     /// かな入力に戻る（「今日はAIを使う」を1回のEnterで確定できる）。この間 composer は空
-    private var alphabetRun: String?
+    private var alphabetRun: String? {
+        didSet { if alphabetRun == nil { alphabetRunDelimited = false } }
+    }
+    /// 今の英字入力が区切り記号で始めたものか（`DelimitedAlphabetSettings`）。真の間は Shift を離しても
+    /// 英字が続き、終わりの記号で終わる。表示では英字の前に開始の記号を出して、英字入力中であることを示す
+    private var alphabetRunDelimited = false
+    /// 英字入力中の表示（区切り記号で始めたものなら、開始の記号を前に付ける）
+    private var alphabetRunDisplay: String {
+        guard let alphabetRun else { return "" }
+        return alphabetRunDelimited ? String(DelimitedAlphabetSettings.start) + alphabetRun : alphabetRun
+    }
     /// 固定部分の表示文字列
     private var fixedText: String { fixedChunks.map(\.text).joined() }
     /// 最後に完了したライブ変換の（読み, 変換結果）
@@ -298,7 +310,7 @@ final class IrohaInputController: IMKInputController {
     private var isComposing: Bool { !composer.isEmpty || !fixedChunks.isEmpty || alphabetRun != nil }
 
     /// 変換をやめてかなで見せるときの表示（固定部分 + 入力中のかな）
-    private var kanaDisplay: String { fixedText + composer.display + (alphabetRun ?? "") }
+    private var kanaDisplay: String { fixedText + composer.display + alphabetRunDisplay }
 
     // MARK: - IMKInputController
 
@@ -413,6 +425,12 @@ final class IrohaInputController: IMKInputController {
         if Int(event.keyCode) == kVK_JIS_Yen,
            event.modifierFlags.intersection([.command, .control, .shift]).isEmpty {
             let text = KeyInputSettings.yenKeyText(option: event.modifierFlags.contains(.option))
+            if alphabetRunDelimited, mode == .composing {
+                // 区切り記号の英字入力中は確定せず英字に足す
+                alphabetRun?.append(text)
+                updateMarkedText(client: client, display: currentDisplay)
+                return true
+            }
             let composing = isComposing || mode == .segmenting
             if !composing, text == event.characters { return false }
             if composing { commitCurrent(client: client) }
@@ -788,7 +806,10 @@ final class IrohaInputController: IMKInputController {
             }
             if alphabetRun == nil, composer.isEmpty, fixedChunks.last?.kind == .alphabet {
                 // 直前の英字部分に戻ってきた: 英字入力として開き直してから1文字消す
-                alphabetRun = fixedChunks.removeLast().text
+                // （区切り記号で入れた英字なら、区切り記号の英字入力として開き直す）
+                let chunk = fixedChunks.removeLast()
+                alphabetRun = chunk.text
+                alphabetRunDelimited = chunk.delimited
             }
             if alphabetRun != nil {
                 displayOverride = nil
@@ -832,6 +853,13 @@ final class IrohaInputController: IMKInputController {
             }
             return true
         case kVK_Space:
+            // 区切り記号の英字入力中の Shift+スペースは、英字の中にスペースを入れる
+            if alphabetRunDelimited,
+               event.modifierFlags.intersection([.command, .control, .option, .shift]) == .shift {
+                alphabetRun?.append(" ")
+                updateMarkedText(client: client, display: currentDisplay)
+                return true
+            }
             guard isComposing else {
                 // 入力していないときのスペース。設定で常に半角にしていなければ全角を入れる
                 // （Shift+スペースは半角のままアプリに任せる）
@@ -859,6 +887,20 @@ final class IrohaInputController: IMKInputController {
             // キーはアプリに渡す（Tabでフォーカスが移ることもある）
             if isComposing { commitCurrent(client: client) }
             return false
+        }
+        // 区切り記号で囲んだ英字入力（`DelimitedAlphabetSettings`）。Shift+英字より先に見る
+        if alphabetRunDelimited {
+            if first == DelimitedAlphabetSettings.end {
+                finishDelimitedAlphabet(client: client)
+            } else {
+                alphabetRun?.append(first)
+                updateMarkedText(client: client, display: currentDisplay)
+            }
+            return true
+        }
+        if DelimitedAlphabetSettings.isEnabled, first == DelimitedAlphabetSettings.start {
+            startDelimitedAlphabet(client: client)
+            return true
         }
         // Shift+英字（大文字）で英字入力を始める。Shiftを押している間は記号・数字もそのまま英字に足し、
         // Shiftを離して打った文字からはかな入力に戻る（それまでの英字は固定部分になる）
@@ -988,16 +1030,53 @@ final class IrohaInputController: IMKInputController {
     /// 英字入力を終えて、打った英字を固定部分にする（Shiftを離してかな入力に戻るとき）
     private func finishAlphabetRun() {
         guard let run = alphabetRun else { return }
+        let delimited = alphabetRunDelimited
         alphabetRun = nil
         guard !run.isEmpty else { return }
-        fixedChunks.append(FixedChunk(reading: run, text: run, kind: .alphabet))
+        fixedChunks.append(FixedChunk(reading: run, text: run, kind: .alphabet, delimited: delimited))
+    }
+
+    // MARK: - 区切り記号で囲んだ英字入力（DelimitedAlphabetSettings）
+
+    /// 開始の記号: 入力中のかなを今の表示で固定し、英字入力を始める（Shift+英字の始まりと同じ）。
+    /// Shift+英字の英字入力中なら、それを固定部分にしてから始める
+    private func startDelimitedAlphabet(client: IMKTextInput) {
+        captureDocumentContextIfStarting(client: client)
+        finishAlphabetRun()
+        lockDisplayOverride()
+        lockComposerWithLiveConversion()
+        cancelPrediction()
+        alphabetRun = ""
+        alphabetRunDelimited = true
+        updateMarkedText(client: client, display: currentDisplay)
+    }
+
+    /// 終わりの記号: 打った英字を固定部分にしてかな入力に戻る。
+    /// 何も打たずに終わりの記号を打ったとき（既定なら「__」）は、開始の記号そのものをかな入力に入れる
+    /// （区切りに使っている記号を入れる手段を残すため。ローマ字の表にある記号ならその文字になる）
+    private func finishDelimitedAlphabet(client: IMKTextInput) {
+        guard alphabetRun?.isEmpty == false else {
+            endAlphabetRun()
+            composer.input(DelimitedAlphabetSettings.start)
+            composerDidChange(client: client)
+            return
+        }
+        finishAlphabetRun()
+        updateMarkedText(client: client, display: currentDisplay)
     }
 
     /// 英字入力の末尾1文字を削除する。空になったら英字入力をやめて元のかな入力に戻る
+    /// （区切り記号の英字入力では、英字が空になっても開始の記号を残し、もう一度の Backspace でやめる）
     private func deleteAlphabetBackward(client: IMKTextInput) {
         guard var run = alphabetRun else { return }
+        if alphabetRunDelimited, run.isEmpty {
+            // 開始の記号だけが残っている: それを消して英字入力をやめる
+            endAlphabetRun()
+            updateMarkedText(client: client, display: currentDisplay)
+            return
+        }
         if !run.isEmpty { run.removeLast() }
-        if run.isEmpty {
+        if run.isEmpty, !alphabetRunDelimited {
             endAlphabetRun()
         } else {
             alphabetRun = run
@@ -1198,7 +1277,9 @@ final class IrohaInputController: IMKInputController {
                let scalar = first.unicodeScalars.first, scalar.isASCII,
                (0x21...0x7E).contains(scalar.value) {
                 commitSegments(client: client)
-                if Self.startsAlphabetRun(first) {
+                if DelimitedAlphabetSettings.isEnabled, first == DelimitedAlphabetSettings.start {
+                    startDelimitedAlphabet(client: client)
+                } else if Self.startsAlphabetRun(first) {
                     inputAlphabet(first, client: client)
                 } else {
                     captureDocumentContextIfStarting(client: client)
@@ -1809,7 +1890,7 @@ final class IrohaInputController: IMKInputController {
     /// 使い続け、新しく増えたかなだけを末尾に足す（新しい変換結果が届いたら置き換わる）
     private var currentDisplay: String {
         let prefix = fixedText
-        if let alphabetRun { return prefix + composer.display + alphabetRun }
+        if alphabetRun != nil { return prefix + composer.display + alphabetRunDisplay }
         if let displayOverride { return prefix + displayOverride }
         if let lastConversion {
             if lastConversion.reading == composer.text {

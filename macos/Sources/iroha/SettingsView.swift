@@ -201,6 +201,10 @@ private struct InputSettingsTab: View {
                         + "入力中のスペースは変換に使うので、この設定には関係しません。英数モードでは常に半角です。")
             }
 
+            if developerMode {
+                DelimitedAlphabetSection()
+            }
+
             // 未確定文字列をAIに渡して確定する（使うAIサービスは「モデル」タブで選ぶ）
             Section {
                 AICommitPresetEditor(index: 0)
@@ -219,6 +223,45 @@ private struct InputSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// 区切り記号で囲んで英字を入力する（開発者モードの項目）。開始・終わりの記号は1文字の記号から選べる
+private struct DelimitedAlphabetSection: View {
+    @AppStorage(DelimitedAlphabetSettings.enabledKey) private var enabled = false
+    @AppStorage(DelimitedAlphabetSettings.startKey) private var start = DelimitedAlphabetSettings.defaultSymbol
+    @AppStorage(DelimitedAlphabetSettings.endKey) private var end = DelimitedAlphabetSettings.defaultSymbol
+
+    var body: some View {
+        Section("区切り記号で英字を入力") {
+            HelpToggle(
+                title: "記号で囲んだ部分を英字で入力する", isOn: $enabled,
+                help: "かな入力のまま、開始の記号を打つと英字入力になり、終わりの記号を打つまで打ったとおりの英字が入ります"
+                    + "（例: kyouha_iPhone_wotukau →「今日はiPhoneを使う」）。大文字・小文字はShiftで打ち分けます。"
+                    + "英字の中にスペースを入れるときはShift+スペースを押します。"
+                    + "英字は確定されずに入力の途中に残るので、英数モードに切り替えずに1回のReturnで確定できます。"
+                    + "英字入力中は、英字の前に開始の記号が表示されます。終わりの記号を打たずにReturnを押すと、そこまでの英字で確定します。"
+                    + "記号そのものを入れるときは、開始の記号のあとすぐに終わりの記号を打ちます（既定なら「__」）。")
+            symbolField(title: "開始の記号", text: $start)
+            symbolField(title: "終わりの記号", text: $end)
+        }
+    }
+
+    private func symbolField(title: String, text: Binding<String>) -> some View {
+        LabeledContent(title) {
+            VStack(alignment: .trailing, spacing: 2) {
+                TextField(title, text: text)
+                    .labelsHidden()
+                    .multilineTextAlignment(.center)
+                    .frame(width: 48)
+                    .disabled(!enabled)
+                if !DelimitedAlphabetSettings.isValid(text.wrappedValue) {
+                    Text("英字・数字以外の記号1文字にしてください。今は「\(DelimitedAlphabetSettings.defaultSymbol)」を使います")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+        }
     }
 }
 
