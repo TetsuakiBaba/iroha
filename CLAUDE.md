@@ -85,7 +85,8 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
     `typo-normalizer/` だけはこのMac（MPS）で学習する
   - `experiments/` はこのMacに全部ある（`reranker/` と `jev/`）。追跡していないだけ
 - `macos/Sources/iroha/` — IME本体（Swift 5モード）: IMKコントローラ、設定UI、
-  AIバックエンド（Apple FoundationModels / Ollama / LM Studio / OpenAI互換）、
+  AIバックエンド（Apple FoundationModels / Ollama / LM Studio / OpenAI互換 / Claude。Claude は Messages API を直接呼び、
+  応答の読み取りは `ClaudeStreamReader`。既定モデル claude-haiku-5-5）、
   アップデータ、モデルDL、macOSユーザ辞書の取り込み（`SystemUserDictionary`）、
   選択テキストのAI編集（`Selection/`。グローバルショートカットとマウス選択で
   他アプリの選択テキストをAIで置換する。GenGoの機能を移植。既定OFF・要アクセシビリティ権限）

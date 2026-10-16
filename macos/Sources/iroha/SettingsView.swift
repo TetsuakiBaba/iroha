@@ -819,9 +819,13 @@ private struct AIServiceSection: View {
     @AppStorage("openAIModel") private var openAIModel = ""
     @AppStorage("openAIEndpoint") private var openAIEndpoint = ""
     @State private var openAIKey = RemoteTranslator.openAIAPIKey
+    @AppStorage("claudeModel") private var claudeModel = RemoteTranslator.claudeDefaultModel
+    @State private var claudeKey = RemoteTranslator.claudeAPIKey
 
     @State private var remoteModels: [String] = []
     @State private var remoteModelsError: String?
+    /// エラーではない案内（Claude で APIキーがまだ無いとき）。赤で出さない
+    @State private var remoteModelsNote: String?
     @State private var loadingRemoteModels = false
 
     var body: some View {
@@ -831,6 +835,7 @@ private struct AIServiceSection: View {
                 Text("Ollama").tag("ollama")
                 Text("LM Studio").tag("lmstudio")
                 Text("OpenAI互換（外部API）").tag("openai")
+                Text("Claude（外部API）").tag("claude")
             } label: {
                 HelpLabel(title: "サービス", help: translationCaption)
             }
@@ -851,11 +856,30 @@ private struct AIServiceSection: View {
                         }
                 }
             }
+            if translationService == "claude" {
+                HStack {
+                    Text("APIキー")
+                    SecureField("", text: $claudeKey)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: claudeKey) {
+                            SecretStore.set(claudeKey, for: RemoteTranslator.claudeKeyAccount)
+                        }
+                        // 入れ終えたら（Return）モデル一覧を取り直す
+                        .onSubmit { fetchRemoteModels() }
+                }
+            }
             if translationService == "openai", remoteModels.isEmpty {
                 // 一覧が取れないサービスもあるので手入力を許す
                 HStack {
                     Text("モデル")
                     TextField("", text: $openAIModel, prompt: Text("gpt-4o-mini"))
+                        .textFieldStyle(.roundedBorder)
+                }
+            } else if translationService == "claude", remoteModels.isEmpty {
+                // APIキーを入れる前・一覧が取れないときも、既定のモデルのまま使えるよう手入力にしておく
+                HStack {
+                    Text("モデル")
+                    TextField("", text: $claudeModel, prompt: Text(RemoteTranslator.claudeDefaultModel))
                         .textFieldStyle(.roundedBorder)
                 }
             } else if translationService != "apple" {
@@ -875,10 +899,12 @@ private struct AIServiceSection: View {
                 }
                 if let error = remoteModelsError {
                     Text(error).font(.caption).foregroundStyle(.red)
+                } else if let note = remoteModelsNote {
+                    Text(note).font(.caption).foregroundStyle(.secondary)
                 }
             }
             // 外部への送信は説明に隠さず常に見せる
-            if translationService == "openai" {
+            if translationService == "openai" || translationService == "claude" {
                 Text("未確定文字列や選択テキストが外部サービスへ送信されます。")
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -892,6 +918,7 @@ private struct AIServiceSection: View {
         switch translationService {
         case "ollama": return $ollamaModel
         case "openai": return $openAIModel
+        case "claude": return $claudeModel
         default: return $lmStudioModel
         }
     }
@@ -912,6 +939,13 @@ private struct AIServiceSection: View {
             return common + "OpenAI互換API（\(RemoteTranslator.openAIEndpoint)）に接続します。"
                 + "未確定文字列や選択テキストが外部サービスへ送信されるので注意してください。"
                 + "APIキーはKeychainに保存されます。失敗時は通常の確定になります。"
+        case "claude":
+            return common + "AnthropicのClaude API（api.anthropic.com）に接続します。"
+                + "未確定文字列や選択テキストが外部サービスへ送信されるので注意してください。"
+                + "APIキーはKeychainに保存されます。APIキーは Claude Console（platform.claude.com）で作れます。"
+                + "既定のモデルは Claude Haiku 5.5 です（短い文の書き換えに向いた、速くて安いモデル）。"
+                + "応答を速くするため、モデルが考える量を少なめ（effort: low）にしています。"
+                + "Claude が依頼を断ったときや失敗時は通常の確定になります。"
         case "ollama":
             return common + "ローカルのOllama（\(RemoteTranslator.ollamaEndpoint)）に接続します。"
                 + "thinking（思考過程）は無効化されます。失敗時は通常の確定になります。"
@@ -932,7 +966,15 @@ private struct AIServiceSection: View {
         switch translationService {
         case "ollama": service = .ollama
         case "openai": service = .openai
+        case "claude": service = .claude
         default: service = .lmstudio
+        }
+        remoteModelsNote = nil
+        if service == .claude, claudeKey.isEmpty {
+            remoteModels = []
+            remoteModelsError = nil
+            remoteModelsNote = "APIキーを入れてReturnを押すと、モデルの一覧から選べます。"
+            return
         }
         loadingRemoteModels = true
         remoteModelsError = nil
@@ -953,8 +995,9 @@ private struct AIServiceSection: View {
                 await MainActor.run {
                     loadingRemoteModels = false
                     remoteModels = []
-                    remoteModelsError =
-                        "\(service.displayName)に接続できません。起動しているか確認してください。"
+                    remoteModelsError = service == .claude
+                        ? "Claudeのモデル一覧を取得できません（\(error.localizedDescription)）。APIキーを確認してください。"
+                        : "\(service.displayName)に接続できません。起動しているか確認してください。"
                 }
             }
         }

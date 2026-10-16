@@ -33,7 +33,7 @@ final class PreferencesSync {
             SelectionSettings.onDemandHotkeyKey, SelectionSettings.excludedBundleIdsKey,
             SelectionSettings.characterCountKey,
             TranslationBackend.userDefaultsKey,
-            "ollamaModel", "lmStudioModel", "openAIModel", "openAIEndpoint",
+            "ollamaModel", "lmStudioModel", "openAIModel", "openAIEndpoint", "claudeModel",
             "ollamaEndpoint", "lmStudioEndpoint",
             "autoUpdateCheck",
         ]

@@ -9,6 +9,7 @@ enum TranslationBackend: String, CaseIterable {
     case ollama     // ローカルのOllamaサーバ
     case lmstudio   // ローカルのLM Studioサーバ
     case openai     // OpenAI互換API（APIキーはKeychain。テキストが外部に送られる）
+    case claude     // Claude（Anthropic API。APIキーはKeychain。テキストが外部に送られる）
 
     static let userDefaultsKey = "translationService"
 
@@ -24,6 +25,7 @@ enum TranslationBackend: String, CaseIterable {
         case .ollama: return "Ollama"
         case .lmstudio: return "LM Studio"
         case .openai: return "OpenAI互換"
+        case .claude: return "Claude"
         }
     }
 }
@@ -34,7 +36,7 @@ struct AIFailure: Error {
 }
 
 /// AI変換（英訳・校正など）と選択テキストのAI編集のディスパッチャ。
-/// バックエンド（Apple / Ollama / LM Studio）を設定に応じて切り替える。
+/// バックエンド（Apple / Ollama / LM Studio / OpenAI互換 / Claude）を設定に応じて切り替える。
 /// 利用不可・失敗時はnilを返し、呼び出し側が元の日本語をそのまま確定する。
 enum TranslationService {
 
@@ -48,6 +50,8 @@ enum TranslationService {
             return !RemoteTranslator.lmStudioModel.isEmpty
         case .openai:
             return !RemoteTranslator.openAIModel.isEmpty
+        case .claude:
+            return !RemoteTranslator.claudeAPIKey.isEmpty
         }
     }
 
@@ -118,6 +122,9 @@ enum TranslationService {
         case .openai:
             return await RemoteTranslator.run(
                 request, service: .openai, stallTimeout: 30, onPartial: onPartial)
+        case .claude:
+            return await RemoteTranslator.run(
+                request, service: .claude, stallTimeout: 30, onPartial: onPartial)
         }
     }
 

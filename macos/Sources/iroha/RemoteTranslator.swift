@@ -1,20 +1,22 @@
 import Foundation
 
-/// ローカルLLMサーバ（Ollama / LM Studio）とOpenAI互換APIを使うAIバックエンド。
+/// ローカルLLMサーバ（Ollama / LM Studio）・OpenAI互換API・Claude（Anthropic API）を使うAIバックエンド。
 /// いずれもストリーミングで応答を受け、thinking（思考過程）は出力しないよう
-/// リクエストで無効化し、混入した場合も<think>ブロックを除去する。
+/// リクエストで無効化し、混入した場合も<think>ブロックを除去する（Claude は思考を別のブロックで返すので本文には混ざらない）。
 enum RemoteTranslator {
 
     enum Service {
         case ollama
         case lmstudio
         case openai  // OpenAI互換API（APIキー任意。LM Studioと同じSSE形式）
+        case claude  // Claude（Anthropic の Messages API。APIキー必須。OpenAI互換とは別の形式）
 
         var displayName: String {
             switch self {
             case .ollama: return "Ollama"
             case .lmstudio: return "LM Studio"
             case .openai: return "OpenAI互換"
+            case .claude: return "Claude"
             }
         }
     }
@@ -45,6 +47,31 @@ enum RemoteTranslator {
     static var openAIAPIKey: String {
         SecretStore.get(openAIKeyAccount) ?? ""
     }
+
+    // Claude（Anthropic API）。Anthropic にも OpenAI 互換の窓口はあるが、既存コードを試す・比べる用途の位置づけで
+    // 一部の機能が Claude 本来の API と同じには動かないため、Messages API（/v1/messages）を直接使う
+    static let claudeEndpoint = "https://api.anthropic.com/v1"
+    static let claudeAPIVersion = "2023-06-01"
+    /// 既定のモデル。AI変換は短い文の書き換えが多いので、速くて安い Haiku にする（ユーザの判断、2026-10-16）
+    static let claudeDefaultModel = "claude-haiku-5-5"
+    static var claudeModel: String {
+        let raw = UserDefaults.standard.string(forKey: "claudeModel") ?? ""
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? claudeDefaultModel : trimmed
+    }
+    static let claudeKeyAccount = "anthropicAPIKey"
+    static var claudeAPIKey: String {
+        SecretStore.get(claudeKeyAccount) ?? ""
+    }
+    /// 断られた（`stop_reason: "refusal"`）依頼を、サーバ側で別のモデルに回してやり直させるモデル
+    /// （`fallbacks: "default"`。Haiku 5.5 など、この仕組みが無いモデルに付けると 400 になる）
+    private static let claudeServerFallbackModels: Set<String> = [
+        "claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5",
+    ]
+    /// モデルごとの「考える量（effort）を指定できるか」。Haiku 4.5 など指定できないモデルに送ると 400 になるので、
+    /// モデル一覧（/v1/models）の capabilities で確かめてから送る。プロセスの間だけ覚える
+    private static let claudeEffortLock = NSLock()
+    nonisolated(unsafe) private static var claudeEffortSupport: [String: Bool] = [:]
 
     /// ベースURLの表記ゆれ（末尾スラッシュ・/v1の有無）を吸収して "…/v1" に揃える
     static func normalizedV1Base(_ endpoint: String) -> String {
@@ -83,7 +110,58 @@ enum RemoteTranslator {
             }
             let (data, _) = try await session.data(for: request)
             return try JSONDecoder().decode(ModelList.self, from: data).data.map(\.id).sorted()
+        case .claude:
+            guard !claudeAPIKey.isEmpty else { throw RemoteError.serverError("APIキーを入力してください") }
+            var request = claudeRequest(path: "/models?limit=1000")
+            request.timeoutInterval = 10
+            let (data, response) = try await session.data(for: request)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard code == 200 else {
+                throw RemoteError.httpError(code, errorMessage(fromBody: String(decoding: data, as: UTF8.self)))
+            }
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let models = json["data"] as? [[String: Any]] else { return [] }
+            for model in models {
+                if let id = model["id"] as? String { rememberEffortSupport(id: id, model: model) }
+            }
+            // 並びは API のまま（新しいモデルが先）
+            return models.compactMap { $0["id"] as? String }
         }
+    }
+
+    /// Anthropic API への要求の共通部分（APIキーとバージョンの見出し）
+    private static func claudeRequest(path: String) -> URLRequest {
+        var request = URLRequest(url: URL(string: claudeEndpoint + path)!)
+        request.setValue(claudeAPIKey, forHTTPHeaderField: "x-api-key")
+        request.setValue(claudeAPIVersion, forHTTPHeaderField: "anthropic-version")
+        return request
+    }
+
+    private static func rememberEffortSupport(id: String, model: [String: Any]) {
+        let capabilities = model["capabilities"] as? [String: Any]
+        let effort = capabilities?["effort"] as? [String: Any]
+        let low = effort?["low"] as? [String: Any]
+        let supported = (low?["supported"] as? Bool) ?? false
+        claudeEffortLock.withLock { claudeEffortSupport[id] = supported }
+    }
+
+    private static func knownEffortSupport(_ model: String) -> Bool? {
+        claudeEffortLock.withLock { claudeEffortSupport[model] }
+    }
+
+    /// このモデルに effort を送ってよいか。まだ知らなければ /v1/models/{id} で1回だけ確かめる
+    /// （確かめられなければ送らない。送らなくてもモデル既定の量で動く）
+    private static func claudeSupportsEffort(_ model: String) async -> Bool {
+        if let known = knownEffortSupport(model) { return known }
+        guard let encoded = model.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return false }
+        var request = claudeRequest(path: "/models/" + encoded)
+        request.timeoutInterval = 5
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        rememberEffortSupport(id: model, model: json)
+        return knownEffortSupport(model) ?? false
     }
 
     // MARK: - 実行（ストリーミング）
@@ -113,6 +191,8 @@ enum RemoteTranslator {
                     request, endpoint: openAIEndpoint, model: openAIModel, apiKey: openAIAPIKey,
                     extraBody: [:],
                     progress: progress, onPartial: onPartial)
+            case .claude:
+                return try await streamClaude(request, progress: progress, onPartial: onPartial)
             }
         }
     }
@@ -219,6 +299,58 @@ enum RemoteTranslator {
         return stripThinking(accumulated)
     }
 
+    /// Claude の Messages API（/v1/messages、SSE）。
+    ///
+    /// - 指示文は `system` に入れる（OpenAI 形式の system メッセージではない）
+    /// - 本文は `content_block_delta` の `text_delta` だけを足す。思考（thinking）は別のブロックで来るので読まない
+    /// - 考える量（effort）は low にして応答を速くする（AI変換は短い文の書き換えが多い）。指定できないモデルには送らない。
+    ///   新しいモデルは思考を切れない・temperature 等の指定を受け付けない（400）ので、どちらも送らない
+    /// - 断られたとき（`stop_reason: "refusal"`）は HTTP 200 で返るので、終わりの理由を見て失敗にする。
+    ///   途中まで出ていた文は使わない。別のモデルでのやり直しを持つモデルには `fallbacks: "default"` を付ける
+    private static func streamClaude(
+        _ request: AIRequest,
+        progress: ProgressBox,
+        onPartial: @escaping @Sendable (String) -> Void
+    ) async throws -> String {
+        guard !claudeAPIKey.isEmpty else { throw RemoteError.serverError("APIキーが設定されていません") }
+        let model = claudeModel
+        var urlRequest = claudeRequest(path: "/messages")
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.timeoutInterval = 300
+        var body: [String: Any] = [
+            "model": model,
+            "max_tokens": 16000,
+            "system": request.instructions,
+            "messages": [["role": "user", "content": request.userMessage]],
+            "stream": true,
+        ]
+        if await claudeSupportsEffort(model) {
+            body["output_config"] = ["effort": "low"]
+        }
+        if claudeServerFallbackModels.contains(model) {
+            body["fallbacks"] = "default"
+            urlRequest.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
+        }
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
+        try await checkStatus(response, bytes: bytes)
+        var reader = ClaudeStreamReader()
+        do {
+            for try await line in bytes.lines {
+                progress.bump()  // 思考中も接続が生きていれば待ち続ける
+                if try reader.consume(line) {
+                    onPartial(reader.text.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                if reader.isFinished { break }
+            }
+            return try reader.result()
+        } catch let failure as ClaudeStreamReader.Failure {
+            throw RemoteError.serverError(failure.message)
+        }
+    }
+
     /// 200以外なら、応答の本文からサーバのエラー文を取り出して投げる
     private static func checkStatus(_ response: URLResponse, bytes: URLSession.AsyncBytes) async throws {
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -233,7 +365,7 @@ enum RemoteTranslator {
         throw RemoteError.httpError(code, errorMessage(fromBody: body))
     }
 
-    /// エラー応答の本文からメッセージを取り出す（OpenAI: {"error":{"message":…}}、
+    /// エラー応答の本文からメッセージを取り出す（OpenAI・Claude: {"error":{"message":…}}、
     /// Ollama・LM Studio: {"error":"…"}）。JSONでなければ本文の先頭を返す
     static func errorMessage(fromBody body: String) -> String? {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
