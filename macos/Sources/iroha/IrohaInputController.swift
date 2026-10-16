@@ -2316,6 +2316,8 @@ final class IrohaInputController: IMKInputController {
             DeveloperOverlay.shared.reportContext(
                 result, fallback: documentContext == nil ? recentCommitted : nil,
                 near: caretRect(client: client, markedTextLength: 0))
+            DeveloperOverlay.shared.reportElementText(
+                imk: FocusedTextProbe.probeIMK(client), ax: FocusedTextProbe.probeAX())
         }
     }
 

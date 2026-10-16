@@ -21,8 +21,9 @@ enum DeveloperOverlaySettings {
 /// 書き終えた上の行が隠れて読み返せないため（2026-09-30 に右上から変更）。`CaretPanel`（行の下。
 /// 画面の下端では行の上）と重なるときは `CaretPanel` のさらに外側へ逃がす。
 ///
-/// 行は「左文脈」「かな漢字変換」「打ち間違いの訂正」の3本。左文脈は入力を始めたときに
-/// アプリから読めたか（読めなければその理由と、代わりに使う文字列）を出す。
+/// 行は「左文脈」「要素の文字」「かな漢字変換」「打ち間違いの訂正」の4本。左文脈は入力を始めたときに
+/// アプリから読めたか（読めなければその理由と、代わりに使う文字列）を出す。要素の文字は、
+/// カーソルのある要素からテキストをどれだけ取れるか（文字数だけ。`FocusedTextProbe`）。
 /// 変換と訂正はそれぞれ最後の1回を出す。
 /// 時間では閉じない（読んでいる途中で消えないように）。中身は次の推論で入れ替わり、
 /// Enter で確定したとき・次の入力を始めたとき・他の場所をクリックしたとき・アプリを切り替えたときに閉じる
@@ -58,6 +59,7 @@ final class DeveloperOverlay {
     private let caretGap: CGFloat = 2
 
     private var contextLine: String?
+    private var elementLine: String?
     private var conversionLine: String?
     private var typoLine: String?
     /// 前回かな漢字変換の行を出してから、結果を使わずに打ち切った変換の数
@@ -122,6 +124,28 @@ final class DeveloperOverlay {
         }
         contextLine = line
         show(near: caretRect)
+    }
+
+    /// カーソルのある要素から取れる文字数（`FocusedTextProbe`）。中身は出さない
+    func reportElementText(imk: FocusedTextProbe.IMKResult, ax: FocusedTextProbe.AXResult) {
+        func count(_ value: Int?, limited: Bool) -> String {
+            guard let value else { return "読めない" }
+            return value.formatted() + (limited ? "以上" : "")
+        }
+        var line = "要素の文字  IMK: 前 \(count(imk.before, limited: imk.beforeLimited))"
+            + " / 後 \(imk.reportedLength == nil ? "不明（長さを返さない）" : count(imk.after, limited: imk.afterLimited))"
+        if let length = imk.reportedLength { line += "（申告 \(length.formatted())）" }
+        line += "  AX: "
+        switch ax {
+        case .notTrusted: line += "アクセシビリティ未許可"
+        case .noElement: line += "要素を取れない"
+        case .noText: line += "テキストを返さない"
+        case .counted(let total, let cursor):
+            line += "\(total.formatted())文字"
+            if let cursor { line += "（カーソル位置 \(cursor.formatted())）" }
+        }
+        elementLine = line
+        if panel.isVisible { layout() }
     }
 
     /// 末尾 `quotedLength` 文字を「」で囲む（窓の幅を抑える。長ければ先頭を … にする）
@@ -208,6 +232,7 @@ final class DeveloperOverlay {
 
     func hide() {
         contextLine = nil
+        elementLine = nil
         conversionLine = nil
         typoLine = nil
         cancelledConversions = 0
@@ -225,7 +250,7 @@ final class DeveloperOverlay {
 
     private func layout() {
         guard let caretRect = lastCaretRect else { return }
-        label.stringValue = [contextLine, conversionLine, typoLine].compactMap { $0 }.joined(separator: "\n")
+        label.stringValue = [contextLine, elementLine, conversionLine, typoLine].compactMap { $0 }.joined(separator: "\n")
         label.sizeToFit()
         let width = padding.left + label.frame.width + padding.right
         let height = padding.top + label.frame.height + padding.bottom
