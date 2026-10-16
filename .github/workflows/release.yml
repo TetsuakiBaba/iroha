@@ -44,6 +44,10 @@ jobs:
       - name: Fetch azooKey dictionary
         run: ./macos/scripts/fetch-dictionary.sh
 
+      # 記号・顔文字・絵文字の候補に使う Mozc のデータ（約500KB、コミット固定。make-bundle.sh がバンドルへコピーする）
+      - name: Fetch Mozc symbol data
+        run: ./macos/scripts/fetch-symbols.sh
+
       - name: Build
         working-directory: macos
         run: |

@@ -22,6 +22,8 @@ import IrohaMLX
 //                                                   AJIMEE-Benchで評価（zenz単体。誤変換検出の閾値設計用）
 //   iroha-cli repl                                : 対話モード（1行ずつ変換、レイテンシ表示）
 //   iroha-cli lattice <読み>                       : 辞書ラティス（azooKey）の生の候補を表示（調査用）
+//   iroha-cli symbols [読み...]                    : 記号・顔文字・絵文字の表（Mozc のデータ）から引いた候補を表示。
+//                                                   読みを省くと件数だけ。描けない絵文字の除外は IME 本体だけが行う
 //   iroha-cli typo catalog [install|remove]        : 配布中の訂正モデルの一覧・取得・削除（設定画面と同じ経路）
 //   iroha-cli typo parity                         : 打ち間違い訂正モデルの移植検証（parity.json 200件）
 //   iroha-cli typo bench <test.jsonl> [--n 件数]   : 同モデルのレイテンシ（mean / p50 / p95）
@@ -789,6 +791,25 @@ case "lattice" where arguments.count >= 3:
     for candidate in candidates {
         let score = scored[candidate.text].map { String(format: "%8.2f", $0) } ?? "        "
         print(String(format: "  %@ %8.2f %@  %@", candidate.isFullMatch ? "★" : "　", candidate.value, score, candidate.text))
+    }
+
+case "symbols":
+    // 記号・顔文字・絵文字の表（SymbolCandidateTable）の中身を見る。
+    //   iroha-cli symbols [読み...]
+    guard let directory = SymbolCandidateTable.defaultDirectoryURL(),
+          let table = SymbolCandidateTable(directory: directory) else {
+        FileHandle.standardError.write("記号のデータが見つかりません（scripts/fetch-symbols.sh で取得できます）\n".data(using: .utf8)!)
+        exit(1)
+    }
+    let counts = table.counts
+    print("\(directory.path)  絵文字 \(counts.emoji)・顔文字 \(counts.emoticons)・記号 \(counts.symbols)")
+    for argument in arguments.dropFirst(2) {
+        let reading = romajiToKana(argument)
+        let found = table.candidates(forReading: reading)
+        print("\(reading)")
+        print("  絵文字(\(found.emoji.count)): \(found.emoji.joined(separator: " "))")
+        print("  顔文字(\(found.emoticons.count)): \(found.emoticons.joined(separator: "  "))")
+        print("  記号(\(found.symbols.count)): \(found.symbols.joined(separator: " "))")
     }
 
 case "typo":

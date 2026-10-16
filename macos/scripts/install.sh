@@ -11,6 +11,7 @@ swift build -c release --product iroha
 swift build -c release --product iroha-train
 ./scripts/build-mlx-metallib.sh release
 ./scripts/fetch-dictionary.sh
+./scripts/fetch-symbols.sh
 
 APP=".build/iroha.app"
 DEST="$HOME/Library/Input Methods/iroha.app"

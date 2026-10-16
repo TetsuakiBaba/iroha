@@ -39,6 +39,18 @@ if [ ! -f "$DICT/mm.binary" ]; then
 fi
 cp -R "$DICT" "$APP/Contents/Resources/Dictionary"
 
+# 記号・顔文字・絵文字の候補に使う Mozc のデータ（scripts/fetch-symbols.sh で vendor/ に取得したもの、BSD 3-Clause）。
+# SymbolCandidateTable が Contents/Resources/Symbols から読む。BSD の条件で LICENSE も一緒に置く
+SYMBOLS="../vendor/mozc-data"
+for file in symbol.tsv emoticon.tsv categorized.tsv emoji_data.tsv LICENSE; do
+  if [ ! -f "$SYMBOLS/$file" ]; then
+    echo "error: 記号のデータがありません。./macos/scripts/fetch-symbols.sh を実行してください" >&2
+    exit 1
+  fi
+done
+mkdir -p "$APP/Contents/Resources/Symbols"
+cp "$SYMBOLS"/{symbol.tsv,emoticon.tsv,categorized.tsv,emoji_data.tsv,LICENSE} "$APP/Contents/Resources/Symbols/"
+
 # 打ち間違い訂正モデルは**同梱しない**。設定でONにしたときに
 # TypoNormalizerDownloader が models/typo-normalizer.json 経由で取得する
 # （重みは本体コード(MIT)と別ライセンス(CC BY-SA 4.0)なので配布物を分けてある）。

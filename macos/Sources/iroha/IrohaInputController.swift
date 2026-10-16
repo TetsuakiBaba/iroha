@@ -348,6 +348,10 @@ final class IrohaInputController: IMKInputController {
         if TypoNormalizerSettings.isEnabled, let normalizer = Self.typoNormalizer() {
             Task.detached(priority: .utility) { try? await normalizer.prewarm() }
         }
+        // 記号・顔文字・絵文字の表（読み込みと絵文字の字形の確認で約 0.1 秒）も先に読む
+        if SymbolCandidateSettings.isEnabled {
+            Task.detached(priority: .utility) { _ = SymbolCandidateSettings.table }
+        }
         // アップデートの自動確認（1日1回まで、設定でOFF可）
         Task { await UpdateChecker.shared.autoCheckIfDue() }
         // 変換モデルが未取得のままなら再試行（起動時にオフラインだった場合など。60秒スロットル付き）
@@ -1674,7 +1678,15 @@ final class IrohaInputController: IMKInputController {
                     correction: await correctionTask?.value, segmentIndex: index,
                     segmentReadings: segmentReadings, context: context
                 ).filter { !candidates.contains($0) }
-                candidates.insert(contentsOf: typoFixes, at: min(1 + rewrites.count, candidates.count))
+                let typoInsertIndex = min(1 + rewrites.count, candidates.count)
+                candidates.insert(contentsOf: typoFixes, at: typoInsertIndex)
+                // 記号・顔文字・絵文字（Mozc のデータ）。絵文字は 7 番目、顔文字・記号はエンジンの候補の後ろ。
+                // 今の表示・変換ルール・訂正は動かさない
+                let symbols = SymbolCandidateSettings.isEnabled
+                    ? SymbolCandidateSettings.table?.candidates(forReading: reading) ?? SymbolCandidates()
+                    : SymbolCandidates()
+                candidates = SymbolCandidateMerger.merge(
+                    candidates, with: symbols, protectedCount: typoInsertIndex + typoFixes.count)
                 // 定番のフォールバック候補（ひらがな・カタカナ）を末尾に追加
                 for extra in [reading, hiraganaToKatakana(reading)] where !candidates.contains(extra) {
                     candidates.append(extra)
@@ -1685,9 +1697,10 @@ final class IrohaInputController: IMKInputController {
                 // 打ち間違いの訂正を選んだ確定も学習しない。学習は読み全体 → 確定文字列を覚えるので、
                 // 覚えると打ち間違えた読みがライブ変換で勝手に直るようになる
                 // （過剰訂正を候補ウィンドウの中に閉じ込めた意味がなくなる）
+                // 記号・顔文字・絵文字も学習しない。覚えると「わらい」だけを打ったときにライブ変換が絵文字になる
                 let unlearnable = Set(rewrites).union(typoFixes).union(candidates.filter { candidate in
                     candidateOnlyWords.contains { candidate.contains($0) }
-                })
+                }).union(SymbolCandidateMerger.unlearnableCandidates(in: candidates, symbols: symbols))
                 let finalCandidates = candidates
                 await MainActor.run {
                     guard self.mode == .segmenting, generation == self.segmentGeneration,

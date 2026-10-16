@@ -187,6 +187,16 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
     （入れたときに設置記録にも写すのでオフラインでも出る）。文面は `dataset/iroha-typo-normalizer/LICENSES.md` の
     「attribution 方法」に合わせる。訂正モデルの行（入力タブ）には学習元を出さない
   ・訂正率 79%（θなし）は合成 typo 分布の数字で、実使用の数字ではない。UI で約束しない
+- 記号・顔文字・絵文字の候補（`SymbolCandidateTable` / `SymbolCandidateMerger`、`macos/Sources/IrohaCore/SymbolCandidates/`、
+  既定ON・切り替えは開発者モード・同期する。2026-10-16）は Mozc（BSD 3-Clause）の `src/data/` の 4 ファイルを
+  `fetch-symbols.sh` がコミット固定で `vendor/mozc-data/` に取り、`make-bundle.sh` が `Contents/Resources/Symbols` へ
+  LICENSE と一緒にコピーする（`dictionary_oss/` は第三者のデータなので使わない）。エンジンのデコレータ鎖には入れず、
+  変換ルールと同じく文節の候補ウィンドウを開くときに合流させる: 絵文字は上から 7 番目（Mozc の `kDefaultInsertPos = 6`。
+  今の表示・変換ルール・訂正がそれより下まであればその後ろ。azooKey 辞書が出した絵文字もここへ移す）、
+  顔文字 → 記号はエンジンの候補の後ろ。「えもじ」「かおもじ」で全部。ライブ変換には使わず、表にある候補は
+  確定しても学習しない（`unlearnableCandidates`。漢字・かなだけの候補は除く。覚えると「わらい」だけ打ったときに
+  ライブ変換が絵文字になる）。macOS が描けない絵文字は OS の版の対応表ではなく Apple Color Emoji の字形で除く
+  （`EmojiRenderability`。組の絵文字は字形 2 つで描かれるので「字形 1 つ」では判定しない）
 - ユーザ定義の変換ルール（User Rewriter、`UserRewriteRule` / `UserRewriteRuleStore`）は
   エンジンのデコレータ鎖に入れず、コントローラが文節の候補ウィンドウを開くときに独立した
   候補生成源として合流させる（第一候補の直後に挿入。ライブ変換には影響しない）。

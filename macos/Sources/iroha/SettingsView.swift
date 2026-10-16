@@ -503,6 +503,8 @@ private struct DictionarySettingsTab: View {
     @AppStorage(UserDictionarySync.autoSyncKey) private var syncSystemDictionary = false
     @AppStorage(PrivateModeSettings.enabledKey) private var privateMode = false
     @AppStorage(PrivateModeSettings.caretIndicatorKey) private var privateModeCaretIndicator = true
+    @AppStorage(SymbolCandidateSettings.enabledKey) private var symbolCandidates = true
+    @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
     @ObservedObject private var uiState = SettingsUIState.shared
 
     @State private var userDictionaryCount = UserDictionaryStore.shared.entries.count
@@ -562,6 +564,20 @@ private struct DictionarySettingsTab: View {
                         + "出力を変換候補に加えます。出力には {{date:yyyy/MM/dd}} や {{time:HH:mm}} の"
                         + "ようなプレースホルダを書けて、変換のたびに今の日付・時刻に置き換わります"
                         + "（例:「きょう」→ 2026/09/06）。")
+            }
+
+            if developerMode {
+                Section("記号・顔文字・絵文字") {
+                    HelpToggle(
+                        title: "記号・顔文字・絵文字を候補に出す", isOn: $symbolCandidates,
+                        help: "文節の読みに合う記号・顔文字・絵文字を候補ウィンドウに加えます"
+                            + "（「やじるし」→ →、「にこにこ」→ (^^)、「わらい」→ 😂）。"
+                            + "絵文字は上から7番目に、顔文字と記号は辞書の候補の後ろに並べます。"
+                            + "「えもじ」ですべての絵文字、「かおもじ」ですべての顔文字を出します。"
+                            + "データはGoogle日本語入力のオープンソース版Mozcのものです。"
+                            + "このMacで描けない新しい絵文字は出しません。"
+                            + "ライブ変換には使わず、選んで確定しても学習しません。")
+                }
             }
 
             Section("変換の学習") {
@@ -1968,6 +1984,10 @@ private struct AboutSettingsTab: View {
                     note: "辞書データ",
                     url: "https://github.com/azooKey/azooKey_dictionary_storage")
                 LicenseRow(
+                    name: "Mozc", holder: "Google Inc.", license: "BSD 3-Clause License",
+                    note: "記号・顔文字・絵文字のデータ",
+                    url: "https://github.com/google/mozc")
+                LicenseRow(
                     name: "swift-algorithms / swift-collections / swift-tokenizers",
                     holder: "Apple, ensan", license: "Apache License 2.0",
                     note: "AzooKeyKanaKanjiConverterの依存",
@@ -1985,6 +2005,7 @@ private struct AboutSettingsTab: View {
                     title: "開発者モード", isOn: $developerMode,
                     help: "ONにすると、細かな調整や開発者向けの項目を設定画面に表示します"
                         + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ、"
+                        + "辞書・学習: 記号・顔文字・絵文字を候補に出す、"
                         + "選択テキスト: 除外するアプリ、モデル: 推論エンジン・モデルファイルの指定・irohaを再起動・"
                         + "自分の入力で追加学習、情報: 推論の時間の表示）。"
                         + "OFFにしても項目が見えなくなるだけで、変えた設定はそのまま効きます"

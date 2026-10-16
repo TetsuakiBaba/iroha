@@ -2,6 +2,8 @@
 .DS_Store
 vendor/llama.cpp/
 vendor/azooKey_dictionary_storage/
+# 記号・顔文字・絵文字の候補に使う Mozc のデータ（fetch-symbols.sh がコミット固定で取得する）
+vendor/mozc-data/
 vendor/dist/
 # 打ち間違い訂正モデル（install-typo-normalizer.sh が書き出しから作る）。
 # /export-scale-16x/ は学習機からの書き出しの置き場所。どちらも重みなのでgitには入れない

@@ -537,6 +537,15 @@ CC BY-SA 4.0（一部は llm-jp-corpus-v3 由来で ODC-BY と Common Crawl の�
   辞書は `macos/scripts/fetch-dictionary.sh` で `vendor/azooKey_dictionary_storage` に取得し
   （コミット固定、約35MB）、`make-bundle.sh` が `iroha.app/Contents/Resources/Dictionary` へコピーする。
   生の候補と採点は `iroha-cli lattice [--context 文脈] <読み>` で見られる
+- 記号・顔文字・絵文字は [Mozc](https://github.com/google/mozc) のデータ（`symbol.tsv`・`emoticon.tsv`・
+  `categorized.tsv`・`emoji_data.tsv`）から文節の候補ウィンドウに足す
+  （[SymbolCandidateTable](macos/Sources/IrohaCore/SymbolCandidates/SymbolCandidateTable.swift)・
+  [SymbolCandidateMerger](macos/Sources/IrohaCore/SymbolCandidates/SymbolCandidateMerger.swift)、既定ON）。
+  azooKey辞書にも記号・絵文字は入っているが、Mozc と比べて記号で約5%・顔文字で約1%しかなかった。
+  絵文字は上から7番目（Mozc と同じ）、顔文字・記号は辞書の候補の後ろに並べ、「えもじ」「かおもじ」で全部を出す。
+  ライブ変換には使わず、選んで確定しても学習しない。このMacで描けない絵文字は字形を見て除く。
+  データは `macos/scripts/fetch-symbols.sh` で `vendor/mozc-data` に取得し（コミット固定、約500KB）、
+  `make-bundle.sh` が `iroha.app/Contents/Resources/Symbols` へコピーする。中身は `iroha-cli symbols <読み>` で見られる
 - zenzのn-best（辞書が無いときの候補ウィンドウ）は先頭トークンを上位から分岐して貪欲に補完し、
   系列の対数確率で並べ、最良候補から8nat以上離れた候補は捨てる
 - 長い読みは区切って順に変換する（[ChunkedConversionEngine](macos/Sources/IrohaCore/ChunkedConversionEngine.swift)）。
@@ -578,5 +587,6 @@ git tag v0.4.0 && git push origin v0.4.0
   （依存の [swift-algorithms](https://github.com/apple/swift-algorithms)・[swift-collections](https://github.com/apple/swift-collections)・
   [swift-tokenizers](https://github.com/ensan-hcl/swift-tokenizers): Apache-2.0）
 - 辞書データ [azooKey_dictionary_storage](https://github.com/azooKey/azooKey_dictionary_storage): Apache-2.0
+- 記号・顔文字・絵文字のデータ [Mozc](https://github.com/google/mozc)（Google Inc.）: BSD 3-Clause
 - アプリアイコン・メニューバーアイコンの書体 [Tsukimi Rounded](https://fonts.google.com/specimen/Tsukimi+Rounded)（Takashi Funayama氏）: SIL Open Font License 1.1
 - 設計にあたり [azooKey-Desktop](https://github.com/azooKey/azooKey-Desktop) / Zenzai の公開知見を参考にした

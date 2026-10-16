@@ -98,7 +98,9 @@ public actor LatticeConverter {
             learningType: .nothing,
             memoryDirectoryURL: workDirectory,
             sharedContainerURL: workDirectory,
-            textReplacer: TextReplacer(),
+            // azooKey の絵文字の置換は確定後の予測にしか使われないので渡さない
+            // （絵文字は SymbolCandidateTable から候補ウィンドウに足す）
+            textReplacer: .empty,
             specialCandidateProviders: [],
             metadata: nil)
         let result = converter.requestCandidates(composing, options: options)
