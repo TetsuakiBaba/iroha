@@ -11,8 +11,13 @@ enum LearningSettings {
         UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true
     }
 
-    /// 学習をOFFにしている間は参照もしない（記録も適用も止める）
+    /// いま学習を使うか。設定がONでも、プライベートモードの間は使わない（`PrivateModeSettings`）
+    static var isActive: Bool {
+        isEnabled && !PrivateModeSettings.isEnabled
+    }
+
+    /// 学習を使わない間は参照もしない（記録も適用も止める）
     static var dictionary: LearningDictionary {
-        isEnabled ? LearningStore.shared.current : .empty
+        isActive ? LearningStore.shared.current : .empty
     }
 }

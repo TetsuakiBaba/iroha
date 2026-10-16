@@ -82,6 +82,7 @@ private struct InputSettingsTab: View {
     @AppStorage(KeyInputSettings.yenKeyCharacterKey) private var yenKeyCharacter = KeyInputSettings.yen
     @AppStorage(KeyInputSettings.alwaysHalfWidthSpaceKey) private var alwaysHalfWidthSpace = true
     @AppStorage(PredictionSettings.predictiveEnabledKey) private var predictiveConversion = false
+    @AppStorage(PrivateModeSettings.enabledKey) private var privateMode = false
     @AppStorage(TypoNormalizerSettings.enabledKey) private var typoNormalizer = false
     @ObservedObject private var typoDownloader = TypoNormalizerDownloader.shared
     @AppStorage(TypoNormalizerSettings.thresholdKey)
@@ -170,7 +171,10 @@ private struct InputSettingsTab: View {
                         + "（Shift+英字で入れた英字やF9・F10で英数にした部分は記録しません）。"
                         + "記録はデータフォルダの input-history/ にMacごとのファイルとして残り、"
                         + "同じデータフォルダを使うMacの間で合算されます。")
-                InputHistoryRow(isEnabled: predictiveConversion)
+                if privateMode, predictiveConversion {
+                    PrivateModePausedNote(text: "プライベートモードの間は、予測も入力履歴の記録も止めています")
+                }
+                InputHistoryRow(isEnabled: predictiveConversion && !privateMode)
             }
 
             Section("句読点・記号・スペース") {
@@ -497,6 +501,7 @@ private struct DictionarySettingsTab: View {
     @AppStorage(ConversionLogSettings.enabledKey) private var conversionLogEnabled = false
     @AppStorage(ConversionLogSettings.scopeKey) private var conversionLogScope = ConversionLogSettings.Scope.all.rawValue
     @AppStorage(UserDictionarySync.autoSyncKey) private var syncSystemDictionary = false
+    @AppStorage(PrivateModeSettings.enabledKey) private var privateMode = false
     @ObservedObject private var uiState = SettingsUIState.shared
 
     @State private var userDictionaryCount = UserDictionaryStore.shared.entries.count
@@ -508,6 +513,20 @@ private struct DictionarySettingsTab: View {
 
     var body: some View {
         Form {
+            Section("プライベートモード") {
+                HelpToggle(
+                    title: "学習・記録・予測を止める", isOn: $privateMode,
+                    help: "ONの間は、入力した内容を残さず、これまでの入力に基づく候補も出しません。"
+                        + "止めるのは、変換の学習（覚えることも、覚えた変換に差し替えることもしません）・"
+                        + "変換記録・入力履歴の記録と予測変換です。"
+                        + "それぞれの設定は変えないので、OFFに戻すと元の動作になります。"
+                        + "ユーザ辞書と変換ルールは自分で登録したものなので、そのまま使います。"
+                        + "AI変換・選択テキストのAI処理は、操作したときにだけ文章をAIサービスに送るもので、止めません。"
+                        + "入力メニュー（メニューバーの入力ソースのアイコン）とショートカットでも切り替えられます。"
+                        + "ON/OFFは他のMacには同期しません。")
+                PrivateModeShortcutField()
+            }
+
             Section("ユーザ辞書") {
                 LabeledContent("登録単語") {
                     HStack {
@@ -547,6 +566,9 @@ private struct DictionarySettingsTab: View {
                         + "（「きしゃ」を「貴社」に直すと、次から「きしゃ」はそう変換されます）。"
                         + "前の文章によって変換結果が変わったときは差し替えず、候補ウィンドウに出します。"
                         + "読みの一部には当てはめません。")
+                if privateMode, learningEnabled {
+                    PrivateModePausedNote(text: "プライベートモードの間は、学習も、学習した変換への差し替えも止めています")
+                }
                 LabeledContent("学習した変換") {
                     HStack {
                         Text("\(learningCount) 件").foregroundStyle(.secondary)
@@ -583,6 +605,9 @@ private struct DictionarySettingsTab: View {
                         + "追加学習（LoRAなど）ができます。上の「変換の学習」とは別のもので、"
                         + "記録しても変換の動作は変わりません。書いていた文章の一部がそのまま残るため、"
                         + "この設定は他のMacには同期されません。")
+                if privateMode, conversionLogEnabled {
+                    PrivateModePausedNote(text: "プライベートモードの間は記録しません")
+                }
                 Picker("記録する範囲", selection: $conversionLogScope) {
                     ForEach(ConversionLogSettings.Scope.allCases) { scope in
                         Text(scope.label).tag(scope.rawValue)
@@ -1010,6 +1035,66 @@ private struct AICommitPresetEditor: View {
 /// AI変換のショートカット入力欄（"Option+Return" 形式。形式のチェックと、重なり・⌃Return の注意つき）。
 /// 同じキーがほかのプリセットにあれば番号の小さいほうが、選択テキストのショートカットと同じなら
 /// そちら（どのアプリでも先に受け取るグローバルショートカット）が動く
+/// プライベートモードで止めている機能の行に出す注意（設定は ON のまま止まっていることを示す）
+private struct PrivateModePausedNote: View {
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: "eye.slash")
+            .font(.caption)
+            .foregroundStyle(.orange)
+    }
+}
+
+/// プライベートモードを切り替えるショートカットの入力欄。入力中に IME に届いたキーと照らし合わせる
+/// （AI変換と同じくグローバルには登録しない）
+private struct PrivateModeShortcutField: View {
+    @AppStorage(PrivateModeSettings.shortcutKey) private var hotkey = PrivateModeSettings.defaultShortcut
+
+    var body: some View {
+        HStack {
+            HelpLabel(
+                title: "ショートカット",
+                help: "「Ctrl+Option+P」のように、修飾キー（Cmd・Ctrl・Option・Shift）とキーを + でつないで書きます。"
+                    + "Cmd・Ctrl・Optionのどれかを含めてください。irohaで入力しているときに効きます"
+                    + "（入力中かどうか、ひらがな・英数のどちらかによりません）。"
+                    + "切り替えると、ON/OFFのどちらになったかをカーソルの下に表示します。空にすると割り当てなしになります。")
+            TextField("", text: $hotkey, prompt: Text("例: \(PrivateModeSettings.defaultShortcut)"))
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 180)
+            Group {
+                if shortcut.isEmpty {
+                    Text("なし").font(.caption).foregroundStyle(.secondary)
+                } else if !shortcut.isValid {
+                    Text("認識できない形式です").font(.caption).foregroundStyle(.red)
+                } else if !PrivateModeSettings.isUsable(shortcut) {
+                    Text("Cmd・Ctrl・Optionのどれかを含めてください").font(.caption).foregroundStyle(.red)
+                } else {
+                    Image(systemName: "checkmark.circle").foregroundStyle(.green)
+                }
+            }
+            Spacer()
+        }
+        if let warning {
+            Text(warning).font(.caption).foregroundStyle(.orange)
+        }
+    }
+
+    private var shortcut: AICommitShortcut { AICommitShortcut(rawValue: hotkey) }
+
+    private var warning: String? {
+        guard PrivateModeSettings.isUsable(shortcut) else { return nil }
+        if let preset = AICommitSettings.presets.first(where: { $0.shortcut.isSameKey(as: shortcut) }) {
+            return "AI変換「\(preset.displayName)」と同じキーです（プライベートモードの切り替えが動きます）"
+        }
+        if shortcut.isSameKey(as: AICommitShortcut(rawValue: "Ctrl+.")) {
+            return "句読点スタイルの切り替え（⌃.）と同じキーです（プライベートモードの切り替えが動きます）"
+        }
+        return nil
+    }
+}
+
 private struct AICommitShortcutField: View {
     let index: Int
     @Binding var hotkey: String

@@ -15,6 +15,11 @@ enum PredictionSettings {
         UserDefaults.standard.object(forKey: predictiveEnabledKey) as? Bool ?? false
     }
 
+    /// いま予測を出し、入力履歴を記録するか。設定がONでも、プライベートモードの間は止める（`PrivateModeSettings`）
+    static var isActive: Bool {
+        isPredictiveEnabled && !PrivateModeSettings.isEnabled
+    }
+
     /// 候補を出し始める読みの文字数。1文字では候補が多すぎて当たらない
     /// （変換記録での試算: 1文字で上位3件に入るのは 26.8%、2文字で 41.6%）
     static let minimumPrefixLength = 2

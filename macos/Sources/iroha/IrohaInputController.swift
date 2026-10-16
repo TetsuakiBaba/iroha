@@ -167,7 +167,7 @@ final class IrohaInputController: IMKInputController {
     /// 選ばれたら先頭の固定部分より後ろの文節をまとめて置き換える（`applyTypoWholeSentenceIfSelected`）
     private var typoWholeSentence: (candidate: String, reading: String, segmentOffset: Int)?
 
-    /// 知らせ（句読点スタイルの切り替え・変換モデルを使えない）を小窓に出しているか
+    /// 知らせ（句読点スタイル・プライベートモードの切り替え、変換モデルを使えない）を小窓に出しているか
     /// （予測はこの間だけ小窓を譲る）。どちらも次のキーで閉じる
     private var noticeVisible = false
     /// 知らせを出しっぱなしにしないためのタイマー
@@ -176,6 +176,8 @@ final class IrohaInputController: IMKInputController {
     private static let punctuationNoticeLifetime = Duration.seconds(1.5)
     /// 小窓のヒント。同じキーをもう一度押せば戻せる
     private static let punctuationNoticeHint = "⌃. で戻す"
+    /// プライベートモードの切り替えの知らせの寿命（句読点より文が長いので少し長く出す）
+    private static let privateModeNoticeLifetime = Duration.seconds(2.5)
     /// 変換モデルを使えない知らせの寿命。変換のたびに出し直すので、打ち続けている間は出たままになる
     private static let modelProblemNoticeLifetime = Duration.seconds(4)
     private static let modelProblemNoticeHint = "設定 > モデル"
@@ -261,6 +263,9 @@ final class IrohaInputController: IMKInputController {
     /// 文脈条件付けに使う直前の確定文字列（最大40文字）。
     /// アプリのテキストを読めないときの文脈に使う
     private var recentCommitted = ""
+    /// `recentCommitted` にプライベートモード中に確定した文字列が入っているか。
+    /// モードを切ったあと、それを左文脈にした確定が変換記録に残らないよう、次の合成の開始で捨てる
+    private var recentCommittedHasPrivateText = false
     /// 合成を始めた時点でアプリから読んだカーソル手前のテキスト（`DocumentContextSettings`）。
     /// 設定OFF・アプリが返さないときは nil で `recentCommitted` に代える
     private var documentContext: String?
@@ -403,6 +408,14 @@ final class IrohaInputController: IMKInputController {
             break
         }
 
+        // プライベートモードの切り替え（設定で決めたキー。入力中かどうか・ひらがな/英数によらず効く）。
+        // ユーザが決めたキーなので、AI変換や組み込みのキーより先に見る
+        if let shortcut = PrivateModeSettings.shortcut,
+           shortcut.matches(keyCode: event.keyCode, modifierFlags: event.modifierFlags) {
+            togglePrivateMode(nil)
+            return true
+        }
+
         // AI変換のショートカット（プリセットごとに設定で自由に決める）: 未確定文字列をAIで変換する。
         // ユーザが決めたキーなので、下の Control+. や Control+U 等の組み込みより先に見る
         if isComposing || mode == .segmenting,
@@ -527,6 +540,18 @@ final class IrohaInputController: IMKInputController {
 
         menu.addItem(NSMenuItem.separator())
 
+        let privateItem = NSMenuItem(
+            title: "プライベートモード",
+            action: #selector(togglePrivateMode(_:)),
+            keyEquivalent: PrivateModeSettings.menuKeyEquivalent?.key ?? ""
+        )
+        if let modifiers = PrivateModeSettings.menuKeyEquivalent?.modifiers {
+            privateItem.keyEquivalentModifierMask = modifiers
+        }
+        privateItem.target = self
+        privateItem.state = PrivateModeSettings.isEnabled ? .on : .off
+        menu.addItem(privateItem)
+
         let liveItem = NSMenuItem(
             title: "ライブ変換",
             action: #selector(toggleLiveConversion(_:)),
@@ -606,6 +631,31 @@ final class IrohaInputController: IMKInputController {
         UserDefaults.standard.set(!PredictionSettings.isPredictiveEnabled,
                                   forKey: PredictionSettings.predictiveEnabledKey)
         if !PredictionSettings.isPredictiveEnabled { cancelPrediction() }
+    }
+
+    /// プライベートモードを切り替え、どちらになったかを小窓に出す（モードの表示は変わらないので、
+    /// 知らせないと押し間違いに気づけない）。入れたときは出している予測を閉じる
+    @objc private func togglePrivateMode(_ sender: Any?) {
+        PrivateModeSettings.toggle()
+        if PrivateModeSettings.isEnabled { cancelPrediction() }
+        let enabled = PrivateModeSettings.isEnabled
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let text = NSMutableAttributedString(
+            string: "プライベートモード ",
+            attributes: [.font: font, .foregroundColor: NSColor.tertiaryLabelColor])
+        text.append(NSAttributedString(
+            string: enabled ? "ON" : "OFF",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+            ]))
+        if enabled {
+            text.append(NSAttributedString(
+                string: "（学習・記録・予測を止めています）",
+                attributes: [.font: font, .foregroundColor: NSColor.tertiaryLabelColor]))
+        }
+        let hint = PrivateModeSettings.shortcut.map { "\($0.rawValue) で戻す" } ?? "入力メニューで戻す"
+        showNotice(text, hint: hint, lifetime: Self.privateModeNoticeLifetime)
     }
 
     @objc private func openSettings(_ sender: Any?) {
@@ -1738,7 +1788,7 @@ final class IrohaInputController: IMKInputController {
     /// 次に同じ読みを丸ごと入力し、エンジンがまた同じ結果を出したときだけ再現する。
     /// 学習が差し替えた結果を、ユーザがエンジンの結果に戻して確定したら、その学習を消す
     private func learnIfCorrected(committed: String) {
-        guard LearningSettings.isEnabled, !segmentsFromAI, !segments.isEmpty, !committed.isEmpty,
+        guard LearningSettings.isActive, !segmentsFromAI, !segments.isEmpty, !committed.isEmpty,
               let baseline = segmentBaseline, committed != baseline else { return }
         // 変換ルールの出力（日付・時刻など）や、候補ウィンドウ専用のユーザ辞書語を選んだ確定は
         // 学習しない。覚えると「きょう → 2026/09/06」が翌日以降も第一候補になったり、
@@ -1761,7 +1811,7 @@ final class IrohaInputController: IMKInputController {
     /// 学習と同じく変換ルールの出力や候補ウィンドウ専用の語（`unlearnableCandidates`）を含む確定は残さない
     /// （毎回変わる日付や、読みと対応しない定型文は学習例にならない）
     private func logSegmentsCommit(committed: String) {
-        guard ConversionLogSettings.isEnabled, !segmentsFromAI, !segments.isEmpty, !committed.isEmpty,
+        guard ConversionLogSettings.isActive, !segmentsFromAI, !segments.isEmpty, !committed.isEmpty,
               !segments.contains(where: { $0.unlearnableCandidates.contains($0.result) }) else { return }
         logConversion(
             mode: .segments, context: conversionContext, reading: segments.map(\.reading).joined(),
@@ -1779,7 +1829,9 @@ final class IrohaInputController: IMKInputController {
         mode: ConversionLogEntry.Mode, context: String, reading: String, proposed: String?,
         committed: String, segments: [ConversionLogEntry.Segment]? = nil
     ) {
-        guard ConversionLogSettings.isEnabled, !reading.isEmpty, !committed.isEmpty else { return }
+        guard ConversionLogSettings.isActive, !reading.isEmpty, !committed.isEmpty else { return }
+        // プライベートモード中に始めた合成を、モードを切ってから確定した場合。左文脈にモード中の確定が入っている
+        if documentContext == nil, recentCommittedHasPrivateText { return }
         let source: ConversionLogEntry.ContextSource =
             documentContext != nil ? .document : (recentCommitted.isEmpty ? .none : .committed)
         let entry = ConversionLogEntry(
@@ -2190,6 +2242,7 @@ final class IrohaInputController: IMKInputController {
         )
         developerOverlayMarkedLength = 0
         recentCommitted = String((recentCommitted + text).suffix(LeftContext.maxLength))
+        if PrivateModeSettings.isEnabled { recentCommittedHasPrivateText = true }
         documentContext = nil
     }
 
@@ -2200,6 +2253,10 @@ final class IrohaInputController: IMKInputController {
     private func captureDocumentContextIfStarting(client: IMKTextInput) {
         guard !isComposing else { return }
         DeveloperOverlay.shared.hide()
+        if recentCommittedHasPrivateText, !PrivateModeSettings.isEnabled {
+            recentCommitted = ""
+            recentCommittedHasPrivateText = false
+        }
         let result = DocumentContextSettings.inspect(from: client)
         documentContext = result.context
         if DeveloperOverlaySettings.isEnabled {
@@ -2216,7 +2273,7 @@ final class IrohaInputController: IMKInputController {
     /// 引くのは手元の表なので、休止もライブ変換の到着も待たない。
     /// 英字入力中・F6等の上書き中・訂正や知らせの小窓を出している間は出さない
     private func refreshPrediction() {
-        guard PredictionSettings.isPredictiveEnabled, mode == .composing, !isTranslating,
+        guard PredictionSettings.isActive, mode == .composing, !isTranslating,
               alphabetRun == nil, displayOverride == nil, typoFeedback == nil, !noticeVisible,
               let client = client()
         else {
@@ -2337,7 +2394,7 @@ final class IrohaInputController: IMKInputController {
     /// （読みにひらがな以外が混ざる・表記に英数字が混ざるものはそこで落ちる）
     /// - Parameter composerText: 入力中の読み（flush 済みの `composer.text`）を確定する表記。文節変換中は使わない
     private func recordInputHistory(composerText: String?) {
-        guard PredictionSettings.isPredictiveEnabled else { return }
+        guard PredictionSettings.isActive else { return }
         var pieces: [(reading: String, text: String)] = []
         if mode == .segmenting {
             guard !segmentsFromAI else { return }

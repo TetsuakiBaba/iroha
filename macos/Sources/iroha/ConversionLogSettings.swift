@@ -32,6 +32,11 @@ enum ConversionLogSettings {
         UserDefaults.standard.bool(forKey: enabledKey)
     }
 
+    /// いま記録するか。設定がONでも、プライベートモードの間は記録しない（`PrivateModeSettings`）
+    static var isActive: Bool {
+        isEnabled && !PrivateModeSettings.isEnabled
+    }
+
     static var scope: Scope {
         Scope(rawValue: UserDefaults.standard.string(forKey: scopeKey) ?? "") ?? .all
     }
@@ -45,7 +50,7 @@ enum ConversionLogSettings {
     ///
     /// `edited == false`（モデルの出力をそのまま確定した）を残すかは `scope` で選べる
     static func shouldRecord(_ entry: ConversionLogEntry) -> Bool {
-        guard isEnabled, !entry.context.isEmpty, !entry.isTrivial else { return false }
+        guard isActive, !entry.context.isEmpty, !entry.isTrivial else { return false }
         switch scope {
         case .all: return true
         case .corrections: return entry.edited != false

@@ -198,6 +198,13 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
   Shift+スペースで英字の中にスペース、開始の直後に終わりの記号（「__」）で記号そのものを読みに入れる。
   英字は `.alphabet` の固定部分（`delimited` つき）になるので、学習・入力履歴・打ち間違いの訂正の対象外は Shift+英字と同じ。
   英字を自動で判定する試み（打鍵どおりの英字の候補・休止での英単語の書き換え）は 2026-10-04 に取り下げた（d2cd6eb）
+- プライベートモード（`PrivateModeSettings`、既定OFF・ON/OFF は同期しない・ショートカットは同期する。2026-10-16）は、
+  ON の間、変換の学習（記録と差し替えの両方）・変換記録・入力履歴の記録と予測変換を止める。各機能の設定値は書き換えず、
+  `LearningSettings.isActive` / `ConversionLogSettings.isActive` / `PredictionSettings.isActive` で止める
+  （**記録・履歴に基づく提示を足すときは `isEnabled` ではなく、プライベートモードを見る `isActive` 側で判定する**）。
+  ユーザ辞書・変換ルール・AI変換は止めない。切り替えは設定 > 辞書・学習・入力メニュー・ショートカット（既定 Ctrl+Option+P、
+  IME に届いたキーで照合。グローバル登録はしない）。モード中の確定が入った `recentCommitted` は、OFF にした後の
+  次の合成の開始で捨てる（変換記録の左文脈に残さないため）
 - 変換・予測の左文脈は合成開始時にアプリのカーソル手前テキストを1回読む（`DocumentContextSettings.read`、
   既定ON）。読めないアプリでは `recentCommitted`（確定文字列の蓄積）に代える。合成中は読み直さない。
   左文脈は**カーソルのある行だけ**（`LeftContext.normalize`、azooKey と同じ。2026-09-30 に「改行を除いて前の段落と
