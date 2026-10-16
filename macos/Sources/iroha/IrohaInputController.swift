@@ -289,6 +289,12 @@ final class IrohaInputController: IMKInputController {
     private var currentSegmentIndex = 0
     /// 非同期の文節処理が古い状態に適用されるのを防ぐ世代カウンタ
     private var segmentGeneration = 0
+    /// Space で文節変換に入ってから文節の区切りが届くまでの間、その文節変換の `segmentGeneration`。
+    /// 区切りが届いたら最初の文節の候補ウィンドウを開くので、その前の Space では開かない
+    /// （区切る前の読み全体の候補を開いてしまうため）。世代で持つので、確定などで区切りが届かずに
+    /// 終わっても、次の文節変換（AIの結果を含む）には効かない
+    private var segmentationPendingGeneration: Int?
+    private var segmentationPending: Bool { segmentationPendingGeneration == segmentGeneration }
     /// 候補ウィンドウ（`CandidateWindow`）に表示中の候補と、その並び・選択
     private var panelCandidates: [String] = []
     private var panelGrid: CandidateGrid?
@@ -1225,8 +1231,11 @@ final class IrohaInputController: IMKInputController {
         currentSegmentIndex = alphabetSegmentIndex ?? min(fixedSegments.count, segments.count - 1)
         refreshSegmentDisplay(client: client)
 
-        // 固定部分だけなら変換するものがない
-        guard !reading.isEmpty else { return }
+        // 固定部分だけなら変換するものがない。そのまま選んでいる文節の候補ウィンドウを開く
+        guard !reading.isEmpty else {
+            openSegmentCandidates(client: client)
+            return
+        }
 
         // 合成中の訂正（読みを直す本線）はここで終わり
         cancelTypoCorrection()
@@ -1236,6 +1245,7 @@ final class IrohaInputController: IMKInputController {
         startTypoCorrection(reading: reading)
 
         let context = conversionContext + fixedPrefix
+        segmentationPendingGeneration = generation
         conversionTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -1259,13 +1269,20 @@ final class IrohaInputController: IMKInputController {
                         BunsetsuSegment(reading: $0.reading, result: $0.conversion, candidates: nil)
                     }
                     self.currentSegmentIndex = min(fixedSegments.count, self.segments.count - 1)
+                    self.segmentationPendingGeneration = nil
                     if let client = self.client() {
                         self.refreshSegmentDisplay(client: client)
+                        // 1 回の Space で最初の文節の候補ウィンドウまで開く（2026-10-17。それまでは
+                        // 1 回目で文節に分けて表示し、2 回目で候補ウィンドウを開いていた）
+                        self.openSegmentCandidates(client: client)
                     }
                 }
             } catch is CancellationError {
             } catch {
-                await MainActor.run { self.reportConversionError(error, context: "文節分割エラー") }
+                await MainActor.run {
+                    if self.segmentationPendingGeneration == generation { self.segmentationPendingGeneration = nil }
+                    self.reportConversionError(error, context: "文節分割エラー")
+                }
             }
         }
     }
@@ -1277,7 +1294,7 @@ final class IrohaInputController: IMKInputController {
             if var grid = panelGrid {
                 grid.next()
                 applyPanelSelection(grid)
-            } else {
+            } else if !segmentationPending {
                 openSegmentCandidates(client: client)
             }
             return true
@@ -1295,14 +1312,13 @@ final class IrohaInputController: IMKInputController {
             }
             return true
         case kVK_Return, kVK_ANSI_KeypadEnter:
-            if panelVisible {
-                // 候補を採用して選択を続ける（結果はapplyPanelSelectionで反映済み）
-                hidePanel()
-                refreshSegmentDisplay(client: client)
-            } else {
-                commitSegments(client: client)
-                DeveloperOverlay.shared.hide()
-            }
+            // 候補ウィンドウが開いていても全文節を確定する（選んだ候補は applyPanelSelection で反映済み）。
+            // 1 回目の Space で候補ウィンドウが開くので、ここで閉じるだけにすると
+            // 「打つ → Space → Enter」で確定できなくなる（Mozc・ことえりと同じく Enter で確定する）。
+            // 文節を直し続けるときは ← / → で隣の文節へ移る
+            if panelVisible { hidePanel() }
+            commitSegments(client: client)
+            DeveloperOverlay.shared.hide()
             return true
         case kVK_Escape:
             if panelVisible {
