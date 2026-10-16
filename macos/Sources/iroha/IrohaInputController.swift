@@ -854,9 +854,12 @@ final class IrohaInputController: IMKInputController {
                 // アプリ側で改行される。左文脈はカーソルのある行だけなので、確定文字列の蓄積も捨てる
                 // （アプリから読めたときの `LeftContext.normalize` と同じ形にそろえる）
                 recentCommitted = ""
+                DeveloperOverlay.shared.hide()
                 return false
             }
             commitCurrent(client: client)
+            // デバッグ表示は Enter での確定で閉じる（確定した入力の数字を次の入力まで残さない）
+            DeveloperOverlay.shared.hide()
             return true
         case kVK_Delete:
             if canUndoTypoCorrection {
@@ -1294,6 +1297,7 @@ final class IrohaInputController: IMKInputController {
                 refreshSegmentDisplay(client: client)
             } else {
                 commitSegments(client: client)
+                DeveloperOverlay.shared.hide()
             }
             return true
         case kVK_Escape:
@@ -2507,6 +2511,8 @@ final class IrohaInputController: IMKInputController {
         } else {
             outcome = .none
         }
+        // 確定などで取り消された訂正は出さない（Enter で閉じたデバッグ表示が後から開き直さないように）
+        guard !Task.isCancelled else { return correction }
         await MainActor.run {
             DeveloperOverlay.shared.reportTypo(
                 trigger, total: total, timer: snapshot, readingLength: reading.count, outcome: outcome,
