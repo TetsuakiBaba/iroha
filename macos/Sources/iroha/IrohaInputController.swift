@@ -152,8 +152,11 @@ final class IrohaInputController: IMKInputController {
     }
     /// 小窓に出している「何をどう直したか」。出ている間は予測を出さない（同じ小窓を奪い合うため）
     private var typoFeedback: NSAttributedString?
-    /// 今の未確定文字列の長さ（UTF-16）。デバッグ表示の窓をその末尾に合わせる
+    /// 今の未確定文字列の長さ（UTF-16）。デバッグ表示の窓と鍵のマークをその末尾に合わせる
     private var developerOverlayMarkedLength = 0
+    /// 鍵のマーク（`PrivateModeIndicator`）を、キーの処理を終えたアプリのカーソル位置へ置き直す待ち
+    private var privateModeIndicatorTask: Task<Void, Never>?
+    private static let privateModeIndicatorDelay = Duration.milliseconds(80)
     /// 小窓を出しっぱなしにしないための保険
     private var typoFeedbackTask: Task<Void, Never>?
     /// 小窓のヒント。Backspace の記号（U+232B）はシステムフォントに入っている
@@ -331,6 +334,8 @@ final class IrohaInputController: IMKInputController {
         cancelPrediction()
         hideTypoFeedback()
         hideNotice()
+        developerOverlayMarkedLength = 0
+        if let client = sender as? IMKTextInput { followPrivateModeIndicator(client: client) }
         // 他アプリでのクリック・スクロール・アプリ切替の合図はアクティブなコントローラ（自分）が受ける
         PointerActivityMonitor.shared.handler = { [weak self] event in
             self?.dismissFloatingWindows(for: event)
@@ -362,6 +367,14 @@ final class IrohaInputController: IMKInputController {
     }
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+        let handled = handleKey(event, client: sender)
+        // アプリに渡したキー（矢印・英数モードの入力など）はアプリが処理してからカーソルが動くので、
+        // 鍵のマークは少し待ってから置き直す
+        schedulePrivateModeIndicatorFollow()
+        return handled
+    }
+
+    private func handleKey(_ event: NSEvent!, client sender: Any!) -> Bool {
         guard let event, event.type == .keyDown,
               let client = sender as? IMKTextInput else { return false }
 
@@ -483,6 +496,7 @@ final class IrohaInputController: IMKInputController {
     override func deactivateServer(_ sender: Any!) {
         commitCurrent(client: sender as? IMKTextInput)
         DeveloperOverlay.shared.hide()
+        PrivateModeIndicator.shared.hide()
         super.deactivateServer(sender)
     }
 
@@ -500,6 +514,8 @@ final class IrohaInputController: IMKInputController {
         cancelPrediction()
         hideTypoFeedback()
         hideNotice()
+        // カーソルが動いた先はアプリに聞くまで分からない。次のキーで出し直す
+        PrivateModeIndicator.shared.hide()
         if event != .scroll, panelVisible {
             hidePanel()
         }
@@ -638,6 +654,7 @@ final class IrohaInputController: IMKInputController {
     @objc private func togglePrivateMode(_ sender: Any?) {
         PrivateModeSettings.toggle()
         if PrivateModeSettings.isEnabled { cancelPrediction() }
+        if let client = client() { followPrivateModeIndicator(client: client) }
         let enabled = PrivateModeSettings.isEnabled
         let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
         let text = NSMutableAttributedString(
@@ -1871,6 +1888,7 @@ final class IrohaInputController: IMKInputController {
         )
         developerOverlayMarkedLength = attributed.length
         followDeveloperOverlay(client: client)
+        followPrivateModeIndicator(client: client)
     }
 
     /// 候補ウィンドウを今の文節の先頭の下に開く。選んでいるのは先頭（今の表示）
@@ -1985,6 +2003,7 @@ final class IrohaInputController: IMKInputController {
         }
         developerOverlayMarkedLength = display.utf16.count
         followDeveloperOverlay(client: client)
+        followPrivateModeIndicator(client: client)
     }
 
     /// 現在の表示内容（ライブ変換結果 or かな or 文節列）をそのまま確定する。
@@ -2241,6 +2260,7 @@ final class IrohaInputController: IMKInputController {
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )
         developerOverlayMarkedLength = 0
+        followPrivateModeIndicator(client: client)
         recentCommitted = String((recentCommitted + text).suffix(LeftContext.maxLength))
         if PrivateModeSettings.isEnabled { recentCommittedHasPrivateText = true }
         documentContext = nil
@@ -2510,6 +2530,60 @@ final class IrohaInputController: IMKInputController {
             return
         }
         DeveloperOverlay.shared.follow(caretRect(client: client, markedTextLength: developerOverlayMarkedLength))
+    }
+
+    // MARK: - プライベートモードの鍵のマーク
+
+    /// 鍵のマークをカーソルの右横に置き直す。モードが OFF・設定で出さない・カーソル位置が分からないときは閉じる。
+    /// モードの間だけアプリにカーソル位置を聞く（OFF なら問い合わせない）
+    private func followPrivateModeIndicator(client: IMKTextInput) {
+        guard PrivateModeSettings.isEnabled, PrivateModeSettings.showsCaretIndicator,
+              let rect = privateModeIndicatorAnchor(client: client)
+        else {
+            PrivateModeIndicator.shared.hide()
+            return
+        }
+        PrivateModeIndicator.shared.show(near: rect)
+    }
+
+    /// 鍵のマークを置くカーソルの位置（未確定文字列があればその末尾）。
+    ///
+    /// 縦の位置と行の高さは `caretRect`（候補ウィンドウや小窓と同じ問い合わせ）から取る。横の位置だけは
+    /// `firstRect(forCharacterRange:)` に文書上の位置を渡して取り直す。`caretRect` は「末尾の文字の矩形の右端」を
+    /// 使うが、テキストエディットでは文字の左端の幅0の矩形が返り、1文字手前になる（行の下に出す窓では
+    /// 目立たないが、行の右横に置く鍵のマークは最後の文字に重なった）。逆に `firstRect` は縦が1行ぶん上にずれた
+    /// （2026-10-16 テキストエディットで実測。横 507 → 518、縦 1414 → 1428、行の高さ 14）。
+    /// `firstRect` が返らない・別の行（折り返し）を指すときは `caretRect` のままにする
+    private func privateModeIndicatorAnchor(client: IMKTextInput) -> NSRect? {
+        guard let base = caretRect(client: client, markedTextLength: developerOverlayMarkedLength) else { return nil }
+        let marked = client.markedRange()
+        let location: Int
+        if marked.location != NSNotFound, marked.length > 0 {
+            location = marked.location + marked.length
+        } else {
+            let selection = client.selectedRange()
+            guard selection.location != NSNotFound else { return base }
+            location = selection.location
+        }
+        var actual = NSRange(location: NSNotFound, length: 0)
+        let rect = client.firstRect(forCharacterRange: NSRange(location: location, length: 0), actualRange: &actual)
+        guard rect.height > 0, rect.origin != .zero,
+              abs(rect.minY - base.minY) <= base.height + 1 else { return base }
+        return NSRect(x: rect.minX, y: base.minY, width: 0, height: base.height)
+    }
+
+    /// キーをアプリが処理し終えたころに鍵のマークを置き直す（続けて打っている間は最後の1回だけ）
+    private func schedulePrivateModeIndicatorFollow() {
+        privateModeIndicatorTask?.cancel()
+        guard PrivateModeSettings.isEnabled, PrivateModeSettings.showsCaretIndicator else {
+            PrivateModeIndicator.shared.hide()
+            return
+        }
+        privateModeIndicatorTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.privateModeIndicatorDelay)
+            guard !Task.isCancelled, let self, let client = self.client() else { return }
+            self.followPrivateModeIndicator(client: client)
+        }
     }
 }
 

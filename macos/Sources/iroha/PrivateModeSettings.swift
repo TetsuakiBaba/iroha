@@ -12,7 +12,7 @@ import Cocoa
 /// 自分で登録したものなので止めない。AI変換・選択テキストのAI処理も、ユーザが操作したときだけ動くので止めない。
 /// 切り替えは設定画面・入力メニュー・ショートカット（入力中かどうかによらず、iroha に届いたキーで見る）の3か所。
 /// ON/OFF は端末ごとの判断なので同期しない（別のMacで OFF にしたのが同期で届いて記録が再開しないように）。
-/// ショートカットは同期する
+/// ショートカットと鍵のマークの表示は同期する
 enum PrivateModeSettings {
 
     static let enabledKey = "privateMode"
@@ -22,6 +22,13 @@ enum PrivateModeSettings {
 
     static var isEnabled: Bool {
         UserDefaults.standard.bool(forKey: enabledKey)
+    }
+
+    /// モードの間、カーソルの右横に鍵のマークを出すか（`PrivateModeIndicator`、既定ON・同期する）
+    static let caretIndicatorKey = "privateModeCaretIndicator"
+
+    static var showsCaretIndicator: Bool {
+        UserDefaults.standard.object(forKey: caretIndicatorKey) as? Bool ?? true
     }
 
     static func toggle() {

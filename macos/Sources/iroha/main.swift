@@ -130,9 +130,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 選択テキストのAI処理（グローバルショートカット・マウス選択トリガー）。
         // 設定でOFF（既定）の間はホットキー登録も監視もしない
         SelectionActionCoordinator.shared.start()
-
-        // プライベートモードの間だけメニューバーに鍵のアイコンを出す
-        PrivateModeStatusItem.shared.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

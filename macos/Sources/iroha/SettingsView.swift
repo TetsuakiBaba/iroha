@@ -502,6 +502,7 @@ private struct DictionarySettingsTab: View {
     @AppStorage(ConversionLogSettings.scopeKey) private var conversionLogScope = ConversionLogSettings.Scope.all.rawValue
     @AppStorage(UserDictionarySync.autoSyncKey) private var syncSystemDictionary = false
     @AppStorage(PrivateModeSettings.enabledKey) private var privateMode = false
+    @AppStorage(PrivateModeSettings.caretIndicatorKey) private var privateModeCaretIndicator = true
     @ObservedObject private var uiState = SettingsUIState.shared
 
     @State private var userDictionaryCount = UserDictionaryStore.shared.entries.count
@@ -523,7 +524,13 @@ private struct DictionarySettingsTab: View {
                         + "ユーザ辞書と変換ルールは自分で登録したものなので、そのまま使います。"
                         + "AI変換・選択テキストのAI処理は、操作したときにだけ文章をAIサービスに送るもので、止めません。"
                         + "入力メニュー（メニューバーの入力ソースのアイコン）とショートカットでも切り替えられます。"
+                        + "切り替えたときは、ON/OFFのどちらになったかをカーソルの下に表示します。"
                         + "ON/OFFは他のMacには同期しません。")
+                HelpToggle(
+                    title: "カーソルの横に鍵マークを出す", isOn: $privateModeCaretIndicator,
+                    help: "プライベートモードの間、入力しているカーソルの右横に鍵のマークを出し続けます。"
+                        + "クリックやスクロール、アプリの切り替えでいったん消え、次にキーを押すと出ます。"
+                        + "カーソルの位置を教えてくれないアプリでは出ません。")
                 PrivateModeShortcutField()
             }
 

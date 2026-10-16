@@ -26,7 +26,7 @@ final class PreferencesSync {
             DocumentContextSettings.enabledKey,
             PredictionSettings.predictiveEnabledKey,
             LearningSettings.enabledKey, UserDictionarySync.autoSyncKey,
-            PrivateModeSettings.shortcutKey,
+            PrivateModeSettings.shortcutKey, PrivateModeSettings.caretIndicatorKey,
             TypoNormalizerSettings.enabledKey, TypoNormalizerSettings.thresholdKey,
             TypoNormalizerSettings.delayMillisecondsKey, TypoNormalizerSettings.minimumLengthKey,
             SelectionSettings.enabledKey, SelectionSettings.triggerModeKey,
