@@ -9,11 +9,17 @@ import InputMethodKit
 /// 経路は 2 つ:
 /// - IMK: iroha が左文脈を読むのと同じ `IMKTextInput`。カーソルの前と後を実際に読んで数える
 /// - AX: アクセシビリティ（要権限）。フォーカスのある要素の文字数とカーソル位置
-/// どちらも同期の IPC なので、デバッグ表示が ON のときに入力の始めで 1 回だけ呼ぶ
+/// どちらも同期の IPC なので、デバッグ表示が ON のときに入力の始めで 1 回だけ呼ぶ。
+/// IMK はメインスレッドで呼ぶので 1 文字目の表示を待たせる。AX は裏のスレッドから呼べる
 enum FocusedTextProbe {
 
-    /// 片側で読む上限（UTF-16 単位）。長い文書で同期の IPC が重くならないように
-    static let readLimit = 100_000
+    /// IMK でテキストを読むのに使ってよい時間。最初の 1 回（片側 `firstChunk`）は必ず読み、
+    /// そこまでで超えていればそれ以上は読まない（2026-10-17。片側 10 万文字まで読んでいたら
+    /// 1 文字目の表示が目に見えて遅れた）
+    static let timeBudget: Duration = .microseconds(30)
+    /// 最初に読む量と、時間が残っているときに次に読む量の倍率（UTF-16 単位）
+    static let firstChunk = 1_024
+    static let chunkGrowth = 8
 
     struct IMKResult: Equatable {
         /// アプリが申告する文書の長さ（UTF-16）。返さなければ nil
@@ -21,7 +27,7 @@ enum FocusedTextProbe {
         /// カーソルの前・後で実際に読めた文字数。読めなければ nil
         var before: Int?
         var after: Int?
-        /// 上限で読むのをやめたか
+        /// 時間切れで読むのをやめたか（読めた数より多くある）
         var beforeLimited = false
         var afterLimited = false
     }
@@ -35,6 +41,8 @@ enum FocusedTextProbe {
     }
 
     static func probeIMK(_ client: IMKTextInput) -> IMKResult {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeBudget
         var result = IMKResult()
         let length = client.length()
         if length > 0, length != NSNotFound { result.reportedLength = length }
@@ -45,28 +53,60 @@ enum FocusedTextProbe {
         var end = selection.location
         let marked = client.markedRange()
         if marked.location != NSNotFound, marked.length > 0, marked.location < end { end = marked.location }
-        if end == 0 {
-            result.before = 0
-        } else {
-            let start = max(0, end - readLimit)
-            result.beforeLimited = start > 0
-            result.before = client.attributedSubstring(from: NSRange(location: start, length: end - start))?
-                .string.count
-        }
-
         // 後: 選択範囲の後ろから文末まで。文書の長さを申告しないアプリでは文末が分からないので読まない
-        if let length = result.reportedLength {
-            let afterStart = selection.location + selection.length
-            if afterStart >= length {
-                result.after = 0
+        let afterStart = selection.location + selection.length
+        let afterEnd = result.reportedLength
+
+        // 両側とも最初の 1 回は読む。そのあとは時間が残っている間だけ、量を増やしながら続きを読む
+        var before = Side(lower: 0, upper: end, readsBackward: true)
+        var after = afterEnd.map { Side(lower: afterStart, upper: max(afterStart, $0), readsBackward: false) }
+        before.readNext(client)
+        after?.readNext(client)
+        while clock.now < deadline, before.canContinue || after?.canContinue == true {
+            if before.canContinue {
+                before.readNext(client)
             } else {
-                let count = min(length - afterStart, readLimit)
-                result.afterLimited = count < length - afterStart
-                result.after = client.attributedSubstring(from: NSRange(location: afterStart, length: count))?
-                    .string.count
+                after?.readNext(client)
             }
         }
+        result.before = before.count
+        result.beforeLimited = before.canContinue
+        result.after = after?.count
+        result.afterLimited = after?.canContinue ?? false
         return result
+    }
+
+    /// カーソルの片側。`readsBackward` ならカーソル（`upper`）から文頭へ、でなければカーソル（`lower`）から文末へ読む
+    private struct Side {
+        var lower: Int
+        var upper: Int
+        let readsBackward: Bool
+        /// 読めた文字数。アプリがテキストを返さなければ nil
+        var count: Int? = 0
+        private var chunk = FocusedTextProbe.firstChunk
+
+        init(lower: Int, upper: Int, readsBackward: Bool) {
+            self.lower = lower
+            self.upper = upper
+            self.readsBackward = readsBackward
+        }
+
+        var canContinue: Bool { count != nil && lower < upper }
+
+        mutating func readNext(_ client: IMKTextInput) {
+            guard canContinue else { return }
+            let length = min(chunk, upper - lower)
+            let range = readsBackward
+                ? NSRange(location: upper - length, length: length)
+                : NSRange(location: lower, length: length)
+            guard let text = client.attributedSubstring(from: range)?.string else {
+                count = nil
+                return
+            }
+            count = (count ?? 0) + text.count
+            if readsBackward { upper -= length } else { lower += length }
+            chunk *= FocusedTextProbe.chunkGrowth
+        }
     }
 
     static func probeAX() -> AXResult {
@@ -81,14 +121,8 @@ enum FocusedTextProbe {
         let element = unsafeBitCast(focused, to: AXUIElement.self)
         AXUIElementSetMessagingTimeout(element, 0.2)
 
-        let total: Int
-        if let count = attribute(kAXNumberOfCharactersAttribute, of: element) as? Int {
-            total = count
-        } else if let value = attribute(kAXValueAttribute, of: element) as? String {
-            total = value.utf16.count
-        } else {
-            return .noText
-        }
+        // 文字数だけを聞く。テキストそのもの（kAXValue）は長い文書だと重いので取らない
+        guard let total = attribute(kAXNumberOfCharactersAttribute, of: element) as? Int else { return .noText }
         var cursor: Int?
         if let value = attribute(kAXSelectedTextRangeAttribute, of: element),
            CFGetTypeID(value) == AXValueGetTypeID() {

@@ -2305,6 +2305,15 @@ final class IrohaInputController: IMKInputController {
     /// （新しい入力の数字と並べないため）
     private func captureDocumentContextIfStarting(client: IMKTextInput) {
         guard !isComposing else { return }
+        // デバッグ表示が ON のときは、1 文字目の表示を待たせている処理を工程ごとに測って出す
+        let clock = ContinuousClock()
+        var lapStart = clock.now
+        var laps: [(String, Duration)] = []
+        func lap(_ name: String) {
+            let now = clock.now
+            laps.append((name, now - lapStart))
+            lapStart = now
+        }
         DeveloperOverlay.shared.hide()
         if recentCommittedHasPrivateText, !PrivateModeSettings.isEnabled {
             recentCommitted = ""
@@ -2312,12 +2321,30 @@ final class IrohaInputController: IMKInputController {
         }
         let result = DocumentContextSettings.inspect(from: client)
         documentContext = result.context
+        lap("左文脈")
         if DeveloperOverlaySettings.isEnabled {
+            let caret = caretRect(client: client, markedTextLength: 0)
+            lap("カーソル位置")
             DeveloperOverlay.shared.reportContext(
-                result, fallback: documentContext == nil ? recentCommitted : nil,
-                near: caretRect(client: client, markedTextLength: 0))
-            DeveloperOverlay.shared.reportElementText(
-                imk: FocusedTextProbe.probeIMK(client), ax: FocusedTextProbe.probeAX())
+                result, fallback: documentContext == nil ? recentCommitted : nil, near: caret)
+            lap("表示")
+            let imk = FocusedTextProbe.probeIMK(client)
+            lap("要素の文字(IMK)")
+            let measured = laps
+            DeveloperOverlay.shared.reportElementText(imk: imk, ax: nil, laps: measured)
+            // アクセシビリティは IMK と違ってメインスレッドでなくても呼べるので、1 文字目を待たせないよう裏で聞く
+            // （プロセスで最初の問い合わせは VS Code で 30〜45ms かかった。2026-10-17 実測）。
+            // 届くまでに表示が閉じられていたら（次の入力の表示になっていたら）出さない
+            let session = DeveloperOverlay.shared.session
+            Task.detached(priority: .userInitiated) {
+                let started = ContinuousClock.now
+                let ax = FocusedTextProbe.probeAX()
+                let elapsed = ContinuousClock.now - started
+                await MainActor.run {
+                    guard DeveloperOverlay.shared.session == session else { return }
+                    DeveloperOverlay.shared.reportElementText(imk: imk, ax: (ax, elapsed), laps: measured)
+                }
+            }
         }
     }
 
