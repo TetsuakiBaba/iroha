@@ -65,8 +65,6 @@ final class DeveloperOverlay {
     /// 前回かな漢字変換の行を出してから、結果を使わずに打ち切った変換の数
     private var cancelledConversions = 0
     private var lastCaretRect: NSRect?
-    /// 閉じるたびに進める番号。裏で取った結果が、閉じたあと（次の入力の表示）に届いたら捨てるのに使う
-    private(set) var session = 0
 
     private init() {
         panel = NSPanel(
@@ -129,32 +127,15 @@ final class DeveloperOverlay {
     }
 
     /// カーソルのある要素から取れる文字数（`FocusedTextProbe`）。中身は出さない。
-    /// `ax` はアクセシビリティの結果とかかった時間（裏で聞くので、届くまでは nil）。
     /// `laps` は入力の始めにメインスレッドで行った処理ごとの時間（1 文字目の表示はこれを待つ）
-    func reportElementText(
-        imk: FocusedTextProbe.IMKResult, ax: (FocusedTextProbe.AXResult, Duration)?, laps: [(String, Duration)]
-    ) {
+    func reportElementText(_ imk: FocusedTextProbe.IMKResult, laps: [(String, Duration)]) {
         func count(_ value: Int?, limited: Bool) -> String {
             guard let value else { return "読めない" }
             return value.formatted() + (limited ? "以上" : "")
         }
-        var line = "要素の文字  IMK: 前 \(count(imk.before, limited: imk.beforeLimited))"
+        var line = "要素の文字  前 \(count(imk.before, limited: imk.beforeLimited))"
             + " / 後 \(imk.reportedLength == nil ? "不明（長さを返さない）" : count(imk.after, limited: imk.afterLimited))"
         if let length = imk.reportedLength { line += "（申告 \(length.formatted())）" }
-        line += "  AX: "
-        if let (result, elapsed) = ax {
-            switch result {
-            case .notTrusted: line += "アクセシビリティ未許可"
-            case .noElement: line += "要素を取れない"
-            case .noText: line += "文字数を返さない"
-            case .counted(let total, let cursor):
-                line += "\(total.formatted())文字"
-                if let cursor { line += "（カーソル位置 \(cursor.formatted())）" }
-            }
-            line += " \(Self.formatFine(elapsed))（裏で取得）"
-        } else {
-            line += "取得中"
-        }
         let total = laps.reduce(Duration.zero) { $0 + $1.1 }
         line += "\n入力の始めの処理  計 \(Self.formatFine(total))（"
             + laps.map { "\($0.0) \(Self.formatFine($0.1))" }.joined(separator: "・") + "）"
@@ -252,7 +233,6 @@ final class DeveloperOverlay {
     }
 
     func hide() {
-        session += 1
         contextLine = nil
         elementLine = nil
         conversionLine = nil

@@ -2329,22 +2329,8 @@ final class IrohaInputController: IMKInputController {
                 result, fallback: documentContext == nil ? recentCommitted : nil, near: caret)
             lap("表示")
             let imk = FocusedTextProbe.probeIMK(client)
-            lap("要素の文字(IMK)")
-            let measured = laps
-            DeveloperOverlay.shared.reportElementText(imk: imk, ax: nil, laps: measured)
-            // アクセシビリティは IMK と違ってメインスレッドでなくても呼べるので、1 文字目を待たせないよう裏で聞く
-            // （プロセスで最初の問い合わせは VS Code で 30〜45ms かかった。2026-10-17 実測）。
-            // 届くまでに表示が閉じられていたら（次の入力の表示になっていたら）出さない
-            let session = DeveloperOverlay.shared.session
-            Task.detached(priority: .userInitiated) {
-                let started = ContinuousClock.now
-                let ax = FocusedTextProbe.probeAX()
-                let elapsed = ContinuousClock.now - started
-                await MainActor.run {
-                    guard DeveloperOverlay.shared.session == session else { return }
-                    DeveloperOverlay.shared.reportElementText(imk: imk, ax: (ax, elapsed), laps: measured)
-                }
-            }
+            lap("要素の文字")
+            DeveloperOverlay.shared.reportElementText(imk, laps: laps)
         }
     }
 

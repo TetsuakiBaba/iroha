@@ -1,4 +1,3 @@
-import ApplicationServices
 import Cocoa
 import InputMethodKit
 
@@ -6,17 +5,16 @@ import InputMethodKit
 ///
 /// 左文脈はカーソル手前の 1 行（最大 40 文字）しか使わないが、アプリによって返せる範囲が違う
 /// （全文を返すもの・カーソル付近だけのもの・何も返さないもの）。中身は出さず文字数だけを見る。
-/// 経路は 2 つ:
-/// - IMK: iroha が左文脈を読むのと同じ `IMKTextInput`。カーソルの前と後を実際に読んで数える
-/// - AX: アクセシビリティ（要権限）。フォーカスのある要素の文字数とカーソル位置
-/// どちらも同期の IPC なので、デバッグ表示が ON のときに入力の始めで 1 回だけ呼ぶ。
-/// IMK はメインスレッドで呼ぶので 1 文字目の表示を待たせる。AX は裏のスレッドから呼べる
+/// iroha が左文脈を読むのと同じ `IMKTextInput` で、カーソルの前と後を実際に読んで数える。
+/// 同期の IPC で 1 文字目の表示を待たせるので、デバッグ表示が ON のときに入力の始めで 1 回だけ呼ぶ。
+/// アクセシビリティ（AX）では数えない（2026-10-17 に取り下げ）。VS Code などの Chromium 系のアプリは、
+/// AX の問い合わせが来て初めて画面の部品の木を作るので、最初の 1 回が 30〜45ms かかり、その後もアプリが
+/// 木を保ち続ける。AX を使うのは選択テキストの AI 編集だけにする
 enum FocusedTextProbe {
 
-    /// IMK でテキストを読むのに使ってよい時間。最初の 1 回（片側 `firstChunk`）は必ず読み、
-    /// そこまでで超えていればそれ以上は読まない（2026-10-17。片側 10 万文字まで読んでいたら
-    /// 1 文字目の表示が目に見えて遅れた）
-    static let timeBudget: Duration = .microseconds(30)
+    /// テキストを読むのに使ってよい時間。最初の 1 回（片側 `firstChunk`）は必ず読み、
+    /// そこまでで超えていればそれ以上は読まない（2026-10-17。それまでは片側 10 万文字まで読んでいた）
+    static let timeBudget: Duration = .milliseconds(30)
     /// 最初に読む量と、時間が残っているときに次に読む量の倍率（UTF-16 単位）
     static let firstChunk = 1_024
     static let chunkGrowth = 8
@@ -30,14 +28,6 @@ enum FocusedTextProbe {
         /// 時間切れで読むのをやめたか（読めた数より多くある）
         var beforeLimited = false
         var afterLimited = false
-    }
-
-    enum AXResult: Equatable {
-        case notTrusted
-        case noElement
-        case noText
-        /// 文字数（UTF-16。アプリの申告）と、カーソル位置（返さなければ nil）
-        case counted(total: Int, cursor: Int?)
     }
 
     static func probeIMK(_ client: IMKTextInput) -> IMKResult {
@@ -107,36 +97,5 @@ enum FocusedTextProbe {
             if readsBackward { upper -= length } else { lower += length }
             chunk *= FocusedTextProbe.chunkGrowth
         }
-    }
-
-    static func probeAX() -> AXResult {
-        guard AXIsProcessTrusted() else { return .notTrusted }
-        // 応答しないアプリで入力が止まらないように、要素ごとに待ち時間を短くする
-        // （システム全体の要素に設定すると、選択テキストの AI 編集など iroha の他の AX 呼び出しにも効いてしまう）
-        guard let application = NSWorkspace.shared.frontmostApplication else { return .noElement }
-        let appElement = AXUIElementCreateApplication(application.processIdentifier)
-        AXUIElementSetMessagingTimeout(appElement, 0.2)
-        guard let focused = attribute(kAXFocusedUIElementAttribute, of: appElement),
-              CFGetTypeID(focused) == AXUIElementGetTypeID() else { return .noElement }
-        let element = unsafeBitCast(focused, to: AXUIElement.self)
-        AXUIElementSetMessagingTimeout(element, 0.2)
-
-        // 文字数だけを聞く。テキストそのもの（kAXValue）は長い文書だと重いので取らない
-        guard let total = attribute(kAXNumberOfCharactersAttribute, of: element) as? Int else { return .noText }
-        var cursor: Int?
-        if let value = attribute(kAXSelectedTextRangeAttribute, of: element),
-           CFGetTypeID(value) == AXValueGetTypeID() {
-            var range = CFRange()
-            if AXValueGetValue(unsafeBitCast(value, to: AXValue.self), .cfRange, &range) {
-                cursor = range.location
-            }
-        }
-        return .counted(total: total, cursor: cursor)
-    }
-
-    private static func attribute(_ name: String, of element: AXUIElement) -> CFTypeRef? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-        return value
     }
 }
