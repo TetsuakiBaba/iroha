@@ -11,6 +11,13 @@ enum DeveloperOverlaySettings {
         DeveloperModeSettings.isEnabled
             && UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
     }
+
+    /// デバッグ表示に本体の加速度センサの揺れをグラフで出す（`KeystrokeAccelerometer`。試験的・既定OFF・同期しない）
+    static let accelerometerKey = "developerOverlayAccelerometer"
+
+    static var showsAccelerometer: Bool {
+        isEnabled && UserDefaults.standard.object(forKey: accelerometerKey) as? Bool ?? false
+    }
 }
 
 /// 推論のたびに、かかった時間をカーソルの右下に小さく出す窓（デバッグ表示）。
@@ -24,7 +31,8 @@ enum DeveloperOverlaySettings {
 /// 行は「左文脈」「要素の文字」「かな漢字変換」「打ち間違いの訂正」の4本。左文脈は入力を始めたときに
 /// アプリから読めたか（読めなければその理由と、代わりに使う文字列）を出す。要素の文字は、
 /// カーソルのある要素からテキストをどれだけ取れるか（文字数だけ。`FocusedTextProbe`）。
-/// 変換と訂正はそれぞれ最後の1回を出す。
+/// 変換と訂正はそれぞれ最後の1回を出す。設定で ON にしていれば、その下に加速度センサの揺れのグラフ
+/// （`AccelerometerGraphView`）を出し、窓が出ている間は描き直し続ける。
 /// 時間では閉じない（読んでいる途中で消えないように）。中身は次の推論で入れ替わり、
 /// Enter で確定したとき・次の入力を始めたとき・他の場所をクリックしたとき・アプリを切り替えたときに閉じる
 /// （閉じると中身も捨てるので、1枚に出るのは常に同じ入力についての数字になる）。
@@ -65,6 +73,9 @@ final class DeveloperOverlay {
     /// 前回かな漢字変換の行を出してから、結果を使わずに打ち切った変換の数
     private var cancelledConversions = 0
     private var lastCaretRect: NSRect?
+    private let graph = AccelerometerGraphView(frame: NSRect(origin: .zero, size: AccelerometerGraphView.size))
+    private let graphGap: CGFloat = 4
+    private var graphTimer: Timer?
 
     private init() {
         panel = NSPanel(
@@ -97,6 +108,8 @@ final class DeveloperOverlay {
         label.textColor = .secondaryLabelColor
         label.maximumNumberOfLines = 0
         background.addSubview(label)
+        graph.isHidden = true
+        background.addSubview(graph)
     }
 
     // MARK: - 行の組み立て
@@ -238,6 +251,8 @@ final class DeveloperOverlay {
         conversionLine = nil
         typoLine = nil
         cancelledConversions = 0
+        graphTimer?.invalidate()
+        graphTimer = nil
         guard panel.isVisible else { return }
         panel.orderOut(nil)
     }
@@ -248,15 +263,27 @@ final class DeveloperOverlay {
         guard lastCaretRect != nil else { return }
         layout()
         panel.orderFrontRegardless()
+        if DeveloperOverlaySettings.showsAccelerometer, graphTimer == nil {
+            let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+                self?.graph.needsDisplay = true
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            graphTimer = timer
+        }
     }
 
     private func layout() {
         guard let caretRect = lastCaretRect else { return }
         label.stringValue = [contextLine, elementLine, conversionLine, typoLine].compactMap { $0 }.joined(separator: "\n")
         label.sizeToFit()
-        let width = padding.left + label.frame.width + padding.right
-        let height = padding.top + label.frame.height + padding.bottom
-        label.frame.origin = NSPoint(x: padding.left, y: padding.bottom)
+        let showsGraph = DeveloperOverlaySettings.showsAccelerometer
+        graph.isHidden = !showsGraph
+        let graphHeight = showsGraph ? AccelerometerGraphView.size.height + graphGap : 0
+        let width = padding.left + max(label.frame.width, showsGraph ? AccelerometerGraphView.size.width : 0)
+            + padding.right
+        let height = padding.top + label.frame.height + graphHeight + padding.bottom
+        graph.frame.origin = NSPoint(x: padding.left, y: padding.bottom)
+        label.frame.origin = NSPoint(x: padding.left, y: padding.bottom + graphHeight)
 
         // カーソルの右下。`CaretPanel` と重なるならその下へ、画面の下に収まらなければ行の上へ
         // （行の上で `CaretPanel` と重なるならその上へ）

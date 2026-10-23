@@ -389,6 +389,8 @@ final class IrohaInputController: IMKInputController {
               let client = sender as? IMKTextInput else { return false }
 
         lastKeyEventTime = .now
+        // 加速度センサのグラフ（開発者モード）。設定が OFF になっていればここでセンサを止める
+        KeystrokeAccelerometer.shared.noteKeyDown(event)
         // 句読点スタイルの知らせは次のキーで閉じる（この後の Control+. なら出し直す）
         hideNotice()
 

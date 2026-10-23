@@ -1931,6 +1931,7 @@ private struct DataDirectorySection: View {
 private struct AboutSettingsTab: View {
     @AppStorage("autoUpdateCheck") private var autoUpdateCheck = true
     @AppStorage(DeveloperOverlaySettings.enabledKey) private var developerOverlay = false
+    @AppStorage(DeveloperOverlaySettings.accelerometerKey) private var developerOverlayAccelerometer = false
     @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
     @State private var showingUninstallConfirm = false
 
@@ -2007,7 +2008,7 @@ private struct AboutSettingsTab: View {
                         + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ、"
                         + "辞書・学習: 記号・顔文字・絵文字を候補に出す、"
                         + "選択テキスト: 除外するアプリ、モデル: 推論エンジン・モデルファイルの指定・irohaを再起動・"
-                        + "自分の入力で追加学習、情報: 推論の時間の表示）。"
+                        + "自分の入力で追加学習、情報: 推論の時間の表示・加速度センサのグラフ）。"
                         + "OFFにしても項目が見えなくなるだけで、変えた設定はそのまま効きます"
                         + "（推論の時間の表示だけは止まります）。この設定は他のMacと同期しません。")
                 if developerMode {
@@ -2021,6 +2022,21 @@ private struct AboutSettingsTab: View {
                             + "「全体」は変換を頼んでから結果が返るまで、「NN」はそのうちニューラルネットの計算だけの時間です"
                             + "（差は辞書・学習の処理と、先に走っている推論の待ち時間）。"
                             + "「取り消し」は、前の表示のあと次の入力で打ち切った変換の数です。この設定は他のMacと同期しません。")
+                    HelpToggle(
+                        title: "上の表示に、本体の加速度センサの揺れをグラフで出す（試験的）",
+                        isOn: $developerOverlayAccelerometer,
+                        help: "打鍵の強さを見るための試験的な表示です。MacBook（M2 以降）に内蔵されている加速度センサの値を"
+                            + "直近2秒ぶん、推論の時間の表示の下にグラフで出します。縦軸は重力と本体の傾きを引いた揺れの大きさ（mg）で、"
+                            + "キーを押した時刻に縦線を引き、その打鍵の揺れの山の値を添えます。"
+                            + "同じ強さで打っても、センサからの距離でキーごとに値が変わるので、比べられるのは同じキーどうしです。"
+                            + "外付けのキーボードで打ったキーは本体が揺れないので出ません。"
+                            + "センサは Apple が公開していない方法で読むので、macOS の更新で使えなくなることがあります。"
+                            + "ONの間はセンサを動かし続けます。この設定は他のMacと同期しません。",
+                        isDisabled: !developerOverlay)
+                    if developerOverlayAccelerometer, !KeystrokeAccelerometer.isSensorPresent {
+                        Text("このMacには加速度センサがないので、グラフは出ません（M2 以降の MacBook のみ）。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
 
