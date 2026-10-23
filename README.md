@@ -374,8 +374,8 @@ macOS版のSwiftパッケージは `macos/` 配下にある（Windows版は今�
 
 ```sh
 cd macos
-swift test                                 # 単体テスト（ローマ字変換など）
-swift build && .build/debug/iroha-cli repl  # CLIで変換を試す（レイテンシ表示付き）
+swift test --build-system native            # 単体テスト（ローマ字変換など）
+swift build --build-system native && .build/debug/iroha-cli repl  # CLIで変換を試す（レイテンシ表示付き）
 .build/debug/iroha-cli convert --n 5 "きしゃ"          # n-best候補
 .build/debug/iroha-cli convert --context "天気予報によると" "きしょう"  # 文脈条件付け
 log stream --predicate 'process == "iroha"' --style compact  # IMEのログ

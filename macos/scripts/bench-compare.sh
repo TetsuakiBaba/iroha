@@ -65,7 +65,7 @@ if [ ! -f ../testdata/ajimee/evaluation_items.json ]; then
 fi
 
 echo "==> iroha-cli をビルド" >&2
-swift build -c release --product iroha-cli >&2
+swift build --build-system native -c release --product iroha-cli >&2
 CLI=.build/release/iroha-cli
 
 RESULTS=$(mktemp -d)

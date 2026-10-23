@@ -6,9 +6,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "==> ビルド"
-swift build -c release --product iroha
+# ビルドの仕組みは native を指定する。Xcode 27 の Swift は既定が swiftbuild で、mlx-swift の .metal を
+# 自分でコンパイルしようとして失敗する（2026-10-24 MacBook で確認）。ビルド先のフォルダも仕組みで変わり、
+# make-bundle.sh・build-mlx-metallib.sh は native の場所（.build/<config>/）を前提にしている
+swift build --build-system native -c release --product iroha
 # 追加学習ヘルパー（MLX）。Metal カーネルは swift build では作れないので専用スクリプトで生成する
-swift build -c release --product iroha-train
+swift build --build-system native -c release --product iroha-train
 ./scripts/build-mlx-metallib.sh release
 ./scripts/fetch-dictionary.sh
 ./scripts/fetch-symbols.sh

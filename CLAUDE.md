@@ -25,7 +25,8 @@
 ## 日常の開発コマンド
 
 ```sh
-cd macos && swift build && swift test   # ビルドと単体テスト（必ず macos/ から実行。
+cd macos && swift build --build-system native && swift test --build-system native
+                                        # ビルドと単体テスト（必ず macos/ から実行。
                                         # Package.swiftのvendor/dist参照がcwd相対のため）
 ./macos/scripts/install.sh       # ローカルの ~/Library/Input Methods/ へインストール（ad-hoc署名）
 /usr/bin/log stream --predicate 'process == "iroha"' --style compact  # IMEログ
@@ -34,6 +35,11 @@ cd macos && swift build && swift test   # ビルドと単体テスト（必ず m
 "$HOME/Library/Input Methods/iroha.app/Contents/MacOS/iroha" --settings [input|dictionary|selection|model|about]
 ```
 
+- `swift build` / `swift test` には `--build-system native` を付ける。Xcode 27 の Swift は既定が新しい仕組み
+  （swiftbuild）で、mlx-swift の .metal のコンパイルで失敗する。ビルド先も変わり、スクリプトは native の
+  `.build/<config>/` を前提にしている（2026-10-24。native は廃止予定と警告が出る）。
+  `macos/.build` は Dropbox の同期から外してある（`xattr -w com.dropbox.ignored 1 macos/.build`、Mac ごとに要る。
+  版の違う Xcode の 2 台が同じ `.build` を書き合っていた）
 - `log` はzshの組み込みと衝突するため必ず `/usr/bin/log` をフルパスで呼ぶ
 - NSLogはこの環境ではユニファイドログに残らない。IMEの実行時調査は
   /tmpへのファイル直書きヘルパーを一時的に仕込む（調査後に削除）

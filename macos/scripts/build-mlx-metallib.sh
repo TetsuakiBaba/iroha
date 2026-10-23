@@ -21,7 +21,7 @@ cd "$(dirname "$0")/.."
 CONFIG="${1:-release}"
 CHECKOUT=".build/checkouts/mlx-swift"
 GEN="$CHECKOUT/Source/Cmlx/mlx-generated/metal"
-BIN_DIR=$(swift build -c "$CONFIG" --show-bin-path)
+BIN_DIR=$(swift build --build-system native -c "$CONFIG" --show-bin-path)
 BUNDLE="$BIN_DIR/mlx-swift_Cmlx.bundle"
 OUT="$BUNDLE/default.metallib"
 

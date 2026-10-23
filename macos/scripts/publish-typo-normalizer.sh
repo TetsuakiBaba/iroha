@@ -44,7 +44,7 @@ DEST="dist/typo-normalizer/$MODEL_ID"
 CLI="macos/.build/release/iroha-cli"
 if [ ! -x "$CLI" ]; then
   echo "==> iroha-cli をビルド（float16 変換と照合に使う）"
-  (cd macos && swift build -c release --product iroha-cli)
+  (cd macos && swift build --build-system native -c release --product iroha-cli)
 fi
 
 rm -rf "$DEST"

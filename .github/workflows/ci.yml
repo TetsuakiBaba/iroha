@@ -40,11 +40,11 @@ jobs:
 
       - name: Build
         working-directory: macos
-        run: swift build
+        run: swift build --build-system native
 
       - name: Test
         working-directory: macos
-        run: swift test
+        run: swift test --build-system native
 
   build-and-test-windows:
     runs-on: windows-latest

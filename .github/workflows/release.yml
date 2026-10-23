@@ -51,8 +51,8 @@ jobs:
       - name: Build
         working-directory: macos
         run: |
-          swift build -c release --product iroha
-          swift build -c release --product iroha-train
+          swift build --build-system native -c release --product iroha
+          swift build --build-system native -c release --product iroha-train
           ./scripts/build-mlx-metallib.sh release
           test -f .build/release/mlx-swift_Cmlx.bundle/default.metallib
 
