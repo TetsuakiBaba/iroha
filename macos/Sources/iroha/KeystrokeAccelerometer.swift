@@ -25,11 +25,6 @@ final class KeystrokeAccelerometer: @unchecked Sendable {
         var magnitude: Float
     }
 
-    struct Key {
-        var t: Double
-        var label: String
-    }
-
     enum State: Equatable {
         case stopped
         case running
@@ -40,8 +35,8 @@ final class KeystrokeAccelerometer: @unchecked Sendable {
     // MARK: - メインスレッドで触る状態
 
     private(set) var state: State = .stopped
-    /// 直近に押したキー（グラフに縦線を引く）
-    private(set) var keys: [Key] = []
+    /// 直近にキーを押した時刻（グラフに縦線を引く）
+    private(set) var keyTimes: [Double] = []
 
     private var device: IOHIDDevice?
     private var drivers: [io_service_t] = []
@@ -88,12 +83,12 @@ final class KeystrokeAccelerometer: @unchecked Sendable {
         }
     }
 
-    /// センサがこの Mac にあるか（設定画面の表示用。権限は要らない）
-    static var isSensorPresent: Bool {
+    /// センサがこの Mac にあるか（権限は要らない）。機械に付いているものなので起動中は変わらず、最初に1回だけ調べる
+    static let isSensorPresent: Bool = {
         let devices = accelerometerDevices()
         devices.forEach { IOObjectRelease($0) }
         return !devices.isEmpty
-    }
+    }()
 
     private func start() {
         let devices = Self.accelerometerDevices()
@@ -160,7 +155,7 @@ final class KeystrokeAccelerometer: @unchecked Sendable {
         device = nil
         sensorRunLoop = nil
         restoreDrivers()
-        keys = []
+        keyTimes = []
         state = .stopped
     }
 
@@ -182,28 +177,8 @@ final class KeystrokeAccelerometer: @unchecked Sendable {
         // NSEvent の時刻は起動からの秒で、センサの時刻（mach_absolute_time）と同じ時計。違えば今の時刻にする
         let now = machSeconds(mach_absolute_time())
         let t = abs(event.timestamp - now) < 1 ? event.timestamp : now
-        keys.append(Key(t: t, label: Self.label(for: event)))
-        keys.removeAll { $0.t < now - Self.keyRetention }
-    }
-
-    private static func label(for event: NSEvent) -> String {
-        switch Int(event.keyCode) {
-        case 36, 76: return "⏎"
-        case 48: return "⇥"
-        case 49: return "␣"
-        case 51: return "⌫"
-        case 53: return "esc"
-        case 102: return "英数"
-        case 104: return "かな"
-        case 123: return "←"
-        case 124: return "→"
-        case 125: return "↓"
-        case 126: return "↑"
-        default:
-            let text = event.charactersIgnoringModifiers ?? ""
-            return text.unicodeScalars.allSatisfy({ $0.value >= 0x21 && $0.value != 0x7F }) && !text.isEmpty
-                ? text : "#\(event.keyCode)"
-        }
+        keyTimes.append(t)
+        keyTimes.removeAll { $0 < now - Self.keyRetention }
     }
 
     // MARK: - サンプル
@@ -316,17 +291,14 @@ private let accelerometerReportCallback: IOHIDReportWithTimeStampCallback = {
         .append(t: machSeconds(timestamp), x: axis(6), y: axis(10), z: axis(14))
 }
 
-/// デバッグ表示の中に出す、直近 2 秒の揺れのグラフ。キーを押した時刻に縦線を引き、その打鍵の山の値を添える
+/// デバッグ表示の中に出す、直近 2 秒の揺れのグラフ。キーを押した時刻に縦線を引く。
+/// 窓が小さく文字を添えても読めないので、文字は出さずグラフだけにする（2026-10-24）
 final class AccelerometerGraphView: NSView {
-    static let size = NSSize(width: 320, height: 86)
+    static let size = NSSize(width: 320, height: 36)
     /// 横軸に出す時間（秒）
     private static let span = 2.0
     /// 縦軸の上端の最小（mg）。これより大きい揺れがあれば上端を広げる
     private static let minimumTop: Float = 50
-    /// 打鍵の山を探す範囲（キーの時刻からの秒）。終わりは次の打鍵の手前で打ち切る
-    private static let peakWindow = (start: -0.02, end: 0.08)
-
-    private let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize - 2, weight: .regular)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -336,25 +308,7 @@ final class AccelerometerGraphView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let sensor = KeystrokeAccelerometer.shared
-        let captionHeight: CGFloat = 12
-        let plot = NSRect(x: 0, y: captionHeight, width: bounds.width, height: bounds.height - captionHeight - 12)
-
-        guard sensor.state == .running else {
-            let message: String
-            if case .unavailable(let reason) = sensor.state { message = "加速度  \(reason)" } else { message = "加速度  停止中" }
-            text(message, at: NSPoint(x: 0, y: bounds.midY - 6), color: .secondaryLabelColor)
-            return
-        }
-        let samples = sensor.samples(since: machSeconds(mach_absolute_time()) - Self.span - 0.2)
-        guard let now = samples.last?.t else {
-            text("加速度  値が届いていない", at: NSPoint(x: 0, y: bounds.midY - 6), color: .secondaryLabelColor)
-            return
-        }
-        let start = now - Self.span
-        let visible = samples.filter { $0.t >= start }
-        let top = max(Self.minimumTop, visible.map(\.magnitude).max() ?? 0)
-        func x(_ t: Double) -> CGFloat { plot.minX + CGFloat((t - start) / Self.span) * plot.width }
-        func y(_ v: Float) -> CGFloat { plot.minY + CGFloat(min(v, top) / top) * plot.height }
+        let plot = bounds
 
         // 軸
         NSColor.separatorColor.setStroke()
@@ -364,21 +318,23 @@ final class AccelerometerGraphView: NSView {
         axis.lineWidth = 0.5
         axis.stroke()
 
-        // キーの縦線と山の値
-        let keys = sensor.keys.filter { $0.t >= start - Self.peakWindow.end }
-        for (index, key) in keys.enumerated() where key.t >= start {
-            let next = keys.dropFirst(index + 1).first?.t
-            let windowEnd = min(key.t + Self.peakWindow.end, next.map { $0 - 0.005 } ?? .infinity)
-            let peak = samples.filter { $0.t >= key.t + Self.peakWindow.start && $0.t < windowEnd }
-                .map(\.magnitude).max()
-            NSColor.systemRed.withAlphaComponent(0.6).setStroke()
+        guard sensor.state == .running else { return }
+        let samples = sensor.samples(since: machSeconds(mach_absolute_time()) - Self.span - 0.2)
+        guard let now = samples.last?.t else { return }
+        let start = now - Self.span
+        let visible = samples.filter { $0.t >= start }
+        let top = max(Self.minimumTop, visible.map(\.magnitude).max() ?? 0)
+        func x(_ t: Double) -> CGFloat { plot.minX + CGFloat((t - start) / Self.span) * plot.width }
+        func y(_ v: Float) -> CGFloat { plot.minY + CGFloat(min(v, top) / top) * plot.height }
+
+        // キーの縦線
+        NSColor.systemRed.withAlphaComponent(0.6).setStroke()
+        for t in sensor.keyTimes where t >= start {
             let line = NSBezierPath()
-            line.move(to: NSPoint(x: x(key.t), y: plot.minY))
-            line.line(to: NSPoint(x: x(key.t), y: plot.maxY))
+            line.move(to: NSPoint(x: x(t), y: plot.minY))
+            line.line(to: NSPoint(x: x(t), y: plot.maxY))
             line.lineWidth = 0.5
             line.stroke()
-            let value = peak.map { String(format: " %.0f", $0) } ?? ""
-            text(key.label + value, at: NSPoint(x: x(key.t) + 2, y: plot.maxY), color: .systemRed)
         }
 
         // 揺れ
@@ -390,13 +346,5 @@ final class AccelerometerGraphView: NSView {
         NSColor.controlAccentColor.setStroke()
         path.lineWidth = 1
         path.stroke()
-
-        let rate = samples.filter { $0.t >= now - 1 }.count
-        text(String(format: "加速度  揺れ（mg）上端 %.0f・%d 件/秒", top, rate),
-             at: NSPoint(x: 0, y: 0), color: .secondaryLabelColor)
-    }
-
-    private func text(_ string: String, at point: NSPoint, color: NSColor) {
-        (string as NSString).draw(at: point, withAttributes: [.font: font, .foregroundColor: color])
     }
 }

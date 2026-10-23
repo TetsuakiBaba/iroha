@@ -2022,21 +2022,21 @@ private struct AboutSettingsTab: View {
                             + "「全体」は変換を頼んでから結果が返るまで、「NN」はそのうちニューラルネットの計算だけの時間です"
                             + "（差は辞書・学習の処理と、先に走っている推論の待ち時間）。"
                             + "「取り消し」は、前の表示のあと次の入力で打ち切った変換の数です。この設定は他のMacと同期しません。")
+                    // センサのない Mac では「（利用不可）」を付け、OFF のまま操作できなくする
+                    let sensorPresent = KeystrokeAccelerometer.isSensorPresent
                     HelpToggle(
-                        title: "上の表示に、本体の加速度センサの揺れをグラフで出す（試験的）",
-                        isOn: $developerOverlayAccelerometer,
-                        help: "打鍵の強さを見るための試験的な表示です。MacBook（M2 以降）に内蔵されている加速度センサの値を"
-                            + "直近2秒ぶん、推論の時間の表示の下にグラフで出します。縦軸は重力と本体の傾きを引いた揺れの大きさ（mg）で、"
-                            + "キーを押した時刻に縦線を引き、その打鍵の揺れの山の値を添えます。"
-                            + "同じ強さで打っても、センサからの距離でキーごとに値が変わるので、比べられるのは同じキーどうしです。"
+                        title: sensorPresent ? "加速度センサを利用する" : "加速度センサを利用する（利用不可）",
+                        isOn: Binding(
+                            get: { sensorPresent && developerOverlayAccelerometer },
+                            set: { developerOverlayAccelerometer = $0 }),
+                        help: "試験的な機能です。MacBook（M2 以降）に内蔵されている加速度センサの値を読み、"
+                            + "直近2秒ぶんの本体の揺れを、上の推論の時間の表示の下にグラフで出します。"
+                            + "縦軸は重力と本体の傾きを引いた揺れの大きさで、キーを押した時刻に赤い縦線を引きます。"
                             + "外付けのキーボードで打ったキーは本体が揺れないので出ません。"
+                            + "センサのない Mac では「（利用不可）」と出て、ONにできません。"
                             + "センサは Apple が公開していない方法で読むので、macOS の更新で使えなくなることがあります。"
                             + "ONの間はセンサを動かし続けます。この設定は他のMacと同期しません。",
-                        isDisabled: !developerOverlay)
-                    if developerOverlayAccelerometer, !KeystrokeAccelerometer.isSensorPresent {
-                        Text("このMacには加速度センサがないので、グラフは出ません（M2 以降の MacBook のみ）。")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
+                        isDisabled: !developerOverlay || !sensorPresent)
                 }
             }
 
