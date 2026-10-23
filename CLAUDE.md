@@ -230,11 +230,24 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   入力ソースのアイコン（あ / A）は Info.plist の入力モードに固定で実行中に差し替えられず、鍵付きの入力モードを足す方法は
   入力メニューから iroha が消える問題に触れるので採らない。メニューバーに別のアイコンを出す方法は分かりにくいので
   取り下げた（2026-10-16）
-- デバッグ表示の加速度センサのグラフ（`KeystrokeAccelerometer`、開発者モード・既定OFF・同期しない・試験的。2026-10-24）は、
-  MacBook（M2 以降）の非公開の加速度センサ（AppleSPUHIDDevice、用途ページ 0xFF00・用途 3）を読み、直近 2 秒の揺れ（mg）と
-  キーを押した時刻をデバッグ表示の下に描く。**管理者権限は要らない**（元にしたライブラリの説明と違う。MacBook で実測）。
-  センサの値は専用スレッドで受ける（約 800 件/秒）。**外すときに備えて 1 ファイルにまとめてある**（消す場所はファイル冒頭のコメント）。
-  root で読む計測ツールは `experiments/keystroke-force/`
+- 加速度センサ（`KeystrokeAccelerometer`・`AccelerometerSettings`、設定 > 情報 > 開発者向け「加速度センサを利用する」、
+  開発者モード・既定OFF・同期しない・試験的。2026-10-24）は、MacBook（M2 以降）の非公開の加速度センサ（AppleSPUHIDDevice、
+  用途ページ 0xFF00・用途 3）を読む。**管理者権限は要らない**（元にしたライブラリの説明と違う。MacBook で実測）。
+  センサの値は専用スレッドで受ける（約 800 件/秒）。センサのない Mac では「（利用不可）」でトグルを操作できない。
+  使い道は 2 つ: デバッグ表示（ON のとき）の下に直近 2 秒の揺れとキーの時刻を文字なしで描くグラフと、タップ入力。
+  キーの名前 `developerOverlayAccelerometer` はグラフだけの設定だったときのもの。外すときの消す場所はファイル冒頭のコメント。
+  計測ツールと実験の記録は `experiments/keystroke-force/`（README.md に経緯と数字）
+- タップ入力（`TapInput` / `TapInputSettings`、判定は IrohaCore の `TapGestureDetector`、設定 > 入力 > タップ入力。
+  加速度センサを利用するときだけ出す・既定OFF・同期しない。2026-10-24）は、⌘ を押したまま本体を指で 2 回叩いて ⌘ を離すと、
+  設定したキーショートカット（`GlobalShortcut` の文字列形式）を合成したキーイベントで送る（アクセシビリティの許可が要る）。
+  今はダブルタップの 1 種類だけ。守ること:
+  ・**⌘ を押している間だけ数える**。修飾キーなしでは手を置き直しただけの揺れもタップに見える。⌘ を押している間に
+    他のキー・クリック・修飾キーが入ったら数えない（⌘C などを使った）。回数は ⌘ を離した時点で確定する（3 回目を待たない）
+  ・キー・クリック・修飾キーの時刻は `CGEventSource.secondsSinceLastEventType`（権限不要）を 20ms ごとに読んで作る。
+    ⌘ つきのキーは IME に届かないことがあるので、`handle(_:client:)` に届いたキーには頼らない
+  ・`TapGestureDetector` の規則と既定値は実験の道具（`experiments/keystroke-force/` の `TapDetector`）と同じにする。
+    一致は `TapGestureDetectorTests.matchesRecordedTrials`（実験の指示つきの記録で 75/80・73/80。記録がなければ何もしない）で確かめる。
+    規則を変えたら、先に実験の道具の `analyze` で記録を数え直して比べる
 - 変換・予測の左文脈は合成開始時にアプリのカーソル手前テキストを1回読む（`DocumentContextSettings.read`、
   既定ON）。読めないアプリでは `recentCommitted`（確定文字列の蓄積）に代える。合成中は読み直さない。
   左文脈は**カーソルのある行だけ**（`LeftContext.normalize`、azooKey と同じ。2026-09-30 に「改行を除いて前の段落と

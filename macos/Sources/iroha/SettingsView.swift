@@ -83,6 +83,7 @@ private struct InputSettingsTab: View {
     @AppStorage(KeyInputSettings.alwaysHalfWidthSpaceKey) private var alwaysHalfWidthSpace = true
     @AppStorage(PredictionSettings.predictiveEnabledKey) private var predictiveConversion = false
     @AppStorage(PrivateModeSettings.enabledKey) private var privateMode = false
+    @AppStorage(AccelerometerSettings.enabledKey) private var accelerometer = false
     @AppStorage(TypoNormalizerSettings.enabledKey) private var typoNormalizer = false
     @ObservedObject private var typoDownloader = TypoNormalizerDownloader.shared
     @AppStorage(TypoNormalizerSettings.thresholdKey)
@@ -209,6 +210,11 @@ private struct InputSettingsTab: View {
                 DelimitedAlphabetSection()
             }
 
+            // 加速度センサを利用するとき（設定 > 情報 > 開発者向け）だけ出す
+            if developerMode && accelerometer && KeystrokeAccelerometer.isSensorPresent {
+                TapInputSection()
+            }
+
             // 未確定文字列をAIに渡して確定する（使うAIサービスは「モデル」タブで選ぶ）
             Section {
                 AICommitPresetEditor(index: 0)
@@ -231,6 +237,87 @@ private struct InputSettingsTab: View {
 }
 
 /// 区切り記号で囲んで英字を入力する（開発者モードの項目）。開始・終わりの記号は1文字の記号から選べる
+/// タップ入力（`TapInput`）。⌘ を押しながら本体をダブルタップしたときに送るキーショートカットを決める
+private struct TapInputSection: View {
+    @AppStorage(TapInputSettings.enabledKey) private var enabled = false
+    @AppStorage(TapInputSettings.doubleTapShortcutKey) private var shortcut = ""
+    @State private var accessibilityGranted = AXIsProcessTrusted()
+    @State private var lastDetection = TapInput.lastDetection
+
+    var body: some View {
+        Section {
+            HelpToggle(
+                title: "タップ入力を使う", isOn: $enabled,
+                help: "ONの間、⌘を押してから離すまでに本体を叩いた回数を、加速度センサの揺れから数えます。"
+                    + "⌘を押している間にほかのキー・クリック・修飾キーを使ったときは数えません。"
+                    + "この設定は他のMacと同期しません。")
+            HStack {
+                HelpLabel(
+                    title: "⌘ + ダブルタップ",
+                    help: "⌘を押したまま本体を2回叩いて⌘を離すと、ここに書いたキーを押したのと同じ入力を、"
+                        + "前面のアプリに送ります。irohaのショートカット（AI変換など）も、ほかのアプリのショートカットも呼び出せます。"
+                        + "「Option+Return」のように、修飾キー（Cmd・Ctrl・Option・Shift）とキーを + でつないで書きます。"
+                        + "空にすると何も送りません。",
+                    isDisabled: !enabled)
+                TextField("", text: $shortcut, prompt: Text("例: Option+Return"))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+                    .disabled(!enabled)
+                Group {
+                    if shortcut.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Text("なし").font(.caption).foregroundStyle(.secondary)
+                    } else if !GlobalShortcut.isValid(shortcut) {
+                        Text("認識できない形式です").font(.caption).foregroundStyle(.red)
+                    } else {
+                        Image(systemName: "checkmark.circle").foregroundStyle(.green)
+                    }
+                }
+                Spacer()
+            }
+            if enabled && !accessibilityGranted {
+                HStack {
+                    Label("キーを送るにはアクセシビリティの許可が要ります", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button("システム設定を開く") {
+                        if let url = URL(
+                            string: "x-apple.systempreferences:"
+                                + "com.apple.preference.security?Privacy_Accessibility") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    Button("再確認") { accessibilityGranted = AXIsProcessTrusted() }
+                }
+            }
+            if enabled {
+                LabeledContent("直近の検出") {
+                    Text(lastDetection.map(describe) ?? "まだありません")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            HelpSectionHeader(
+                title: "タップ入力",
+                help: "試験的な機能です。⌘を押したまま本体（パームレストなど）を指で叩くと、叩いた回数に応じたキーを送ります。"
+                    + "今はダブルタップ（2回）だけです。叩いた回数は加速度センサの揺れから数えるので、"
+                    + "強さや場所によっては数え違えることがあります。本体を置いた机を叩いても数えることがあります。"
+                    + "ふたを閉じて外付けのキーボードだけで使っているときは使えません。")
+        }
+        .onAppear { accessibilityGranted = AXIsProcessTrusted() }
+        .onReceive(NotificationCenter.default.publisher(for: TapInput.detectedNotification)) { _ in
+            lastDetection = TapInput.lastDetection
+        }
+    }
+
+    private func describe(_ detection: TapInput.Detection) -> String {
+        let name = detection.count == 2 ? "⌘ + ダブルタップ" : "⌘ + タップ \(detection.count) 回"
+        let time = detection.date.formatted(date: .omitted, time: .standard)
+        return "\(name)（\(time)）" + (detection.sent ? "・キーを送りました" : "")
+    }
+}
+
 private struct DelimitedAlphabetSection: View {
     @AppStorage(DelimitedAlphabetSettings.enabledKey) private var enabled = false
     @AppStorage(DelimitedAlphabetSettings.startKey) private var start = DelimitedAlphabetSettings.defaultSymbol
@@ -1931,7 +2018,7 @@ private struct DataDirectorySection: View {
 private struct AboutSettingsTab: View {
     @AppStorage("autoUpdateCheck") private var autoUpdateCheck = true
     @AppStorage(DeveloperOverlaySettings.enabledKey) private var developerOverlay = false
-    @AppStorage(DeveloperOverlaySettings.accelerometerKey) private var developerOverlayAccelerometer = false
+    @AppStorage(AccelerometerSettings.enabledKey) private var accelerometer = false
     @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
     @State private var showingUninstallConfirm = false
 
@@ -2005,10 +2092,11 @@ private struct AboutSettingsTab: View {
                 HelpToggle(
                     title: "開発者モード", isOn: $developerMode,
                     help: "ONにすると、細かな調整や開発者向けの項目を設定画面に表示します"
-                        + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ、"
+                        + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ・"
+                        + "区切り記号で英字を入力・タップ入力（加速度センサを利用するとき）、"
                         + "辞書・学習: 記号・顔文字・絵文字を候補に出す、"
                         + "選択テキスト: 除外するアプリ、モデル: 推論エンジン・モデルファイルの指定・irohaを再起動・"
-                        + "自分の入力で追加学習、情報: 推論の時間の表示・加速度センサのグラフ）。"
+                        + "自分の入力で追加学習、情報: 推論の時間の表示・加速度センサを利用する）。"
                         + "OFFにしても項目が見えなくなるだけで、変えた設定はそのまま効きます"
                         + "（推論の時間の表示だけは止まります）。この設定は他のMacと同期しません。")
                 if developerMode {
@@ -2027,16 +2115,17 @@ private struct AboutSettingsTab: View {
                     HelpToggle(
                         title: sensorPresent ? "加速度センサを利用する" : "加速度センサを利用する（利用不可）",
                         isOn: Binding(
-                            get: { sensorPresent && developerOverlayAccelerometer },
-                            set: { developerOverlayAccelerometer = $0 }),
-                        help: "試験的な機能です。MacBook（M2 以降）に内蔵されている加速度センサの値を読み、"
-                            + "直近2秒ぶんの本体の揺れを、上の推論の時間の表示の下にグラフで出します。"
-                            + "縦軸は重力と本体の傾きを引いた揺れの大きさで、キーを押した時刻に赤い縦線を引きます。"
-                            + "外付けのキーボードで打ったキーは本体が揺れないので出ません。"
+                            get: { sensorPresent && accelerometer },
+                            set: { accelerometer = $0 }),
+                        help: "試験的な機能です。MacBook（M2 以降）に内蔵されている加速度センサの値を読みます。"
+                            + "ONにすると、入力タブに「タップ入力」が出ます。"
+                            + "上の推論の時間の表示もONなら、直近2秒ぶんの本体の揺れをその下にグラフで出します"
+                            + "（縦軸は重力と本体の傾きを引いた揺れの大きさで、キーを押した時刻に赤い縦線を引きます。"
+                            + "外付けのキーボードで打ったキーは本体が揺れないので出ません）。"
                             + "センサのない Mac では「（利用不可）」と出て、ONにできません。"
                             + "センサは Apple が公開していない方法で読むので、macOS の更新で使えなくなることがあります。"
                             + "ONの間はセンサを動かし続けます。この設定は他のMacと同期しません。",
-                        isDisabled: !developerOverlay || !sensorPresent)
+                        isDisabled: !sensorPresent)
                 }
             }
 

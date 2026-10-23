@@ -10,12 +10,25 @@ import IOKit.hid
 /// 装置を開く・797 件/秒の受信まで確認。`experiments/keystroke-force/` の `probe`）。
 /// 非公開の経路なので、macOS の更新で読めなくなることがある。
 ///
-/// **外すとき**はこのファイル、`DeveloperOverlay` のグラフ（`graph`）、`DeveloperOverlaySettings.accelerometerKey`、
-/// 設定画面のトグル、`IrohaInputController.handleKey` の `noteKeyDown` を消す。
+/// **外すとき**はこのファイル、`DeveloperOverlay` のグラフ（`graph`）、`DeveloperOverlaySettings.showsAccelerometer`、
+/// 設定画面のトグル、`IrohaInputController.handleKey` の `noteKeyDown`、センサを使うタップ入力（`TapInput.swift`・
+/// IrohaCore の `TapGestureDetector`・設定画面の「タップ入力」・`main.swift` の `TapInput.shared.start()`）を消す。
 ///
 /// センサの値は専用のスレッドの実行ループで受ける（約 800 件/秒。IME のメインスレッドを起こさないため）。
 /// 起こす設定（`wakeProperties`）はこのセンサの下のドライバにだけ書く。止めるときは報告間隔だけ元に戻す
 /// （ほかの 2 つは元の値を読めないので戻さない）
+/// 加速度センサを利用するか（設定 > 情報 > 開発者向け。試験的・既定OFF・同期しない）。
+/// 使うのはデバッグ表示のグラフとタップ入力。開発者モードが OFF のとき・センサのない Mac では、設定が ON で残っていても使わない
+enum AccelerometerSettings {
+    /// 2026-10-24 まではデバッグ表示のグラフだけの設定だったので、キーの名前はそのときのもの
+    static let enabledKey = "developerOverlayAccelerometer"
+
+    static var isEnabled: Bool {
+        DeveloperModeSettings.isEnabled && KeystrokeAccelerometer.isSensorPresent
+            && UserDefaults.standard.bool(forKey: enabledKey)
+    }
+}
+
 final class KeystrokeAccelerometer: @unchecked Sendable {
     static let shared = KeystrokeAccelerometer()
 
@@ -52,6 +65,8 @@ final class KeystrokeAccelerometer: @unchecked Sendable {
     private var ringCount = 0
     private var baseline: (x: Double, y: Double, z: Double)?
     private var lastSampleTime: Double?
+    /// 揺れを 1 件受け取るたびにセンサのスレッドで呼ぶ（タップ入力）
+    private var sampleObserver: ((_ t: Double, _ magnitude: Float) -> Void)?
 
     private static let vendorUsagePage = 0xFF00
     private static let accelerometerUsage = 3
@@ -72,9 +87,9 @@ final class KeystrokeAccelerometer: @unchecked Sendable {
 
     // MARK: - 開始・停止
 
-    /// 設定に合わせて開く・閉じる（フォーカスが来たときとキーを押したときに呼ぶ）。メインスレッドから呼ぶ
+    /// 設定に合わせて開く・閉じる（キーを押したときと、設定が変わったとき（`TapInput`）に呼ぶ）。メインスレッドから呼ぶ
     func syncWithSettings() {
-        let wanted = DeveloperOverlaySettings.showsAccelerometer
+        let wanted = AccelerometerSettings.isEnabled
         switch (wanted, state) {
         case (true, .stopped): start()
         case (false, .running): stop()
@@ -192,10 +207,21 @@ final class KeystrokeAccelerometer: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// 揺れを受け取るたびに呼ぶ処理を置く（nil で外す）。処理はセンサのスレッドで動くので、そのスレッドだけで状態を持つこと
+    func setSampleObserver(_ observer: ((_ t: Double, _ magnitude: Float) -> Void)?) {
+        lock.lock()
+        sampleObserver = observer
+        lock.unlock()
+    }
+
     /// センサのスレッドから呼ばれる
     fileprivate func append(t: Double, x: Double, y: Double, z: Double) {
         lock.lock()
-        defer { lock.unlock() }
+        var observed: (observer: (Double, Float) -> Void, magnitude: Float)?
+        defer {
+            lock.unlock()
+            observed.map { $0.observer(t, $0.magnitude) }
+        }
         var base = baseline ?? (x, y, z)
         if let last = lastSampleTime {
             let k = min(1, max(0, (t - last) / Self.baselineTimeConstant))
@@ -206,7 +232,9 @@ final class KeystrokeAccelerometer: @unchecked Sendable {
         baseline = base
         lastSampleTime = t
         let dx = x - base.x, dy = y - base.y, dz = z - base.z
-        ring[ringEnd] = Sample(t: t, magnitude: Float((dx * dx + dy * dy + dz * dz).squareRoot() * 1000))
+        let magnitude = Float((dx * dx + dy * dy + dz * dz).squareRoot() * 1000)
+        ring[ringEnd] = Sample(t: t, magnitude: magnitude)
+        if let sampleObserver { observed = (sampleObserver, magnitude) }
         ringEnd = (ringEnd + 1) % Self.capacity
         ringCount = min(ringCount + 1, Self.capacity)
     }
@@ -274,7 +302,8 @@ private let machTimebase: mach_timebase_info_data_t = {
     return info
 }()
 
-private func machSeconds(_ ticks: UInt64) -> Double {
+/// mach_absolute_time の刻みを秒に（センサの時刻と同じ時計。タップ入力も使う）
+func machSeconds(_ ticks: UInt64) -> Double {
     Double(ticks) * Double(machTimebase.numer) / Double(machTimebase.denom) / 1e9
 }
 

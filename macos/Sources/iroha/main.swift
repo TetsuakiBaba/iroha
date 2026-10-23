@@ -130,6 +130,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 選択テキストのAI処理（グローバルショートカット・マウス選択トリガー）。
         // 設定でOFF（既定）の間はホットキー登録も監視もしない
         SelectionActionCoordinator.shared.start()
+
+        // タップ入力（加速度センサを利用する設定とタップ入力が ON のときだけセンサを動かす。開発者モード・試験的）
+        TapInput.shared.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

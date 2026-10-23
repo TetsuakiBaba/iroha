@@ -12,13 +12,10 @@ enum DeveloperOverlaySettings {
             && UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
     }
 
-    /// デバッグ表示に本体の加速度センサの揺れをグラフで出す（`KeystrokeAccelerometer`。試験的・既定OFF・同期しない）。
-    /// センサのない Mac では設定が ON のまま残っていても使わない
-    static let accelerometerKey = "developerOverlayAccelerometer"
-
+    /// デバッグ表示に本体の加速度センサの揺れをグラフで出す（`KeystrokeAccelerometer`）。
+    /// 加速度センサを利用する設定（`AccelerometerSettings`）が ON のときだけ
     static var showsAccelerometer: Bool {
-        isEnabled && KeystrokeAccelerometer.isSensorPresent
-            && UserDefaults.standard.object(forKey: accelerometerKey) as? Bool ?? false
+        isEnabled && AccelerometerSettings.isEnabled
     }
 }
 
