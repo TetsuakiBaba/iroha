@@ -406,7 +406,7 @@ final class IrohaInputController: IMKInputController {
                 isComposing || mode == .segmenting || isTranslating
         }
 
-        // 英訳確定の待機中: Escで取消、それ以外は握りつぶす（最大でもタイムアウトの10秒）
+        // 英訳確定の待機中: Escで取消、それ以外は握りつぶす（応答が止まったときの打ち切りは最大30秒）
         if isTranslating {
             if Int(event.keyCode) == kVK_Escape {
                 cancelTranslation(client: client)
@@ -2320,6 +2320,8 @@ final class IrohaInputController: IMKInputController {
             lapStart = now
         }
         DeveloperOverlay.shared.hide()
+        // AI変換に備えて Apple のモデルを読み込ませておく（間隔は `TranslationService.prewarm` が決める）
+        Task.detached { TranslationService.prewarm() }
         if recentCommittedHasPrivateText, !PrivateModeSettings.isEnabled {
             recentCommitted = ""
             recentCommittedHasPrivateText = false

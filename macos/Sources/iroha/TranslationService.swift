@@ -71,18 +71,29 @@ enum TranslationService {
     private enum Prewarm {
         static let session = LanguageModelSession(
             instructions: TranslationService.translateInstructions)
-        nonisolated(unsafe) static var done = false
+        static let lock = NSLock()
+        nonisolated(unsafe) static var last: Date?
     }
     #endif
 
-    /// モデルの事前ロードを促す（Appleバックエンド時のみ・プロセスで一度だけ。失敗しても無害）
+    /// 続けて prewarm を頼まない間隔
+    static let prewarmInterval: TimeInterval = 30
+
+    /// モデルの事前ロードを促す（Appleバックエンド時のみ。失敗しても無害）。
+    ///
+    /// フォーカスが来たときと入力の始まりに呼ぶ。システムは使われていないモデルをしばらくすると外し、
+    /// 外れた状態で頼むと 1 回に 6.5〜7.5 秒かかる（読み込み済みなら 0.5〜1 秒。2026-10-23 実測）。
+    /// プロセスで一度だけでは、時間がたって外されたあとに効かないので、間隔をあけて頼み直す
     static func prewarm() {
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), TranslationBackend.current == .apple,
-           appleAvailable, !Prewarm.done {
-            Prewarm.done = true
-            Prewarm.session.prewarm()
-        }
+        guard #available(macOS 26.0, *), TranslationBackend.current == .apple, appleAvailable
+        else { return }
+        Prewarm.lock.lock()
+        let now = Date()
+        let due = Prewarm.last.map { now.timeIntervalSince($0) >= prewarmInterval } ?? true
+        if due { Prewarm.last = now }
+        Prewarm.lock.unlock()
+        if due { Prewarm.session.prewarm() }
         #endif
     }
 
@@ -111,7 +122,9 @@ enum TranslationService {
     ) async -> Result<String, AIFailure> {
         switch TranslationBackend.current {
         case .apple:
-            return await runWithApple(request, stallTimeout: 10, onPartial: onPartial)
+            // 途中経過はほぼ最後にまとめて届くので、ここでの打ち切りは全体の時間の上限として効く。
+            // モデルが外れていると 1 回に 6.5〜7.5 秒、10 秒を超えたこともある（2026-10-23 実測）
+            return await runWithApple(request, stallTimeout: 30, onPartial: onPartial)
         case .ollama:
             // ローカルLLMはモデルのコールドロードに時間がかかることがあるため長めに待つ
             return await RemoteTranslator.run(
@@ -181,15 +194,16 @@ enum TranslationService {
             }
         }
         defer { watchdog.cancel() }
+        let stalledFailure = AIFailure(message: "\(Int(stallTimeout))秒間応答がありませんでした")
         do {
             let text = try await task.value
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            // Apple のストリームは打ち切られても例外を出さず、そこまでの出力で終わる
+            if progress.stalled { return .failure(stalledFailure) }
             return text.isEmpty ? .failure(AIFailure(message: "空の応答が返りました")) : .success(text)
         } catch {
             NSLog("iroha: AI変換エラー: \(error)")
-            if progress.stalled {
-                return .failure(AIFailure(message: "\(Int(stallTimeout))秒間応答がありませんでした"))
-            }
+            if progress.stalled { return .failure(stalledFailure) }
             return .failure(AIFailure(message: error.localizedDescription))
         }
     }
