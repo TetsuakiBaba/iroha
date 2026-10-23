@@ -894,12 +894,16 @@ final class IrohaInputController: IMKInputController {
             if alphabetRun != nil {
                 displayOverride = nil
                 deleteAlphabetBackward(client: client)
+                if !isComposing { cancelTypoCorrection() }
                 return true
             }
             displayOverride = nil
             // 固定部分しか残っていないときは、直前の固定部分を読みに戻してから削除する
             if composer.isEmpty { unlockLastFixedChunk() }
             composer.deleteBackward()
+            // 入力を消し終えたら訂正の状態を捨てる。取り消した読み（`typoRejectedReading`）が残ると、
+            // 同じ読みを打ち直したときに訂正が走らない
+            if !isComposing { cancelTypoCorrection() }
             // 削除中はライブ変換を止めてかな表示に戻す。漢字のままだと1かな消しただけで
             // 文節構造が変わり、どこを消したのか分からなくなるため。
             // 次の1文字を入力した時点でライブ変換が再開する（そのままEnterならかなで確定）
@@ -929,6 +933,7 @@ final class IrohaInputController: IMKInputController {
                 // 2回目のEsc: 入力自体を取り消す
                 composer = Self.makeComposer()
                 fixedChunks = []
+                cancelTypoCorrection()
                 updateMarkedText(client: client, display: "")
             }
             return true
