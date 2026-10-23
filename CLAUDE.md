@@ -38,6 +38,8 @@ cd macos && swift build --build-system native && swift test --build-system nativ
 - `swift build` / `swift test` には `--build-system native` を付ける。Xcode 27 の Swift は既定が新しい仕組み
   （swiftbuild）で、mlx-swift の .metal のコンパイルで失敗する。ビルド先も変わり、スクリプトは native の
   `.build/<config>/` を前提にしている（2026-10-24。native は廃止予定と警告が出る）。
+  Xcode の版を上げると Metal Toolchain も入れ直しになる（`xcodebuild -downloadComponent MetalToolchain`。
+  無いと install.sh が `build-mlx-metallib.sh` で止まる）。
   `macos/.build` は Dropbox の同期から外してある（`xattr -w com.dropbox.ignored 1 macos/.build`、Mac ごとに要る。
   版の違う Xcode の 2 台が同じ `.build` を書き合っていた）
 - `log` はzshの組み込みと衝突するため必ず `/usr/bin/log` をフルパスで呼ぶ
