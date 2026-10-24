@@ -342,6 +342,8 @@ final class IrohaInputController: IMKInputController {
         hideNotice()
         developerOverlayMarkedLength = 0
         if let client = sender as? IMKTextInput { followPrivateModeIndicator(client: client) }
+        // タップ入力の小窓はこのコントローラのカーソル位置に出す
+        TapInputFeedback.shared.attach(self) { [weak self] in self?.developerOverlayCaretRect() }
         // 他アプリでのクリック・スクロール・アプリ切替の合図はアクティブなコントローラ（自分）が受ける
         PointerActivityMonitor.shared.handler = { [weak self] event in
             self?.dismissFloatingWindows(for: event)
@@ -509,6 +511,7 @@ final class IrohaInputController: IMKInputController {
         commitCurrent(client: sender as? IMKTextInput)
         DeveloperOverlay.shared.hide()
         PrivateModeIndicator.shared.hide()
+        TapInputFeedback.shared.detach(self)
         super.deactivateServer(sender)
     }
 

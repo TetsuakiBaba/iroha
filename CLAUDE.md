@@ -240,7 +240,9 @@ cd macos && swift build --build-system native && swift test --build-system nativ
 - タップ入力（`TapInput` / `TapInputSettings`、判定は IrohaCore の `TapGestureDetector`、設定 > 入力 > タップ入力。
   加速度センサを利用するときだけ出す・既定OFF・同期しない。2026-10-24）は、⌘ を押したまま本体を指で 2 回叩いて ⌘ を離すと、
   設定したキーショートカット（`GlobalShortcut` の文字列形式）を合成したキーイベントで送る（アクセシビリティの許可が要る）。
-  今はダブルタップの 1 種類だけ。守ること:
+  今はダブルタップの 1 種類だけ。数えたら（2 回以上のとき）カーソルの近くに「⌘ + ダブルタップ → Ctrl+Space」などを
+  1.2 秒出す（`TapInputFeedback`。`CaretPanel` とは別の窓。カーソル位置は有効なコントローラが `attach` で渡し、
+  取れなければマウスポインタの近く）。守ること:
   ・**⌘ を押している間だけ数える**。修飾キーなしでは手を置き直しただけの揺れもタップに見える。⌘ を押している間に
     他のキー・クリック・修飾キーが入ったら数えない（⌘C などを使った）。回数は ⌘ を離した時点で確定する（3 回目を待たない）
   ・キー・クリック・修飾キーの時刻は `CGEventSource.secondsSinceLastEventType`（権限不要）を 20ms ごとに読んで作る。

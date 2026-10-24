@@ -312,9 +312,7 @@ private struct TapInputSection: View {
     }
 
     private func describe(_ detection: TapInput.Detection) -> String {
-        let name = detection.count == 2 ? "⌘ + ダブルタップ" : "⌘ + タップ \(detection.count) 回"
-        let time = detection.date.formatted(date: .omitted, time: .standard)
-        return "\(name)（\(time)）" + (detection.sent ? "・キーを送りました" : "")
+        "\(detection.message)（\(detection.date.formatted(date: .omitted, time: .standard))）"
     }
 }
 

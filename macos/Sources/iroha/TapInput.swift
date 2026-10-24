@@ -39,8 +39,17 @@ final class TapInput {
     struct Detection {
         var count: Int
         var date: Date
-        /// ショートカットを送ったか
-        var sent: Bool
+        /// 送ったショートカット（送らなかったら nil）
+        var sentShortcut: String?
+        var accessibilityGranted: Bool
+
+        /// カーソルの近くの表示と設定画面の「直近の検出」に出す文
+        var message: String {
+            guard count == 2 else { return "タップ \(count) 回（割り当てなし）" }
+            if let sentShortcut { return "⌘ + ダブルタップ → \(sentShortcut)" }
+            if !accessibilityGranted { return "⌘ + ダブルタップ（アクセシビリティが未許可）" }
+            return "⌘ + ダブルタップ（キーが未設定）"
+        }
     }
 
     /// 直近に数えた結果（メインスレッド）
@@ -73,12 +82,18 @@ final class TapInput {
 
     /// タップを数えた（メインスレッド）
     fileprivate static func didDetect(count: Int) {
-        var sent = false
-        if count == 2, TapInputSettings.isEnabled, let shortcut = TapInputSettings.doubleTapShortcut, AXIsProcessTrusted() {
-            post(shortcut)
-            sent = true
+        guard TapInputSettings.isEnabled else { return }
+        let trusted = AXIsProcessTrusted()
+        var sent: String?
+        if count == 2, let shortcut = TapInputSettings.doubleTapShortcut, trusted {
+            sent = shortcut.rawValue
         }
-        lastDetection = Detection(count: count, date: Date(), sent: sent)
+        let detection = Detection(count: count, date: Date(), sentShortcut: sent, accessibilityGranted: trusted)
+        lastDetection = detection
+        // 1 回だけのときは出さない（⌘ を押すたびに、手の揺れで出ることがあるため）。
+        // 表示の位置はキーを送る前に取る（送ったキーでカーソルが動くことがあるため）
+        if count >= 2 { TapInputFeedback.shared.show(detection.message) }
+        if let sent, let shortcut = GlobalShortcut.parse(sent) { post(shortcut) }
         NotificationCenter.default.post(name: detectedNotification, object: nil)
     }
 
@@ -166,3 +181,101 @@ private final class TapSession {
         return isFirst ? nil : t
     }
 }
+
+/// タップ入力を数えたことを、カーソルの近くに 1 秒ほど出す小窓（「⌘ + ダブルタップ → Ctrl+Space」など）。
+///
+/// 予測変換・打ち間違いの知らせの `CaretPanel` とは別の窓にする（`CaretPanel` は「訂正の小窓が出ている ⇒
+/// Backspace で取り消せる」を 1 枚で保っているので、相乗りするとその約束が崩れる）。
+/// カーソルの位置は iroha で入力しているコントローラから取り（`attach`）、取れなければマウスポインタの近くに出す。
+/// キーボードフォーカスは取らず、マウスも透過する。メインスレッドから使う
+final class TapInputFeedback {
+    static let shared = TapInputFeedback()
+
+    private let panel: NSPanel
+    private let label: NSTextField
+    private let padding = NSEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
+    /// カーソル行とウィンドウの間隔
+    private let caretGap: CGFloat = 2
+    private static let duration: TimeInterval = 1.2
+    private var hideWork: DispatchWorkItem?
+    private weak var caretOwner: AnyObject?
+    private var caretRect: (() -> NSRect?)?
+
+    private init() {
+        panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 120, height: 28),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: true
+        )
+        panel.level = .popUpMenu
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.animationBehavior = .none
+
+        let background = NSVisualEffectView()
+        background.material = .popover
+        background.blendingMode = .behindWindow
+        background.state = .active
+        background.wantsLayer = true
+        background.layer?.cornerRadius = 6
+        background.layer?.masksToBounds = true
+        panel.contentView = background
+
+        label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: NSFont.systemFontSize)
+        label.lineBreakMode = .byClipping
+        background.addSubview(label)
+    }
+
+    /// 入力を受け持つコントローラが、カーソルの位置の問い合わせ方を渡す（有効になったとき）
+    func attach(_ owner: AnyObject, caretRect: @escaping () -> NSRect?) {
+        caretOwner = owner
+        self.caretRect = caretRect
+    }
+
+    /// 無効になったとき。別のコントローラが先に attach していたら何もしない
+    func detach(_ owner: AnyObject) {
+        guard caretOwner === owner else { return }
+        caretOwner = nil
+        caretRect = nil
+    }
+
+    func show(_ text: String) {
+        label.stringValue = text
+        label.sizeToFit()
+        let size = NSSize(width: padding.left + label.frame.width + padding.right,
+                          height: padding.top + label.frame.height + padding.bottom)
+        label.frame.origin = NSPoint(x: padding.left, y: padding.bottom)
+        let anchor = (caretOwner != nil ? caretRect?() : nil)
+            ?? NSRect(origin: NSEvent.mouseLocation, size: NSSize(width: 0, height: 16))
+        panel.setFrame(NSRect(origin: origin(for: size, near: anchor), size: size), display: true)
+        panel.orderFrontRegardless()
+
+        hideWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.panel.orderOut(nil) }
+        hideWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.duration, execute: work)
+    }
+
+    /// カーソル行の下。予測・訂正の小窓と重なるならその下、画面の下に収まらなければ行の上
+    private func origin(for size: NSSize, near anchor: NSRect) -> NSPoint {
+        var origin = NSPoint(x: anchor.minX, y: anchor.minY - caretGap - size.height)
+        if let other = CaretPanel.shared.visibleFrame,
+           NSRect(origin: origin, size: size).intersects(other) {
+            origin.y = other.minY - caretGap - size.height
+        }
+        let screen = NSScreen.screens.first { $0.frame.contains(anchor.origin) } ?? NSScreen.main
+        if let visible = screen?.visibleFrame {
+            if origin.y < visible.minY { origin.y = anchor.maxY + caretGap }
+            origin.x = min(max(origin.x, visible.minX), max(visible.minX, visible.maxX - size.width))
+        }
+        return origin
+    }
+}
+
