@@ -116,14 +116,31 @@ public struct UserDictionary: Sendable {
         return !isMuchLonger
     }
 
+    /// 読みの中に部分一致する（`split` が一致の対象にする）エントリの読みと単語
+    public func entries(
+        occurringIn reading: String, minimumMatchLength: Int = 2, forLiveConversion: Bool = false
+    ) -> [(reading: String, word: String)] {
+        let table = forLiveConversion ? liveWordsByReading : wordsByReading
+        var result: [(reading: String, word: String)] = []
+        for (key, words) in table where key.count >= minimumMatchLength && reading.contains(key) {
+            result.append(contentsOf: words.map { (key, $0) })
+        }
+        return result
+    }
+
     /// 読み全体を、ユーザ辞書に一致する部分とそれ以外に左から最長一致で分割する。
     ///
     /// 1文字の読み（「あ」等）が文中で無差別に一致すると変換が壊れるため、
     /// 部分一致は`minimumMatchLength`文字以上のエントリだけを対象にする
     /// （完全一致は`words(forReading:)`が長さに関係なく拾う）。
-    /// `forLiveConversion` が真ならライブ変換に使うエントリだけを一致の対象にする
+    /// `forLiveConversion` が真ならライブ変換に使うエントリだけを一致の対象にする。
+    ///
+    /// `wordBoundaries`（読みの文字位置）を渡すと、始まりと終わりがどちらもその位置にある一致だけを使う。
+    /// 読みの並びが一致するだけでは語の途中にも当たる（「きえました」の「えま」→「き江間した」）ため、
+    /// 辞書ラティスの語の境目（`LatticeConverter.wordBoundaries`）で語として成り立つ所に限る
     public func split(
-        _ reading: String, minimumMatchLength: Int = 2, forLiveConversion: Bool = false
+        _ reading: String, minimumMatchLength: Int = 2, forLiveConversion: Bool = false,
+        wordBoundaries: Set<Int>? = nil
     ) -> [Chunk] {
         let table = forLiveConversion ? liveWordsByReading : wordsByReading
         guard !table.isEmpty, !reading.isEmpty else { return [.reading(reading)] }
@@ -137,7 +154,8 @@ public struct UserDictionary: Sendable {
             var length = min(maxReadingLength, characters.count - index)
             while length >= minimumMatchLength {
                 let candidate = String(characters[index..<(index + length)])
-                if let word = table[candidate]?.first {
+                if let word = table[candidate]?.first,
+                   wordBoundaries.map({ $0.contains(index) && $0.contains(index + length) }) ?? true {
                     match = (length, word)
                     break
                 }

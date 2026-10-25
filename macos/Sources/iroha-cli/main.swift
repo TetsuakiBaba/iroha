@@ -149,11 +149,11 @@ func makeEngine(userData: UserDataMode = .ime) -> any ConversionEngine {
     }
     // 辞書ラティス + zenz採点（IME本体と同じ構成）。辞書が無い・OFF指定ならzenz単体
     let latticeMode = ProcessInfo.processInfo.environment["IROHA_LATTICE"] ?? ""
+    let lattice = LatticeConverter.defaultDictionaryURL().map { LatticeConverter(dictionaryURL: $0) }
     func withLattice<Base: ConversionEngine & CandidateScorer>(_ base: Base) -> any ConversionEngine {
-        guard latticeMode != "off", let dictionaryURL = LatticeConverter.defaultDictionaryURL() else { return base }
+        guard latticeMode != "off", let lattice else { return base }
         return LatticeRescoringEngine(
-            base: base, lattice: LatticeConverter(dictionaryURL: dictionaryURL),
-            usesLatticeForFirstCandidate: latticeMode == "always")
+            base: base, lattice: lattice, usesLatticeForFirstCandidate: latticeMode == "always")
     }
     let core: any ConversionEngine
     if env["IROHA_BACKEND"] == "mlx" {
@@ -167,7 +167,8 @@ func makeEngine(userData: UserDataMode = .ime) -> any ConversionEngine {
     }
     return LearningEngine(
         base: UserDictionaryEngine(
-            base: ChunkedConversionEngine(base: VariantKanjiEngine(base: core)), dictionary: { store.current }),
+            base: ChunkedConversionEngine(base: VariantKanjiEngine(base: core)), dictionary: { store.current },
+            lattice: lattice),
         dictionary: { learning.current })
 }
 

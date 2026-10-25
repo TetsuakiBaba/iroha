@@ -58,12 +58,23 @@ final class IrohaInputController: IMKInputController {
     /// 変換エンジンはプロセスで1つを共有する（モデルは初回変換時にロード）。
     /// 学習 → ユーザ辞書 → 長い読みの区切り → 異体字の補完 → 辞書ラティス+zenz の順にデコレータで包む
     /// （学習・辞書が空で読みが短ければ素通しなのでふるまいは変わらない）。
-    /// 辞書ラティス（azooKey辞書）は候補ウィンドウの候補を読みが正しい語に限るために使う。
+    /// 辞書ラティス（azooKey辞書）は候補ウィンドウの候補を読みが正しい語に限るためと、
+    /// ユーザ辞書の語を読みの途中に当ててよいか（語の境目か）を決めるために使う。
     /// 辞書がバンドルに無ければzenz単体で動く
     private static let engine = LearningEngine(
         base: UserDictionaryEngine(
-            base: ChunkedConversionEngine(base: VariantKanjiEngine(base: makeCoreEngine()))),
+            base: ChunkedConversionEngine(base: VariantKanjiEngine(base: makeCoreEngine())),
+            lattice: lattice),
         dictionary: { LearningSettings.dictionary })
+
+    /// 辞書ラティス。辞書がバンドルに無ければ nil
+    private static let lattice: LatticeConverter? = {
+        guard let dictionaryURL = LatticeConverter.defaultDictionaryURL() else {
+            NSLog("iroha: 辞書ラティスの辞書が見つかりません。zenz単体で変換します")
+            return nil
+        }
+        return LatticeConverter(dictionaryURL: dictionaryURL)
+    }()
 
     /// zenzモデルの実体（llama.cpp）。`engineBackend` が MLX なら作られない（static let は初回参照時に作る）
     private static let zenz = ZenzEngine(modelPath: engineModelPath, adapterPath: engineAdapterPath)
@@ -109,11 +120,8 @@ final class IrohaInputController: IMKInputController {
     }
 
     private static func withLattice<Base: ConversionEngine & CandidateScorer>(_ base: Base) -> any ConversionEngine {
-        guard let dictionaryURL = LatticeConverter.defaultDictionaryURL() else {
-            NSLog("iroha: 辞書ラティスの辞書が見つかりません。zenz単体で変換します")
-            return base
-        }
-        return LatticeRescoringEngine(base: base, lattice: LatticeConverter(dictionaryURL: dictionaryURL))
+        guard let lattice else { return base }
+        return LatticeRescoringEngine(base: base, lattice: lattice)
     }
 
     private enum Mode {

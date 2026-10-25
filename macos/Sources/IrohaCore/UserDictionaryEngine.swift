@@ -6,21 +6,26 @@ import Foundation
 /// - 読み全体がユーザ辞書に完全一致 → その単語を最優先の候補にする
 /// - 読みの一部が一致 → 一致部分を単語で埋め、残りだけをエンジンに変換させて連結する
 ///   （例:「きららざかにいく」→「雲母坂」+ エンジンによる「にいく」→「に行く」）
+///   一致を使うのは辞書ラティスで語の境目になる所だけ（`lattice` が無ければ読みが並べば使う）
 ///
 /// ユーザ辞書が空のときは何もせず素通しする（既定のふるまいと完全に同じ）。
 public final class UserDictionaryEngine: ConversionEngine {
 
     private let base: any ConversionEngine
     private let dictionaryProvider: @Sendable () -> UserDictionary
+    /// 読みの途中の一致が語の境目に当たるかを決める辞書ラティス
+    private let lattice: LatticeConverter?
 
     public init(
         base: any ConversionEngine,
         dictionary: @escaping @Sendable () -> UserDictionary = {
             UserDictionaryStore.shared.current
-        }
+        },
+        lattice: LatticeConverter? = nil
     ) {
         self.base = base
         self.dictionaryProvider = dictionary
+        self.lattice = lattice
     }
 
     public func prewarm() async throws {
@@ -45,7 +50,9 @@ public final class UserDictionaryEngine: ConversionEngine {
                 InferenceTimer.current?.note(.userDictionary)
                 return [word]
             }
-            let chunks = dictionary.split(reading, forLiveConversion: true)
+            let chunks = dictionary.split(
+                reading, forLiveConversion: true,
+                wordBoundaries: await wordBoundaries(reading, dictionary: dictionary, forLiveConversion: true))
             guard Self.hasWordChunk(chunks) else {
                 return try await base.convert(reading: reading, context: context, candidateCount: 1)
             }
@@ -54,7 +61,8 @@ public final class UserDictionaryEngine: ConversionEngine {
 
         // 候補ウィンドウ用: ユーザ辞書の単語を先頭に、続けてエンジンの候補を並べる
         let exactWords = dictionary.words(forReading: reading)
-        let chunks = dictionary.split(reading)
+        let chunks = dictionary.split(
+            reading, wordBoundaries: await wordBoundaries(reading, dictionary: dictionary, forLiveConversion: false))
         var results = exactWords
         if Self.hasWordChunk(chunks), exactWords.isEmpty {
             results.append(try await compose(chunks, context: context))
@@ -70,6 +78,17 @@ public final class UserDictionaryEngine: ConversionEngine {
             if results.isEmpty { throw error }
         }
         return results
+    }
+
+    /// 読みの中に一致するエントリを辞書ラティスに入れて変換したときの語の境目。
+    /// 一致するエントリが無い・ラティスが無いときは nil（ラティスを呼ばない）
+    private func wordBoundaries(
+        _ reading: String, dictionary: UserDictionary, forLiveConversion: Bool
+    ) async -> Set<Int>? {
+        guard let lattice else { return nil }
+        let words = dictionary.entries(occurringIn: reading, forLiveConversion: forLiveConversion)
+        guard !words.isEmpty else { return nil }
+        return await lattice.wordBoundaries(reading: reading, userWords: words)
     }
 
     private static func hasWordChunk(_ chunks: [UserDictionary.Chunk]) -> Bool {

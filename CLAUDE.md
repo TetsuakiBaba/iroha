@@ -125,6 +125,9 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   学習 → ユーザ辞書 → 長い読みの区切り（`ChunkedConversionEngine`、80文字超を
   句読点/文節境界で分割して逐次変換）→ LLM の順に重ねる。ユーザ辞書は読みを分割して
   一致部分を埋め、学習は読み全体が一致したときだけ差し替える）。
+  ユーザ辞書の読みの途中の一致は、辞書ラティスにその語を固有名詞として入れて変換したときの語の境目に
+  始まりと終わりがある所だけ使う（`LatticeConverter.wordBoundaries`。2026-10-25。読みの並びだけで当てると
+  「えま→江間」が「きえました」に当たり「来江間した」になった）。
   macOS側の辞書は読み取り専用で絶対に書き込まない。
   ユーザ辞書のうち単語が読みより大幅に長いエントリ（`UserDictionary.isSuitableForLiveConversion`
   が偽: 2倍超かつ3文字以上長い。ハッシュタグ・URL・定型文など）はライブ変換・文節分割には

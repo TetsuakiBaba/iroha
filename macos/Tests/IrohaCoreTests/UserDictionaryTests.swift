@@ -120,6 +120,35 @@ final class UserDictionaryTests: XCTestCase {
         XCTAssertEqual(UserDictionary.empty.candidateOnlyWords(in: "たぐ"), [])
     }
 
+    func testSplitUsesOnlyMatchesOnWordBoundaries() {
+        let dictionary = makeDictionary([("えま", "江間")])
+        // 「えらーが|きえ|ました」: 「えま」(5..<7) は語の途中なので当てない
+        XCTAssertEqual(
+            dictionary.split("えらーがきえました", wordBoundaries: [0, 3, 4, 6, 9]),
+            [.reading("えらーがきえました")])
+        XCTAssertEqual(
+            dictionary.split("えまとあそぶ", wordBoundaries: [0, 2, 3, 6]),
+            [.word("江間"), .reading("とあそぶ")])
+        // 境目が分からなければ（ラティスが無い）読みが並べば当てる
+        XCTAssertEqual(
+            dictionary.split("えらーがきえました"),
+            [.reading("えらーがき"), .word("江間"), .reading("した")])
+    }
+
+    func testSplitFallsBackToShorterMatchOnWordBoundaries() {
+        let dictionary = makeDictionary([("とうきょう", "東京"), ("とうきょうと", "東京都")])
+        // 「とうきょう|とっきょ」: 長い一致の終わりが境目でなければ短い一致を使う
+        XCTAssertEqual(
+            dictionary.split("とうきょうとっきょ", wordBoundaries: [0, 5, 9]),
+            [.word("東京"), .reading("とっきょ")])
+    }
+
+    func testEntriesOccurringInReading() {
+        let dictionary = makeDictionary([("えま", "江間"), ("きららざか", "雲母坂"), ("あ", "阿")])
+        XCTAssertEqual(dictionary.entries(occurringIn: "きえました").map(\.word), ["江間"])
+        XCTAssertTrue(dictionary.entries(occurringIn: "あさ").isEmpty, "1文字の読みは部分一致の対象外")
+    }
+
     func testEmptyDictionaryDoesNotSplit() {
         XCTAssertEqual(UserDictionary.empty.split("きららざか"), [.reading("きららざか")])
         XCTAssertTrue(UserDictionary.empty.isEmpty)
@@ -218,6 +247,27 @@ final class UserDictionaryEngineTests: XCTestCase {
         XCTAssertEqual(live, ["タグ付け"], "同じ読みでも通常の語はライブ変換に使う")
         let composed = try await engine.convert(reading: "きららざかのたぐ", context: "", candidateCount: 1)
         XCTAssertEqual(composed, ["雲母坂ノタグ付け"])
+    }
+
+    /// 読みの並びが一致しても、辞書ラティスで語の境目にならない所には当てない
+    func testPartialMatchInsideWordIsIgnoredWithLattice() async throws {
+        guard let url = LatticeConverter.defaultDictionaryURL() else {
+            throw XCTSkip("辞書が無いためスキップ（macos/scripts/fetch-dictionary.sh で取得）")
+        }
+        let stub = StubEngine()
+        let dictionary = UserDictionary(entries: [UserDictionaryEntry(reading: "えま", word: "江間")])
+        let engine = UserDictionaryEngine(
+            base: stub, dictionary: { dictionary }, lattice: LatticeConverter(dictionaryURL: url))
+        for reading in ["えらーがきえました", "きえます", "とりかえました"] {
+            let result = try await engine.convert(reading: reading, context: "", candidateCount: 1)
+            XCTAssertEqual(result, [hiraganaToKatakana(reading)], reading)
+        }
+        for (reading, expected) in [
+            ("えまとあそぶ", "江間トアソブ"), ("きのうえまにきいた", "キノウ江間ニキイタ"), ("えまさん", "江間サン"),
+        ] {
+            let result = try await engine.convert(reading: reading, context: "", candidateCount: 1)
+            XCTAssertEqual(result, [expected], reading)
+        }
     }
 
     func testEngineFailurePropagatesWithoutUserWords() async {

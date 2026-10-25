@@ -88,6 +88,41 @@ public actor LatticeConverter {
     /// ラティスの返した候補をそのまま（部分候補も含む。調査・デバッグ用）
     public func rawCandidates(reading: String, count: Int) -> [Candidate] {
         guard !reading.isEmpty else { return [] }
+        let readingLength = reading.count
+        return request(reading: reading, count: count).map {
+            Candidate(text: $0.text, value: Double($0.value), isFullMatch: $0.rubyCount == readingLength)
+        }
+    }
+
+    /// ユーザ辞書の語を加えたラティスで読み全体を変換し、評価が最も良い候補の語の境目を返す。
+    ///
+    /// 値は読みの文字位置（先頭の 0 と末尾の `reading.count` を含む）。ユーザ辞書の語を読みの
+    /// 途中に当ててよいかを決めるのに使う（`UserDictionary.split(_:wordBoundaries:)`）。語は
+    /// azooKey の評価用コマンドと同じく固有名詞・評価値 -10 で入れるので、語として前後とつながる
+    /// 場所（「えまとあそぶ」）では最良の候補に残り、動詞などの途中（「きえました」の「えま」）では
+    /// 品詞の連接で負けて境目が合わない。語はこの呼び出しの間だけ入れ、返る前に外す
+    /// （`LatticeRescoringEngine` の候補には混ぜない）。読み全体の候補が無ければ nil
+    public func wordBoundaries(reading: String, userWords: [(reading: String, word: String)]) -> Set<Int>? {
+        guard !reading.isEmpty else { return nil }
+        converter.importDynamicUserDictionary(userWords.map {
+            DicdataElement(
+                word: $0.word, ruby: hiraganaToKatakana($0.reading),
+                cid: CIDData.固有名詞.cid, mid: MIDData.一般.mid, value: -10)
+        })
+        defer { converter.importDynamicUserDictionary([]) }
+        let readingLength = reading.count
+        guard let best = request(reading: reading, count: 1).first(where: { $0.rubyCount == readingLength })
+        else { return nil }
+        var boundaries: Set<Int> = [0]
+        var position = 0
+        for element in best.data {
+            position += element.ruby.count
+            boundaries.insert(position)
+        }
+        return boundaries
+    }
+
+    private func request(reading: String, count: Int) -> [KanaKanjiConverterModule.Candidate] {
         var composing = ComposingText()
         composing.insertAtCursorPosition(reading, inputStyle: .direct)
         let options = ConvertRequestOptions(
@@ -106,9 +141,6 @@ public actor LatticeConverter {
         let result = converter.requestCandidates(composing, options: options)
         // 読みは独立して与えるので、差分変換用の内部状態は毎回捨てる
         converter.stopComposition()
-        let readingLength = reading.count
-        return result.mainResults.map {
-            Candidate(text: $0.text, value: Double($0.value), isFullMatch: $0.rubyCount == readingLength)
-        }
+        return result.mainResults
     }
 }
