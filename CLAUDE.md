@@ -261,6 +261,13 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   ・`TapGestureDetector` の規則と既定値は実験の道具（`experiments/keystroke-force/` の `TapDetector`）と同じにする。
     一致は `TapGestureDetectorTests.matchesRecordedTrials`（実験の指示つきの記録で 75/80・73/80。記録がなければ何もしない）で確かめる。
     規則を変えたら、先に実験の道具の `analyze` で記録を数え直して比べる
+- 確定の取り消し（Ctrl+Backspace、確定した直後だけ。`CommitUndo` / `undoCommit`。2026-10-27）は、`commitText` で
+  確定する前の合成の状態を持っておき、カーソルの手前が確定した文字列のままなら（`attributedSubstring` で照合）
+  それを消して状態を戻す。ほかのキー・クリック・フォーカス移動で取り消せなくする（`closeCommitUndo`）。
+  **確定に伴う記録（学習・変換記録・入力履歴）は `deferCommitEffect` で包み、取り消せなくなったときに書く**
+  （取り消した確定は本当の確定ではないので残さない）。確定の流れに記録を足すときもこれで包む
+- 候補ウィンドウの辞書ラティスには azooKey の特別な候補（`LatticeConverter.specialCandidateProviders`、2026-10-27）を
+  入れている: 桁区切り（「12345」→ 12,345）・時刻（「1230」→ 12:30）・和暦西暦（「2026ねん」→ 令和8年）
 - 変換・予測の左文脈は合成開始時にアプリのカーソル手前テキストを1回読む（`DocumentContextSettings.read`、
   既定ON）。読めないアプリでは `recentCommitted`（確定文字列の蓄積）に代える。合成中は読み直さない。
   左文脈は**カーソルのある行だけ**（`LeftContext.normalize`、azooKey と同じ。2026-09-30 に「改行を除いて前の段落と

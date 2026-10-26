@@ -82,6 +82,16 @@ public actor LatticeConverter {
         return results
     }
 
+    /// 読みから作る特別な候補（azooKey の機能。読み全体に一致する候補として辞書の候補の間に入る）:
+    /// 桁区切りの数字（「12345」→ 12,345）、時刻（「1230」→ 12:30、「930」→ 9:30）、
+    /// 和暦・西暦（「2026ねん」→ 令和8年、「しょうわ64ねん」→ 1989年）。
+    /// メールアドレス・装飾英字・Unicode・バージョンは iroha の入力（かなの読み）に合わないので使わない
+    static let specialCandidateProviders: [any SpecialCandidateProvider] = [
+        CommaSeparatedNumberSpecialCandidateProvider(),
+        TimeExpressionSpecialCandidateProvider(),
+        CalendarSpecialCandidateProvider(),
+    ]
+
     /// `fullMatchCandidates` が返す候補数の上限
     public static let maxFullMatchCandidates = 60
 
@@ -136,7 +146,7 @@ public actor LatticeConverter {
             // azooKey の絵文字の置換は確定後の予測にしか使われないので渡さない
             // （絵文字は SymbolCandidateTable から候補ウィンドウに足す）
             textReplacer: .empty,
-            specialCandidateProviders: [],
+            specialCandidateProviders: Self.specialCandidateProviders,
             metadata: nil)
         let result = converter.requestCandidates(composing, options: options)
         // 読みは独立して与えるので、差分変換用の内部状態は毎回捨てる

@@ -9,6 +9,7 @@ import IrohaMLX
 /// - ライブ変換: 入力のたびに読みをLLM（zenz-v3）へ送り、変換結果を未確定文字列として表示
 /// - スペースキー: 文節変換モードへ（←→で文節移動、Shift+←→で伸縮、Spaceで候補ウィンドウ）
 /// - Enterで確定、Escでかな表示に戻す/取消、BSで編集
+/// - Ctrl+BS: 確定した直後なら確定を取り消し、確定する前の未確定文字列に戻す（`undoCommit`）
 /// - F6-F10 / Ctrl+U,I,O,P,T: ひらがな/カタカナ/半角カナ/全角英数/半角英数
 /// - Shift+英字: Shiftを押している間だけ英字入力（離すとその英字を固定してかな入力に戻る）
 /// - 予測変換（設定・既定OFF）: 読みの先頭が一致する入力履歴の語を最大3件カーソル下の小窓に表示。
@@ -268,6 +269,34 @@ final class IrohaInputController: IMKInputController {
         var rejectedLearning: RejectedLearning?
     }
     private var fixedChunks: [FixedChunk] = []
+
+    /// 確定の取り消し（Ctrl+Backspace、確定した直後だけ）に使う、確定する前の合成の状態。
+    /// 確定に伴う記録（学習・変換記録・入力履歴）も、取り消せる間は書かずにここで持っておき、
+    /// 取り消せなくなったとき（次のキー・クリック・フォーカス移動）に書く（`closeCommitUndo`）。
+    /// 取り消した確定は本当の確定ではないので、記録に残さない
+    private struct CommitUndo {
+        var text: String
+        var mode: Mode
+        var composer: RomajiComposer
+        var fixedChunks: [FixedChunk]
+        var alphabetRun: String?
+        var alphabetRunDelimited: Bool
+        var displayOverride: String?
+        var displayOverrideRejectedLearning: RejectedLearning?
+        var lastConversion: (reading: String, result: String)?
+        var segments: [BunsetsuSegment]
+        var currentSegmentIndex: Int
+        var segmentBaseline: String?
+        var segmentEngineBaseline: String?
+        var segmentsFromAI: Bool
+        var recentCommitted: String
+        var recentCommittedHasPrivateText: Bool
+        var documentContext: String?
+        var effects: [() -> Void]
+    }
+    private var commitUndo: CommitUndo?
+    /// 確定の流れの中で作った記録。`commitText` が `commitUndo` に移す
+    private var pendingCommitEffects: [() -> Void] = []
     /// Shift+英字で入力中の英字（合成の末尾に付く。nilなら英字入力中でない）。
     /// Shiftを押している間だけ続き、Shiftを離して小文字などを打つと `.alphabet` の固定部分になって
     /// かな入力に戻る（「今日はAIを使う」を1回のEnterで確定できる）。この間 composer は空
@@ -420,6 +449,12 @@ final class IrohaInputController: IMKInputController {
         // 句読点スタイルの知らせは次のキーで閉じる（この後の Control+. なら出し直す）
         hideNotice()
 
+        // 確定の取り消し（確定した直後の Ctrl+Backspace）。ほかのキーが来たら取り消せなくする
+        if commitUndo != nil {
+            if Self.isUndoCommitKey(event), undoCommit(client: client) { return true }
+            closeCommitUndo()
+        }
+
         // 予測変換の小窓: Tab で候補を選ぶ。選んだまま他のキーを押すと、その候補を入れてからキーを処理する
         if prediction != nil, mode == .composing, handlePredictionKey(event, client: client) {
             return true
@@ -533,6 +568,7 @@ final class IrohaInputController: IMKInputController {
 
     override func deactivateServer(_ sender: Any!) {
         commitCurrent(client: sender as? IMKTextInput)
+        closeCommitUndo()
         DeveloperOverlay.shared.hide()
         PrivateModeIndicator.shared.hide()
         TapInputFeedback.shared.detach(self)
@@ -540,8 +576,10 @@ final class IrohaInputController: IMKInputController {
     }
 
     override func commitComposition(_ sender: Any!) {
-        // クリックやフォーカス移動による確定。小窓の予測は確定に含めない
+        // クリックやフォーカス移動による確定。小窓の予測は確定に含めない。
+        // カーソルが動くので、この確定も前の確定も取り消せなくする
         commitCurrent(client: sender as? IMKTextInput)
+        closeCommitUndo()
     }
 
     /// 他アプリでのクリック・スクロール・アプリ切替（`PointerActivityMonitor`）: カーソル位置に出している
@@ -550,6 +588,8 @@ final class IrohaInputController: IMKInputController {
     /// 移動後のカーソル位置に文字列が入りかねない）。
     /// スクロールでは候補ウィンドウは閉じない（候補を選んでいる途中の小さなスクロールで消えると煩わしい）
     private func dismissFloatingWindows(for event: PointerActivityMonitor.Event) {
+        // クリックでカーソルが動くと、確定した文字列の位置が分からなくなる
+        if event != .scroll { closeCommitUndo() }
         cancelPrediction()
         hideTypoFeedback()
         hideNotice()
@@ -1079,10 +1119,12 @@ final class IrohaInputController: IMKInputController {
         var rejected = fixedChunks.compactMap(\.rejectedLearning)
         if displayOverride != nil, let pending = displayOverrideRejectedLearning { rejected.append(pending) }
         guard !rejected.isEmpty else { return }
-        Task.detached(priority: .utility) {
-            for learning in rejected {
-                LearningStore.shared.forget(
-                    reading: learning.reading, engineResult: learning.engineResult, result: learning.shown)
+        deferCommitEffect {
+            Task.detached(priority: .utility) {
+                for learning in rejected {
+                    LearningStore.shared.forget(
+                        reading: learning.reading, engineResult: learning.engineResult, result: learning.shown)
+                }
             }
         }
     }
@@ -1906,11 +1948,13 @@ final class IrohaInputController: IMKInputController {
         guard !segments.contains(where: { $0.unlearnableCandidates.contains($0.result) }) else { return }
         let reading = segments.map(\.reading).joined()
         let engineResult = segmentEngineBaseline ?? baseline
-        Task.detached(priority: .utility) {
-            if committed == engineResult {
-                LearningStore.shared.forget(reading: reading, engineResult: engineResult, result: baseline)
-            } else {
-                LearningStore.shared.record(reading: reading, replaced: engineResult, result: committed)
+        deferCommitEffect {
+            Task.detached(priority: .utility) {
+                if committed == engineResult {
+                    LearningStore.shared.forget(reading: reading, engineResult: engineResult, result: baseline)
+                } else {
+                    LearningStore.shared.record(reading: reading, replaced: engineResult, result: committed)
+                }
             }
         }
     }
@@ -1950,7 +1994,7 @@ final class IrohaInputController: IMKInputController {
         // 左文脈のない確定・読みをそのままの1文字は記録しない。
         // 「直した確定だけ」の設定なら、モデルの出力をそのまま確定したものも残さない
         guard ConversionLogSettings.shouldRecord(entry) else { return }
-        ConversionLog.shared.record(entry)
+        deferCommitEffect { ConversionLog.shared.record(entry) }
     }
 
     /// 文節列を未確定文字列として表示する（現在の文節は太い下線）
@@ -2321,7 +2365,86 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 指定文字列を確定して状態をリセットする
+    // MARK: - 確定の取り消し
+
+    private func deferCommitEffect(_ effect: @escaping () -> Void) {
+        pendingCommitEffects.append(effect)
+    }
+
+    /// 確定を取り消せなくする。持っていた記録をここで書く
+    /// （確定に至らなかった流れで作った記録が残っていれば、それも書く）
+    private func closeCommitUndo() {
+        let leftover = pendingCommitEffects
+        pendingCommitEffects = []
+        leftover.forEach { $0() }
+        guard let undo = commitUndo else { return }
+        commitUndo = nil
+        undo.effects.forEach { $0() }
+    }
+
+    /// Ctrl+Backspace（修飾キーは Control だけ）
+    private static func isUndoCommitKey(_ event: NSEvent) -> Bool {
+        Int(event.keyCode) == kVK_Delete
+            && event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .function]) == .control
+    }
+
+    /// 直前の確定を取り消し、確定する前の未確定文字列に戻す。
+    /// カーソルの手前が確定した文字列のままのときだけ行う（アプリから読めない・カーソルが動いた・
+    /// 続けて何か入ったときは何もしない）。戻したら true
+    private func undoCommit(client: IMKTextInput) -> Bool {
+        guard let undo = commitUndo, japaneseMode, !isComposing, mode == .composing else { return false }
+        let selection = client.selectedRange()
+        let length = undo.text.utf16.count
+        guard selection.location != NSNotFound, selection.length == 0, selection.location >= length else {
+            return false
+        }
+        let range = NSRange(location: selection.location - length, length: length)
+        guard client.attributedSubstring(from: range)?.string == undo.text else { return false }
+        commitUndo = nil
+        client.insertText("", replacementRange: range)
+
+        mode = undo.mode
+        composer = undo.composer
+        fixedChunks = undo.fixedChunks
+        alphabetRun = undo.alphabetRun
+        alphabetRunDelimited = undo.alphabetRunDelimited
+        displayOverride = undo.displayOverride
+        displayOverrideRejectedLearning = undo.displayOverrideRejectedLearning
+        lastConversion = undo.lastConversion
+        segments = undo.segments
+        currentSegmentIndex = undo.currentSegmentIndex
+        segmentBaseline = undo.segmentBaseline
+        segmentEngineBaseline = undo.segmentEngineBaseline
+        segmentsFromAI = undo.segmentsFromAI
+        recentCommitted = undo.recentCommitted
+        recentCommittedHasPrivateText = undo.recentCommittedHasPrivateText
+        documentContext = undo.documentContext
+        if mode == .segmenting {
+            segmentGeneration += 1
+            refreshSegmentDisplay(client: client)
+        } else {
+            composerDidChange(client: client)
+        }
+        return true
+    }
+
     private func commitText(_ text: String, client: IMKTextInput?) {
+        // 前の確定はもう取り消せない（間に別の確定が入った）
+        let effects = pendingCommitEffects
+        pendingCommitEffects = []
+        closeCommitUndo()
+        let undo = (isComposing || mode == .segmenting) && !text.isEmpty
+            ? CommitUndo(
+                text: text, mode: mode, composer: composer, fixedChunks: fixedChunks,
+                alphabetRun: alphabetRun, alphabetRunDelimited: alphabetRunDelimited,
+                displayOverride: displayOverride, displayOverrideRejectedLearning: displayOverrideRejectedLearning,
+                lastConversion: lastConversion, segments: segments, currentSegmentIndex: currentSegmentIndex,
+                segmentBaseline: segmentBaseline, segmentEngineBaseline: segmentEngineBaseline,
+                segmentsFromAI: segmentsFromAI, recentCommitted: recentCommitted,
+                recentCommittedHasPrivateText: recentCommittedHasPrivateText, documentContext: documentContext,
+                effects: effects)
+            : nil
+        if undo == nil { effects.forEach { $0() } }
         cancelPrediction()
         // どの経路の確定でも進行中の英訳を無効化する（翻訳完了からの確定も含む）
         isTranslating = false
@@ -2346,7 +2469,11 @@ final class IrohaInputController: IMKInputController {
         hidePanel()
         displayOverride = nil
         mode = .composing
-        guard let client else { return }
+        guard let client else {
+            undo?.effects.forEach { $0() }
+            return
+        }
+        commitUndo = undo
         client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
         client.setMarkedText(
             NSAttributedString(string: ""),
@@ -2536,8 +2663,11 @@ final class IrohaInputController: IMKInputController {
                 pieces.append((composer.text, composerText))
             }
         }
-        for piece in pieces {
-            InputHistoryStore.shared.record(reading: piece.reading, text: piece.text)
+        guard !pieces.isEmpty else { return }
+        deferCommitEffect {
+            for piece in pieces {
+                InputHistoryStore.shared.record(reading: piece.reading, text: piece.text)
+            }
         }
     }
 

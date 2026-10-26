@@ -51,6 +51,18 @@ final class LatticeRescoringEngineTests: XCTestCase {
         XCTAssertFalse(candidates.contains("ない"))
     }
 
+    /// 数字・年の読みには、桁区切り・時刻・和暦西暦の候補が入る（azooKey の特別な候補）
+    func testSpecialCandidatesForNumbersAndYears() async throws {
+        let lattice = try makeLattice()
+        let time = await lattice.fullMatchCandidates(reading: "1230", nBest: 10)
+        XCTAssertTrue(time.contains("12:30"), "\(time)")
+        XCTAssertTrue(time.contains("1,230"), "\(time)")
+        let number = await lattice.fullMatchCandidates(reading: "12345", nBest: 10)
+        XCTAssertTrue(number.contains("12,345"), "\(number)")
+        let year = await lattice.fullMatchCandidates(reading: "2026ねん", nBest: 10)
+        XCTAssertTrue(year.contains("令和8年"), "\(year)")
+    }
+
     /// 第一候補（ライブ変換）はラティスを通さずzenzの生成に任せる
     func testSingleCandidateBypassesLattice() async throws {
         let lattice = try makeLattice()
