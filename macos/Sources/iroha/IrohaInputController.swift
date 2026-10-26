@@ -64,6 +64,7 @@ final class IrohaInputController: IMKInputController {
     private static let engine = LearningEngine(
         base: UserDictionaryEngine(
             base: ChunkedConversionEngine(base: VariantKanjiEngine(base: makeCoreEngine())),
+            dictionary: { PrivateModeSettings.userDictionary },
             lattice: lattice),
         dictionary: { LearningSettings.dictionary })
 
@@ -232,7 +233,20 @@ final class IrohaInputController: IMKInputController {
 
     /// F6/F7等による表示の強制上書き（ひらがな・カタカナ・英数）。
     /// 次の入力でfixedChunksへ取り込まれる
-    private var displayOverride: String?
+    private var displayOverride: String? {
+        didSet { if displayOverride == nil { displayOverrideRejectedLearning = nil } }
+    }
+    /// `displayOverride` が、学習で差し替えた表示を退けて選んだものなら、その学習（確定したら消す）
+    private var displayOverrideRejectedLearning: RejectedLearning?
+
+    /// 学習で差し替えた表示（`shown`）を、F6-F10等で別の表示形にして退けたときの記録。
+    /// 退けた表示形のまま確定したら、その学習を消す（`forgetRejectedLearnings`）。
+    /// Spaceの候補からエンジンの結果に戻して確定したときに学習を消すのと同じ扱い
+    private struct RejectedLearning {
+        var reading: String
+        var engineResult: String
+        var shown: String
+    }
 
     /// F6-F10 / Ctrl+U,I,O,P,Tで表示形を指定した部分。
     /// 指定した見た目のまま未確定文字列の先頭に残し、以降の入力ではライブ変換の対象にしない
@@ -250,6 +264,8 @@ final class IrohaInputController: IMKInputController {
         var typedReading: String?
         /// `.alphabet` で、区切り記号で囲んで入れた英字か（Backspace で開き直すときも区切り記号の英字入力に戻す）
         var delimited = false
+        /// `.display` で、学習で差し替えた表示を退けて選んだ表示形なら、その学習（確定したら消す）
+        var rejectedLearning: RejectedLearning?
     }
     private var fixedChunks: [FixedChunk] = []
     /// Shift+英字で入力中の英字（合成の末尾に付く。nilなら英字入力中でない）。
@@ -691,7 +707,7 @@ final class IrohaInputController: IMKInputController {
             ]))
         if enabled {
             text.append(NSAttributedString(
-                string: "（学習・記録・予測を止めています）",
+                string: "（学習・ユーザ辞書・記録・予測を止めています）",
                 attributes: [.font: font, .foregroundColor: NSColor.tertiaryLabelColor]))
         }
         let hint = PrivateModeSettings.shortcut.map { "\($0.rawValue) で戻す" } ?? "入力メニューで戻す"
@@ -1042,20 +1058,45 @@ final class IrohaInputController: IMKInputController {
         }
         if let converted {
             displayOverride = converted
+            displayOverrideRejectedLearning = rejectedLearning(reading: kana, choosing: converted)
             updateMarkedText(client: client, display: fixedText + converted)
         }
         return true  // 変換できない場合もキーは消費する（Fキーがアプリに漏れないように）
+    }
+
+    /// ライブ変換が `reading` に学習で差し替えた表示を出していて、`text` がそれと違えば、退けた学習
+    private func rejectedLearning(reading: String, choosing text: String) -> RejectedLearning? {
+        guard LearningSettings.isActive, let lastConversion, lastConversion.reading == reading,
+              lastConversion.result != text,
+              let engineResult = Self.engine.engineResult(forReading: reading, shown: lastConversion.result),
+              engineResult != lastConversion.result else { return nil }
+        return RejectedLearning(reading: reading, engineResult: engineResult, shown: lastConversion.result)
+    }
+
+    /// F6-F10等で退けた学習を消す（確定するときに呼ぶ）
+    private func forgetRejectedLearnings() {
+        guard LearningSettings.isActive else { return }
+        var rejected = fixedChunks.compactMap(\.rejectedLearning)
+        if displayOverride != nil, let pending = displayOverrideRejectedLearning { rejected.append(pending) }
+        guard !rejected.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            for learning in rejected {
+                LearningStore.shared.forget(
+                    reading: learning.reading, engineResult: learning.engineResult, result: learning.shown)
+            }
+        }
     }
 
     /// F6-F10等で指定した表示形を「固定部分」として取り込む（確定はしない）。
     /// 以降の入力では、この部分をライブ変換にかけ直さない
     private func lockDisplayOverride() {
         guard let text = displayOverride else { return }
+        let rejectedLearning = displayOverrideRejectedLearning
         displayOverride = nil
         // applyFunctionKeyConversionでflush済みなので、composer.textが指定した部分の読み
         let reading = composer.text
         guard !text.isEmpty, !reading.isEmpty else { return }
-        fixedChunks.append(FixedChunk(reading: reading, text: text))
+        fixedChunks.append(FixedChunk(reading: reading, text: text, rejectedLearning: rejectedLearning))
         composer = Self.makeComposer()
         // 残りの読みは空になったので、進行中のライブ変換も破棄する
         cancelConversion()
@@ -1845,6 +1886,7 @@ final class IrohaInputController: IMKInputController {
     /// 全文節の変換結果を結合して確定する
     private func commitSegments(client: IMKTextInput?) {
         let text = segments.map(\.result).joined()
+        forgetRejectedLearnings()
         learnIfCorrected(committed: text)
         logSegmentsCommit(committed: text)
         recordInputHistory(composerText: nil)
@@ -2064,6 +2106,7 @@ final class IrohaInputController: IMKInputController {
         cancelPrediction()
         // キー入力以外の確定（フォーカス移動等）でも合成状態の変化を知らせる
         defer { SelectionActionCoordinator.isIMEComposing = false }
+        forgetRejectedLearnings()
         guard let text = resolveCommitText(logging: true) else { return }
         // 入力中の読み（resolveCommitText で flush 済み）を確定する表記は、確定文字列から固定部分を除いたもの
         let fixedPrefix = fixedText

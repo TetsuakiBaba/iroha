@@ -1,5 +1,6 @@
 import Carbon.HIToolbox
 import Cocoa
+import IrohaCore
 
 /// プライベートモード（既定OFF・他のMacと同期しない。2026-10-16）。
 ///
@@ -7,9 +8,11 @@ import Cocoa
 /// - 変換の学習（覚えることも、覚えた変換に差し替えることもしない）… `LearningSettings.isActive`
 /// - 変換記録 … `ConversionLogSettings.isActive`
 /// - 入力履歴の記録と予測変換 … `PredictionSettings.isActive`
+/// - ユーザ辞書（変換をiroha本来の結果にする。2026-10-27）… `userDictionary`
 ///
-/// 各機能の設定値は書き換えない（OFF に戻せば元の動作になる）。ユーザ辞書・変換ルールはユーザが
-/// 自分で登録したものなので止めない。AI変換・選択テキストのAI処理も、ユーザが操作したときだけ動くので止めない。
+/// 各機能の設定値は書き換えない（OFF に戻せば元の動作になる）。ユーザ辞書は当初「自分で登録したもの」として
+/// 止めていなかったが、モードの間は変換をiroha本来の結果にしたいというユーザの判断で止める。変換ルールは
+/// 候補ウィンドウにだけ出るので止めない。AI変換・選択テキストのAI処理も、ユーザが操作したときだけ動くので止めない。
 /// 切り替えは設定画面・入力メニュー・ショートカット（入力中かどうかによらず、iroha に届いたキーで見る）の3か所。
 /// ON/OFF は端末ごとの判断なので同期しない（別のMacで OFF にしたのが同期で届いて記録が再開しないように）。
 /// ショートカットと鍵のマークの表示は同期する
@@ -22,6 +25,11 @@ enum PrivateModeSettings {
 
     static var isEnabled: Bool {
         UserDefaults.standard.bool(forKey: enabledKey)
+    }
+
+    /// 変換に使うユーザ辞書。モードの間は空（参照しない）
+    static var userDictionary: UserDictionary {
+        isEnabled ? .empty : UserDictionaryStore.shared.current
     }
 
     /// モードの間、カーソルの右横に鍵のマークを出すか（`PrivateModeIndicator`、既定ON・同期する）

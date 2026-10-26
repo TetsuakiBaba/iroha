@@ -224,7 +224,8 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   ON の間、変換の学習（記録と差し替えの両方）・変換記録・入力履歴の記録と予測変換を止める。各機能の設定値は書き換えず、
   `LearningSettings.isActive` / `ConversionLogSettings.isActive` / `PredictionSettings.isActive` で止める
   （**記録・履歴に基づく提示を足すときは `isEnabled` ではなく、プライベートモードを見る `isActive` 側で判定する**）。
-  ユーザ辞書・変換ルール・AI変換は止めない。切り替えは設定 > 辞書・学習・入力メニュー・ショートカット（既定 Ctrl+Option+P、
+  2026-10-27 からユーザ辞書も止める（`PrivateModeSettings.userDictionary`。モードの間は変換を iroha 本来の結果にする
+  というユーザの判断）。変換ルール（候補ウィンドウにだけ出る）・AI変換は止めない。切り替えは設定 > 辞書・学習・入力メニュー・ショートカット（既定 Ctrl+Option+P、
   IME に届いたキーで照合。グローバル登録はしない）。モード中の確定が入った `recentCommitted` は、OFF にした後の
   次の合成の開始で捨てる（変換記録の左文脈に残さないため）。
   ON の間はカーソルの右横に鍵のマークを出す（`PrivateModeIndicator`、設定 `privateModeCaretIndicator`・既定ON・同期する）。
@@ -263,7 +264,9 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   エンジンがまた同じ結果を出したときだけ差し替える（2026-09-30。「ほうこう→芳香」を覚えても、左文脈「御恩と」で
   エンジンが「奉公」を出せば差し替えない。差し替えるかをエンジンの結果で決めるので、学習済みの読みでもエンジンは毎回呼ぶ）。
   記録時の「直す前」は `LearningEngine.engineResult(forReading:shown:)` で引く。差し替えた結果をエンジンの結果に
-  戻して確定したらその学習を消す（`LearningStore.forget`）。`replaced` が nil の学習（それより前のもの）は
+  戻して確定したらその学習を消す（`LearningStore.forget`）。差し替えた表示を F6-F10 / Ctrl+U…T で別の表示形にして
+  確定したときも消す（`RejectedLearning` / `forgetRejectedLearnings`。2026-10-27。それまでは Space の候補から
+  戻したときだけで、「は→派」をひらがなにして確定しても残った）。`replaced` が nil の学習（それより前のもの）は
   読みが一致すれば常に差し替え、同じ読みで「直す前」つきの学習を記録したときに置き換える。文節単位の学習（＋直前の確定文字列を文脈に
   持つ仕組み）は 2026-09-18 に廃止した（設定画面で同じ語が「全体」「文節」の2行に見え、
   適用条件の文脈がユーザから見えないため）。旧形式の `learning.json` は読めるが
