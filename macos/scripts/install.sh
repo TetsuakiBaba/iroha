@@ -19,10 +19,22 @@ swift build --build-system native -c release --product iroha-train
 APP=".build/iroha.app"
 DEST="$HOME/Library/Input Methods/iroha.app"
 
-# バンドル組み立てと署名（SIGN_IDENTITY未指定ならad-hoc）。
+# 署名は、キーチェーンに Developer ID Application の証明書があればそれで行う（無ければ ad-hoc）。
+# ad-hoc 署名の識別条件はビルドの中身から計算した値（cdhash）なので、ビルドし直すたびに変わる。
+# キーチェーンは APIキーを読ませてよいアプリをこの識別条件で覚えるため、ad-hoc だと更新のたびに
+# 「キーチェーン内の…を使用しようとしています」のダイアログが出た（2026-10-27）。Developer ID なら
+# 識別条件はバンドルIDと開発者IDで、配布版とも同じになる。公証しないので署名の時刻は付けない
+# （Apple のサーバに接続せずに入れられるように。時刻の有無で識別条件は変わらない）
+if [ -z "${SIGN_IDENTITY:-}" ]; then
+    SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+        | awk '/"Developer ID Application: /{print $2; exit}')"
+fi
+
+# バンドル組み立てと署名。
 # 開発ビルドはgit describeのバージョン（例: 0.4.2-3-g7aae579）を表示して
 # リリースビルドと区別できるようにする（リリースはCIがタグから注入）
 VERSION="${VERSION:-$(git describe --tags --dirty --always 2>/dev/null | sed 's/^v//')}" \
+SIGN_IDENTITY="${SIGN_IDENTITY:--}" SIGN_TIMESTAMP=0 \
   ./scripts/make-bundle.sh
 
 echo "==> インストール: $DEST"

@@ -7,6 +7,7 @@
 #   BUILD_NUMBER  CFBundleVersionに注入（省略時はInfo.plistのまま）
 #   SIGN_IDENTITY 署名ID（省略時は ad-hoc "-"。CIではDeveloper ID +
 #                 hardened runtime + timestampで署名する）
+#   SIGN_TIMESTAMP 0 なら署名に時刻を付けない（Apple のサーバに接続しない。公証しないローカル用。既定 1）
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -75,6 +76,8 @@ if [ "$SIGN_IDENTITY" = "-" ]; then
   codesign --force --sign - "$APP"
 else
   echo "==> 署名 (Developer ID, hardened runtime)"
-  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/iroha-train"
-  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
+  TIMESTAMP="--timestamp"
+  [ "${SIGN_TIMESTAMP:-1}" = "0" ] && TIMESTAMP="--timestamp=none"
+  codesign --force --options runtime "$TIMESTAMP" --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/iroha-train"
+  codesign --force --options runtime "$TIMESTAMP" --sign "$SIGN_IDENTITY" "$APP"
 fi

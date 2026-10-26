@@ -51,7 +51,9 @@ enum TranslationService {
         case .openai:
             return !RemoteTranslator.openAIModel.isEmpty
         case .claude:
-            return !RemoteTranslator.claudeAPIKey.isEmpty
+            // キーの入力中に main thread でキーチェーンを読まない（`SecretStore`）。まだ読んでいなければ
+            // 使えるものとして進め、送る直前に裏で読む（無ければその時点で失敗して通常の確定になる）
+            return !(SecretStore.cachedValue(RemoteTranslator.claudeKeyAccount) ?? "?").isEmpty
         }
     }
 

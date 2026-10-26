@@ -919,9 +919,13 @@ private struct AIServiceSection: View {
     @AppStorage("lmStudioModel") private var lmStudioModel = ""
     @AppStorage("openAIModel") private var openAIModel = ""
     @AppStorage("openAIEndpoint") private var openAIEndpoint = ""
-    @State private var openAIKey = RemoteTranslator.openAIAPIKey
+    // APIキーはキーチェーンから裏で読む（`SecretStore`。main thread で読むと、ダイアログに答えるまで入力が止まる）。
+    // 読み終わるまでは覚えている値で表示し、欄は操作できないようにする
+    @State private var openAIKey = SecretStore.cachedValue(RemoteTranslator.openAIKeyAccount) ?? ""
     @AppStorage("claudeModel") private var claudeModel = RemoteTranslator.claudeDefaultModel
-    @State private var claudeKey = RemoteTranslator.claudeAPIKey
+    @State private var claudeKey = SecretStore.cachedValue(RemoteTranslator.claudeKeyAccount) ?? ""
+    @State private var keysLoaded = SecretStore.cachedValue(RemoteTranslator.openAIKeyAccount) != nil
+        && SecretStore.cachedValue(RemoteTranslator.claudeKeyAccount) != nil
 
     @State private var remoteModels: [String] = []
     @State private var remoteModelsError: String?
@@ -950,9 +954,11 @@ private struct AIServiceSection: View {
                 }
                 HStack {
                     Text("APIキー")
-                    SecureField("", text: $openAIKey)
+                    SecureField("", text: $openAIKey, prompt: keyFieldPrompt)
                         .textFieldStyle(.roundedBorder)
+                        .disabled(!keysLoaded)
                         .onChange(of: openAIKey) {
+                            guard keysLoaded else { return }
                             SecretStore.set(openAIKey, for: RemoteTranslator.openAIKeyAccount)
                         }
                 }
@@ -960,9 +966,11 @@ private struct AIServiceSection: View {
             if translationService == "claude" {
                 HStack {
                     Text("APIキー")
-                    SecureField("", text: $claudeKey)
+                    SecureField("", text: $claudeKey, prompt: keyFieldPrompt)
                         .textFieldStyle(.roundedBorder)
+                        .disabled(!keysLoaded)
                         .onChange(of: claudeKey) {
+                            guard keysLoaded else { return }
                             SecretStore.set(claudeKey, for: RemoteTranslator.claudeKeyAccount)
                         }
                         // 入れ終えたら（Return）モデル一覧を取り直す
@@ -1012,7 +1020,7 @@ private struct AIServiceSection: View {
             }
         }
         .onChange(of: translationService) { fetchRemoteModels() }
-        .onAppear { fetchRemoteModels() }
+        .onAppear { loadKeysThenFetchModels() }
     }
 
     private var remoteModelBinding: Binding<String> {
@@ -1061,6 +1069,24 @@ private struct AIServiceSection: View {
         }
     }
 
+    private var keyFieldPrompt: Text? {
+        keysLoaded ? nil : Text("キーチェーンから読み込み中…")
+    }
+
+    /// APIキーを裏で読んでから、モデルの一覧を取る（一覧の取得に APIキーが要るサービスがある）
+    private func loadKeysThenFetchModels() {
+        guard !keysLoaded else {
+            fetchRemoteModels()
+            return
+        }
+        SecretStore.load([RemoteTranslator.openAIKeyAccount, RemoteTranslator.claudeKeyAccount]) { values in
+            openAIKey = values[RemoteTranslator.openAIKeyAccount] ?? ""
+            claudeKey = values[RemoteTranslator.claudeKeyAccount] ?? ""
+            keysLoaded = true
+            fetchRemoteModels()
+        }
+    }
+
     private func fetchRemoteModels() {
         guard translationService != "apple" else { return }
         let service: RemoteTranslator.Service
@@ -1071,6 +1097,8 @@ private struct AIServiceSection: View {
         default: service = .lmstudio
         }
         remoteModelsNote = nil
+        // APIキーを読み終えたら `loadKeysThenFetchModels` がもう一度呼ぶ
+        if service == .openai || service == .claude, !keysLoaded { return }
         if service == .claude, claudeKey.isEmpty {
             remoteModels = []
             remoteModelsError = nil

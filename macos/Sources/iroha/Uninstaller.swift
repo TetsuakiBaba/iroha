@@ -29,6 +29,7 @@ enum Uninstaller {
             try? FileManager.default.removeItem(at: DataDirectory.defaultURL)
             SecretStore.set("", for: RemoteTranslator.openAIKeyAccount)
             SecretStore.set("", for: RemoteTranslator.claudeKeyAccount)
+            SecretStore.waitForWrites()
             if let bundleId = Bundle.main.bundleIdentifier {
                 UserDefaults.standard.removePersistentDomain(forName: bundleId)
             }

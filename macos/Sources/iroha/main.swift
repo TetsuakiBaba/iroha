@@ -64,6 +64,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AICommitSettings.migrateIfNeeded()
         AICommitSettings.migrateHotkeysIfNeeded()
 
+        // 使っている外部サービスの APIキーを裏で読んでおく（AI変換のたびに main thread で読まないように。`SecretStore`）
+        switch TranslationBackend.current {
+        case .openai: SecretStore.load([RemoteTranslator.openAIKeyAccount])
+        case .claude: SecretStore.load([RemoteTranslator.claudeKeyAccount])
+        case .apple, .ollama, .lmstudio: break
+        }
+
         // 開発用: 設定ウィンドウだけを開く（IMEとしては接続しない）。UIの確認に使う
         //   "~/Library/Input Methods/iroha.app/Contents/MacOS/iroha" --settings [タブ名]
         //   タブ名: input / dictionary / selection / model / about、log（変換記録の編集）、learning（学習の編集）

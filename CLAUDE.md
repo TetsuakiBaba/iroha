@@ -42,6 +42,13 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   無いと install.sh が `build-mlx-metallib.sh` で止まる）。
   `macos/.build` は Dropbox の同期から外してある（`xattr -w com.dropbox.ignored 1 macos/.build`、Mac ごとに要る。
   版の違う Xcode の 2 台が同じ `.build` を書き合っていた）
+- `install.sh` はキーチェーンに Developer ID Application の証明書があればそれで署名する（無い Mac では ad-hoc。
+  公証しないので署名の時刻は付けない）。ad-hoc の識別条件はビルドごとに変わる cdhash で、更新のたびに API キーの
+  キーチェーンのダイアログが出ていた（2026-10-27）
+- **キーチェーン（API キー）を main thread で読まない**（`SecretStore`。`get` は裏のスレッド用、main thread は
+  `cachedValue` / `load`）。設定画面は IME と同じプロセスにあり、読み取りがダイアログを出すと答えるまで main thread が
+  止まり、どのアプリの入力にも応えられなくなる。パスワードのダイアログ自体も iroha を入力メソッドとして待つので、
+  答えるまで数分かかった（2026-10-27 実測 4 分 19 秒）
 - `log` はzshの組み込みと衝突するため必ず `/usr/bin/log` をフルパスで呼ぶ
 - NSLogはこの環境ではユニファイドログに残らない。IMEの実行時調査は
   /tmpへのファイル直書きヘルパーを一時的に仕込む（調査後に削除）

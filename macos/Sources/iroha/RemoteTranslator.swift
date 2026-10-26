@@ -42,7 +42,8 @@ enum RemoteTranslator {
     static var openAIModel: String {
         UserDefaults.standard.string(forKey: "openAIModel") ?? ""
     }
-    /// APIキーはKeychainに保存（平文plistを避ける）。ローカルプロキシ等では空でもよい
+    /// APIキーはKeychainに保存（平文plistを避ける）。ローカルプロキシ等では空でもよい。
+    /// 読むとダイアログが出ることがあるので、`openAIAPIKey`・`claudeAPIKey` は main thread で使わない（`SecretStore`）
     static let openAIKeyAccount = "openAIAPIKey"
     static var openAIAPIKey: String {
         SecretStore.get(openAIKeyAccount) ?? ""
