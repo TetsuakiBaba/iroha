@@ -603,7 +603,7 @@ private struct DictionarySettingsTab: View {
         Form {
             Section("プライベートモード") {
                 HelpToggle(
-                    title: "学習・ユーザ辞書・記録・予測を止める", isOn: $privateMode,
+                    title: "プライベートモードを使う", isOn: $privateMode,
                     help: "ONの間は、入力した内容を残さず、これまでの入力に基づく候補も出しません。"
                         + "止めるのは、変換の学習（覚えることも、覚えた変換に差し替えることもしません）・"
                         + "ユーザ辞書・変換記録・入力履歴の記録と予測変換です。変換はiroha本来の結果になります。"
