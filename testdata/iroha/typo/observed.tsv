@@ -1,0 +1,13 @@
+id	source	clean	typed	shown	note
+obs01	memo	あてさき	aetesaki	あえてさき	ate の a のあとに左手薬指が e に引っかかる。「あえて」は正しい語なので読みだけでは区別しにくい
+obs02	memo	ありがとうございます。	arigatougozaimsu.	ありがとうございmす。	mas の a が抜ける
+obs03	memo	かくにんしました	kakuinshimashita	かくいんしました	kakunin の n が抜ける
+obs04	memo	かくにん	kakuin	かくいん	同上（単独。前後の文脈がない）
+obs05	memo	おどろきました	hodorokimashita	ほどろきました	先頭に h が入る
+obs06	memo	おねがいしてください	onegaishitekudasi	おねがいしてくだし	kudasai の 2 つ目の a が抜ける
+obs07	memo	ごあんないします	goannaishimasu	ごあんあいします	iroha は nn で「ん」を確定するので annai は あんあい になる（ほかの IME の打ち方）
+obs08	memo	じっこうしました。	jkkoushimashita.	jっこうしました。	jikkou の i が抜ける
+obs09	memo	おねがいします	onegaismasu	おねがいsます	「し」を si と打つ人の i が抜ける（訓令式）
+obs10	memo	11じにあいましょう	11jiniaimashou	11じにあいましょう	誤りなし。数字を書き換えない（以前は「あじにあいましょう」になった）
+obs11	derived	2がつ3にちにかくにんします	2gatsu3nichinikakuinshimasu	2がつ3にちにかくいんします	数字の前後の文脈を保ったまま直せるか（obs03 と obs10 の組み合わせ）
+obs12	derived	あした3じからごあんないします	ashita3jikaragoannaishimasu	あした3じからごあんあいします	同上（obs07 と obs10 の組み合わせ）

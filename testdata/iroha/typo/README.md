@@ -17,6 +17,9 @@ typo normalizer の学習データの読みのどれとも一致しない。下�
 | `make_bench.py` | bench.tsv から下の 2 つを作り、中身を検査する |
 | `typo_bench.jsonl` | 評価用（`iroha-cli typo eval` がそのまま読める） |
 | `REVIEW.md` | 確認用の一覧（カテゴリ別の表） |
+| `observed.tsv` | **実際に打って見つけた打ち間違い**の正本（2026-10-28〜、手で編集する）。下の「実際の打ち間違い」 |
+| `make_observed.py` | observed.tsv から observed.jsonl を作り、打鍵列が画面の形に戻るかを検査する |
+| `observed.jsonl` | 評価用（`iroha-cli typo eval` がそのまま読める） |
 
 ```sh
 cd testdata/iroha/typo
@@ -85,3 +88,15 @@ macos/.build/release/iroha-cli typo eval testdata/iroha/typo/typo_bench.jsonl
 
 初版（2026-09-24）では small-v1 が θ = 2.0 で 50.71% / 0.00%、small-v2 候補が 60.71% / 5.00% だった。
 small-v2 候補は初版の 59 件の正しい読みを学習に含んでいた。
+
+
+## 実際の打ち間違い（observed、2026-10-28〜）
+
+使っていて見つけた打ち間違い（`source = memo`）と、それを組み合わせた確認用の例（`source = derived`）。
+**200 件のベンチとは別のファイル**にしてあるので、足しても 200 件の数字は変わらない。足すときは observed.tsv に
+1 行足して `make_observed.py` を回す（`typed` を iroha と同じ規則でかなに戻した形が、画面に出た形 `shown` と
+一致しなければ失敗する）。学習データとの重なりは調べていない（言い回しが短く、重なっていてもおかしくない）。
+
+2026-10-28 の large 20 epoch（配布中の iroha-typo-v1）: 誤りあり 11 件中 7 件を直し、誤りなし 1 件は書き換えない（θ = 2.0）。
+直せないのは obs01（「あえて」は正しい語）・obs04（文脈のない「かくいん」）・obs05（確信度が足りない）・
+obs09（訓令式の打鍵。学習データの綴りがヘボン式だけだった）。

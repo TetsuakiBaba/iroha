@@ -1,0 +1,12 @@
+{"id": "obs01", "noisy": "あえてさき", "clean": "あてさき", "error_type": "observed", "source": "memo", "typed": "aetesaki", "note": "ate の a のあとに左手薬指が e に引っかかる。「あえて」は正しい語なので読みだけでは区別しにくい"}
+{"id": "obs02", "noisy": "ありがとうございmす。", "clean": "ありがとうございます。", "error_type": "observed", "source": "memo", "typed": "arigatougozaimsu.", "note": "mas の a が抜ける"}
+{"id": "obs03", "noisy": "かくいんしました", "clean": "かくにんしました", "error_type": "observed", "source": "memo", "typed": "kakuinshimashita", "note": "kakunin の n が抜ける"}
+{"id": "obs04", "noisy": "かくいん", "clean": "かくにん", "error_type": "observed", "source": "memo", "typed": "kakuin", "note": "同上（単独。前後の文脈がない）"}
+{"id": "obs05", "noisy": "ほどろきました", "clean": "おどろきました", "error_type": "observed", "source": "memo", "typed": "hodorokimashita", "note": "先頭に h が入る"}
+{"id": "obs06", "noisy": "おねがいしてくだし", "clean": "おねがいしてください", "error_type": "observed", "source": "memo", "typed": "onegaishitekudasi", "note": "kudasai の 2 つ目の a が抜ける"}
+{"id": "obs07", "noisy": "ごあんあいします", "clean": "ごあんないします", "error_type": "observed", "source": "memo", "typed": "goannaishimasu", "note": "iroha は nn で「ん」を確定するので annai は あんあい になる（ほかの IME の打ち方）"}
+{"id": "obs08", "noisy": "jっこうしました。", "clean": "じっこうしました。", "error_type": "observed", "source": "memo", "typed": "jkkoushimashita.", "note": "jikkou の i が抜ける"}
+{"id": "obs09", "noisy": "おねがいsます", "clean": "おねがいします", "error_type": "observed", "source": "memo", "typed": "onegaismasu", "note": "「し」を si と打つ人の i が抜ける（訓令式）"}
+{"id": "obs10", "noisy": "11じにあいましょう", "clean": "11じにあいましょう", "error_type": "none", "source": "memo", "typed": "11jiniaimashou", "note": "誤りなし。数字を書き換えない（以前は「あじにあいましょう」になった）"}
+{"id": "obs11", "noisy": "2がつ3にちにかくいんします", "clean": "2がつ3にちにかくにんします", "error_type": "observed", "source": "derived", "typed": "2gatsu3nichinikakuinshimasu", "note": "数字の前後の文脈を保ったまま直せるか（obs03 と obs10 の組み合わせ）"}
+{"id": "obs12", "noisy": "あした3じからごあんあいします", "clean": "あした3じからごあんないします", "error_type": "observed", "source": "derived", "typed": "ashita3jikaragoannaishimasu", "note": "同上（obs07 と obs10 の組み合わせ）"}
