@@ -178,6 +178,11 @@ final class TypoNormalizerTests: XCTestCase {
         let mixed = NumberMask("なんでも3.5じかん1,000えん")
         XCTAssertEqual(mixed.masked, "なんでもなんじかんなんえん")
         XCTAssertEqual(mixed.restore("なんでもなんじかんなんえん"), "なんでも3.5じかん1,000えん")
+        // ローマ字の隣の数字は打ち間違い（i を 8 と打った）とみなして置き換えない
+        let typo = NumberMask("はつばいをk8たいしてる")
+        XCTAssertTrue(typo.digitIsTypo)
+        XCTAssertEqual(typo.masked, "はつばいをk8たいしてる")
+        XCTAssertFalse(NumberMask("11じにあいましょう").digitIsTypo)
         // 数字が無ければ何もしない
         let plain = NumberMask("かくいん")
         XCTAssertEqual(plain.masked, "かくいん")

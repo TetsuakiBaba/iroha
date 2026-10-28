@@ -117,6 +117,8 @@ public actor TypoNormalizer {
     ///   数字の位置で区切って通すと「にちに…」のような語の途中から始まる読みになり、そこを書き換えてしまう
     /// - それ以外（ASCII の記号・ヵヶ など）は、そこで読みを区切って間の部分だけを通す。区切った部分が
     ///   `minimumSegmentLength` に満たなければ触らない
+    /// - ただし数字がローマ字の隣にある読み（「をk8たい」、i を 8 と打った）は、数字も打ち間違いとみなして
+    ///   読み全体をそのまま通す。意図して打った数字は「11じ」のようにかなの隣に来る
     /// 返す `margin` は直した部分の最小値
     public func correction(
         for reading: String, threshold: Double = TypoNormalizer.defaultThreshold,
@@ -125,9 +127,12 @@ public actor TypoNormalizer {
         let runtime = try load()
         guard runtime.supports(reading: reading) else { return nil }
         let mask = NumberMask(reading)
+        let segments = mask.digitIsTypo
+            ? [(text: reading, isProtected: false)]
+            : Self.protectedSegments(of: mask.masked, isProtected: runtime.isProtected)
         var corrected = ""
         var margins: [Double] = []
-        for segment in Self.protectedSegments(of: mask.masked, isProtected: runtime.isProtected) {
+        for segment in segments {
             guard !segment.isProtected, segment.text.count >= minimumSegmentLength,
                   let scored = Self.score(segment.text, runtime: runtime), scored.margin > threshold
             else {
@@ -289,9 +294,18 @@ struct NumberMask {
     let masked: String
     /// `masked` の中の「なん」を左から順に並べたもの。置き換えたものは元の数字、元からあるものは nil
     private let occurrences: [String?]
+    /// 数字がローマ字の隣にある（「k8」）。数字の段に指がかかった打ち間違いなので、置き換えない（`masked` は元のまま）
+    let digitIsTypo: Bool
 
     init(_ reading: String) {
         let characters = Array(reading)
+        let isLetter: (Int) -> Bool = { $0 >= 0 && $0 < characters.count && characters[$0].isASCII && characters[$0].isLetter }
+        digitIsTypo = characters.indices.contains { Self.isDigit(characters[$0]) && (isLetter($0 - 1) || isLetter($0 + 1)) }
+        if digitIsTypo {
+            masked = reading
+            occurrences = []
+            return
+        }
         var masked = ""
         var inserted: Set<Int> = []   // masked の中で、置き換えた「なん」が始まる位置（文字数）
         var maskedCount = 0

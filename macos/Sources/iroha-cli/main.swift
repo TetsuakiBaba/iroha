@@ -1351,15 +1351,11 @@ case "typo":
                     margins.append(0)
                     continue
                 }
-                let generated = try await normalizer.generate(for: record.noisy) ?? record.noisy
-                predictions.append(generated)
-                if generated == record.noisy {
-                    margins.append(0)
-                } else {
-                    margins.append(
-                        try await normalizer.logProbability(of: generated, given: record.noisy)
-                            - normalizer.logProbability(of: record.noisy, given: record.noisy))
-                }
+                // 本体と同じ経路（数字を「なん」に置き換える・出力できない記号で区切る）で、しきい値なしの訂正を出す。
+                // 数字などを含まない読みでは「生成 1 回 + margin」と同じ
+                let correction = try await normalizer.correction(for: record.noisy, threshold: -.infinity)
+                predictions.append(correction?.corrected ?? record.noisy)
+                margins.append(correction?.margin ?? 0)
             }
         } catch {
             FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
