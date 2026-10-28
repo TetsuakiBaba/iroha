@@ -156,6 +156,52 @@ final class TypoNormalizerTests: XCTestCase {
         XCTAssertTrue(supportsHiragana)
     }
 
+    /// 読みを「そのまま残す文字」で区切る。連なりはまとめ、空の区間は作らない
+    func testProtectedSegments() {
+        let isDigit: (Character) -> Bool = { $0.isNumber }
+        let segments = TypoNormalizer.protectedSegments(of: "11じにあいましょう", isProtected: isDigit)
+        XCTAssertEqual(segments.map(\.text), ["11", "じにあいましょう"])
+        XCTAssertEqual(segments.map(\.isProtected), [true, false])
+        let middle = TypoNormalizer.protectedSegments(of: "あした3じから10ぷん", isProtected: isDigit)
+        XCTAssertEqual(middle.map(\.text), ["あした", "3", "じから", "10", "ぷん"])
+        XCTAssertEqual(TypoNormalizer.protectedSegments(of: "", isProtected: isDigit).count, 0)
+        XCTAssertEqual(TypoNormalizer.protectedSegments(of: "かくにん", isProtected: isDigit).map(\.text), ["かくにん"])
+    }
+
+    /// 数字の並びを「なん」に置き換え、「なん」の数が合えば数字に戻す
+    func testNumberMask() {
+        let mask = NumberMask("2がつ3にちにかくいんします")
+        XCTAssertEqual(mask.masked, "なんがつなんにちにかくいんします")
+        XCTAssertEqual(mask.restore("なんがつなんにちにかくにんします"), "2がつ3にちにかくにんします")
+        XCTAssertNil(mask.restore("なんがつにちにかくにんします"), "「なん」が減ったら戻せない")
+        // 小数点・カンマは数字に挟まれていれば並びに含める。元からある「なん」はそのまま
+        let mixed = NumberMask("なんでも3.5じかん1,000えん")
+        XCTAssertEqual(mixed.masked, "なんでもなんじかんなんえん")
+        XCTAssertEqual(mixed.restore("なんでもなんじかんなんえん"), "なんでも3.5じかん1,000えん")
+        // 数字が無ければ何もしない
+        let plain = NumberMask("かくいん")
+        XCTAssertEqual(plain.masked, "かくいん")
+        XCTAssertEqual(plain.restore("かくにん"), "かくにん")
+    }
+
+    /// 数字はモデルが出力できないので、そのまま残して前後だけを直す（2026-10-28 まで「11じに」→「ああじに」と壊れていた）
+    func testDigitsAreKept() async throws {
+        guard let directory = TypoNormalizer.defaultDirectoryURL() else {
+            throw XCTSkip("Typo Normalizer のモデルが無いためスキップ（IROHA_TYPO_MODEL で指定）")
+        }
+        let normalizer = TypoNormalizer(directory: directory)
+        for reading in ["11じにあいましょう", "あした3じから", "11じに"] {
+            let correction = try await normalizer.correction(for: reading, threshold: 2.0, minimumSegmentLength: 4)
+            let corrected = correction?.corrected ?? reading
+            XCTAssertEqual(corrected.filter(\.isNumber), reading.filter(\.isNumber), "数字が変わった: \(reading) → \(corrected)")
+        }
+        // 数字の前後の打ち間違いは直る（数字の直後の「にち」を書き換えない）
+        let typo = try await normalizer.correction(for: "3じにかくいんしました", threshold: 2.0, minimumSegmentLength: 4)
+        XCTAssertEqual(typo?.corrected, "3じにかくにんしました")
+        let date = try await normalizer.correction(for: "2がつ3にちにかくいんします", threshold: 2.0, minimumSegmentLength: 4)
+        XCTAssertEqual(date?.corrected, "2がつ3にちにかくにんします")
+    }
+
     /// float16 の展開が 65,536 通り全部で `Float16` と一致する（`iroha-cli typo shrink` で配るので、
     /// 非正規化数（|x| < 2^-14）の指数を 1 つ間違えるといった取りこぼしが実際の重みに乗る）
     func testHalfToFloatMatchesFloat16() throws {

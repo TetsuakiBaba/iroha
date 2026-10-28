@@ -1508,6 +1508,7 @@ final class IrohaInputController: IMKInputController {
               reading != lastTypoCorrection?.corrected, reading != typoRejectedReading
         else { return }
         let threshold = TypoNormalizerSettings.threshold
+        let minimumLength = TypoNormalizerSettings.minimumLength
         let delay = remainingTypoIdleDelay()
         typoIdleGeneration += 1
         let generation = typoIdleGeneration
@@ -1523,7 +1524,9 @@ final class IrohaInputController: IMKInputController {
                 guard stillValid,
                       let correction = try await Self.measureTypoCorrection(
                         .idle, reading: reading, controller: self, operation: {
-                            try await normalizer.correction(for: reading, threshold: threshold)
+                            // 数字などで区切った部分にも最低文字数を当てる（短い部分は別の語の typo に見えやすい）
+                            try await normalizer.correction(
+                                for: reading, threshold: threshold, minimumSegmentLength: minimumLength)
                         }),
                       // 「読みの末尾に足しただけ」は訂正ではなく続きの補完。打ちかけの読みは
                       // 常に終わりが足りなく見えるので、入力中は必ず捨てる
@@ -1662,10 +1665,12 @@ final class IrohaInputController: IMKInputController {
         guard TypoNormalizerSettings.isEnabled, TypoNormalizerSettings.accepts(reading: reading),
               let normalizer = Self.typoNormalizer() else { return }
         let threshold = TypoNormalizerSettings.threshold
+        let minimumLength = TypoNormalizerSettings.minimumLength
         typoCorrectionTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 return try await Self.measureTypoCorrection(.conversion, reading: reading, controller: self) {
-                    try await normalizer.correction(for: reading, threshold: threshold)
+                    try await normalizer.correction(
+                        for: reading, threshold: threshold, minimumSegmentLength: minimumLength)
                 }
             } catch {
                 NSLog("iroha: 打ち間違い訂正エラー: \(error)")

@@ -817,10 +817,12 @@ case "typo":
     // 打ち間違い訂正モデル（training/typo-normalizer、SWIFT-PORT.md）の検証。
     //   typo parity [--dir DIR]          書き出しに付いてくる parity.json 200件と突き合わせる
     //   typo bench <test.jsonl> [--n 件数] レイテンシ（mean / p50 / p95）
-    //   typo <読み> [--threshold θ]       1件だけ試す
+    //   typo <読み> [--threshold θ] [--min-length N]  1件だけ試す（N は数字などで区切った部分の最低文字数。
+    //                                    アプリは設定の最低文字数（既定 4）を渡す。既定 1 = 区切った部分もすべて通す）
     var typoDirectory = TypoNormalizer.defaultDirectoryURL()
     var typoThreshold = TypoNormalizer.defaultThreshold
     var typoCount = 300
+    var typoMinimumSegmentLength = 1
     var typoPositional: [String] = []
     var typoIndex = 2
     while typoIndex < arguments.count {
@@ -833,6 +835,9 @@ case "typo":
             typoIndex += 2
         case "--n" where typoIndex + 1 < arguments.count:
             typoCount = Int(arguments[typoIndex + 1]) ?? typoCount
+            typoIndex += 2
+        case "--min-length" where typoIndex + 1 < arguments.count:
+            typoMinimumSegmentLength = Int(arguments[typoIndex + 1]) ?? typoMinimumSegmentLength
             typoIndex += 2
         default:
             typoPositional.append(arguments[typoIndex])
@@ -1445,8 +1450,10 @@ case "typo":
         do {
             let kana = romajiToKana(reading)
             let generated = try await normalizer.generate(for: kana)
-            let correction = try await normalizer.correction(for: kana, threshold: typoThreshold)
+            let correction = try await normalizer.correction(
+                for: kana, threshold: typoThreshold, minimumSegmentLength: typoMinimumSegmentLength)
             print("入力     \(kana)")
+            // 数字を含む読みは数字を「なん」に置き換えて通すので、この「生成」（数字のまま通した結果）は参考
             print("生成     \(generated ?? "（対象外）")")
             if let correction {
                 print(String(format: "採用     %@  (margin %.3f > θ %.2f)",
@@ -1455,6 +1462,8 @@ case "typo":
                     print("         ただし末尾に足しただけなので、入力中の訂正では捨てられる"
                         + "（打ちかけの読みは常に終わりが足りなく見えるため）")
                 }
+            } else if kana.contains(where: \.isNumber) {
+                print("不採用   訂正なし（数字は「なん」に置き換えて見た結果）")
             } else if let generated, generated != kana {
                 let margin = try await normalizer.logProbability(of: generated, given: kana)
                     - normalizer.logProbability(of: kana, given: kana)

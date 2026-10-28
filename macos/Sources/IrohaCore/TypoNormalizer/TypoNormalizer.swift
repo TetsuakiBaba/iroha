@@ -108,20 +108,64 @@ public actor TypoNormalizer {
     }
 
     /// 訂正案（しきい値を超えたときだけ）。読みが対象外・訂正なし・自信が足りないときは nil
+    ///
+    /// 「入力には現れるがモデルが出力できない文字」（`Runtime.isProtected`）は書き換えさせない。こういう文字を含む読みは
+    /// 「入力のまま」の確率が 0 になり、margin が +∞ になって θ と関係なく書き換わるため
+    /// （「11じにあいましょう」→「あじにあいましょう」、2026-10-28）。
+    /// - 数字の並びは「なん」に置き換えて読み全体を通し、直した後で数字に戻す（`NumberMask`）。
+    ///   「なんじに」「なんがつなんにち」は自然な読みなので、数字の前後の文脈を保ったまま直せる。
+    ///   数字の位置で区切って通すと「にちに…」のような語の途中から始まる読みになり、そこを書き換えてしまう
+    /// - それ以外（ASCII の記号・ヵヶ など）は、そこで読みを区切って間の部分だけを通す。区切った部分が
+    ///   `minimumSegmentLength` に満たなければ触らない
+    /// 返す `margin` は直した部分の最小値
     public func correction(
-        for reading: String, threshold: Double = TypoNormalizer.defaultThreshold
+        for reading: String, threshold: Double = TypoNormalizer.defaultThreshold,
+        minimumSegmentLength: Int = 1
     ) throws -> TypoCorrection? {
         let runtime = try load()
         guard runtime.supports(reading: reading) else { return nil }
-        let scored: (corrected: String, margin: Double)? = InferenceTimer.measureNeuralNetwork {
+        let mask = NumberMask(reading)
+        var corrected = ""
+        var margins: [Double] = []
+        for segment in Self.protectedSegments(of: mask.masked, isProtected: runtime.isProtected) {
+            guard !segment.isProtected, segment.text.count >= minimumSegmentLength,
+                  let scored = Self.score(segment.text, runtime: runtime), scored.margin > threshold
+            else {
+                corrected += segment.text
+                continue
+            }
+            corrected += scored.corrected
+            margins.append(scored.margin)
+        }
+        guard let margin = margins.min(), let restored = mask.restore(corrected), restored != reading
+        else { return nil }
+        return TypoCorrection(reading: reading, corrected: restored, margin: margin)
+    }
+
+    private static func score(_ reading: String, runtime: Runtime) -> (corrected: String, margin: Double)? {
+        InferenceTimer.measureNeuralNetwork {
             guard let corrected = runtime.generate(reading), corrected != reading else { return nil }
             // どちらも同じ入力に対する完全な系列なので直接比べられる（SWIFT-PORT.md §4）
             let margin = runtime.logProbability(of: corrected, given: reading)
                 - runtime.logProbability(of: reading, given: reading)
             return (corrected, margin)
         }
-        guard let scored, scored.margin > threshold else { return nil }
-        return TypoCorrection(reading: reading, corrected: scored.corrected, margin: scored.margin)
+    }
+
+    /// 読みを「そのまま残す文字の連なり」と「モデルに通す部分」に分ける（順序どおり、空の区間は作らない）
+    static func protectedSegments(
+        of reading: String, isProtected: (Character) -> Bool
+    ) -> [(text: String, isProtected: Bool)] {
+        var segments: [(text: String, isProtected: Bool)] = []
+        for character in reading {
+            let protected = isProtected(character)
+            if let last = segments.last, last.isProtected == protected {
+                segments[segments.count - 1].text.append(character)
+            } else {
+                segments.append((String(character), protected))
+            }
+        }
+        return segments
     }
 
     /// しきい値を通さない生の生成結果（検証・実験用）
@@ -172,6 +216,14 @@ public actor TypoNormalizer {
             !reading.isEmpty
                 && reading.count <= TypoNormalizer.maxReadingLength
                 && vocabulary.containsAll(reading)
+        }
+
+        /// モデルが出力できず、打ち間違いの印でもない文字（数字・ASCII の記号・ヵヶ など）。
+        /// ローマ字は打ち間違いでかなにならずに残ったものなので、直す対象として通す。
+        /// 出力語彙にある文字は対象外なので、数字を出力できるモデルに替えれば数字もモデルに通る
+        func isProtected(_ character: Character) -> Bool {
+            guard let id = vocabulary.id(of: character), id >= outputSize else { return false }
+            return !(character.isASCII && character.isLetter)
         }
 
         /// greedy + KV キャッシュ。生成長は読みの長さ + 9 まで（学習時と同じ）
@@ -226,6 +278,93 @@ public actor TypoNormalizer {
     }
 }
 
+/// 読みの中の数字の並び（「11」「3.5」「1,000」）を「なん」に置き換え、モデルが直した後で数字に戻す。
+///
+/// 戻すときは「なん」の出現を左から数えて対応させる。置き換えた「なん」も元からある「なん」（「なんでも」）も
+/// 同じ順に並ぶので、直した結果の「なん」の数が置き換えた後と同じなら、k 番目どうしが対応する。
+/// 数が違う（モデルが「なん」を消した・足した）ときは戻せないので訂正を捨てる
+struct NumberMask {
+    static let placeholder = "なん"
+
+    let masked: String
+    /// `masked` の中の「なん」を左から順に並べたもの。置き換えたものは元の数字、元からあるものは nil
+    private let occurrences: [String?]
+
+    init(_ reading: String) {
+        let characters = Array(reading)
+        var masked = ""
+        var inserted: Set<Int> = []   // masked の中で、置き換えた「なん」が始まる位置（文字数）
+        var maskedCount = 0
+        var numbers: [Int: String] = [:]
+        var index = 0
+        while index < characters.count {
+            guard Self.isDigit(characters[index]) else {
+                masked.append(characters[index])
+                maskedCount += 1
+                index += 1
+                continue
+            }
+            // 数字、または数字に挟まれた「.」「,」までを 1 つの並びにする
+            var end = index + 1
+            while end < characters.count {
+                if Self.isDigit(characters[end]) {
+                    end += 1
+                } else if (characters[end] == "." || characters[end] == ","),
+                          end + 1 < characters.count, Self.isDigit(characters[end + 1]) {
+                    end += 2
+                } else {
+                    break
+                }
+            }
+            inserted.insert(maskedCount)
+            numbers[maskedCount] = String(characters[index..<end])
+            masked += Self.placeholder
+            maskedCount += Self.placeholder.count
+            index = end
+        }
+        self.masked = masked
+        occurrences = Self.placeholderOffsets(in: masked).map { inserted.contains($0) ? numbers[$0] : nil }
+    }
+
+    /// モデルが直した `masked` を、数字に戻す。「なん」の数が合わなければ nil
+    func restore(_ corrected: String) -> String? {
+        guard occurrences.contains(where: { $0 != nil }) else { return corrected }
+        let offsets = Self.placeholderOffsets(in: corrected)
+        guard offsets.count == occurrences.count else { return nil }
+        let characters = Array(corrected)
+        var result = ""
+        var position = 0
+        for (offset, number) in zip(offsets, occurrences) {
+            result += String(characters[position..<offset])
+            result += number ?? Self.placeholder
+            position = offset + Self.placeholder.count
+        }
+        result += String(characters[position...])
+        return result
+    }
+
+    private static func isDigit(_ character: Character) -> Bool {
+        character.isASCII && character.isNumber
+    }
+
+    /// 「なん」が始まる位置（文字数）を左から、重ならないように拾う
+    private static func placeholderOffsets(in text: String) -> [Int] {
+        let characters = Array(text)
+        let pattern = Array(placeholder)
+        var offsets: [Int] = []
+        var index = 0
+        while index + pattern.count <= characters.count {
+            if Array(characters[index..<index + pattern.count]) == pattern {
+                offsets.append(index)
+                index += pattern.count
+            } else {
+                index += 1
+            }
+        }
+        return offsets
+    }
+}
+
 /// 文字単位の語彙（`training/typo-normalizer/tokenizer.py`）。
 /// 先頭 4 つは `<pad> <s> </s> <unk>`、以降は 1 文字ずつ
 struct TypoVocabulary {
@@ -249,6 +388,10 @@ struct TypoVocabulary {
     /// 語彙に無い文字を含まないか。含むなら、そもそもモデルを呼ばない（SWIFT-PORT.md §8）
     func containsAll(_ text: String) -> Bool {
         text.allSatisfy { stoi[$0] != nil }
+    }
+
+    func id(of character: Character) -> Int? {
+        stoi[character]
     }
 
     func encode(_ text: String, bos: Bool = false, eos: Bool = false) -> [Int] {
