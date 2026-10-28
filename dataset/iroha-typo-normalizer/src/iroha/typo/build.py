@@ -35,7 +35,7 @@ from iroha.paths import Paths, SPLITS
 from iroha.sources.base import SourceAdapter
 from iroha.typo.errors import (APPLICABLE, ERROR_TYPES, ErrorContext,
                                        KeyStream, Typo)
-from iroha.typo.romanize import RomanizeError, romanize_units, to_kana
+from iroha.typo.romanize import SPELLINGS, RomanizeError, romanize_units, to_kana
 
 CLEAN = "clean"
 
@@ -132,6 +132,13 @@ class TypoGenerator:
         styles = dict(typo.get("romaji_style", {"nn": 1.0}) or {"nn": 1.0})
         self.styles = list(styles)
         self.style_weights = [float(styles[s]) for s in self.styles]
+        # 綴りの個人差（shi / si など、2026-10-28）。設定が無ければヘボン式だけ（それより前の生成と同じ乱数の流れ）
+        spellings = dict(typo.get("romaji_spelling", {"hepburn": 1.0}) or {"hepburn": 1.0})
+        unknown_spellings = set(spellings) - set(SPELLINGS)
+        if unknown_spellings:
+            raise ValueError(f"未知の綴り: {sorted(unknown_spellings)}（使えるのは {sorted(SPELLINGS)}）")
+        self.spellings = list(spellings)
+        self.spelling_weights = [float(spellings[s]) for s in self.spellings]
         self.key_weights = {str(k): float(v) for k, v in (typo.get("key_weights", {}) or {}).items()}
         self.match_ratios = bool(typo.get("match_error_ratios", True))
         # 実績が config の比率に寄るように、不足している type を優先して引く
@@ -164,16 +171,19 @@ class TypoGenerator:
                             mixed_max_units=self.mixed_max_units,
                             repeat_sokuon_bias=self.repeat_sokuon_bias, dist=self.dist)
 
-    def stream_for(self, clean: str, rng: random.Random) -> tuple[KeyStream, str] | None:
+    def stream_for(self, clean: str, rng: random.Random) -> tuple[KeyStream, str, str] | None:
+        """正しい読み → 打鍵列。返り値は (打鍵列, 「ん」の打ち方, 綴り)"""
         style = rng.choices(self.styles, self.style_weights)[0]
+        spelling = (rng.choices(self.spellings, self.spelling_weights)[0]
+                    if len(self.spellings) > 1 else self.spellings[0])
         try:
-            keys, units, unit_keys = romanize_units(clean, style)
+            keys, units, unit_keys = romanize_units(clean, style, spelling)
         except RomanizeError:
             return None
         # 打鍵列に戻したときに元のかなに戻らない読みは扱わない（教師が壊れる）
         if to_kana(keys) != clean:
             return None
-        return KeyStream(keys=keys, units=units, unit_keys=unit_keys), style
+        return KeyStream(keys=keys, units=units, unit_keys=unit_keys), style, spelling
 
     def generate(self, clean: str, rng: random.Random, *, force_clean: bool = False,
                  force_type: str | None = None) -> dict | None:
@@ -181,10 +191,11 @@ class TypoGenerator:
         if built is None:
             self._bump_retry("not_romanizable")
             return None
-        stream, style = built
+        stream, style, spelling = built
         if force_clean:
             return {"input": clean, "target": clean, "error_type": CLEAN,
-                    "romaji_style": style, "keys": stream.keys, "n_errors": 0, "detail": ""}
+                    "romaji_style": style, "romaji_spelling": spelling, "keys": stream.keys,
+                    "n_errors": 0, "detail": ""}
 
         n_errors = 1
         if self.max_errors >= 2 and rng.random() < self.second_ratio:
@@ -216,6 +227,7 @@ class TypoGenerator:
             "target": clean,
             "error_type": "+".join(t.error_type for t in applied),
             "romaji_style": style,
+            "romaji_spelling": spelling,
             "keys": applied[-1].keys,
             "n_errors": len(applied),
             "detail": "; ".join(t.detail for t in applied),

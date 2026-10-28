@@ -191,6 +191,19 @@ KANA_TO_KEYS: dict[str, str] = {
     "いぇ": "ye", "くぁ": "qa", "くぃ": "qi", "くぇ": "qe", "くぉ": "qo",
 }
 
+# 訓令式寄りの綴り（2026-10-28）。「し」を si と打つ人の打ち間違い（si の i が抜けて s だけ残る）は、
+# ヘボン式の打鍵列からは作れない（shi の i が抜けても sh が残る）。ここに無い音は KANA_TO_KEYS のまま。
+# どれも RomajiComposer の TABLE にある綴り
+KUNREI_KEYS: dict[str, str] = {
+    "し": "si", "ち": "ti", "つ": "tu", "ふ": "hu", "じ": "zi",
+    "しゃ": "sya", "しゅ": "syu", "しぇ": "sye", "しょ": "syo",
+    "ちゃ": "tya", "ちゅ": "tyu", "ちぇ": "tye", "ちょ": "tyo",
+    "じゃ": "zya", "じゅ": "zyu", "じぇ": "zye", "じょ": "zyo",
+}
+
+# 綴りの名前 → KANA_TO_KEYS に上書きする表
+SPELLINGS: dict[str, dict[str, str]] = {"hepburn": {}, "kunrei": KUNREI_KEYS}
+
 VOWELS_AND_Y = set("aiueoy")
 
 
@@ -212,11 +225,16 @@ def split_units(kana: str) -> list[str]:
     return units
 
 
-def romanize(kana: str, n_style: str = "nn") -> str:
+def _keys_for(unit: str, spelling: str) -> str | None:
+    return SPELLINGS[spelling].get(unit) or KANA_TO_KEYS.get(unit)
+
+
+def romanize(kana: str, n_style: str = "nn", spelling: str = "hepburn") -> str:
     """かな → 打鍵列。
 
     n_style: "nn"        … 「ん」は常に nn
              "contextual" … 子音の前だけ n 1 つ（実際の打ち方の個人差を再現する）
+    spelling: "hepburn"（shi / tsu / chi / fu / ji）か "kunrei"（si / tu / ti / hu / zi）
     未知のかなが含まれていれば RomanizeError。
     """
     units = split_units(kana)
@@ -224,7 +242,7 @@ def romanize(kana: str, n_style: str = "nn") -> str:
     for i, u in enumerate(units):
         nxt = units[i + 1] if i + 1 < len(units) else None
         if u == "っ":
-            nxt_keys = KANA_TO_KEYS.get(nxt or "", "")
+            nxt_keys = _keys_for(nxt or "", spelling) or ""
             if nxt_keys and nxt_keys[0] in SOKUON_CONSONANTS and nxt != "ん":
                 keys.append(nxt_keys[0])  # 子音反復
             else:
@@ -232,20 +250,21 @@ def romanize(kana: str, n_style: str = "nn") -> str:
             continue
         if u == "ん":
             if n_style == "contextual" and nxt is not None:
-                nxt_keys = KANA_TO_KEYS.get(nxt, "")
+                nxt_keys = _keys_for(nxt, spelling) or ""
                 if nxt_keys and nxt_keys[0] not in VOWELS_AND_Y and nxt_keys[0] != "n":
                     keys.append("n")
                     continue
             keys.append("nn")
             continue
-        k = KANA_TO_KEYS.get(u)
+        k = _keys_for(u, spelling)
         if k is None:
             raise RomanizeError(f"打鍵列にできないかな: {u!r} in {kana!r}")
         keys.append(k)
     return "".join(keys)
 
 
-def romanize_units(kana: str, n_style: str = "nn") -> tuple[str, list[str], list[str]]:
+def romanize_units(kana: str, n_style: str = "nn",
+                   spelling: str = "hepburn") -> tuple[str, list[str], list[str]]:
     """かな → (打鍵列, 打鍵単位のリスト, 単位ごとの打鍵列)。
 
     ``"".join(unit_keys) == keys`` かつ ``"".join(units) == kana`` が常に成り立つ。
@@ -257,7 +276,7 @@ def romanize_units(kana: str, n_style: str = "nn") -> tuple[str, list[str], list
     for i, u in enumerate(units):
         nxt = units[i + 1] if i + 1 < len(units) else None
         if u == "っ":
-            nxt_keys = KANA_TO_KEYS.get(nxt or "", "")
+            nxt_keys = _keys_for(nxt or "", spelling) or ""
             if nxt_keys and nxt_keys[0] in SOKUON_CONSONANTS and nxt != "ん":
                 unit_keys.append(nxt_keys[0])
             else:
@@ -265,13 +284,13 @@ def romanize_units(kana: str, n_style: str = "nn") -> tuple[str, list[str], list
             continue
         if u == "ん":
             if n_style == "contextual" and nxt is not None:
-                nxt_keys = KANA_TO_KEYS.get(nxt, "")
+                nxt_keys = _keys_for(nxt, spelling) or ""
                 if nxt_keys and nxt_keys[0] not in VOWELS_AND_Y and nxt_keys[0] != "n":
                     unit_keys.append("n")
                     continue
             unit_keys.append("nn")
             continue
-        k = KANA_TO_KEYS.get(u)
+        k = _keys_for(u, spelling)
         if k is None:
             raise RomanizeError(f"打鍵列にできないかな: {u!r} in {kana!r}")
         unit_keys.append(k)

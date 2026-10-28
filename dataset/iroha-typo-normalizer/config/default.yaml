@@ -342,6 +342,11 @@ typo:
   romaji_style:
     nn: 0.5
     contextual: 0.5
+  # 綴りの個人差（2026-10-28）。hepburn = shi / tsu / chi / fu / ji、kunrei = si / tu / ti / hu / zi（しゃ → sya など）。
+  # ヘボン式だけだと「し」を si と打つ人の打ち間違い（onegaismasu → おねがいsます）を直せなかった
+  romaji_spelling:
+    hepburn: 0.5
+    kunrei: 0.5
   # キー別の起こりやすさ（1.0 が基準）。既定は空＝どの打鍵も同じ確率（2026-09-23）。
   # Komatsu & Nakatoh 2018 は脱字を押す力の弱さ・速さのせいとしていて指による差を示しておらず、
   # JWTD から推定したキー別の脱字率もほぼ平ら（0.01〜0.03）。打鍵ごとに一様なら、よく使うキー

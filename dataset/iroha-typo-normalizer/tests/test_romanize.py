@@ -1,7 +1,7 @@
 """ローマ字 ⇄ かな。Swift の RomajiComposer と同じ挙動であることが前提。"""
 import pytest
 
-from iroha.typo.romanize import (KANA_TO_KEYS, RomanizeError, romanize,
+from iroha.typo.romanize import (KANA_TO_KEYS, KUNREI_KEYS, RomanizeError, romanize,
                                          romanize_units, roundtrip_ok, to_kana)
 
 
@@ -56,3 +56,29 @@ def test_every_table_kana_roundtrips():
 def test_unromanizable_raises():
     with pytest.raises(RomanizeError):
         romanize("あAう")
+
+
+def test_every_kunrei_kana_roundtrips():
+    """訓令式の綴り（KUNREI_KEYS）も全部、打鍵列 → かな で元に戻る（RomajiComposer の表にある）。"""
+    broken = [k for k in KUNREI_KEYS if to_kana(KUNREI_KEYS[k]) != k]
+    assert broken == []
+
+
+@pytest.mark.parametrize("kana,keys", [
+    ("おねがいします", "onegaisimasu"),
+    ("つづき", "tuduki"),
+    ("ちゃんと", "tyannto"),
+    ("じしょ", "zisyo"),
+    ("ふつう", "hutuu"),
+    ("まっちゃ", "mattya"),      # 促音は次の綴りの頭の子音を重ねる
+    ("いっしょ", "issyo"),
+])
+def test_kunrei_spelling(kana, keys):
+    assert romanize(kana, "nn", "kunrei") == keys
+    assert to_kana(keys) == kana
+    unit_keys, units, _ = romanize_units(kana, "nn", "kunrei")
+    assert unit_keys == keys
+
+
+def test_hepburn_is_default():
+    assert romanize("おねがいします") == "onegaishimasu"

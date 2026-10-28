@@ -328,6 +328,8 @@ iroha の挙動どおり（`ていsでい` のような input が出るのは正
 - **かなが変わらない崩しは typo ではないので引き直す**（`shi` の `h` が落ちて `si` → `し`）。
   2 つ目の typo が 1 つ目を打ち消して元に戻る場合も弾く
 - `typo.romaji_style` で「ん」の打ち方の個人差を混ぜる（常に `nn` / 子音の前だけ `n`）
+- `typo.romaji_spelling` で綴りの個人差を混ぜる（`hepburn` = shi / tsu / chi / fu / ji、`kunrei` = si / tu / ti / hu / zi、既定は半々。2026-10-28）。
+  ヘボン式だけだと「し」を si と打つ人の打ち間違い（onegaismasu → おねがいsます）が学習データに出てこない。生成したサンプルには `romaji_spelling` を付ける
 - `typo.units` で生成単位を選ぶ（既定 `[sentence, chunk]`）。実際の iroha は
   文節くらいの長さで訂正を走らせるので、チャンク単位のほうが本番に近い
 
