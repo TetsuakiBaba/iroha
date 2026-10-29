@@ -50,6 +50,7 @@ cd dataset/iroha-typo-normalizer/iroha
 ./.venv/bin/python -m iroha download      # 公開データを data/raw/ に取る
 ./.venv/bin/python -m iroha preprocess    # 正規化 → 読み → フィルタ → canonical
 ./.venv/bin/python -m iroha build-kkc     # かな漢字変換用データ
+./.venv/bin/python -m iroha build-iroha-bench  # かな漢字変換モデルの評価セット（AJIMEE-Bench と同じ形式。config/iroha-bench-v1.yaml）
 ./.venv/bin/python -m iroha build-typo    # typo normalizer 用データ
 ./.venv/bin/python -m iroha build-readings  # typo を付けない正しい読みの一覧（オンザフライ学習用）
 ./.venv/bin/python -m iroha build-jwtd    # 実 typo（JWTD）→ 学習データ + ベンチ（要 --set jwtd.src=…）
@@ -605,6 +606,33 @@ split は train 6,126,816 / validation 62,861 / test 62,913。同じ日に `buil
 - open2ch の不適切語一覧は「死」「殺」「韓」などの 1 字を含む広いもので、普通の発話もかなり落ちる（件数は足りている）
 - 話し言葉の一覧の validation / test の読みは、書き言葉の一覧の train に入っていることがある（一覧ごとに重複を除いているため）。
   混ぜて学習するときの評価は、今までどおり data/iroha-ds と testdata/iroha/typo で行う
+
+### かな漢字変換モデルの評価セット iroha-bench-v1（`config/iroha-bench-v1.yaml`、`build-iroha-bench`）
+
+AJIMEE-Bench（200 件）では iroha-t5 や zenz の差が 200 件の揺れ（±5pt）に収まり測れないので、
+学習に入っていない文から数千件の評価セットを作る（2026-10-29）。かな漢字変換モデルの学習元
+zenz-v2.5-dataset は Wikipedia（2024-02）と Common Crawl（CC-MAIN-2023-40）だけなので、
+LLM-jp Corpus v4 の kaken・e-gov・patent・aozora（書き言葉）と対話コーパス 5 つ（話し言葉）を使う
+（open2ch は Web の掲示板で Common Crawl と重なりうるので使わない）。
+
+```sh
+./.venv/bin/python -m iroha download       --config config/iroha-bench-v1.yaml
+./.venv/bin/python -m iroha preprocess     --config config/iroha-bench-v1.yaml
+./.venv/bin/python -m iroha build-iroha-bench --config config/iroha-bench-v1.yaml   # ripgrep（rg）が要る
+```
+
+- 1 文から 1 項目。文節チャンクの連続した範囲を、読みが 8〜40 字に収まるように選ぶ（文の途中から始まることがある）。
+  左文脈は半分の項目に付ける（前の文 + この文で範囲より前の文字列の右端 40 字。範囲が文頭で前の文が無いと空になる）
+- 読みの確からしさが low の文は、理由が固有名詞・数詞だけなら使う（別分割との不一致などは使わない）
+- 同じ文書からは 2 項目まで。ソースごとに 500 項目を選んでから、**正解がそのまま `training/train-full.txt` の
+  どこかに出てくる項目を除く**（`rg -F`）。Web にある法令や、話し言葉の短い定型句が Common Crawl 由来の学習データに入っている
+- 出力は `<data_dir>/iroha-bench-v1/evaluation_items.json`（`iroha-cli ajimee` でそのまま測れる。`index` の先頭がソース名）。
+  リポジトリでは `testdata/iroha-bench-v1/` に置く（Git には入れない。LLM-jp を国外へ再配布しないため）
+- 正解は 1 つだけで表記の揺れ（「行う / おこなう」）も誤答に数えるので、正解率は AJIMEE-Bench より低く出る。
+  読みは Sudachi の推定なので誤りも含む。どちらもモデルによらず同じ条件なので、モデルどうしの比較に使う
+- 2026-10-29 に作った版: 3,253 項目（kaken 411・e-gov 340・patent 432・aozora 452・realpersonachat 395・
+  mrmp 366・jmrd 344・newschat 355・jcre3 158。学習データとの重なりで 933 項目を除いた）。
+  測り方と結果は `experiments/iroha-bench/`
 
 ### split と重複除去
 

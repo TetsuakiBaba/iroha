@@ -8,3 +8,4 @@
 | `eval.tsv` | かな漢字変換の独自評価セット（読み → 期待する変換、40 文） | 追跡 |
 | `iroha/typo/` | 打ち間違いの訂正の書き下ろしベンチ（200 件。説明は同ディレクトリの README.md） | 追跡 |
 | `ajimee/` | AJIMEE-Bench（`evaluation_items.json`、CC BY-SA 3.0）。取得して置く | 追跡しない |
+| `iroha-bench-v1/` | かな漢字変換モデルの評価セット iroha-bench-v1（3,253 項目、AJIMEE-Bench と同じ形式）。LLM-jp Corpus v4 を含むので国外へ再配布しない。作り方は `../dataset/iroha-typo-normalizer/README.md`、測り方と結果は `../experiments/iroha-bench/README.md` | 追跡しない |

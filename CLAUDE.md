@@ -404,7 +404,10 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   比べて制約の損失がないことを先に確認する（2026-09-16: llm-jp の語頭「▁」スペースを制約が弾いて
   約10pt失っていた。`training/README.md` 参照）
 - 評価で見るもの: 学習損失・eval loss・AJIMEE acc@1 の三つを並べる（llm-jp では損失が下がっても
-  AJIMEE が横ばいだった。200件のノイズ幅は±5pt）。レイテンシは bench の平均。30ms を超えるなら
+  AJIMEE が横ばいだった。200件のノイズ幅は±5pt）。**モデルどうしの差は iroha-bench-v1 で判断する**
+  （`testdata/iroha-bench-v1/`、学習に入っていない 3,253 項目。`experiments/iroha-bench/run.sh` で測り、
+  基準との差を McNemar 検定で出す。2026-10-29 に作成。AJIMEE では差が揺れに埋もれる。作り方は
+  iroha-dataset の `build-iroha-bench`、結果と注意点は `experiments/iroha-bench/README.md`）。レイテンシは bench の平均。30ms を超えるなら
   データや幅より先にデコーダ 1 層を試す
 - 学習データ（`train-*.txt`）・`prepare_data.py`・`train.py` は llm-jp 側と共有。**変更しない**。
   T5 側の変更は `training/t5/` の中だけで行う

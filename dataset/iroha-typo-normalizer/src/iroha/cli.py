@@ -3,6 +3,7 @@
     python -m iroha download
     python -m iroha preprocess
     python -m iroha build-kkc      # KKC = かな漢字変換（Kana-Kanji Conversion）
+    python -m iroha build-iroha-bench # かな漢字変換モデルの評価セット（AJIMEE-Bench と同じ形式）
     python -m iroha build-typo
     python -m iroha build-jwtd     # JWTD（Wikipedia の実 typo）→ 学習データ + ベンチ
     python -m iroha stats
@@ -101,6 +102,16 @@ def cmd_build_kkc(args, cfg, paths) -> int:
     stats = KkcBuilder(cfg, paths).run(_adapters(cfg, paths, args.source))
     _echo({k: stats[k] for k in ("examples", "total", "avg_input_chars", "avg_context_chars")})
     print(f"→ {paths.kkc}")
+    return 0
+
+
+def cmd_build_iroha_bench(args, cfg, paths) -> int:
+    from iroha.kkc.iroha_bench import IrohaBenchBuilder
+    paths.ensure()
+    builder = IrohaBenchBuilder(cfg, paths)
+    stats = builder.run(_adapters(cfg, paths, args.source))
+    _echo(stats)
+    print(f"→ {paths.root / builder.name}")
     return 0
 
 
@@ -213,6 +224,7 @@ COMMANDS = {
     "download": cmd_download,
     "preprocess": cmd_preprocess,
     "build-kkc": cmd_build_kkc,
+    "build-iroha-bench": cmd_build_iroha_bench,
     "build-typo": cmd_build_typo,
     "spoken-stats": cmd_spoken_stats,
     "build-readings": cmd_build_readings,

@@ -1,0 +1,77 @@
+# かな漢字変換モデルの評価セット（2026-10-29）。AJIMEE-Bench（200 件）だけではモデルの差を測れないため、
+# 学習に入っていない文から数千件の評価セットを作る。
+#
+# かな漢字変換モデル（iroha-t5・zenz）の学習元 zenz-v2.5-dataset は Wikipedia（2024-02）と
+# Common Crawl（CC-MAIN-2023-40）だけなので、そのどちらでもないソースを使う:
+#
+#   llmjp_kaken / llmjp_egov / llmjp_patent / llmjp_aozora   LLM-jp Corpus v4（CC BY 4.0）書き言葉
+#   realpersonachat / mrmp / jmrd / newschat / jcre3          対話コーパス（CC BY-SA 4.0 / MIT）話し言葉
+#
+# open2ch は Web の掲示板なので Common Crawl と重なりうるうえ、本文の権利が整理されていないので使わない。
+# Web に載っている文（法令・科研費の概要など）は Common Crawl に入っていることがあるので、
+# 作ったあと training/train-full.txt と表層が重なる例を除く（build-iroha-bench の後段）。
+#
+# 使い方（default.yaml に重ねる）:
+#   ./.venv/bin/python -m iroha download   --config config/iroha-bench-v1.yaml
+#   ./.venv/bin/python -m iroha preprocess --config config/iroha-bench-v1.yaml
+#   ./.venv/bin/python -m iroha build-iroha-bench --config config/iroha-bench-v1.yaml
+#
+# 生データと canonical は Dropbox の外に置く（typo-corpus と同じ置き場）。
+data_dir: ~/iroha-typo-data/iroha-bench-v1
+raw_dir: ~/iroha-typo-data/raw
+
+sources:
+  tatoeba: { enabled: false }
+  kaken: { enabled: false }
+  aozora: { enabled: false }
+  # 評価に使う数千件には各 1 本で足りる。前処理（Sudachi）の時間を抑えるため文書数も切る
+  llmjp_kaken:
+    enabled: true
+    files: 1
+    max_documents: 3000
+  llmjp_egov:
+    enabled: true
+    files: 1
+    max_documents: 3000
+  llmjp_patent:
+    enabled: true
+    files: 1
+    max_documents: 1500
+  llmjp_aozora:
+    enabled: true
+    files: 1
+    max_documents: 300
+    allowed_orthography: ["新字新仮名"]
+  realpersonachat: { enabled: true, dialogue_ratio: 0.2 }
+  mrmp: { enabled: true }
+  jmrd: { enabled: true }
+  newschat: { enabled: true }
+  jcre3: { enabled: true }
+
+reading:
+  record_morphemes: false
+
+kkc:
+  enabled: false
+
+typo:
+  enabled: false
+
+# build-iroha-bench（canonical → AJIMEE-Bench と同じ形式の JSON）
+iroha_bench:
+  # 出力のディレクトリ名。項目の作り方や元のデータを変えたら v2 にする（版の違う結果を比べないため）
+  name: iroha-bench-v1
+  items_per_source: 500
+  # 入力（読み）の長さ。AJIMEE-Bench の入力は 10〜50 字ほど
+  min_input_chars: 8
+  max_input_chars: 40
+  # 左文脈を付ける割合と長さ（prepare_data.py と同じく右端 40 字）
+  context_ratio: 0.5
+  max_context_chars: 40
+  # 読みの確からしさが low の文のうち、理由がこれだけなら使う（固有名詞・漢数字を全部落とすと易しい文に偏る）。
+  # 別分割との不一致・辞書に読みが無い語・読みが長すぎる語を含む文は使わない
+  allow_low_confidence_reasons: [proper_noun, numeral]
+  # 同じ文書から取る項目の上限（文書の偏りを抑える）
+  items_per_document: 2
+  # 正解がそのまま出てくる項目を除く学習データ（このディレクトリからの相対パス）
+  exclude_overlap_with: ../../training/train-full.txt
