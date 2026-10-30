@@ -21,6 +21,14 @@
 したがって `.gitignore` で `data/` を除外している。この方針を変えるときは、
 ソースごとの条件を再確認してから変えること。
 
+**例外: かな漢字変換の評価セット iroha-bench-v1 は公開する**（2026-10-30 ユーザの判断。論文の再現のため）。
+出典は LLM-jp Corpus v4 の 4 種（CC BY 4.0）と対話コーパス 5 種（CC BY-SA 4.0 ×4・MIT）で、上の Tatoeba・
+自前の KAKEN ソースは含まない。全体を CC BY-SA 4.0 とし、項目ごとに `license` と `attribution` を付ける。
+元の文（`original_text`）は出さず、評価に要る読み・左文脈・正解だけを出す。特許公報（ja_patent）は明細書の著作権が
+出願人にある旨を LLM-jp の README が注意しているが、LLM-jp が示す CC BY 4.0 に従って含めた。
+公開用のファイルは `experiments/iroha-bench/export_public.py`（`experiments/` は追跡外）が
+`testdata/iroha-bench-v1/release/` に作る（README.md・LICENSE.md もそこにある。`.gitignore` で release/ だけを追跡）。
+
 ---
 
 ## A. Tatoeba（日本語文）
@@ -257,7 +265,8 @@ canonical record の `attribution` に文書ごとに入る（e-Gov は法令番
 
 - LLM-jp は**日本国著作権法を適用するため日本国内のサーバから配布**しており、
   国外のサーバから再配布すると同法が適用されない旨を README に書いている。
-  生データ・生成物とも再配布しない（この文書冒頭の方針どおり）
+  生データ・生成物とも再配布しない（この文書冒頭の方針どおり）。ただし iroha-bench-v1 は例外として、
+  CC BY 4.0 に従って GitHub（国外のサーバ）で公開する（冒頭の「例外」、2026-10-30 ユーザの判断）
 - 各文書の著作権は原則として著作者に帰属する（LLM-jp の README）
 - `ja_kaken` は自前の `kaken` ソース（KAKEN API）と中身が重なる。同時に有効にしない
 - `ja_e-gov` は、ひらがなを含まない段落（カタカナ文語の旧法令）を捨てる

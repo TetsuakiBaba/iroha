@@ -24,9 +24,11 @@ windows/build-vulkan/
 # 中身は履歴に残っている: git checkout v0.12.0 -- training
 /training/
 testdata/ajimee/
-# かな漢字変換の評価セット（iroha-dataset の build-iroha-bench）。LLM-jp Corpus v4 と対話コーパスの
-# 文を含み、LLM-jp は国外へ再配布しない（dataset/iroha-typo-normalizer/LICENSES.md E 節）
-testdata/iroha-bench-v1/
+# かな漢字変換の評価セット（iroha-dataset の build-iroha-bench）。作ったままのファイルは元の文
+# （original_text）や作成時の情報を含むので追跡しない。公開用に出典とライセンスを付けた release/ だけを
+# 追跡する（2026-10-30。dataset/iroha-typo-normalizer/LICENSES.md の「派生データの公開可否」の例外）
+testdata/iroha-bench-v1/*
+!testdata/iroha-bench-v1/release/
 # 実験ディレクトリ。2026-09-22 にリポジトリから外した（追跡していた23件も削除）。
 # 学習データ・チェックポイントが大きいうえ、jev/ajimee-candidates*.jsonl（AJIMEE-Bench、
 # CC-BY-SA 3.0）や typo-normalizer/results/ の実文など他者のデータを含むため。
