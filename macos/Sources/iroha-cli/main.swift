@@ -311,14 +311,21 @@ case "ajimee" where arguments.count >= 3:
     var withContext = Tally()
     var withoutContext = Tally()
     var totalMilliseconds = 0.0
+    // IROHA_TIMINGS=<path> で項目ごとの変換時間を TSV に書く（中央値・パーセンタイル・入力の長さ別の集計用）
+    var timings = ProcessInfo.processInfo.environment["IROHA_TIMINGS"].map { _ in
+        "index\treading_length\tcontext_length\tms\n"
+    }
     for item in items {
         let start = ContinuousClock.now
         let result = (try? await engine.convert(
             reading: item.input, context: item.contextText, candidateCount: 1
         ).first) ?? item.input
         let elapsed = start.duration(to: .now)
-        totalMilliseconds += Double(elapsed.components.attoseconds) / 1e15
+        let milliseconds = Double(elapsed.components.attoseconds) / 1e15
             + Double(elapsed.components.seconds) * 1e3
+        totalMilliseconds += milliseconds
+        timings?.append("\(item.index)\t\(item.input.count)\t\(item.contextText.count)\t"
+            + String(format: "%.3f", milliseconds) + "\n")
         let hit = item.expectedOutput.contains(result)
         let minCER = item.expectedOutput.map { reference in
             Double(editDistance(Array(result), Array(reference))) / Double(max(reference.count, 1))
@@ -339,6 +346,9 @@ case "ajimee" where arguments.count >= 3:
     total.accAt1 = withContext.accAt1 + withoutContext.accAt1
     total.minCERSum = withContext.minCERSum + withoutContext.minCERSum
     print(String(format: "全体: %@  平均 %.1fms/変換", total.summary, totalMilliseconds / Double(total.count)))
+    if let path = ProcessInfo.processInfo.environment["IROHA_TIMINGS"], let timings {
+        try? timings.write(toFile: path, atomically: true, encoding: .utf8)
+    }
 
 case "ajimee-dump" where arguments.count >= 4:
     // jev方式（選択肢ラベルのロジット直読み）実験用のダンプ。AJIMEE-Bench の各項目について
