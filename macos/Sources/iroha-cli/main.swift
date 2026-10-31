@@ -20,6 +20,8 @@ import IrohaMLX
 //   iroha-cli confidence <evaluation_items.json> [--margin 閾値] [--examples 件数]
 //                                                 : 自信度（文字ごとのマージン）と誤変換箇所の対応を
 //                                                   AJIMEE-Benchで評価（zenz単体。誤変換検出の閾値設計用）
+//   iroha-cli mlx-steps <model.gguf...> [--steps 64] [--repeat 30] [--depth 0] [--capacity N]
+//                                                 : MLX で 1 トークンを生成する時間（llama-bench の -p 0 -n にあたる計測用）
 //   iroha-cli repl                                : 対話モード（1行ずつ変換、レイテンシ表示）
 //   iroha-cli lattice <読み>                       : 辞書ラティス（azooKey）の生の候補を表示（調査用）
 //   iroha-cli symbols [読み...]                    : 記号・顔文字・絵文字の表（Mozc のデータ）から引いた候補を表示。
@@ -1521,6 +1523,40 @@ case "convert":
     }
     let engine = makeEngine()
     await convertAndPrint(engine: engine, reading: reading, context: context, count: count)
+
+case "mlx-steps" where arguments.count >= 3:
+    // MLX で 1 トークンを生成する時間（llama-bench の -p 0 -n にあたる）。モデルごとに 1 行の TSV
+    var steps = 64, repeats = 30, depth = 0
+    var capacity: Int?
+    var paths: [String] = []
+    var index = 2
+    while index < arguments.count {
+        let value = index + 1 < arguments.count ? Int(arguments[index + 1]) : nil
+        switch arguments[index] {
+        case "--steps" where value != nil: steps = value!; index += 2
+        case "--repeat" where value != nil: repeats = value!; index += 2
+        case "--depth" where value != nil: depth = value!; index += 2
+        case "--capacity" where value != nil: capacity = value!; index += 2
+        default: paths.append(arguments[index]); index += 1
+        }
+    }
+    // median_ms は 1 ステップ全体、build_ms はそのうち計算の手順を組み立てる時間（CPU だけ）。どちらも repeats 回の中央値
+    print("model\tdepth\tcapacity\tsteps\trepeats\tmedian_ms\tp10_ms\tp90_ms\tbuild_ms")
+    for path in paths {
+        do {
+            let results = try await MLXConversionEngine(modelPath: path)
+                .measureDecodeSteps(steps: steps, repeats: repeats, depth: depth, capacity: capacity)
+            let times = results.map(\.total).sorted()
+            let building = results.map(\.building).sorted()
+            print("\(URL(fileURLWithPath: path).lastPathComponent)\t\(depth)\t\(capacity.map(String.init) ?? "auto")\t\(steps)\t"
+                  + "\(repeats)\t" + [times[times.count / 2], times[times.count / 10], times[times.count * 9 / 10],
+                                       building[building.count / 2]]
+                    .map { String(format: "%.3f", $0) }.joined(separator: "\t"))
+        } catch {
+            FileHandle.standardError.write("\(path): \(error)\n".data(using: .utf8)!)
+            exit(1)
+        }
+    }
 
 default:  // repl
     let engine = makeEngine()

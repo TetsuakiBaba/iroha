@@ -202,6 +202,57 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
         return results.isEmpty ? [reading] : results
     }
 
+    // MARK: - 計測
+
+    /// 計測用（iroha-cli `mlx-steps`）: 同じトークンを入れ続けて 1 トークンずつの生成を `steps` 回続け、1 ステップの平均時間（ms）を
+    /// `repeats` 回ぶん返す（最初の 1 回は捨てる）。1 ステップは変換と同じ `step`（計算・待ち合わせ・ロジットの取り出し）で、
+    /// そのうち計算の手順を組み立てる時間（`buildStep`。CPU だけ）を `building` に分けて返す。
+    /// llama-bench の `-p 0 -n steps` にあたる。`depth` は生成の前に入っているトークンの数（GPT-2 はプロンプトとして
+    /// 一度に入れる。T5 はエンコーダの入力の長さ）。`capacity` は KV の確保の大きさ（nil なら変換と同じ決め方）
+    public func measureDecodeSteps(steps: Int, repeats: Int, depth: Int,
+                                   capacity: Int?) throws -> [(total: Double, building: Double)] {
+        try ensureLoaded()
+        guard let runtime else { throw ConversionError.modelLoadFailed("内部状態が不正です") }
+        var results: [(total: Double, building: Double)] = []
+        for _ in 0 ... repeats {
+            var state: DecodingState
+            let first: Int32
+            switch runtime.model {
+            case .t5(let model):
+                let length = Self.bucket(max(depth, 1), step: 16)
+                let memory = model.encode(MLXArray([Int32](repeating: runtime.eos, count: length), [1, length]),
+                                          sourceMask: MLXArray.ones([1, length]).asType(dtype))
+                state = .t5(model.startDecoding(memory: memory, capacity: capacity ?? Self.bucket(steps + 2, step: 64)))
+                first = model.decoderStartToken
+            case .gpt2(let model):
+                var cache = model.startDecoding(capacity: capacity ?? Self.bucket(depth + steps + 2, step: 64))
+                if depth > 0 {
+                    let logits = model.prefill([Int32](repeating: runtime.eos, count: depth),
+                                               paddedLength: Self.bucket(depth, step: 16), state: &cache)
+                    eval([logits] + cache.arrays)
+                }
+                state = .gpt2(cache)
+                first = runtime.eos
+            }
+            // 最初の 1 ステップは測らない（T5 は交差注意のキー・バリューをここで計算する。変換でも `start` が行う）
+            _ = step(runtime: runtime, state: &state, token: first)
+            var total: UInt64 = 0, building: UInt64 = 0
+            for _ in 0 ..< steps {
+                let start = DispatchTime.now().uptimeNanoseconds
+                let (logits, arrays) = buildStep(runtime: runtime, state: &state, token: runtime.eos)
+                let built = DispatchTime.now().uptimeNanoseconds
+                eval([logits] + arrays)
+                _ = logits.asArray(Float.self)
+                let end = DispatchTime.now().uptimeNanoseconds
+                total += end - start
+                building += built - start
+            }
+            results.append((total: Double(total) / 1e6 / Double(steps), building: Double(building) / 1e6 / Double(steps)))
+            trimCache()
+        }
+        return Array(results.dropFirst())
+    }
+
     // MARK: - メモリ
 
     /// MLX が使い回し用に手元に残しているメモリが `cacheWatermarkBytes` を超えていたら手放す。
@@ -285,23 +336,27 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
 
     /// デコーダに 1 トークン入れて、次のトークンのロジット（CPU 上の Float 配列）を返す
     private func step(runtime: Runtime, state: inout DecodingState, token: Int32) -> [Float] {
-        let logits: MLXArray
-        let arrays: [MLXArray]
+        let (logits, arrays) = buildStep(runtime: runtime, state: &state, token: token)
+        eval([logits] + arrays)
+        return logits.asArray(Float.self)
+    }
+
+    /// `step` の計算の手順だけを組み立てる（MLX は遅延評価なので、ここではまだ計算しない）。
+    /// 返すのはロジットと、評価しておくべきキャッシュの配列
+    private func buildStep(runtime: Runtime, state: inout DecodingState, token: Int32) -> (MLXArray, [MLXArray]) {
         switch (runtime.model, state) {
         case (.t5(let model), .t5(var cache)):
             let bias = decoderBias(model: model, length: cache.capacity)
-            logits = model.decodeStep(token, state: &cache, selfBias: bias).asType(.float32)
-            arrays = cache.arrays
+            let logits = model.decodeStep(token, state: &cache, selfBias: bias).asType(.float32)
             state = .t5(cache)
+            return (logits, cache.arrays)
         case (.gpt2(let model), .gpt2(var cache)):
-            logits = model.decodeStep(token, state: &cache).asType(.float32)
-            arrays = cache.arrays
+            let logits = model.decodeStep(token, state: &cache).asType(.float32)
             state = .gpt2(cache)
+            return (logits, cache.arrays)
         default:
             preconditionFailure("モデルと生成の状態の種類が合わない")
         }
-        eval([logits] + arrays)
-        return logits.asArray(Float.self)
     }
 
     /// 貪欲法で 1 候補を生成する（`ZenzEngine.generate` と同じ）。`logits` は `state` の直後のロジット。
