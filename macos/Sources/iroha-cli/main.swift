@@ -45,7 +45,7 @@ import IrohaMLX
 //   IROHA_NO_LATIN=1 で読みにラテン文字がないときの英字出力を禁じる（実験用。USB等も出なくなる）
 //   IROHA_NO_CONSTRAINT=1 で読み制約（constrained decoding）を丸ごと切り素の貪欲生成にする
 //   （実験用。Python側の制約なし計測と突き合わせるとき）
-//   IROHA_BACKEND=mlx でかな漢字変換を MLX 版エンジン（MLXConversionEngine、T5 のみ）で動かす
+//   IROHA_BACKEND=mlx でかな漢字変換を MLX 版エンジン（MLXConversionEngine、T5 と GPT-2）で動かす
 //   （IME 本体の 設定 > モデル > 推論エンジン と同じ。IROHA_MLX_DTYPE=f32 で bf16 ではなく f32 にする）
 //   データフォルダはIME本体の設定（保存場所の変更）に従う。IROHA_DATA_DIR で上書き可能
 

@@ -318,9 +318,11 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   選べる（設定 > モデル > 推論エンジン、キー `inferenceBackend`。機械ごとの設定で同期しない・再起動で反映。2026-10-01 追加）。
   **MLX は T5 だけ**。デコーダ 2 層の T5 では 1 ステップの手間が llama.cpp より小さく、生成が約 2 割速い
   （T5 e12d2 最終で 30.6 → 24.0ms、AJIMEE 2 条件とも出力が全問一致。`training/t5/MAC-AJIMEE-MLX-2026-10-01.md`・
-  `MAC-SPEED-MLX-vs-LLAMA-2026-10-01.md`）。12 層の zenz では逆に遅いので対応しない（MLX を選んでいても
-  T5 以外は `InferenceBackend.resolve` が llama.cpp に戻し、設定画面に理由を出す）。IrohaCore は MLX に依存させない
-  （Windows 移植の候補のため。MLX 版は IrohaMLX → IrohaTrain の `T5Model` を使う）。守ること:
+  `MAC-SPEED-MLX-vs-LLAMA-2026-10-01.md`）。12 層の zenz では逆に遅かったので IME では使わない（MLX を選んでいても
+  T5 以外は `InferenceBackend.resolve` が llama.cpp に戻し、設定画面に理由を出す。`MLXConversionEngine.supportedArchitectures`）。
+  ただし計測のため zenz（GPT-2）も読める（`loadableArchitectures`、iroha-cli の `IROHA_BACKEND=mlx`。2026-10-31。
+  f32 で llama.cpp と 312 項目の出力が全部一致、bf16 では 7 項目が違う）。IrohaCore は MLX に依存させない
+  （Windows 移植の候補のため。MLX 版は IrohaMLX → IrohaTrain の `T5Model` / `GPT2Model` を使う）。守ること:
   ・プロンプト・読み制約・終端・n-best・一括採点の規則は `ZenzEngine` と同じにする。一致は `MLXConversionEngineTests`
     （f32 で ZenzEngine と突き合わせ）と `T5ParityTests` で確かめる。片方だけ変えない
   ・計算は bf16。**T5 は f16 だと途中の値が溢れて全問空の出力になる**（llama.cpp は途中を f32 で計算するので起きない）

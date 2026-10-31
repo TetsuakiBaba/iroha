@@ -4,23 +4,32 @@ import MLXNN
 import IrohaCore
 import IrohaTrain
 
-/// かな漢字変換エンジンの MLX 版（`ZenzEngine` の推論部分だけを MLX に置き換えたもの）。対応は T5 のみ。
+/// かな漢字変換エンジンの MLX 版（`ZenzEngine` の推論部分だけを MLX に置き換えたもの）。
+/// IME で選べるのは T5 だけ（`supportedArchitectures`）。zenz（GPT-2）も読めるが（`loadableArchitectures`）、
+/// 計測用（iroha-cli の `IROHA_BACKEND=mlx`）で、IME では llama.cpp で動かす。
 ///
 /// プロンプト・読み制約・終端・n-best・一括採点（`score`）の規則は `ZenzEngine` と同じにしてあり、
 /// 出力も同じになる（2026-10-01、T5 e12d2 最終で AJIMEE 200 問 × 2 条件がすべて一致。
 /// `training/t5/MAC-AJIMEE-MLX-2026-10-01.md`）。違うのは計算の仕組みだけ:
 ///
-/// - 重み・順伝播は `IrohaTrain` の `T5Model`（追加学習と同じ実装。llama.cpp とのロジット一致は `T5ParityTests`）
+/// - 重み・順伝播は `IrohaTrain` の `T5Model` / `GPT2Model`（追加学習と同じ実装。llama.cpp とのロジット一致は
+///   `T5ParityTests` / `GPT2ParityTests`）
 /// - 1 ステップの手間が llama.cpp より小さいので、デコーダが 2 層の T5 では速い（1 回の変換で約 2 割。
-///   `training/t5/MAC-SPEED-MLX-vs-LLAMA-2026-10-01.md`）。12 層の zenz（GPT-2）では逆に遅いので対応していない
+///   `training/t5/MAC-SPEED-MLX-vs-LLAMA-2026-10-01.md`）。12 層の zenz（GPT-2）では逆に遅かったので
+///   IME では使わない（2026-10-01。2026-10-31 に計測のため GPT-2 を読めるようにした）
 /// - 計算は bf16。T5 は f16 だと途中の値が溢れて出力が壊れる（bf16 は f32 と同じ範囲を持つ）。
 ///   計測用に `IROHA_MLX_DTYPE=f32` で f32 にできる
 /// - 量子化済みの GGUF（Q5_K_M など）は f16 に戻した版（`ModelRequantizer.ensureF16`、キャッシュ）を読む
 /// - LoRA アダプタ（llama.cpp 形式の GGUF）は読み込み時に重みへ足し込む（`LoRAAdapterMerger`）
 public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
 
-    /// このエンジンが読めるアーキテクチャ（`general.architecture`）
+    /// IME でこのエンジンを使うアーキテクチャ（`general.architecture`。`supports(modelPath:)`）
     public static let supportedArchitectures = [T5Model.architecture]
+    /// このエンジンが読めるアーキテクチャ（計測用に GPT-2 も読む）
+    public static let loadableArchitectures = [T5Model.architecture, GPT2Model.architecture]
+
+    /// `ZenzEngine` の llama.cpp のコンテキスト長（n_ctx）。生成の上限をこれで抑える規則を合わせる
+    static let contextSize = 1024
 
     /// 一括採点で 1 回に流す候補数の上限（`ZenzEngine.maxScoringSequences` と同じ）
     static let maxScoringSequences = 32
@@ -34,15 +43,33 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
     private let usesReadingConstraint: Bool
     private let dtype: DType
 
+    private enum Network {
+        case t5(T5Model)
+        case gpt2(GPT2Model)
+    }
+
+    /// 生成の途中の状態（値型なので、n-best の分岐はコピーで済む）
+    private enum DecodingState {
+        case t5(T5Model.DecoderState)
+        case gpt2(GPT2Model.DecoderState)
+
+        /// 入っているトークンの数（`ZenzEngine` の KV キャッシュのトークン数にあたる）
+        var position: Int {
+            switch self {
+            case .t5(let state): state.position
+            case .gpt2(let state): state.position
+            }
+        }
+    }
+
     private struct Runtime {
-        let model: T5Model
+        let model: Network
         let tokenizer: VocabTokenizer
         /// 出力文字列（出さないトークンは nil）と終端トークン（`ZenzEngine.buildTokenTable` と同じ）
         let tokenTexts: [String?]
         let tokenIsTerminator: [Bool]
         let terminatorIndices: MLXArray
         let eos: Int32
-        let decoderStart: Int32
     }
 
     private var runtime: Runtime?
@@ -61,7 +88,7 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
         dtype = float32 ? .float32 : .bfloat16
     }
 
-    /// `path` のモデルをこのエンジンで読めるか（アーキテクチャだけを見る。ファイルが無ければ偽）
+    /// `path` のモデルを IME でこのエンジンで動かすか（アーキテクチャだけを見る。ファイルが無ければ偽）
     public static func supports(modelPath path: String) -> Bool {
         guard let gguf = try? GGUFFile(path: path), let architecture = gguf.architecture else { return false }
         return supportedArchitectures.contains(architecture)
@@ -88,9 +115,9 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
         } catch {
             throw ConversionError.modelLoadFailed("\(modelPath): \(error)")
         }
-        guard let architecture, Self.supportedArchitectures.contains(architecture) else {
+        guard let architecture, Self.loadableArchitectures.contains(architecture) else {
             throw ConversionError.modelLoadFailed(
-                "MLX のエンジンは T5 のモデルにだけ対応しています（このモデル: \(architecture ?? "不明")）")
+                "MLX のエンジンは T5 と GPT-2 のモデルにだけ対応しています（このモデル: \(architecture ?? "不明")）")
         }
         if let adapterPath, !FileManager.default.fileExists(atPath: adapterPath) {
             throw ConversionError.modelNotFound(adapterPath)
@@ -100,7 +127,9 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
             let path = try ModelRequantizer.ensureF16(basePath: modelPath).path
             let gguf = try GGUFFile(path: path)
             let adapter = try adapterPath.map { try LoRAAdapterMerger(path: $0, baseArchitecture: architecture) }
-            let model = try T5Model(gguf: gguf, lora: nil, adapter: adapter, dtype: dtype)
+            let model: Network = architecture == GPT2Model.architecture
+                ? .gpt2(try GPT2Model(gguf: gguf, lora: nil, adapter: adapter, dtype: dtype))
+                : .t5(try T5Model(gguf: gguf, lora: nil, adapter: adapter, dtype: dtype))
             // 読み込みの途中で使ったメモリを使い回し用に残さない
             Memory.clearCache()
             let tokenizer = try VocabTokenizer(modelPath: path)
@@ -108,7 +137,7 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
             runtime = Runtime(
                 model: model, tokenizer: tokenizer, tokenTexts: table.texts, tokenIsTerminator: table.terminators,
                 terminatorIndices: MLXArray(table.terminators.indices.filter { table.terminators[$0] }.map(Int32.init)),
-                eos: tokenizer.eos, decoderStart: model.decoderStartToken)
+                eos: tokenizer.eos)
         } catch let error as ConversionError {
             throw error
         } catch {
@@ -130,12 +159,8 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
     /// `ZenzEngine.convert` と同じ: 1 候補なら貪欲生成、複数なら先頭トークンを上位に分岐して貪欲に補完し、
     /// 系列全体の対数確率で並べる（最良から `nbestLogProbWindow` 以上離れた候補は捨てる）
     private func convert(runtime: Runtime, reading: String, leftContext: String, candidateCount: Int) throws -> [String] {
-        let encoded = encode(runtime: runtime, reading: reading, leftContext: leftContext)
         let maxNew = reading.count * 3 + 8
-        // 開始トークン + 先頭の固定（n-best）+ 生成 maxNew。64 単位に切り上げて形をそろえる
-        var state = runtime.model.startDecoding(memory: encoded.memory, sourceMask: encoded.mask,
-                                                capacity: Self.bucket(maxNew + 2, step: 64))
-        let firstLogits = step(runtime: runtime, state: &state, token: runtime.decoderStart)
+        let (state, firstLogits) = start(runtime: runtime, reading: reading, leftContext: leftContext, maxNew: maxNew)
 
         if candidateCount <= 1 {
             let text = try generate(runtime: runtime, state: state, logits: firstLogits,
@@ -193,23 +218,48 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
 
     // MARK: - 生成
 
+    /// `ZenzEngine.tokenizePrompt` と同じ: エンコーダ・デコーダ型は特殊トークンを自動で付けず末尾に </s>、
+    /// デコーダのみの型はモデルの設定どおりに付ける
     private func promptTokens(runtime: Runtime, reading: String, leftContext: String) -> [Int32] {
         let prompt = ZenzEngine.buildPrompt(reading: reading, leftContext: leftContext,
                                             maxContextLength: LeftContext.maxLength)
-        // `ZenzEngine.tokenizePrompt` と同じ: 特殊トークンを自動で付けず末尾に </s>
+        if case .gpt2 = runtime.model { return runtime.tokenizer.tokenize(prompt, addSpecial: true) }
         return runtime.tokenizer.tokenize(prompt, addSpecial: false) + [runtime.eos]
+    }
+
+    /// プロンプトを入れて生成を始め、最初のトークンのロジットを返す。`maxNew` は生成の上限（先頭の固定は別）
+    private func start(runtime: Runtime, reading: String, leftContext: String,
+                       maxNew: Int) -> (DecodingState, [Float]) {
+        switch runtime.model {
+        case .t5(let model):
+            let encoded = encode(model: model, runtime: runtime, reading: reading, leftContext: leftContext)
+            // 開始トークン + 先頭の固定（n-best）+ 生成 maxNew。64 単位に切り上げて形をそろえる
+            var state = DecodingState.t5(model.startDecoding(memory: encoded.memory, sourceMask: encoded.mask,
+                                                             capacity: Self.bucket(maxNew + 2, step: 64)))
+            let logits = step(runtime: runtime, state: &state, token: model.decoderStartToken)
+            return (state, logits)
+        case .gpt2(let model):
+            let prompt = promptTokens(runtime: runtime, reading: reading, leftContext: leftContext)
+            // プロンプトは 16 の倍数に埋めて一度に入れる。容量はプロンプト + 先頭の固定 + 生成 maxNew を 64 単位で
+            let padded = min(Self.bucket(prompt.count, step: 16), model.contextLength)
+            var cache = model.startDecoding(capacity: Self.bucket(max(padded, prompt.count + maxNew + 2), step: 64))
+            let logits = model.prefill(prompt, paddedLength: padded, state: &cache).asType(.float32)
+            eval([logits] + cache.arrays)
+            return (.gpt2(cache), logits.asArray(Float.self))
+        }
     }
 
     /// プロンプトをエンコードしたエンコーダ出力 [1, S, D] と有効位置のマスク [1, S]。
     /// 入力は 16 の倍数にパディングする（形をそろえて MLX のメモリを使い回すため。`T5Model.DecoderState` 参照）。
     /// パディングはエンコーダの自己注意と交差注意の両方でマスクされ、有効位置の値は変わらない
-    private func encode(runtime: Runtime, reading: String, leftContext: String) -> (memory: MLXArray, mask: MLXArray) {
+    private func encode(model: T5Model, runtime: Runtime, reading: String,
+                        leftContext: String) -> (memory: MLXArray, mask: MLXArray) {
         let source = promptTokens(runtime: runtime, reading: reading, leftContext: leftContext)
         let length = Self.bucket(source.count, step: 16)
         let padded = source + [Int32](repeating: 0, count: length - source.count)
         let valid = [Float](repeating: 1, count: source.count) + [Float](repeating: 0, count: length - source.count)
         let mask = MLXArray(valid, [1, length]).asType(dtype)
-        return (runtime.model.encode(MLXArray(padded, [1, length]), sourceMask: mask), mask)
+        return (model.encode(MLXArray(padded, [1, length]), sourceMask: mask), mask)
     }
 
     /// `value` 以上で最小の `step` の倍数
@@ -225,25 +275,38 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
     }
 
     /// 自己注意のバイアス（相対位置 + 因果マスク）を `length` 位置ぶん以上用意する（作り置きを使い回す）
-    private func decoderBias(runtime: Runtime, length: Int) -> MLXArray {
+    private func decoderBias(model: T5Model, length: Int) -> MLXArray {
         if let decoderBias, decoderBias.dim(2) >= length { return decoderBias }
-        let bias = runtime.model.decoderSelfBias(length: Self.bucket(max(length, 128), step: 64))
+        let bias = model.decoderSelfBias(length: Self.bucket(max(length, 128), step: 64))
         eval(bias)
         decoderBias = bias
         return bias
     }
 
     /// デコーダに 1 トークン入れて、次のトークンのロジット（CPU 上の Float 配列）を返す
-    private func step(runtime: Runtime, state: inout T5Model.DecoderState, token: Int32) -> [Float] {
-        let bias = decoderBias(runtime: runtime, length: state.capacity)
-        let logits = runtime.model.decodeStep(token, state: &state, selfBias: bias).asType(.float32)
-        eval([logits] + state.arrays)
+    private func step(runtime: Runtime, state: inout DecodingState, token: Int32) -> [Float] {
+        let logits: MLXArray
+        let arrays: [MLXArray]
+        switch (runtime.model, state) {
+        case (.t5(let model), .t5(var cache)):
+            let bias = decoderBias(model: model, length: cache.capacity)
+            logits = model.decodeStep(token, state: &cache, selfBias: bias).asType(.float32)
+            arrays = cache.arrays
+            state = .t5(cache)
+        case (.gpt2(let model), .gpt2(var cache)):
+            logits = model.decodeStep(token, state: &cache).asType(.float32)
+            arrays = cache.arrays
+            state = .gpt2(cache)
+        default:
+            preconditionFailure("モデルと生成の状態の種類が合わない")
+        }
+        eval([logits] + arrays)
         return logits.asArray(Float.self)
     }
 
     /// 貪欲法で 1 候補を生成する（`ZenzEngine.generate` と同じ）。`logits` は `state` の直後のロジット。
     /// `forcedFirst` があれば先頭をそのトークンに固定する
-    private func generate(runtime: Runtime, state initial: T5Model.DecoderState, logits initialLogits: [Float],
+    private func generate(runtime: Runtime, state initial: DecodingState, logits initialLogits: [Float],
                           forcedFirst: (token: Int, logProb: Float)?, reading: String,
                           maxNew: Int) throws -> (text: String, logProb: Float) {
         var state = initial
@@ -261,8 +324,9 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
             }
             logits = step(runtime: runtime, state: &state, token: Int32(forcedFirst.token))
         }
-        // 上限は先頭の固定とは別に `maxNew` 回（`ZenzEngine.generate` と同じ）
-        for iteration in 0..<maxNew {
+        // 上限は先頭の固定とは別に `maxNew` 回で、コンテキストの残りでも抑える（`ZenzEngine.generate` と同じ）
+        let limit = max(0, min(maxNew, Self.contextSize - state.position))
+        for iteration in 0..<limit {
             try Task.checkCancellation()
             guard let picked = selectToken(runtime: runtime, logits: logits, constraint: constraint, mask: mask) else {
                 break
@@ -272,8 +336,15 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
             logProb += picked.logProb
             if runtime.tokenIsTerminator[picked.token] { break }
             outputBytes += runtime.tokenizer.pieceBytes(Int32(picked.token))
+            // zenz の特殊トークン（私用領域 U+EE00-U+EE0F）が出たら終了（`ZenzEngine.generate` と同じ。zenz の語彙では
+            // バイト単位の 3 トークンに分かれるので、終端トークンの表では捕まえられない）
+            if let text = String(data: Data(outputBytes), encoding: .utf8),
+               let last = text.unicodeScalars.last, (0xEE00...0xEE0F).contains(last.value) {
+                outputBytes = Array(String(text.unicodeScalars.dropLast()).utf8)
+                break
+            }
             // 最後の 1 回は次のロジットが要らない
-            guard iteration < maxNew - 1 else { break }
+            guard iteration < limit - 1 else { break }
             logits = step(runtime: runtime, state: &state, token: Int32(picked.token))
         }
         let text = ZenzEngine.decodeUTF8DroppingFragments(Data(outputBytes))
@@ -344,24 +415,38 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
     }
 
     private func score(runtime: Runtime, candidates: [String], reading: String, leftContext: String) throws -> [Float] {
-        let (memory, sourceMask) = encode(runtime: runtime, reading: reading, leftContext: leftContext)
         let tokenized = candidates.map { runtime.tokenizer.tokenize($0, addSpecial: false) }
         var scores = [Float](repeating: -.infinity, count: candidates.count)
-        // 空文字列は採点不能（-inf のまま。`ZenzEngine` と同じ）
-        let valid = tokenized.indices.filter { !tokenized[$0].isEmpty }
+        let chunkScorer: ([[Int32]]) -> [Float]
+        var valid: [Int]
+        switch runtime.model {
+        case .t5(let model):
+            let (memory, sourceMask) = encode(model: model, runtime: runtime, reading: reading, leftContext: leftContext)
+            chunkScorer = { self.scoreChunk(runtime: runtime, model: model, memory: memory, sourceMask: sourceMask,
+                                            sequences: $0) }
+            // 空文字列は採点不能（-inf のまま。`ZenzEngine` と同じ）
+            valid = tokenized.indices.filter { !tokenized[$0].isEmpty }
+        case .gpt2(let model):
+            let prompt = promptTokens(runtime: runtime, reading: reading, leftContext: leftContext)
+            chunkScorer = { self.scoreChunk(runtime: runtime, model: model, prompt: prompt, sequences: $0) }
+            // プロンプトと合わせて文脈長に収まらない候補も採点不能（`ZenzEngine` は KV キャッシュに収まらない候補を飛ばす）
+            valid = tokenized.indices.filter {
+                !tokenized[$0].isEmpty && prompt.count + tokenized[$0].count <= min(model.contextLength, Self.contextSize)
+            }
+        }
         var start = 0
         while start < valid.count {
             try Task.checkCancellation()
             let chunk = Array(valid[start ..< min(start + Self.maxScoringSequences, valid.count)])
-            let chunkScores = scoreChunk(runtime: runtime, memory: memory, sourceMask: sourceMask,
-                                         sequences: chunk.map { tokenized[$0] })
+            let chunkScores = chunkScorer(chunk.map { tokenized[$0] })
             for (offset, index) in chunk.enumerated() { scores[index] = chunkScores[offset] }
             start += chunk.count
         }
         return scores
     }
 
-    private func scoreChunk(runtime: Runtime, memory: MLXArray, sourceMask: MLXArray, sequences: [[Int32]]) -> [Float] {
+    private func scoreChunk(runtime: Runtime, model: T5Model, memory: MLXArray, sourceMask: MLXArray,
+                            sequences: [[Int32]]) -> [Float] {
         // 形をそろえる（候補数は 2 の累乗、長さは 16 の倍数。`encode` と同じ理由）。増えた行・列はパディングで、
         // デコーダは因果的なので後ろの列は前の位置の値に影響しない
         let batch = Self.powerOfTwo(atLeast: sequences.count)
@@ -372,7 +457,7 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
         var positions: [Int32] = []
         var targets: [Int32] = []
         for (row, sequence) in sequences.enumerated() {
-            inputs[row * length] = runtime.decoderStart
+            inputs[row * length] = model.decoderStartToken
             for (offset, token) in sequence.enumerated() {
                 inputs[row * length + offset + 1] = token
             }
@@ -387,12 +472,48 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
         positions += [Int32](repeating: 0, count: rows - used)
         targets += [Int32](repeating: 0, count: rows - used)
 
-        let hidden = runtime.model.decodeHidden(
+        let hidden = model.decodeHidden(
             MLXArray(inputs, [batch, length]),
             memory: broadcast(memory, to: [batch, memory.dim(1), memory.dim(2)]),
             sourceMask: broadcast(sourceMask, to: [batch, sourceMask.dim(1)]))
         let selected = hidden.reshaped(batch * length, -1).take(MLXArray(positions), axis: 0)
-        let logits = runtime.model.outputLogits(selected).asType(.float32)  // [rows, V]
+        return sumScores(runtime: runtime, logits: model.outputLogits(selected).asType(.float32),
+                         targets: targets, sequences: sequences)
+    }
+
+    /// GPT-2 の一括採点。行ごとにプロンプト + 候補を並べ（プロンプトは行ごとに計算し直す）、プロンプトの最後の位置から
+    /// 候補の最後の位置までのロジットを使う（位置 P-1+j が候補の j 番目のトークン、最後は終端を予測する）
+    private func scoreChunk(runtime: Runtime, model: GPT2Model, prompt: [Int32], sequences: [[Int32]]) -> [Float] {
+        // 形をそろえる（候補数は 2 の累乗、長さは 16 の倍数で文脈長まで）。後ろの埋めた列は因果的なので前に影響しない
+        let batch = Self.powerOfTwo(atLeast: sequences.count)
+        let length = min(Self.bucket(prompt.count + sequences.map(\.count).max()!, step: 16), model.contextLength)
+        var inputs = [Int32](repeating: 0, count: batch * length)
+        var positions: [Int32] = []
+        var targets: [Int32] = []
+        for (row, sequence) in sequences.enumerated() {
+            for (offset, token) in (prompt + sequence).enumerated() {
+                inputs[row * length + offset] = token
+            }
+            for offset in 0 ... sequence.count {
+                positions.append(Int32(row * length + prompt.count - 1 + offset))
+                targets.append(offset < sequence.count ? sequence[offset] : 0)
+            }
+        }
+        let used = positions.count
+        let rows = Self.bucket(used, step: 64)
+        positions += [Int32](repeating: 0, count: rows - used)
+        targets += [Int32](repeating: 0, count: rows - used)
+
+        let hidden = model.hidden(MLXArray(inputs, [batch, length]))
+        let selected = hidden.reshaped(batch * length, -1).take(MLXArray(positions), axis: 0)
+        return sumScores(runtime: runtime, logits: model.outputLogits(selected).asType(.float32),
+                         targets: targets, sequences: sequences)
+    }
+
+    /// 選んだ位置のロジット [rows, V] から、候補ごとに log P(候補 + 終端) を足し上げる。`targets` は各位置で
+    /// 予測するトークン（候補の最後の次の位置は終端で、値は使わない）
+    private func sumScores(runtime: Runtime, logits: MLXArray, targets: [Int32], sequences: [[Int32]]) -> [Float] {
+        let rows = targets.count
         let logZ = MLX.logSumExp(logits, axis: -1)
         let picked = takeAlong(logits, MLXArray(targets, [rows, 1]), axis: -1).squeezed(axis: -1) - logZ
         let terminal = MLX.logSumExp(logits.take(runtime.terminatorIndices, axis: -1), axis: -1) - logZ

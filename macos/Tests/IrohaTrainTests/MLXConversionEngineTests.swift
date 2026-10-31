@@ -79,15 +79,37 @@ final class MLXConversionEngineTests: XCTestCase {
         }
     }
 
-    /// T5 以外（zenz = GPT-2）は読めない。黙って別のエンジンで動かさずに失敗する
-    func testRejectsNonT5Model() async throws {
+    /// zenz（GPT-2）は IME では MLX で動かさない（`supports` が偽）が、計測用に読める
+    func testZenzIsNotOfferedToIME() throws {
         let path = try TestSupport.requireModel()
         XCTAssertFalse(MLXConversionEngine.supports(modelPath: path))
-        let mlx = MLXConversionEngine(modelPath: path)
-        do {
-            _ = try await mlx.convert(reading: "かんじ", context: "", candidateCount: 1)
-            XCTFail("T5 以外のモデルで変換できてしまった")
-        } catch ConversionError.modelLoadFailed {
+    }
+
+    /// zenz（GPT-2）の貪欲生成・n-best・一括採点が ZenzEngine と同じ（f32）
+    func testZenzMatchesZenzEngine() async throws {
+        let path = try TestSupport.requireModel()
+        let llama = ZenzEngine(modelPath: path)
+        let mlx = MLXConversionEngine(modelPath: path, usesFloat32: true)
+        for input in inputs {
+            let expected = try await llama.convert(reading: input.reading, context: input.context, candidateCount: 1)
+            let actual = try await mlx.convert(reading: input.reading, context: input.context, candidateCount: 1)
+            XCTAssertEqual(actual, expected, input.reading)
+        }
+        for input in inputs.prefix(3) {
+            let expected = try await llama.convert(reading: input.reading, context: input.context, candidateCount: 5)
+            let actual = try await mlx.convert(reading: input.reading, context: input.context, candidateCount: 5)
+            XCTAssertEqual(actual, expected, input.reading)
+        }
+        let candidates = ["", "記者が汽車で帰社した", "貴社が記者で帰社した", "汽車", "きしゃがきしゃできしゃした"]
+        let expected = try await llama.score(candidates: candidates, reading: "きしゃがきしゃできしゃした", context: "本日は")
+        let actual = try await mlx.score(candidates: candidates, reading: "きしゃがきしゃできしゃした", context: "本日は")
+        XCTAssertEqual(actual.count, expected.count)
+        for (index, (a, e)) in zip(actual, expected).enumerated() {
+            if e == -.infinity {
+                XCTAssertEqual(a, -.infinity, "候補 \(index)")
+            } else {
+                XCTAssertEqual(a, e, accuracy: 0.01, "候補 \(index)")
+            }
         }
     }
 
