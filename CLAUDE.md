@@ -59,6 +59,18 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   iroha が消え、ログアウトまで戻らない（2026-09-26 実測。install.sh と `SelfInstaller.replaceInstalledBundle` の
   コメント参照）。入れ替えの数秒後に `iroha --refresh-input-menu` で入力メニューに一覧を読み直させる。
   `killall TextInputMenuAgent` 等では直らない
+- **入力メニューで iroha が灰色になるのは、別のアプリが Secure Input を持ったままのとき**（2026-10-30〜31 実測。
+  iroha の不具合ではない）。持ち主は `ioreg -l -w 0 | grep kCGSSessionSecureInputPID`。Chrome はパスワードの画面を
+  離れても解除せず、終了するまで続いた。灰色は Secure Input が有効になったあと**前面のアプリを切り替えたとき**に出て、
+  解除されても次に切り替えるまで残る（確かめるときは必ず Finder などに切り替えてから入力メニューを見る）。
+  azooKey は選べるが、置き場所（`/Library`）・App Sandbox・プロビジョニングプロファイル・公証・Info.plist の接続名・
+  入力メソッドとしての動き・ほかのアプリの見張りのどれを azooKey に合わせても iroha は灰色のままで、条件は分からなかった。
+  そこで知らせる: `SecureInputNotice`（判定は IrohaCore の `SecureInputNoticeRule`、
+  設定 > 入力 > 入力メニュー、既定ON・同期する）が、前面のアプリが切り替わった 2 秒後に確かめ、持ち主が前面のアプリでも
+  iroha 自身（設定画面の API キー欄）でもなければ、アプリ名と戻し方をマウスポインタの近くに 8 秒出す（`TapInputFeedback`）。
+  同じ持ち主には解除されるまで 1 回だけ。前面のアプリ自身が持ち続ける場合（Terminal の「セキュアキーボード入力」）は
+  パスワード欄と見分けられないので知らせない。再現は前面に出ないプロセスで `EnableSecureEventInput()` を保持して作る
+  （そのときの持ち主は、そのプロセスを起動したアプリの PID で記録される）
 
 ## プロジェクト構成の要点
 

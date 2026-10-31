@@ -81,6 +81,7 @@ private struct InputSettingsTab: View {
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
     @AppStorage(KeyInputSettings.yenKeyCharacterKey) private var yenKeyCharacter = KeyInputSettings.yen
     @AppStorage(KeyInputSettings.alwaysHalfWidthSpaceKey) private var alwaysHalfWidthSpace = true
+    @AppStorage(SecureInputNoticeSettings.enabledKey) private var secureInputNotice = true
     @AppStorage(PredictionSettings.predictiveEnabledKey) private var predictiveConversion = false
     @AppStorage(PrivateModeSettings.enabledKey) private var privateMode = false
     @AppStorage(AccelerometerSettings.enabledKey) private var accelerometer = false
@@ -204,6 +205,17 @@ private struct InputSettingsTab: View {
                     help: "ONでは、ひらがなモードで入力していないときのスペースも半角になります。"
                         + "OFFにすると全角スペースが入り、Shift+スペースで半角が入ります。"
                         + "入力中のスペースは変換に使うので、この設定には関係しません。英数モードでは常に半角です。")
+            }
+
+            Section("入力メニュー") {
+                HelpToggle(
+                    title: "irohaを選べないときに知らせる", isOn: $secureInputNotice,
+                    help: "パスワードの入力中、アプリはキー入力を他から読めないようにする保護（Secure Input）を有効にします。"
+                        + "その間、入力メニューでirohaが灰色になり選べません。アプリによってはパスワードの画面を離れても"
+                        + "保護を解除しないことがあり、そのアプリを終了するまで続きます。"
+                        + "ONにすると、保護を有効にしたままのアプリが前面にないとき、そのアプリの名前と戻し方を"
+                        + "マウスポインタの近くに表示します（同じアプリについては、保護が解除されるまで1回だけ）。"
+                        + "パスワード欄に入力している間は表示しません。")
             }
 
             if developerMode {

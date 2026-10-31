@@ -196,7 +196,7 @@ final class TapInputFeedback {
     private let padding = NSEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
     /// カーソル行とウィンドウの間隔
     private let caretGap: CGFloat = 2
-    private static let duration: TimeInterval = 1.2
+    static let duration: TimeInterval = 1.2
     private var hideWork: DispatchWorkItem?
     private weak var caretOwner: AnyObject?
     private var caretRect: (() -> NSRect?)?
@@ -246,7 +246,8 @@ final class TapInputFeedback {
         caretRect = nil
     }
 
-    func show(_ text: String) {
+    /// Secure Input の知らせ（`SecureInputNotice`）もこの小窓を使う（文が長いので長めに出す）
+    func show(_ text: String, duration: TimeInterval = TapInputFeedback.duration) {
         label.stringValue = text
         label.sizeToFit()
         let size = NSSize(width: padding.left + label.frame.width + padding.right,
@@ -260,7 +261,7 @@ final class TapInputFeedback {
         hideWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.panel.orderOut(nil) }
         hideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.duration, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
     }
 
     /// カーソル行の下。予測・訂正の小窓と重なるならその下、画面の下に収まらなければ行の上
