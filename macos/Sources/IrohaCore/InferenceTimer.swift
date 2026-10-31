@@ -35,8 +35,21 @@ public final class InferenceTimer: @unchecked Sendable {
         /// モデルの読み込みにかかった時間（最初の 1 回だけ 0 でない）
         public var modelLoad: Duration = .zero
         public var shortcuts: Set<Shortcut> = []
+        /// 以下は NN の時間の内訳（`iroha-cli ajimee` の IROHA_TIMINGS で書き出す）。
+        /// 入力の一括処理（デコーダのみのモデルではプロンプトの llama_decode、T5 では llama_encode）
+        public var prompt: Duration = .zero
+        /// 1 トークンずつの llama_decode（T5 のデコーダ開始トークンを含む）の合計と回数
+        public var decode: Duration = .zero
+        public var decodeSteps = 0
+        /// 次のトークンを選ぶ CPU の処理（語彙全体の走査と読みの制約）の合計
+        public var tokenSelection: Duration = .zero
 
         public init() {}
+    }
+
+    /// NN の時間の内訳の区分（`Snapshot` の同名の項目）
+    public enum Part: Sendable {
+        case prompt, decode, tokenSelection
     }
 
     private let lock = NSLock()
@@ -63,6 +76,18 @@ public final class InferenceTimer: @unchecked Sendable {
         lock.unlock()
     }
 
+    public func add(_ part: Part, _ duration: Duration) {
+        lock.lock()
+        switch part {
+        case .prompt: state.prompt += duration
+        case .decode:
+            state.decode += duration
+            state.decodeSteps += 1
+        case .tokenSelection: state.tokenSelection += duration
+        }
+        lock.unlock()
+    }
+
     public func note(_ shortcut: Shortcut) {
         lock.lock()
         state.shortcuts.insert(shortcut)
@@ -74,6 +99,14 @@ public final class InferenceTimer: @unchecked Sendable {
         guard let timer = current else { return try body() }
         let start = ContinuousClock.now
         defer { timer.addNeuralNetwork(start.duration(to: .now)) }
+        return try body()
+    }
+
+    /// NN の計算の一部を測って `current` の内訳に足す（`current` が nil なら測らずに実行するだけ）
+    public static func measure<T>(_ part: Part, _ body: () throws -> T) rethrows -> T {
+        guard let timer = current else { return try body() }
+        let start = ContinuousClock.now
+        defer { timer.add(part, start.duration(to: .now)) }
         return try body()
     }
 

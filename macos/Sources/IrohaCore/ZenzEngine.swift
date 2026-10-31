@@ -310,7 +310,9 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer {
         let maxNewTokens = max(0, min(reading.count * 3 + 8, remainingContext))
         generation: for _ in 0..<maxNewTokens {
             try Task.checkCancellation()
-            guard let picked = selectToken(runtime: runtime, constraint: constraint, mask: mask) else { break }
+            guard let picked = InferenceTimer.measure(.tokenSelection, {
+                selectToken(runtime: runtime, constraint: constraint, mask: mask)
+            }) else { break }
             let token = picked.token
             if picked.relaxed { constraint = nil }
             mask = picked.mask
@@ -399,14 +401,20 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer {
                 batch.logits[index] = 0
             }
             batch.n_tokens = Int32(promptTokens.count)
-            let result = llama_encode(ctx, batch)
+            let result = InferenceTimer.measure(.prompt) { llama_encode(ctx, batch) }
+            llama_synchronize(ctx)
             guard result == 0 else { throw ConversionError.inferenceFailed("llama_encode=\(result)") }
             var start = [runtime.decoderStartToken]
             try decode(ctx: ctx, tokens: &start)
             return start
         }
         var tokens = promptTokens
-        try decode(ctx: ctx, tokens: &tokens)
+        // llama_decode は GPU の計算を待たずに戻る。待ちを内訳の該当区分に入れるため、ここで終わりを待つ
+        // （すぐ後でロジットを読むときに待つので、変換全体の時間は変わらない）
+        try InferenceTimer.measure(.prompt) {
+            try decode(ctx: ctx, tokens: &tokens)
+            llama_synchronize(ctx)
+        }
         return tokens
     }
 
@@ -656,8 +664,13 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer {
     }
 
     private func decode(ctx: OpaquePointer, tokens token: inout llama_token) throws {
-        let result = withUnsafeMutablePointer(to: &token) { pointer in
-            llama_decode(ctx, llama_batch_get_one(pointer, 1))
+        // 終わりを待つ理由はプロンプトの llama_decode（primePrompt）と同じ
+        let result = InferenceTimer.measure(.decode) {
+            let result = withUnsafeMutablePointer(to: &token) { pointer in
+                llama_decode(ctx, llama_batch_get_one(pointer, 1))
+            }
+            llama_synchronize(ctx)
+            return result
         }
         guard result == 0 else { throw ConversionError.inferenceFailed("llama_decode=\(result)") }
     }

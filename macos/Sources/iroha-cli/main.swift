@@ -311,21 +311,30 @@ case "ajimee" where arguments.count >= 3:
     var withContext = Tally()
     var withoutContext = Tally()
     var totalMilliseconds = 0.0
-    // IROHA_TIMINGS=<path> で項目ごとの変換時間を TSV に書く（中央値・パーセンタイル・入力の長さ別の集計用）
+    // IROHA_TIMINGS=<path> で項目ごとの変換時間を TSV に書く（中央値・パーセンタイル・入力の長さ別の集計用）。
+    // prompt_ms 以降は NN の時間の内訳（入力の一括処理・1 トークンずつの llama_decode の合計と回数・
+    // 次のトークンを選ぶ CPU の処理。`InferenceTimer.Snapshot`）
     var timings = ProcessInfo.processInfo.environment["IROHA_TIMINGS"].map { _ in
-        "index\treading_length\tcontext_length\tms\n"
+        "index\treading_length\tcontext_length\tms\tprompt_ms\tdecode_ms\tdecode_steps\tselect_ms\n"
+    }
+    func milliseconds(_ duration: Duration) -> Double {
+        Double(duration.components.attoseconds) / 1e15 + Double(duration.components.seconds) * 1e3
     }
     for item in items {
+        let timer = timings == nil ? nil : InferenceTimer()
         let start = ContinuousClock.now
-        let result = (try? await engine.convert(
-            reading: item.input, context: item.contextText, candidateCount: 1
-        ).first) ?? item.input
-        let elapsed = start.duration(to: .now)
-        let milliseconds = Double(elapsed.components.attoseconds) / 1e15
-            + Double(elapsed.components.seconds) * 1e3
-        totalMilliseconds += milliseconds
-        timings?.append("\(item.index)\t\(item.input.count)\t\(item.contextText.count)\t"
-            + String(format: "%.3f", milliseconds) + "\n")
+        let result = await InferenceTimer.$current.withValue(timer) {
+            (try? await engine.convert(
+                reading: item.input, context: item.contextText, candidateCount: 1
+            ).first) ?? item.input
+        }
+        let elapsed = milliseconds(start.duration(to: .now))
+        totalMilliseconds += elapsed
+        if let parts = timer?.snapshot {
+            timings?.append("\(item.index)\t\(item.input.count)\t\(item.contextText.count)\t"
+                + String(format: "%.3f\t%.3f\t%.3f\t%d\t%.3f", elapsed, milliseconds(parts.prompt),
+                         milliseconds(parts.decode), parts.decodeSteps, milliseconds(parts.tokenSelection)) + "\n")
+        }
         let hit = item.expectedOutput.contains(result)
         let minCER = item.expectedOutput.map { reference in
             Double(editDistance(Array(result), Array(reference))) / Double(max(reference.count, 1))
