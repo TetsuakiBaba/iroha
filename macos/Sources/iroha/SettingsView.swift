@@ -495,7 +495,7 @@ private struct TypoNormalizerModelRow: View {
         case .idle, .failed:
             if let installed = downloader.installed {
                 HStack(spacing: 6) {
-                    // 名前（「標準」）だけでは版が分からないので ID（iroha-typo-v1 など）を添える
+                    // 名前（「標準」）だけでは版が分からないので ID（iroha-typo-v2 など）を添える
                     Text("\(installed.name)（\(installed.id)）").foregroundStyle(.secondary)
                     Button("削除") { downloader.remove() }
                 }
@@ -540,7 +540,7 @@ private struct TypoDelayRow: View {
     }
 }
 
-/// 打ち間違い訂正を採用する margin のしきい値。既定 2.0（SWIFT-PORT.md §4 の推奨）。
+/// 打ち間違い訂正を採用する margin のしきい値。既定 2.5（`TypoNormalizer.defaultThreshold`）。
 ///
 /// 数字そのものはユーザに意味が伝わらないので、目安の言葉を添える。
 /// 訂正率・過剰訂正率の実測値は合成した打ち間違いの分布で測ったもので、実際の打ち間違いの

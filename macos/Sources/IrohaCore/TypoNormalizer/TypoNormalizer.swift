@@ -22,7 +22,7 @@ public struct TypoCorrection: Sendable, Equatable {
 /// 打鍵 → ローマ字→かな変換 → [ TypoNormalizer ] → 辞書ラティス → かな漢字変換NN
 /// ```
 ///
-/// 11.6M パラメータ（iroha-typo-v1）の文字単位 Transformer encoder–decoder。学習と書き出しは
+/// 11.6M パラメータ（iroha-typo-v2）の文字単位 Transformer encoder–decoder。学習と書き出しは
 /// `training/typo-normalizer/`、移植の仕様は同ディレクトリの SWIFT-PORT.md が正。
 ///
 /// ## 使いかたの制約（SWIFT-PORT.md §5・§9）
@@ -38,10 +38,12 @@ public struct TypoCorrection: Sendable, Equatable {
 /// モデル自体もアプリに同梱せず、設定でONにしたときに取得する（`TypoNormalizerCatalog`）。
 public actor TypoNormalizer {
 
-    /// 訂正を採用するしきい値の既定値。SWIFT-PORT.md §4 の推奨
-    /// （候補ウィンドウに出す設計なら 1.5〜2.0、黙って置き換えるなら 4.0）。
-    /// test で選んだ値なので、実験側が valid で選び直したら追随すること
-    public static let defaultThreshold = 2.0
+    /// 訂正を採用するしきい値の既定値。SWIFT-PORT.md §4 の推奨は
+    /// 候補ウィンドウに出す設計なら 1.5〜2.0、黙って置き換えるなら 4.0。
+    /// iroha-typo-v2（2026-11-01、訓令式の綴りも混ぜて学習）で 2.0 → 2.5 に上げた。v2 は θ = 2.0 だと
+    /// 正しい読みを書き換える件が v1 より増え（iroha ベンチの誤りなし 60 件中 2 件、margin 2.04 / 2.29）、
+    /// 2.5 で v1 の θ = 2.0 と同じ水準に戻る（訂正率はヘボン式の打鍵で約 1pt 下がる。training/typo-normalizer/MLX-HANDOFF.md 14 節）
+    public static let defaultThreshold = 2.5
 
     /// 学習データの読みの上限。これより長い読みには使わない
     public static let maxReadingLength = 48

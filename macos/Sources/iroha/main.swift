@@ -133,6 +133,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 変換モデルが無ければバックグラウンドでダウンロード開始
         ModelDownloader.shared.startIfNeeded()
 
+        // 打ち間違いの訂正が ON なら、カタログから外れた古いモデル（iroha-typo-v1 など）を新しいものに入れ替える。
+        // それまでは設定画面を開いたときにしか入れ替えなかったので、開かない人は古いモデルのままだった（2026-11-01）
+        if TypoNormalizerSettings.isEnabled {
+            Task { @MainActor in TypoNormalizerDownloader.shared.ensureCurrentModel() }
+        }
+
         // macOSのユーザ辞書の取り込み（設定がONのときだけ）
         UserDictionarySync.syncOnLaunchIfEnabled()
 

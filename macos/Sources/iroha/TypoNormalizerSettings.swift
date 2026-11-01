@@ -31,7 +31,7 @@ enum TypoNormalizerSettings {
     }
 
     /// 訂正を採用する margin のしきい値。大きいほど過剰訂正が減り、訂正できる数も減る。
-    /// 既定は 2.0（SWIFT-PORT.md §4 の推奨。候補ウィンドウに出す設計なら 1.5〜2.0）
+    /// 既定は 2.5（`TypoNormalizer.defaultThreshold`。2026-11-01 に iroha-typo-v2 に合わせて 2.0 から上げた）
     static var threshold: Double {
         guard let value = UserDefaults.standard.object(forKey: thresholdKey) as? Double,
               value.isFinite else { return TypoNormalizer.defaultThreshold }

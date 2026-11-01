@@ -1390,7 +1390,7 @@ case "typo":
             print("（語彙外の文字を含む・長すぎるため素通しにした入力: \(unsupported) 件）")
         }
         print(" θ        Exact Match   CER    Typo訂正率   過剰訂正率   書き換えた割合")
-        for threshold in [-Double.infinity, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 10.0] {
+        for threshold in [-Double.infinity, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 6.0, 8.0, 10.0] {
             var exact = 0, errors = 0, changed = 0, typoFixed = 0, falseCorrections = 0
             for (index, record) in records.enumerated() {
                 let prediction = predictions[index]
