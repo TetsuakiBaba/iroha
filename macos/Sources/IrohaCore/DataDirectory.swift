@@ -56,9 +56,9 @@ public enum DataDirectory {
     public static var defaultModelURL: URL {
         modelsURL.appendingPathComponent(defaultModelFileName)
     }
-    /// 2026-10-03 に zenz-v3.1-small から自作の T5（iroha-t5-alpha）に替えた。ファイル名が変わるので、
-    /// 既定のモデルを使っている人は次の起動で新しいモデルを取得する（古い zenz のファイルは消さない）
-    public static let defaultModelFileName = "iroha-t5-alpha-Q8_0.gguf"
+    /// 2026-10-03 に zenz-v3.1-small から自作の T5（iroha-t5-alpha）に、2026-11-06 に iroha-kkc-v1（Q5_K_M）に替えた。
+    /// ファイル名が変わるので、既定のモデルを使っている人は次の起動で新しいモデルを取得する（古いファイルは消さない）
+    public static let defaultModelFileName = "iroha-kkc-v1-Q5_K_M.gguf"
 
     public static var userDictionaryURL: URL { url.appendingPathComponent("user-dictionary.json") }
     public static var learningURL: URL { url.appendingPathComponent("learning.json") }

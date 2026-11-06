@@ -363,10 +363,11 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   エポック数・学習率は設定画面（`TrainingSettings`、同期しない）→ `iroha-train --epochs/--lr`。
   UI の文言は「記録を貯めるほど効く」を前に出す（少ない記録で効かせる方向に設計を戻さない）。
   zenz-v3.1-small は個人の記録の 96.9% を既に正解するので、学べる差分は少ない（2026-09-18 実測）
-- 既定のかな漢字変換モデルは **iroha-t5-alpha**（2026-10-03 に zenz-v3.1-small から変更。文字単位 T5 e12d2 の
-  188m 時点・Q8_0、`training/t5/`）。初回起動時に `ModelDownloader` が取得し、大きさと SHA-256 を照合してから
-  `<データフォルダ>/models/iroha-t5-alpha-Q8_0.gguf`（`DataDirectory.defaultModelFileName`）に置く。重みは CC BY-SA 4.0
-  （学習元 zenz-v2.5-dataset を継承）なので本体と分け、Release の専用タグ `kkc-model-v1` に置く。
+- 既定のかな漢字変換モデルは **iroha-kkc-v1**（Q5_K_M。2026-11-06 に iroha-t5-alpha から変更。その前は 2026-10-03 まで
+  zenz-v3.1-small。文字単位 T5 e12d2、`training/t5/`）。初回起動時に `ModelDownloader` が取得し、大きさと SHA-256 を照合してから
+  `<データフォルダ>/models/iroha-kkc-v1-Q5_K_M.gguf`（`DataDirectory.defaultModelFileName`）に置く。重みは CC BY-SA 4.0
+  （学習元 zenz-v2.5-dataset を継承）なので本体と分け、Release の専用タグ `iroha-kkc-v1` に置く。
+  前の既定 iroha-t5-alpha の Release `kkc-model-v1` は、配布済みのアプリが固定の URL で取得するので消さない・名前を変えない。
   **このタグは必ず `--prerelease` で作る**（`releases/latest` を奪うと `UpdateChecker` が壊れる。typo-normalizer-v1 と同じ）。
   既定のモデルを差し替えるときは、ファイル名・URL・大きさ・SHA-256 を `ModelDownloader.swift` と
   `macos/scripts/fetch-model.sh` の両方で変え、設定 > 情報 のライセンス一覧（`SettingsView` の `LicenseRow`）と README も合わせる

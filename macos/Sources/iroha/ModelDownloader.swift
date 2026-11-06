@@ -7,14 +7,14 @@ import IrohaCore
 final class ModelDownloader: NSObject, ObservableObject {
     static let shared = ModelDownloader()
 
-    /// 既定のモデル iroha-t5-alpha（文字単位 T5、zenz-v2.5-dataset で学習、CC BY-SA 4.0）。
+    /// 既定のモデル iroha-kkc-v1（文字単位 T5、zenz-v2.5-dataset で学習、Q5_K_M、CC BY-SA 4.0）。
     /// 重みは本体コード(MIT)と別ライセンスなので、アプリのリリースとは別のタグ（プレリリース）に置く。
     /// scripts/fetch-model.sh と同じ配布元
     private static let modelURL = URL(string:
-        "https://github.com/TetsuakiBaba/iroha/releases/download/kkc-model-v1/iroha-t5-alpha-Q8_0.gguf")!
+        "https://github.com/TetsuakiBaba/iroha/releases/download/iroha-kkc-v1/iroha-kkc-v1-Q5_K_M.gguf")!
     /// 取得したファイルの照合（途中で切れた・差し替わったファイルを置かない）
-    private static let modelBytes: Int64 = 121_290_560
-    private static let modelSHA256 = "262baeb22a1ce640dc435eab217137809bec935cc663ae91e65a0458e8e7599b"
+    private static let modelBytes: Int64 = 81_535_360
+    private static let modelSHA256 = "f060e259dbed28754f71e1634bc01a5d9d735d519f8ff72c333cac77c859efda"
 
     enum State: Equatable {
         case idle
