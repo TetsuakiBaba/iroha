@@ -7,10 +7,19 @@
 <meta name="description" content="iroha は、AI が文を読んで変換する Mac のための日本語入力です。変換はすべてこの Mac の中で行い、打った文字を外に送りません。無料・オープンソース。">
 <meta name="theme-color" content="#fbf7ef" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#171a29" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://tetsuakibaba.github.io/iroha/">
+<!-- 共有用の画像は website/ogp/（ogp.html を build.sh で docs/assets/img/ogp.png にする） -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="iroha（いろは）">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:url" content="https://tetsuakibaba.github.io/iroha/">
 <meta property="og:title" content="iroha（いろは） — Mac のための日本語入力">
 <meta property="og:description" content="AI が文を読んで変換する日本語入力。変換はすべてこの Mac の中で。無料・オープンソース。">
-<meta property="og:type" content="website">
-<meta property="og:image" content="assets/img/icon-512.png">
+<meta property="og:image" content="https://tetsuakibaba.github.io/iroha/assets/img/ogp.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="iroha（いろは）。日本語を、もっと心地よく書こう。「記者が汽車で帰社した」と変換した画面の例">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/png" href="assets/img/favicon-64.png">
 <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
 <link rel="stylesheet" href="assets/css/site.css">
@@ -409,6 +418,42 @@
         <span class="desc">ソースコード、ビルドの方法、開発の記録（開発者向け）。</span>
         <span class="status">GitHub</span>
       </a>
+    </div>
+
+    <!-- 開発者モードの説明。ふだん使う人が迷わないよう、切り替えを ON にしたときだけ出す。
+         項目の一覧はアプリの 設定 > 情報 >「開発者モード」の「?」の文面（SettingsView.swift）と合わせる -->
+    <div class="devmode">
+      <div class="devmode-head">
+        <div>
+          <h3 id="devmode-title">開発者モード</h3>
+          <p>細かな調整や、試験的な機能の説明です。ふだん使うだけなら、読まなくても困りません。</p>
+        </div>
+        <button type="button" class="switch" id="devmode-toggle" role="switch" aria-checked="false" aria-controls="devmode-body">
+          <span class="switch-label">開発者モードの説明を表示する</span>
+          <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+        </button>
+      </div>
+
+      <div class="devmode-body" id="devmode-body" hidden>
+        <p>iroha の <strong>設定 &gt; 情報 &gt; 開発者向け「開発者モード」</strong>を ON にすると、設定画面に次の項目が増えます。OFF に戻すと項目が見えなくなるだけで、変えた設定はそのまま効きます（推論の時間の表示だけは止まります）。この設定はほかの Mac と同期しません。</p>
+        <dl class="devmode-list">
+          <dt>入力</dt><dd>アプリの文章を文脈に使う、打ち間違いの訂正の細かな調整（訂正モデル・休止時間・最低文字数・確信の強さ）、区切り記号で英字を入力、タップ入力（加速度センサを利用するとき）</dd>
+          <dt>辞書・学習</dt><dd>記号・顔文字・絵文字を候補に出す</dd>
+          <dt>選択テキスト</dt><dd>除外するアプリ</dd>
+          <dt>モデル</dt><dd>推論エンジン（llama.cpp ／ MLX）、モデルファイルの指定、iroha を再起動、自分の入力で追加学習</dd>
+          <dt>情報</dt><dd>推論の時間の表示、加速度センサを利用する</dd>
+        </dl>
+
+        <h4>自分の入力で追加学習（試験的）</h4>
+        <p>確定した変換の記録を使って、かな漢字変換のモデルに自分の文章の癖を覚えさせる機能です（LoRA と呼ばれる方法）。元のモデルは変えずに、小さな追加のファイル（アダプタ）を作ります。学習はこの Mac の中で行い、記録をどこにも送りません。iroha-kkc と zenz のモデルで使えます。</p>
+        <ol class="devmode-steps">
+          <li><strong>設定 &gt; 辞書・学習 &gt; 変換記録</strong>の「確定した変換を記録する」を ON にして、ふだんどおり使います。記録されるのは、前に書いた文があるところでの確定だけです。</li>
+          <li>記録が 30 件以上たまったら、<strong>設定 &gt; モデル</strong>の「自分の入力で追加学習」で「学習を開始」を押します。数十秒から数分かかり、その間は GPU を使います。</li>
+          <li>結果を見ます。今のモデルが「間違えていた変換」をいくつ当てられるようになったかと、「できていた変換」をいくつ保てたかが並びます。</li>
+          <li>よければ「このアダプタを使う」を押して、iroha を再起動します。</li>
+        </ol>
+        <p class="devmode-note">記録が増えるほど、自分の文章に合った学習になります。「できていた変換」が減ったときは、そのアダプタは使わずに、記録が増えてからもう一度試してください。</p>
+      </div>
     </div>
   </div>
 </section>
