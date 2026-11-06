@@ -23,12 +23,15 @@ public struct NotationPreference: Codable, Sendable, Equatable {
         self.counts = counts
     }
 
-    /// 分かち書きした文の並びから数える
+    /// 分かち書きした文の並びから数える（決まった言い回しの位置のかなは数えない。`isFixedKanaPosition`）
     public init(sentences: [[ReadingToken]]) {
         var counts: [String: [String: Int]] = [:]
         for tokens in sentences {
-            for token in tokens {
+            for (index, token) in tokens.enumerated() {
                 guard let reading = token.reading, Self.isCountable(token.surface) else { continue }
+                // 決まった言い回しの位置のかなは数えない（漢字は内容の語なので数える）
+                if Self.isFixedKanaPosition(tokens, index),
+                   token.surface.unicodeScalars.allSatisfy(DocumentText.isHiragana) { continue }
                 counts[reading, default: [:]][token.surface, default: 0] += 1
             }
         }
@@ -85,8 +88,8 @@ public struct NotationPreference: Codable, Sendable, Equatable {
     public func preferredSurface(
         for surface: String, reading: String, minimumCount: Int = 2, minimumShare: Double = 0.5
     ) -> String? {
-        // 読みが 1 文字の語（み／見、た／他）は、別の語とまぎれやすいので替えない
-        guard reading.count >= 2, let surfaces = counts[reading] else { return nil }
+        // 読みが 1 拍の語（み／見、た／他、しゃ／者）は、別の語とまぎれやすいので替えない
+        guard Self.moraCount(reading) >= 2, let surfaces = counts[reading] else { return nil }
         let variants = surfaces.filter { $0.key == surface || Self.areVariants($0.key, surface) }
         let total = variants.values.reduce(0, +)
         guard total > 0,
@@ -101,12 +104,66 @@ public struct NotationPreference: Codable, Sendable, Equatable {
     public func rewrite(
         _ tokens: [ReadingToken], minimumCount: Int = 2, minimumShare: Double = 0.5
     ) -> String {
-        tokens.map { token in
-            guard let reading = token.reading, Self.isCountable(token.surface) else { return token.surface }
+        tokens.enumerated().map { index, token in
+            guard let reading = token.reading, Self.isCountable(token.surface),
+                  !Self.isFixedKanaPosition(tokens, index) else { return token.surface }
             return preferredSurface(
                 for: token.surface, reading: reading, minimumCount: minimumCount, minimumShare: minimumShare)
                 ?? token.surface
         }.joined()
+    }
+
+    // MARK: - 採点に加える項（NotationPreferenceEngine）
+
+    /// 表記 `surface`（読み `reading`）を選ぶことの、その人の書き方から見た不利さ（0 以下）。
+    ///
+    /// `surface` と、その表記の違いにあたる表記（`areVariants`。同じ読みでその人が使ったもの）のうち、
+    /// 最も多く使った表記の回数を m、`surface` の回数を c として log((c + 1) / (m + 1))。
+    /// 最も多い表記なら 0、その人が使わない書き方ほど小さい（及び 53 回・および 30 回なら「および」は log(31/54)）。
+    ///
+    /// 同じ読みの別の語（精度／制度、療法／両方）には当てない。2026-11-07 に当てて測ると、論文の文で直したのは
+    /// 3 文（算出・介助・精度）だけで、文書と関係のない文では別の語に替えて 27 項目を壊した（両方→療法、
+    /// 城→白、傘下→参加）。文書の数件の回数では、その読みの語の使い分けまでは分からない。
+    ///
+    /// 当てないとき（0 を返す）:
+    /// - 読みが 1 拍（し／誌、か／化、しゃ／者／車。助詞・助動詞や漢字 1 字の語がまぎれる。
+    ///   「しゃ」は 2 文字でも 1 拍なので、文字数ではなく拍で数える。2026-11-07 の計測で
+    ///   「自律走行車」が論文に多い「者」に替わった）
+    /// - `surface` とその表記の違いのうち、その人が使ったのが 1 つだけ（「会って」を書いたことがない人の「あって」）
+    /// - `surface` とその表記の違いを、文書で合わせて `minimumCount` 回未満しか使っていない（好みが分からない）
+    public func penalty(surface: String, reading: String, minimumCount: Int = 2) -> Double {
+        guard let variants = variantCounts(of: surface, reading: reading, minimumCount: minimumCount),
+              let most = variants.values.max()
+        else { return 0 }
+        return log(Double((variants[surface] ?? 0) + 1) / Double(most + 1))
+    }
+
+    /// `surface` と、その表記の違いにあたる表記の回数（`surface` 自身を含む）。当てない条件なら nil
+    private func variantCounts(of surface: String, reading: String, minimumCount: Int) -> [String: Int]? {
+        guard Self.moraCount(reading) >= 2, Self.isCountable(surface), let surfaces = counts[reading] else { return nil }
+        let variants = surfaces.filter { $0.key == surface || Self.areVariants($0.key, surface) }
+        // その人が 2 つ以上の表記を使い分けているときだけ好みが分かる。1 つしか使っていなければ
+        // （「会って」を書いたことがなく「あって」だけ）、そのかながどの語にあたるのかが分からない
+        guard variants.count >= 2, variants.values.reduce(0, +) >= minimumCount else { return nil }
+        return variants
+    }
+
+    /// 分かち書きした文全体の不利さ（語ごとの `penalty` の和）
+    public func penalty(_ tokens: [ReadingToken], minimumCount: Int = 2) -> Double {
+        tokens.indices.reduce(0) { sum, index in
+            guard let reading = tokens[index].reading, !Self.isFixedKanaPosition(tokens, index) else { return sum }
+            return sum + penalty(surface: tokens[index].surface, reading: reading, minimumCount: minimumCount)
+        }
+    }
+
+    /// 表記 `surface`（読み `reading`）の代わりに試す、その人が使った表記の違い
+    /// （`minimumCount` 回以上・回数の多い順・`surface` 自身は除く）。`penalty` が 0 になる条件では空
+    public func alternatives(for surface: String, reading: String, minimumCount: Int = 2) -> [String] {
+        guard let variants = variantCounts(of: surface, reading: reading, minimumCount: minimumCount) else { return [] }
+        return variants
+            .filter { $0.key != surface && $0.value >= minimumCount }
+            .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+            .map(\.key)
     }
 
     /// 2 つの表記が「同じ語の表記の違い」か。
@@ -136,6 +193,24 @@ public struct NotationPreference: Codable, Sendable, Equatable {
             let (kana, kanji) = kanjiA.isEmpty ? (a, b) : (b, a)
             return isHiraganaOnly(kana) && kanji.unicodeScalars.contains(where: DocumentText.isHiragana)
         }
+    }
+
+    /// 決まった言い回しの位置か: 「に」「て」「で」「と」の直後の語
+    /// （において・にとって・によって・ていく・てくる・であって・という・といった）。
+    /// 複合した助詞・補助の動詞・引用の「いう」は誰でもかなで書くので、その人の好みを表さない。
+    /// この位置のひらがなの語は数えない（`init(sentences:)`）。採点では、この位置の語はかなでも漢字でも
+    /// 不利さを当てない（「どこに行って」の「行っ」を「ていく」のかなと比べない）。
+    /// 数えると「において」の「おい」が「置いて」を、「といった」の「いっ」が「言って」「行って」をかなに寄せた
+    /// （2026-11-07、iroha-bench-v1 で「追います→おいます」「行った→いった」）
+    static func isFixedKanaPosition(_ tokens: [ReadingToken], _ index: Int) -> Bool {
+        guard index > 0 else { return false }
+        return ["に", "て", "で", "と"].contains(tokens[index - 1].surface)
+    }
+
+    /// 読みの拍の数（小さい「ゃゅょぁぃぅぇぉゎ」は前の文字と合わせて 1 拍。「っ」「ん」「ー」は 1 拍）
+    static func moraCount(_ reading: String) -> Int {
+        let small: Set<Character> = ["ゃ", "ゅ", "ょ", "ぁ", "ぃ", "ぅ", "ぇ", "ぉ", "ゎ"]
+        return reading.filter { !small.contains($0) }.count
     }
 
     /// 数える語か（かな・漢字だけでできている語。句読点・英字・数字・記号は数えない）

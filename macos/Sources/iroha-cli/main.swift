@@ -163,11 +163,12 @@ func makeEngine(userData: UserDataMode = .ime) -> any ConversionEngine {
     if env["IROHA_BACKEND"] == "mlx" {
         FileHandle.standardError.write("推論エンジン: MLX（IROHA_BACKEND=mlx）\n".data(using: .utf8)!)
         let path = env["IROHA_MODEL"].flatMap { $0.isEmpty ? nil : $0 } ?? ZenzEngine.defaultModelPath
-        core = withLattice(MLXConversionEngine(
+        core = withLattice(withDocumentNotation(MLXConversionEngine(
             modelPath: path, adapterPath: env["IROHA_LORA"], restrictLatinToReading: restrictLatin,
-            usesReadingConstraint: usesConstraint))
+            usesReadingConstraint: usesConstraint)))
     } else {
-        core = withLattice(zenz)
+        // 表記の好み（IROHA_DOCUMENTS）を採点に加える。指定が無ければ素通し（DocumentsCommand.swift）
+        core = withLattice(withDocumentNotation(zenz))
     }
     return LearningEngine(
         base: UserDictionaryEngine(

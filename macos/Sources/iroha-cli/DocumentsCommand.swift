@@ -12,11 +12,52 @@ import IrohaDocuments
 //       文書の文から評価用の項目（読み・正解・直前の文）を作る。読みは分かち書きの自動推定なので、
 //       人が確かめて直してから使う（固有名詞の読みを間違えることがある）
 //   iroha-cli docs bench <評価.jsonl> [フォルダ] [--context none|previous] [--examples N] [--dump 出力.jsonl]
+//                        [--weights 0.5,1,2] [--show-weight 重み] [--weights-dump 出力.jsonl]
 //       評価項目を今のエンジン（IME と同じ構成・ユーザ辞書と学習は空）で変換し、
 //       ① 文の完全一致・CER、② 間違えた文のうち「ほかの文書に出てくる語」を出せていない文の数、
 //       ③ その語を単独で変換したときの第一候補・候補 10 件の中の順位、
-//       ④ 変換結果を表記の好みで書き換えたときに直る文・壊れる文の数（占める割合の下限ごと）を出す。
+//       ④ 変換結果を表記の好みで書き換えたときに直る文・壊れる文の数（占める割合の下限ごと）、
+//       ⑤ 表記の好みを採点に加えたとき（NotationPreferenceEngine）の重みごとの完全一致・直した・壊した を出す。
 //       語の一覧は試す文の文書を除いて作る（leave-one-document-out。その文書を書く前の状態に近づける）
+
+// 表記の好みを採点に加える（NotationPreferenceEngine。2026-11-07、段階 1）:
+//   どのコマンドでも、環境変数 IROHA_DOCUMENTS=<フォルダ>（default で <データフォルダ>/documents）を付けると
+//   その文書で数えた表記の好みを採点に加える。重みは IROHA_NOTATION_WEIGHT（既定 1）。
+//   docs bench は文ごとに「試す文の文書を除いた数え方」に差し替え、--weights の重みごとに測る
+
+/// 変換エンジンが変換のたびに読む、表記の好みの設定（評価では文ごとに差し替える）
+final class DocumentNotationContext: @unchecked Sendable {
+    static let shared = DocumentNotationContext()
+
+    private let lock = NSLock()
+    private var value: NotationPreferenceConfiguration
+
+    private init() {
+        let env = ProcessInfo.processInfo.environment
+        guard let path = env["IROHA_DOCUMENTS"], !path.isEmpty else {
+            value = .disabled
+            return
+        }
+        let folder = path == "default" ? DocumentCollection.defaultFolderURL : URL(fileURLWithPath: path, isDirectory: true)
+        let weight = Double(env["IROHA_NOTATION_WEIGHT"] ?? "") ?? 1
+        let collection = DocumentCollection(folder: folder)
+        value = NotationPreferenceConfiguration(preference: collection.notation, weight: weight)
+        FileHandle.standardError.write(
+            "表記の好み: 文書 \(collection.documents.count) 件（\(folder.path)）・重み \(weight)\n".data(using: .utf8)!)
+    }
+
+    var configuration: NotationPreferenceConfiguration {
+        get { lock.lock(); defer { lock.unlock() }; return value }
+        set { lock.lock(); value = newValue; lock.unlock() }
+    }
+}
+
+/// かな漢字変換のモデルに表記の好みを重ねる（makeEngine から使う。設定が無ければ素通し）
+func withDocumentNotation<Base: ConversionEngine & CandidateScorer>(_ base: Base) -> NotationPreferenceEngine<Base> {
+    NotationPreferenceEngine(base: base, tokenizer: SystemReadingTokenizer()) {
+        DocumentNotationContext.shared.configuration
+    }
+}
 
 func runDocumentsCommand(_ arguments: [String]) async {
     guard let subcommand = arguments.first else {
@@ -255,6 +296,11 @@ private func documentBench(_ arguments: [String]) async {
     }
     var notationTallies = Array(repeating: NotationTally(), count: shares.count)
 
+    // 1 周目は表記の好みを使わない（基準）。重みごとの計測は最後に行う
+    DocumentNotationContext.shared.configuration = .disabled
+    let weights = (options["weights"] ?? "0.5,1,2").split(separator: ",").compactMap { Double($0) }
+    var baseOutputs: [String] = []
+
     let engine = makeEngine(userData: .evaluation)
     _ = try? await engine.convert(reading: "うぉーむあっぷ", context: "", candidateCount: 1)
     stderrLine("左文脈: \(usesContext ? "直前の文" : "なし")（--context previous で直前の文）")
@@ -282,6 +328,7 @@ private func documentBench(_ arguments: [String]) async {
         let elapsed = start.duration(to: .now)
         totalMilliseconds += Double(elapsed.components.attoseconds) / 1e15 + Double(elapsed.components.seconds) * 1e3
         let normalized = normalizeDocumentText(output)
+        baseOutputs.append(normalized)
         let distance = editDistance(Array(normalized), Array(item.expected))
         totalDistance += distance
         totalLength += item.expected.count
@@ -396,6 +443,66 @@ private func documentBench(_ arguments: [String]) async {
         for example in tally.fixedExamples.prefix(exampleCount) { print(example) }
         print("  壊した例（割合 \(Int(shares[0] * 100))%以上）:")
         for example in tally.brokenExamples.prefix(exampleCount) { print(example) }
+    }
+
+    // ⑤ 表記の好みを採点に加える（NotationPreferenceEngine。文ごとに、その文の文書を除いた数え方で）
+    print("")
+    print("■ 表記の好みを採点に加えた場合（モデルの対数確率 ＋ 重み × 不利さ。文書を除いた数え方）")
+    print(String(format: "  重み 0（基準）: 完全一致 %d (%.1f%%)  平均 %.1fms", exact,
+                 Double(exact) / Double(items.count) * 100, totalMilliseconds / Double(items.count)))
+    var weightDump: [Double: [String]] = [:]
+    for weight in weights {
+        var correctCount = 0
+        var fixed = 0
+        var broken = 0
+        var milliseconds = 0.0
+        var fixedExamples: [String] = []
+        var brokenExamples: [String] = []
+        var outputs: [String] = []
+        for (index, item) in items.enumerated() {
+            DocumentNotationContext.shared.configuration = NotationPreferenceConfiguration(
+                preference: notationFolds[item.document] ?? .empty, weight: weight)
+            let start = ContinuousClock.now
+            let output = (try? await engine.convert(
+                reading: item.reading, context: usesContext ? item.context : "", candidateCount: 1).first) ?? item.reading
+            let elapsed = start.duration(to: .now)
+            milliseconds += Double(elapsed.components.attoseconds) / 1e15 + Double(elapsed.components.seconds) * 1e3
+            let normalized = normalizeDocumentText(output)
+            outputs.append(normalized)
+            let isCorrect = normalized == item.expected
+            let wasCorrect = baseOutputs[index] == item.expected
+            if isCorrect { correctCount += 1 }
+            let example = "    [\(item.document)]\n      基準: \(baseOutputs[index])\n      加点: \(normalized)\n      正解: \(item.expected)"
+            if isCorrect && !wasCorrect {
+                fixed += 1
+                if fixedExamples.count < 12 { fixedExamples.append(example) }
+            } else if !isCorrect && wasCorrect {
+                broken += 1
+                if brokenExamples.count < 12 { brokenExamples.append(example) }
+            }
+        }
+        DocumentNotationContext.shared.configuration = .disabled
+        weightDump[weight] = outputs
+        print(String(format: "  重み %.2f: 完全一致 %d (%.1f%%)  直した %d  壊した %d  平均 %.1fms",
+                     weight, correctCount, Double(correctCount) / Double(items.count) * 100, fixed, broken,
+                     milliseconds / Double(items.count)))
+        if options["show-weight"].flatMap(Double.init) == weight {
+            print("  直した例:")
+            for example in fixedExamples { print(example) }
+            print("  壊した例:")
+            for example in brokenExamples { print(example) }
+        }
+    }
+    if let path = options["weights-dump"] {
+        var lines = ""
+        for (index, item) in items.enumerated() {
+            var record: [String: Any] = ["document": item.document, "sentence": item.sentence,
+                                         "expected": item.expected, "base": baseOutputs[index]]
+            for (weight, outputs) in weightDump { record[String(weight)] = outputs[index] }
+            if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]),
+               let line = String(data: data, encoding: .utf8) { lines += line + "\n" }
+        }
+        try? lines.write(toFile: path, atomically: true, encoding: .utf8)
     }
 
     if let path = options["dump"] {
