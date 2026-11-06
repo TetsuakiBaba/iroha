@@ -8,13 +8,30 @@
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // ---------- 論文のリンク（公開されたらここに URL を入れる） ----------
+  // ---------- 論文のリンクと引用の書き方（Jxiv で公開されたら url と doi を入れる） ----------
+  // url と doi のどちらかが入った論文だけ、札がリンクになり、「引用するとき」の欄に書き方が出る。
+  // 例: url: "https://jxiv.jst.go.jp/index.php/jxiv/preprint/view/XXXX", doi: "10.51094/jxiv.XXXX", year: 2026
   const PAPERS = {
-    kkc: null,  // 例: "https://jxiv.jst.go.jp/index.php/jxiv/preprint/view/XXXX"
-    typo: null,
+    kkc: {
+      url: null,
+      doi: null,
+      year: 2026,
+      key: "baba2026irohakkc",
+      title: "自動変換に向けた浅いデコーダを持つ文字単位エンコーダ・デコーダモデルによるニューラルかな漢字変換の高速化",
+    },
+    typo: {
+      url: null,
+      doi: null,
+      year: 2026,
+      key: "baba2026irohatypo",
+      title: "かな漢字変換の手前で読みを直すローマ字入力の打ち間違い訂正",
+    },
   };
+  const AUTHOR = { ja: "馬場 哲晃", bib: "馬場, 哲晃" };
+  const paperURL = (p) => p.url || (p.doi ? `https://doi.org/${p.doi}` : null);
+
   document.querySelectorAll("[data-paper]").forEach((el) => {
-    const url = PAPERS[el.dataset.paper];
+    const url = paperURL(PAPERS[el.dataset.paper] || {});
     if (!url) {
       el.addEventListener("click", (e) => e.preventDefault());
       return;
@@ -25,6 +42,62 @@
     const status = el.querySelector(".status");
     if (status) status.textContent = "Jxiv で読む";
   });
+
+  function setupCitations() {
+    const box = document.getElementById("cite");
+    const list = document.getElementById("cite-list");
+    if (!box || !list) return;
+    const published = Object.values(PAPERS).filter((p) => paperURL(p));
+    if (published.length === 0) return;
+
+    for (const p of published) {
+      const link = p.doi ? `https://doi.org/${p.doi}` : p.url;
+      const text = `${AUTHOR.ja}: ${p.title}, Jxiv プレプリント (${p.year}). ${link}`;
+      const bib = [
+        `@misc{${p.key},`,
+        `  author    = {${AUTHOR.bib}},`,
+        `  title     = {${p.title}},`,
+        `  year      = {${p.year}},`,
+        `  publisher = {Jxiv},`,
+        `  note      = {プレプリント},`,
+        p.doi ? `  doi       = {${p.doi}},` : null,
+        `  url       = {${p.url || link}}`,
+        `}`,
+      ].filter(Boolean).join("\n");
+
+      const item = document.createElement("div");
+      item.className = "cite-item";
+      const t = document.createElement("p");
+      t.className = "cite-text";
+      t.textContent = text;
+      const pre = document.createElement("pre");
+      pre.className = "cite-bib";
+      pre.textContent = bib;
+      const actions = document.createElement("div");
+      actions.className = "cite-actions";
+      actions.append(copyButton("書式をコピー", text), copyButton("BibTeX をコピー", bib));
+      item.append(t, pre, actions);
+      list.append(item);
+    }
+    box.hidden = false;
+  }
+
+  function copyButton(label, value) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cite-copy";
+    b.textContent = label;
+    b.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(value);
+        b.textContent = "コピーしました";
+      } catch {
+        b.textContent = "コピーできませんでした";
+      }
+      setTimeout(() => { b.textContent = label; }, 1800);
+    });
+    return b;
+  }
 
   // ---------- テキストの窓の表示 ----------
   function demoView(root) {
@@ -311,4 +384,5 @@
   runSpeed();
   runTypo();
   setupDevmode();
+  setupCitations();
 })();

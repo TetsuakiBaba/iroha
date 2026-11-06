@@ -526,3 +526,58 @@ table.keys td { color: var(--ink-soft); }
 .devmode-steps { margin: 0 0 14px; padding-left: 1.4em; color: var(--ink-soft); font-size: 15px; line-height: 1.9; }
 .devmode-steps li { margin-bottom: 6px; }
 .devmode-note { font-size: 14px !important; }
+
+/* これまでの歩み（縦のタイムライン） */
+.timeline { list-style: none; margin: 0; padding: 0; position: relative; }
+.timeline::before {
+  content: ""; position: absolute; left: 9.5em; top: 10px; bottom: 10px; width: 2px;
+  background: linear-gradient(var(--line), var(--sakura-deep) 85%, var(--kobai));
+}
+.timeline li { position: relative; display: grid; grid-template-columns: 8.4em 1fr; column-gap: 2.6em; padding: 0 0 26px; }
+.timeline li::before {
+  content: ""; position: absolute; left: calc(9.5em - 5px); top: 9px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--paper); border: 2px solid var(--sakura-deep); box-sizing: border-box;
+}
+.timeline li.tl-major::before { width: 16px; height: 16px; left: calc(9.5em - 7px); top: 7px; background: var(--sakura); border-color: var(--kobai); }
+.timeline li.tl-now::before { background: var(--kobai); box-shadow: 0 0 0 5px color-mix(in srgb, var(--kobai) 18%, transparent); }
+.timeline li.tl-origin::before { border-style: dashed; }
+.tl-date { grid-column: 1; grid-row: 1 / span 2; margin: 0; text-align: right; font-size: 14px; color: var(--ink-faint); padding-top: 3px; letter-spacing: .04em; }
+.tl-major .tl-date { color: var(--kobai); font-weight: 600; }
+.timeline h3 { grid-column: 2; margin: 0 0 4px; font-size: 17px; }
+.timeline li > p:not(.tl-date) { grid-column: 2; margin: 0; color: var(--ink-soft); font-size: 15px; line-height: 1.85; }
+.timeline li.tl-origin { padding-bottom: 34px; }
+@media (max-width: 560px) {
+  .timeline::before { left: 7px; }
+  .timeline li { grid-template-columns: 1fr; padding-left: 30px; }
+  .timeline li::before { left: 2px; }
+  .timeline li.tl-major::before { left: 0; }
+  .tl-date { grid-row: auto; text-align: left; padding-top: 0; margin-bottom: 2px; }
+  .timeline h3, .timeline li > p:not(.tl-date) { grid-column: 1; }
+}
+.timeline li:last-child { padding-bottom: 0; }
+
+/* 引用の書き方（論文が公開されたら出る） */
+.cite { margin-top: 28px; padding: 22px 24px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+.cite h3 { margin: 0 0 4px; font-size: 18px; }
+.cite > p { margin: 0 0 14px; color: var(--ink-soft); font-size: 14px; }
+.cite-item + .cite-item { margin-top: 18px; padding-top: 18px; border-top: 1px dashed var(--line); }
+.cite-text { margin: 0 0 10px; font-size: 15px; line-height: 1.8; overflow-wrap: anywhere; }
+.cite-bib {
+  margin: 0 0 10px; padding: 12px 14px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
+  font: 13px/1.6 var(--font-mono); color: var(--ink); overflow-x: auto; white-space: pre;
+}
+.cite-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.cite-copy {
+  font: inherit; font-size: 13px; color: var(--ink); background: var(--paper); border: 1px solid var(--line);
+  border-radius: 999px; padding: 5px 14px; cursor: pointer;
+}
+.cite-copy:hover { border-color: var(--fuji); }
+@media (max-width: 560px) { .cite { padding: 18px 16px; } }
+/* うまくいかなかった実験の点は、塗らずに灰色の × にする */
+.timeline li.tl-miss::before {
+  content: "×"; display: grid; place-items: center; width: 14px; height: 14px; left: calc(9.5em - 6px); top: 7px;
+  border: 0; background: var(--paper); color: var(--ink-faint); font-weight: 700; line-height: 1; font-family: var(--font-mono);
+  /* 文字の大きさは変えない（left の em がこの要素の文字の大きさで計算されるため） */
+}
+.tl-miss h3 { color: var(--ink-soft); }
+@media (max-width: 560px) { .timeline li.tl-miss::before { left: 1px; } }
