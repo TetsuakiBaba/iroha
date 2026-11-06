@@ -1,0 +1,31 @@
+# iroha のリポジトリを引用するときの情報（Citation File Format）。
+# GitHub のリポジトリのページの「Cite this repository」に、この内容から作った書式が出る。
+# リリースのたびに version と date-released を合わせる。
+# 論文（Jxiv）が公開されたら、preferred-citation に論文を足す。
+cff-version: 1.2.0
+message: "iroha を論文などで引用するときは、次の情報を使ってください。"
+type: software
+title: "iroha"
+abstract: >-
+  iroha is a Japanese input method for macOS that converts kana to kanji with
+  a neural model reading the whole sentence. All conversion runs on the Mac.
+  It includes iroha-kkc, a character-level encoder-decoder model for fast kana-kanji
+  conversion, and iroha-typo, a model that corrects romaji typing errors in the reading
+  before conversion.
+authors:
+  - family-names: Baba
+    given-names: Tetsuaki
+    alias: "馬場 哲晃"
+    affiliation: "Tokyo Metropolitan University"
+repository-code: "https://github.com/TetsuakiBaba/iroha"
+url: "https://tetsuakibaba.github.io/iroha/"
+license: MIT
+version: "0.15.0"
+date-released: "2026-11-06"
+keywords:
+  - Japanese input method
+  - kana-kanji conversion
+  - IME
+  - macOS
+  - neural network
+  - typo correction

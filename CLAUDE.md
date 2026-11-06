@@ -373,7 +373,9 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   `macos/scripts/fetch-model.sh` の両方で変え、設定 > 情報 のライセンス一覧（`SettingsView` の `LicenseRow`）と README も合わせる
 - バージョンはgitタグが唯一の情報源。リリースはCIがタグから、開発ビルドは
   install.shがgit describeから注入する（Info.plistのコミット値はフォールバック。
-  リリース時にゆるく追随させる）。Windows版も同じ原則でCIがタグから注入すること
+  リリース時にゆるく追随させる）。Windows版も同じ原則でCIがタグから注入すること。
+  リポジトリの引用情報 `CITATION.cff` の `version` と `date-released` も、リリースのたびに合わせる
+  （GitHub の「Cite this repository」に出る。論文が公開されたら `preferred-citation` に論文を足す）
 
 ## Windows版の開発（windows/、Windowsマシン上のClaude向け）
 
