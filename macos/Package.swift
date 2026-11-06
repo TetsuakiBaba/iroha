@@ -45,10 +45,18 @@ let package = Package(
             // sqlite3: macOSのユーザ辞書（TextReplacements.db）の読み取りに使う
             linkerSettings: llamaLinkerSettings + [.linkedLibrary("sqlite3")]
         ),
+        // 自分の文書（PDF・Word など）から語と読みを集める（PDFKit・CFStringTokenizer を使う macOS 専用の部分）。
+        // 語の取り出し方・一覧の形は OS に依存しないので IrohaCore の DocumentVocabulary/ に置く
+        .target(
+            name: "IrohaDocuments",
+            dependencies: ["IrohaCore"],
+            swiftSettings: [.unsafeFlags(llamaHeaderFlags)],
+            linkerSettings: [.linkedFramework("PDFKit")]
+        ),
         // 変換エンジンをコマンドラインで試す検証用ハーネス
         .executableTarget(
             name: "iroha-cli",
-            dependencies: ["IrohaCore", "IrohaMLX"],
+            dependencies: ["IrohaCore", "IrohaMLX", "IrohaDocuments"],
             swiftSettings: [.unsafeFlags(llamaHeaderFlags)],
             linkerSettings: llamaLinkerSettings
         ),
@@ -90,6 +98,12 @@ let package = Package(
             name: "IrohaTrainTests",
             dependencies: ["IrohaTrain", "IrohaMLX"],
             swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
+            linkerSettings: llamaLinkerSettings
+        ),
+        .testTarget(
+            name: "IrohaDocumentsTests",
+            dependencies: ["IrohaDocuments"],
+            swiftSettings: [.unsafeFlags(llamaHeaderFlags)],
             linkerSettings: llamaLinkerSettings
         ),
         .testTarget(
