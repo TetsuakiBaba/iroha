@@ -166,7 +166,7 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   このときの置き場所は旧パスの `experiments/typo-normalizer/`）。守ること:
   ・**計算の順序を変えたら `iroha-cli typo parity` を必ず回す**（PyTorch 実装との照合 200 件。
     生成が一致してもロジットがずれていれば実装は間違っている。float32 でロジット 1e-3・logP 0.01 以内）
-  ・**本線は「入力の休止」で読みそのものを直す**（`scheduleTypoCorrection`、既定 300ms・設定可）。
+  ・**本線は「入力の休止」で読みそのものを直す**（`scheduleTypoCorrection`、既定 500ms・設定可。2026-11-06 に 300ms から変更）。
     iroha はライブ変換が主でスペースを押さずに確定することも多く、しかも打ち間違いに
     気づいた人はスペースではなく Backspace を押すので、変換要求を起点にすると遅い。
     直した直後の Backspace だけは「1文字消す」ではなく訂正の取り消しに使う

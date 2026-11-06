@@ -8,7 +8,7 @@ import IrohaCore
 ///
 /// ONにすると次の2つのタイミングで訂正が走る:
 ///
-/// 1. **入力中の休止（既定 300ms、`idleDelay`）** — 読みそのものを直し、直した読みで
+/// 1. **入力中の休止（既定 500ms、`idleDelay`）** — 読みそのものを直し、直した読みで
 ///    ライブ変換を続ける。iroha はライブ変換が主で、スペースを押さずに確定することも多い。
 ///    また打ち間違いに気づいた人はスペースではなく Backspace を押すので、
 ///    「変換を要求した時点」では遅い。直した直後の Backspace で取り消せる
@@ -21,7 +21,8 @@ enum TypoNormalizerSettings {
     static let delayMillisecondsKey = "typoNormalizerDelayMs"
     static let minimumLengthKey = "typoNormalizerMinLength"
 
-    static let defaultDelayMilliseconds = 300
+    /// 2026-11-06 に 300ms から 500ms に変更（ユーザの判断）
+    static let defaultDelayMilliseconds = 500
     static let delayMillisecondsRange = 100...2000
     static let defaultMinimumLength = 4
     static let minimumLengthRange = 1...20
