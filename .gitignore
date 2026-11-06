@@ -38,3 +38,6 @@ testdata/iroha-bench-v1/*
 # 助成金申請書類（非公開）
 grants/
 experiments/**/__pycache__/
+
+# ウェブサイト用の録画の素材（大きいので追跡しない。書き出した動画は docs/assets/video/ に置く）
+website/raw/

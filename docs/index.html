@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iroha（いろは） — Mac のための日本語入力</title>
+<meta name="description" content="iroha は、AI が文を読んで変換する Mac のための日本語入力です。変換はすべてこの Mac の中で行い、打った文字を外に送りません。無料・オープンソース。">
+<meta name="theme-color" content="#fbf7ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171a29" media="(prefers-color-scheme: dark)">
+<meta property="og:title" content="iroha（いろは） — Mac のための日本語入力">
+<meta property="og:description" content="AI が文を読んで変換する日本語入力。変換はすべてこの Mac の中で。無料・オープンソース。">
+<meta property="og:type" content="website">
+<meta property="og:image" content="assets/img/icon-512.png">
+<link rel="icon" type="image/png" href="assets/img/favicon-64.png">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <!-- 霞（すやり霞）: 角の丸い横長の帯を少しずらして重ねる -->
+  <symbol id="kasumi" viewBox="0 0 1440 56" preserveAspectRatio="xMidYMid slice">
+    <rect x="-40" y="8" width="620" height="18" rx="9" fill="currentColor" opacity=".9"/>
+    <rect x="180" y="30" width="520" height="16" rx="8" fill="currentColor" opacity=".6"/>
+    <rect x="820" y="4" width="460" height="16" rx="8" fill="currentColor" opacity=".7"/>
+    <rect x="980" y="26" width="560" height="20" rx="10" fill="currentColor" opacity=".9"/>
+    <rect x="640" y="40" width="300" height="10" rx="5" fill="currentColor" opacity=".45"/>
+  </symbol>
+</svg>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./" aria-label="いろは（iroha） トップ">
+      <img src="assets/img/icon-512.png" alt="" width="30" height="30">
+    </a>
+    <nav class="site-nav" aria-label="ページ内の移動">
+      <a href="#features">特長</a>
+      <a href="#kkc">かな漢字変換</a>
+      <a href="#typo">打ち間違いの訂正</a>
+      <a href="usage.html">使い方</a>
+      <a href="#faq">よくある質問</a>
+      <a class="nav-cta" href="#download">ダウンロード</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<!-- ===== トップ ===== -->
+<section class="hero" aria-labelledby="hero-title">
+  <div class="iroha-poem" aria-hidden="true">色は匂へど　散りぬるを<br>我が世誰ぞ　常ならむ</div>
+  <div class="wrap hero-grid">
+    <div>
+      <h1 id="hero-title"><span class="nw">日本語を、</span><wbr><span class="nw">もっと<span class="accent">心地よく</span></span><wbr><span class="nw">書こう。</span></h1>
+      <p class="lead">iroha は、AI が文を読んで変換する Mac のための日本語入力です。変換はすべてこの Mac の中で行い、打った文字を外に送りません。</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#download">無料でダウンロード</a>
+        <a class="btn btn-ghost" href="#promo">動画で見る</a>
+      </div>
+      <div class="meta-row">
+        <span class="chip">macOS 14 以降</span>
+        <span class="chip">Apple シリコンの Mac</span>
+        <span class="chip">無料・オープンソース</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="demo-window" id="hero-demo" aria-label="入力の実演">
+        <div class="demo-titlebar" aria-hidden="true"><i></i><i></i><i></i><span>テキストエディット</span></div>
+        <div class="demo-body">
+          <div class="demo-text" aria-live="off"><span class="done"></span><span class="composing"></span><span class="caret"></span><span class="pause-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="typo-popup"></span></div>
+          <div class="demo-keys" aria-hidden="true"><span class="label">打ったキー</span><span class="keys"></span></div>
+        </div>
+      </div>
+      <p class="demo-status" id="hero-caption" aria-live="polite"></p>
+      <p class="demo-note">表示している変換と訂正は iroha の実際の出力です。英訳の文は、使う AI サービスによって変わります。</p>
+    </div>
+  </div>
+</section>
+
+<svg class="kasumi" aria-hidden="true"><use href="#kasumi"/></svg>
+
+<!-- ===== プロモーション動画 ===== -->
+<section id="promo" class="section" aria-labelledby="promo-title" style="padding-top:40px">
+  <div class="narrow">
+    <h2 id="promo-title" class="visually-hidden">1 分でわかる iroha</h2>
+    <div class="video-frame">
+      <!-- 組み立ては website/promo/remotion（npm run render。録画は website/raw/、台本は website/keys/） -->
+      <video controls playsinline preload="metadata" poster="assets/video/promo-poster.jpg" aria-label="1 分でわかる iroha（音楽つき）">
+        <source src="assets/video/promo.mp4" type="video/mp4">
+      </video>
+    </div>
+    <p class="video-caption">iroha の実際の画面です（音楽が流れます）。英訳の文は、使う AI サービスによって変わります。</p>
+  </div>
+</section>
+
+<!-- ===== 特長 ===== -->
+<section id="features" class="section section-tint" aria-labelledby="features-title">
+  <div class="wrap">
+    <p class="eyebrow">とくちょう</p>
+    <h2 id="features-title">打つことに集中できる日本語入力</h2>
+    <p class="section-lead">iroha は、文全体を読んでから漢字を選びます。区切りを指定したり、候補を選び直したりする手間が少なくなります。</p>
+    <div class="cards">
+      <article class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h10M4 17h7"/><path d="M17 14l3 3-3 3"/></svg></div>
+        <h3>打つそばから変換</h3>
+        <p>キーを打つたびに、その時点の文を変換して表示します。打ち終えたら Return で確定するだけです。</p>
+      </article>
+      <article class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5h14v10H9l-4 4z"/><path d="M9 9h6M9 12h4"/></svg></div>
+        <h3>前の文に合わせて変換</h3>
+        <p>すでに書いてある文を手がかりにして、同じ読みでも場面に合う漢字を選びます。</p>
+      </article>
+      <article class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M10 11l1.5 1.5L14.5 9"/></svg></div>
+        <h3>この Mac の中で完結</h3>
+        <p>変換に使う AI は Mac の中で動きます。打った文字を外のサーバーに送らず、ネットにつながっていなくても使えます。</p>
+      </article>
+      <article class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 18l6-12 6 12"/><path d="M6.5 13h7"/><path d="M15 6l2 2 4-4"/></svg></div>
+        <h3>打ち間違いを直す</h3>
+        <p>「jっこうしました」のような打ち間違いを、手が止まったときに直してから変換します（設定で ON）。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<svg class="kasumi fuji" aria-hidden="true" style="background:color-mix(in srgb, var(--paper-deep) 70%, transparent)"><use href="#kasumi"/></svg>
+
+<!-- ===== iroha-kkc ===== -->
+<section id="kkc" class="section" aria-labelledby="kkc-title">
+  <div class="wrap split">
+    <div>
+      <p class="eyebrow fuji">かなかんじへんかん</p>
+      <p class="model-name"><span>iroha-kkc</span> <small>かな漢字変換モデル</small></p>
+      <h2 id="kkc-title">速くて正確な、<br>iroha のための変換モデル</h2>
+      <p class="section-lead" style="margin-bottom:0">iroha-kkc は、iroha のために一から作ったかな漢字変換の AI です。打つたびに変換をやり直すライブ変換に向けて、速さを第一に設計しました。</p>
+      <p class="kkc-message">ライブ変換に慣れるほど、この変換の速さの心地よさに気がつくはずです。</p>
+      <ul class="points">
+        <li><b>変換にかかる時間は、これまでの代表的な AI のかな漢字変換モデル（zenz）の半分以下。</b>3,253 問のテストでは平均 0.024 秒でした（zenz は 0.063 秒）。</li>
+        <li><b>正確さは同じかそれ以上。</b>3,253 問の変換のテストで、比べたモデルより多く正解しました。公開されている 200 問のテスト（AJIMEE-Bench）でも、同じ水準の正解率です。</li>
+      </ul>
+      <a class="more-link" href="#papers">しくみと比較の詳細（論文） →</a>
+    </div>
+
+    <div>
+      <figure class="speed chart" id="speed">
+        <h3>速さと正確さ（AJIMEE-Bench・200 問）</h3>
+        <!-- 数字は配布と同じ Q5_K_M どうしを AJIMEE-Bench で同じ回に交互に 3 回測った平均
+             （experiments/iroha-bench/results/ajimee-q5-site/、2026-11-06、M1 Max、NNのみ）:
+             iroha-kkc 35.5ms・86.0%、zenz-v3.1-small 79.1ms・87.0%（正解率は 3 回とも同じ）。
+             座標: x = 56 + ms × 4.04、y = 244 − % × 2.2 -->
+        <svg viewBox="0 0 480 300" role="img" aria-labelledby="chart-desc">
+          <desc id="chart-desc">横軸は 1 回の変換にかかる時間、縦軸は正解率。iroha-kkc は 0.036 秒で 86.0%、これまでのモデル（zenz）は 0.079 秒で 87.0%。正解率はほぼ同じ高さで、iroha-kkc は約 2.2 倍速い。</desc>
+          <g class="grid">
+            <line x1="56" y1="24" x2="460" y2="24"/>
+            <line x1="56" y1="79" x2="460" y2="79"/>
+            <line x1="56" y1="134" x2="460" y2="134"/>
+            <line x1="56" y1="189" x2="460" y2="189"/>
+          </g>
+          <g class="axis">
+            <line x1="56" y1="244" x2="460" y2="244"/>
+            <line x1="56" y1="24" x2="56" y2="244"/>
+          </g>
+          <g class="tick-y">
+            <text x="48" y="28">100%</text>
+            <text x="48" y="138">50%</text>
+            <text x="48" y="248">0%</text>
+          </g>
+          <g class="tick-x">
+            <text x="56" y="266">0</text>
+            <text x="157" y="266">0.025</text>
+            <text x="258" y="266">0.05</text>
+            <text x="359" y="266">0.075</text>
+            <text x="460" y="266">0.1 秒</text>
+          </g>
+          <text class="axis-label" x="258" y="292">1 回の変換にかかる時間（左ほど速い）</text>
+          <text class="corner" x="56" y="12">正解率（上ほど正確）</text>
+
+          <g class="gap">
+            <line class="gap-line" x1="364" y1="134" x2="210" y2="134"/>
+            <path class="gap-head" d="M217 128 L208 134 L217 140"/>
+            <text x="287" y="125">約 2.2 倍速い</text>
+          </g>
+
+          <g class="pt other">
+            <circle cx="375.6" cy="52.6" r="9"/>
+            <text class="end" x="440" y="82">これまでのモデル（zenz）</text>
+            <text class="val end" x="440" y="100">0.079 秒・87.0%</text>
+          </g>
+          <g class="pt mine">
+            <circle cx="199.4" cy="54.8" r="11"/>
+            <text class="end" x="182" y="56">iroha-kkc</text>
+            <text class="val end" x="182" y="74">0.036 秒・86.0%</text>
+          </g>
+        </svg>
+        <figcaption class="speed-note">正解率の差（1.0 ポイント）は、200 問のテストでは誤差の範囲に入ります。3,253 問のテストでは iroha-kkc の方が多く正解しました。どちらも配布しているものと同じ形式のモデルを、Apple M1 Max で測りました（時間は 3 回の平均）。</figcaption>
+        <div class="speed-foot">
+          <p></p>
+          <button class="replay" type="button" data-replay="speed">もう一度</button>
+        </div>
+      </figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<svg class="kasumi moegi" aria-hidden="true"><use href="#kasumi"/></svg>
+
+<!-- ===== iroha-typo ===== -->
+<section id="typo" class="section section-tint" aria-labelledby="typo-title">
+  <div class="wrap split">
+    <div>
+      <p class="eyebrow moegi">うちまちがいのていせい</p>
+      <p class="model-name"><span>iroha-typo</span> <small>打ち間違い訂正モデル</small></p>
+      <h2 id="typo-title">打ち間違いを、<br>手が止まったときに直す</h2>
+      <p class="section-lead" style="margin-bottom:0">iroha-typo は、変換の前に「読み」の打ち間違いを直す小さな AI です。入力の手がふっと止まったときに読みを見直し、直してから漢字にします。</p>
+      <ul class="points">
+        <li><b>打ち間違いの約 4 件に 3 件を直し、正しく打った文は 1 文も書き換えませんでした。</b>（iroha のために書き下ろした 200 文のテストで）</li>
+        <li><b>直したらカーソルの下に知らせます。</b>直してほしくなかったときは、すぐに Backspace を押すと元に戻ります。</li>
+        <li>最初は OFF です。設定で ON にしたときに、訂正に使うデータを 1 回だけダウンロードします。</li>
+      </ul>
+      <a class="more-link" href="#papers">しくみと評価の詳細（論文） →</a>
+    </div>
+
+    <div>
+      <div class="demo-window" id="typo-demo" aria-label="打ち間違いの訂正の実演">
+        <div class="demo-titlebar" aria-hidden="true"><i></i><i></i><i></i><span>メモ</span></div>
+        <div class="demo-body">
+          <div class="demo-text" aria-live="off"><span class="done"></span><span class="composing"></span><span class="caret"></span><span class="pause-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="typo-popup"></span></div>
+          <div class="demo-keys" aria-hidden="true"><span class="label">打ったキー</span><span class="keys"></span></div>
+        </div>
+      </div>
+      <p class="demo-status" aria-live="polite"></p>
+      <div class="typo-steps" role="group" aria-label="例を選ぶ"></div>
+      <p class="demo-note">表示している訂正と変換は iroha の実際の出力です。点が出ている間が「手が止まった」状態です。</p>
+    </div>
+  </div>
+</section>
+
+<svg class="kasumi kin" aria-hidden="true" style="background:color-mix(in srgb, var(--paper-deep) 70%, transparent)"><use href="#kasumi"/></svg>
+
+<!-- ===== その他の機能 ===== -->
+<section id="more" class="section" aria-labelledby="more-title">
+  <div class="wrap">
+    <p class="eyebrow fuji">そのほかのきのう</p>
+    <h2 id="more-title">毎日の入力を手伝う機能</h2>
+    <p class="section-lead">どれも設定で ON・OFF を切り替えられます。くわしい操作は<a href="usage.html">使い方</a>のページにまとめています。</p>
+    <div class="feature-grid">
+      <div class="feature">
+        <h3>ユーザ辞書</h3>
+        <p>人の名前や専門の言葉を登録できます。Mac に登録してある「ユーザ辞書」も取り込めます。</p>
+      </div>
+      <div class="feature">
+        <h3>変換の学習</h3>
+        <p>選び直して確定した変換を覚え、次に同じ読みを打ったときに最初から出します。</p>
+      </div>
+      <div class="feature">
+        <h3>日付や時刻を入れる</h3>
+        <p>読みと出力の組を決めておくと、候補に出します。日付や時刻はその日の値になります。</p>
+        <span class="eg"><code>きょう</code> → 2026/11/06</span>
+      </div>
+      <div class="feature">
+        <h3>予測変換</h3>
+        <p>読みを 2 文字打つと、これまでに確定した言葉から続きの候補を出します。Tab で選べます。</p>
+      </div>
+      <div class="feature">
+        <h3>AI に書き換えを頼む</h3>
+        <p>入力中の文を、英訳や敬語への書き換えなど、登録した指示で AI に書き換えてもらえます。</p>
+        <span class="eg">⌥ + Return で英訳（初期設定）</span>
+      </div>
+      <div class="feature">
+        <h3>プライベートモード</h3>
+        <p>ON の間は、学習や入力の履歴を残しません。カーソルの横に鍵のマークが出ます。</p>
+      </div>
+      <div class="feature">
+        <h3>記号・顔文字・絵文字</h3>
+        <p>「やじるし」「わらい」などの読みから、記号・顔文字・絵文字を候補に出します。</p>
+      </div>
+      <div class="feature">
+        <h3>文の途中で英字</h3>
+        <p>Shift を押しながら打つと、モードを切り替えずに英字を入れられます。設定で ON にすると、<code>_</code> で囲んだ部分も英字になります。</p>
+        <span class="eg"><code>きょうは</code> + Shift で <code>AI</code> → 今日はAI</span>
+        <span class="eg"><code>kyouha_iroha_wo</code> → 今日はirohaを</span>
+      </div>
+      <div class="feature">
+        <h3>複数の Mac で同じ辞書</h3>
+        <p>データの置き場所を iCloud Drive や Dropbox にすると、辞書や学習を複数の Mac で使えます。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== プライバシー ===== -->
+<section id="privacy" class="section section-tint" aria-labelledby="privacy-title">
+  <div class="wrap">
+    <div class="privacy">
+      <div class="seal" aria-hidden="true">Mac の<br>なかで</div>
+      <div>
+        <h2 id="privacy-title" style="font-size:24px">打った文字は、外に送りません</h2>
+        <p><strong>かな漢字変換も打ち間違いの訂正も、この Mac の中だけで行います。</strong>iroha が通信するのは、アップデートの確認と、変換に使うデータのダウンロードのときだけです（どちらも GitHub から）。</p>
+        <p>例外は「AI に書き換えを頼む」機能で、外部の AI サービス（Claude や OpenAI 互換のサービスなど）を自分で選んだときだけ、その文がそのサービスに送られます。Mac の中で動く Apple Intelligence や Ollama を選べば、外には送られません。</p>
+        <p>パスワードの入力欄では、macOS が日本語入力そのものを止めるので、iroha には文字が届きません。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== ダウンロード ===== -->
+<section id="download" class="section" aria-labelledby="download-title">
+  <div class="wrap split">
+    <div>
+      <p class="eyebrow">だうんろーど</p>
+      <h2 id="download-title">はじめかた</h2>
+      <ol class="steps">
+        <li><b>ダウンロードして開く。</b>「最新版をダウンロード」のボタンから <code>iroha-x.y.z.zip</code> を入手し、展開した <b>iroha.app</b> をダブルクリックします。自動でインストールされます。</li>
+        <li><b>入力ソースに追加する。</b>「システム設定」→「キーボード」→「入力ソース」の「編集」→「＋」→「日本語」→「iroha」を選びます。一覧に出ないときは、一度ログアウトしてから試してください。</li>
+        <li><b>メニューバーで iroha を選ぶ。</b>初めて使うときに、変換に使うデータを 1 回だけダウンロードします。</li>
+      </ol>
+      <dl class="req">
+        <dt>動作環境</dt><dd>macOS 14 以降、Apple シリコン（M1 以降）の Mac</dd>
+        <dt>価格</dt><dd>無料（オープンソース、MIT ライセンス）</dd>
+        <dt>アップデート</dt><dd>新しい版が出ると iroha が知らせます</dd>
+        <dt>アンインストール</dt><dd>iroha の設定 →「情報」→「iroha をアンインストール…」</dd>
+      </dl>
+    </div>
+    <div>
+      <div class="download-box">
+        <span class="logo logo-md" role="img" aria-label="いろは"><img src="assets/img/icon-512.png" alt="" width="42" height="42"><span aria-hidden="true">ろは</span></span>
+        <p class="romaji" style="margin:6px 0 20px">iroha</p>
+        <a class="btn btn-primary" href="https://github.com/TetsuakiBaba/iroha/releases/latest">最新版をダウンロード</a>
+        <p>GitHub の配布ページが開きます。「Assets」の中の <code>iroha-x.y.z.zip</code> をダウンロードしてください。</p>
+        <p><a href="https://github.com/TetsuakiBaba/iroha/releases">これまでの版と変更点</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<svg class="kasumi" aria-hidden="true"><use href="#kasumi"/></svg>
+
+<!-- ===== よくある質問 ===== -->
+<section id="faq" class="section" aria-labelledby="faq-title" style="padding-top:40px">
+  <div class="narrow faq">
+    <p class="eyebrow">よくあるしつもん</p>
+    <h2 id="faq-title">よくある質問</h2>
+    <details>
+      <summary>本当に無料ですか？</summary>
+      <p>無料です。iroha はオープンソースで、ソースコードを <a href="https://github.com/TetsuakiBaba/iroha">GitHub</a> で公開しています。</p>
+    </details>
+    <details>
+      <summary>打った文字がどこかに送られることはありますか？</summary>
+      <p>ありません。変換はこの Mac の中で行います。外部の AI サービスを自分で選んで「AI に書き換えを頼む」機能を使ったときだけ、その文がそのサービスに送られます。</p>
+    </details>
+    <details>
+      <summary>Intel の Mac や Windows で使えますか？</summary>
+      <p>今は Apple シリコン（M1 以降）の Mac だけに対応しています。</p>
+    </details>
+    <details>
+      <summary>入力ソースの一覧に iroha が出てきません。</summary>
+      <p>インストールの直後は一覧に出ないことがあります。一度ログアウトしてログインし直してから、もう一度追加してください。</p>
+    </details>
+    <details>
+      <summary>入力メニューで iroha が灰色になって選べません。</summary>
+      <p>ほかのアプリがパスワード入力のための保護（セキュア入力）を続けているときに起きます。そのアプリのパスワード欄を閉じるか、アプリを終了すると戻ります。iroha は、原因になっているアプリの名前を画面に知らせます。</p>
+    </details>
+    <details>
+      <summary>打ち間違いの訂正が、正しく打った言葉を変えてしまいました。</summary>
+      <p>直した直後に Backspace を押すと元に戻ります。訂正の回数が多いと感じるときは、設定の「入力」→「打ち間違いの訂正」で訂正を控えめにできます。</p>
+    </details>
+    <details>
+      <summary>やめるときはどうすればよいですか？</summary>
+      <p>iroha の設定 →「情報」→「iroha をアンインストール…」で、入力ソースからの削除とアプリの削除まで行います。辞書などのデータも一緒に消すかを選べます。</p>
+    </details>
+    <details>
+      <summary>不具合を見つけたとき、要望があるときは？</summary>
+      <p><a href="https://github.com/TetsuakiBaba/iroha/issues">GitHub の Issues</a> にお寄せください。</p>
+    </details>
+  </div>
+</section>
+
+<!-- ===== 詳しく知りたい方へ ===== -->
+<section id="papers" class="section section-tint" aria-labelledby="papers-title">
+  <div class="wrap">
+    <p class="eyebrow fuji">もっとくわしく</p>
+    <h2 id="papers-title">詳しく知りたい方へ</h2>
+    <p class="section-lead">iroha-kkc と iroha-typo のしくみ、テストの作り方、ほかのモデルとの比較は、論文にまとめています。</p>
+    <div class="docs-grid">
+      <a class="doc-card pending" data-paper="kkc" href="#papers" aria-disabled="true">
+        <span class="kind">論文 ・ iroha-kkc</span>
+        <span class="title">自動変換に向けた浅いデコーダを持つ文字単位エンコーダ・デコーダモデルによるニューラルかな漢字変換の高速化</span>
+        <span class="desc">馬場 哲晃（東京都立大学）</span>
+        <span class="status">Jxiv で公開準備中</span>
+      </a>
+      <a class="doc-card pending" data-paper="typo" href="#papers" aria-disabled="true">
+        <span class="kind">論文 ・ iroha-typo</span>
+        <span class="title">かな漢字変換の手前で読みを直すローマ字入力の打ち間違い訂正</span>
+        <span class="desc">馬場 哲晃（東京都立大学）</span>
+        <span class="status">Jxiv で公開準備中</span>
+      </a>
+      <a class="doc-card" href="https://github.com/TetsuakiBaba/iroha/tree/main/testdata/iroha-bench-v1/release">
+        <span class="kind">データ</span>
+        <span class="title">iroha-bench-v1（かな漢字変換のテスト 3,253 問）</span>
+        <span class="desc">iroha-kkc の評価に使ったテストの問題です。CC BY-SA 4.0 で公開しています。</span>
+        <span class="status">GitHub</span>
+      </a>
+      <a class="doc-card" href="https://github.com/TetsuakiBaba/iroha">
+        <span class="kind">ソースコード</span>
+        <span class="title">iroha のリポジトリ</span>
+        <span class="desc">ソースコード、ビルドの方法、開発の記録（開発者向け）。</span>
+        <span class="status">GitHub</span>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ===== ライセンス ===== -->
+<section id="credits" class="section" aria-labelledby="credits-title">
+  <div class="narrow">
+    <h2 id="credits-title" style="font-size:22px">謝辞とライセンス</h2>
+    <div class="thanks">
+      <p>作者（馬場 哲晃）は学生時代、Microsoft IME にかな漢字変換辞書を提供していた稲永 紘之 先生の指導のもとで、「一括変換処理方式におけるカナ漢字変換システムの構築」という卒業研究に取り組みました。そのころから、いつか自分のかな漢字変換システムを開発してみたいという思いを持っていました。</p>
+      <p>iroha の開発は、Keita Miwa 氏によるニューラルかな漢字変換の取り組みと、その成果を誰もが使える形で公開してきた一連のオープンソースソフトウェアに強く影響を受けています。</p>
+      <p>iPhone 向けの日本語入力 <a href="https://github.com/azooKey/azooKey">azooKey</a>、ニューラルかな漢字変換エンジン Zenzai、変換モデル <a href="https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf">zenz</a> とその学習データ <a href="https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset">zenz-v2.5-dataset</a>、かな漢字変換のライブラリ <a href="https://github.com/azooKey/AzooKeyKanaKanjiConverter">AzooKeyKanaKanjiConverter</a>、そして Mac 向けの <a href="https://github.com/azooKey/azooKey-Desktop">azooKey-Desktop</a>。言語モデルでかな漢字変換を行うという考え方を、実際に毎日使える日本語入力として示し、そのコード・モデル・データを公開してくださったことが、iroha を作り始めるきっかけになりました。</p>
+      <p>iroha-kkc は zenz-v2.5-dataset で学習しており、変換の候補を作るしくみには AzooKeyKanaKanjiConverter と azooKey の辞書データを使っています。これらの公開がなければ、iroha をこの形で作ることはできませんでした。稲永 紘之 先生と Keita Miwa 氏に、心より感謝いたします。</p>
+    </div>
+    <h3 class="credits-head">ライセンス</h3>
+    <ul class="credits">
+      <li>iroha のソースコード: MIT License</li>
+      <li>かな漢字変換モデル iroha-kkc: CC BY-SA 4.0。学習データ <a href="https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset">zenz-v2.5-dataset</a>（Keita Miwa 氏、CC BY-SA 4.0）</li>
+      <li>打ち間違い訂正モデル iroha-typo: CC BY-SA 4.0。学習元の一覧はアプリの設定 →「情報」→「ライセンス」にあります</li>
+      <li><a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a>: MIT License</li>
+      <li>候補を作るしくみ <a href="https://github.com/azooKey/AzooKeyKanaKanjiConverter">AzooKeyKanaKanjiConverter</a>（ensan / azooKey）: MIT License。辞書データ <a href="https://github.com/azooKey/azooKey_dictionary_storage">azooKey_dictionary_storage</a>: Apache License 2.0</li>
+      <li>記号・顔文字・絵文字のデータ <a href="https://github.com/google/mozc">Mozc</a>（Google Inc.）: BSD 3-Clause License</li>
+      <li>ロゴの書体 <a href="https://github.com/mt-funa/Tsukimi-Rounded">Tsukimi Rounded</a>（Takashi Funayama 氏）: <a href="assets/fonts/OFL.txt">SIL Open Font License 1.1</a></li>
+    </ul>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <a class="brand" href="./" aria-label="いろは（iroha） トップ"><img src="assets/img/icon-512.png" alt="" width="26" height="26"><span>ろは</span></a>
+    <nav aria-label="フッター">
+      <a href="usage.html">使い方</a>
+      <a href="https://github.com/TetsuakiBaba/iroha/releases">更新履歴</a>
+      <a href="https://github.com/TetsuakiBaba/iroha/issues">不具合・要望</a>
+      <a href="https://github.com/TetsuakiBaba/iroha">GitHub</a>
+    </nav>
+    <p class="copy">© 2026 Tetsuaki Baba</p>
+  </div>
+</footer>
+
+<script src="assets/js/site.js"></script>
+</body>
+</html>

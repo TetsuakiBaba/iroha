@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使い方 — iroha（いろは）</title>
+<meta name="description" content="iroha のキー操作と、よく使う機能の使い方。">
+<meta name="theme-color" content="#fbf7ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171a29" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/png" href="assets/img/favicon-64.png">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./" aria-label="いろは（iroha） トップ">
+      <img src="assets/img/icon-512.png" alt="" width="30" height="30">
+    </a>
+    <nav class="site-nav" aria-label="サイト内の移動">
+      <a href="./#features">特長</a>
+      <a href="./#kkc">かな漢字変換</a>
+      <a href="./#typo">打ち間違いの訂正</a>
+      <a href="./#faq">よくある質問</a>
+      <a class="nav-cta" href="./#download">ダウンロード</a>
+    </nav>
+  </div>
+</header>
+
+<main class="narrow">
+  <div class="page-head">
+    <p class="eyebrow">つかいかた</p>
+    <h1>使い方</h1>
+    <p>iroha のキー操作と、よく使う機能の使い方です。設定は、メニューバーの入力ソースのアイコン →「設定…」から開けます。</p>
+    <ul class="toc">
+      <li><a href="#basic">基本の操作</a></li>
+      <li><a href="#bunsetsu">区切りと候補を直す</a></li>
+      <li><a href="#kana">ひらがな・カタカナ・英数</a></li>
+      <li><a href="#alphabet">文の途中で英字</a></li>
+      <li><a href="#undo">確定を取り消す</a></li>
+      <li><a href="#typo">打ち間違いの訂正</a></li>
+      <li><a href="#prediction">予測変換</a></li>
+      <li><a href="#ai">AI に書き換えを頼む</a></li>
+      <li><a href="#dictionary">辞書と学習</a></li>
+      <li><a href="#settings">設定の場所</a></li>
+    </ul>
+  </div>
+
+  <section id="basic" class="doc-section">
+    <h2>基本の操作</h2>
+    <p>ローマ字で打つと、打つそばから変換された文が表示されます（ライブ変換）。表示が合っていれば Return で確定します。</p>
+    <div class="table-wrap">
+      <table class="keys">
+        <thead><tr><th>キー</th><th>はたらき</th></tr></thead>
+        <tbody>
+          <tr><td>ローマ字で打つ</td><td>かなになり、続けて漢字に変換されます</td></tr>
+          <tr><td>Return</td><td>表示している文を確定します</td></tr>
+          <tr><td>Space</td><td>文を区切りごとに分けて、最初の区切りの候補を出します。何も入力していないときはスペースを入れます</td></tr>
+          <tr><td>Backspace</td><td>1 文字消します。表示はかなに戻ります</td></tr>
+          <tr><td>Esc</td><td>候補 → 区切り → かな → 取り消し の順に 1 段ずつ戻ります</td></tr>
+          <tr><td>英数 / かな キー</td><td>英字の入力 / 日本語の入力 に切り替えます（JIS キーボード）</td></tr>
+          <tr><td>Ctrl + Shift + J / ;</td><td>日本語の入力 / 英字の入力 に切り替えます</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="bunsetsu" class="doc-section">
+    <h2>区切りと候補を直す</h2>
+    <p>変換が思ったとおりでないときは Space を押します。文が区切り（文節）ごとに分かれ、選んでいる区切りに太い下線が付きます。</p>
+    <div class="table-wrap">
+      <table class="keys">
+        <thead><tr><th>キー</th><th>はたらき</th></tr></thead>
+        <tbody>
+          <tr><td>← / →</td><td>隣の区切りに移ります</td></tr>
+          <tr><td>Shift + ← / →</td><td>選んでいる区切りを短く / 長くします。後ろの区切りは自動で変換し直します</td></tr>
+          <tr><td>↑ / ↓ / Space</td><td>候補の中で選ぶ候補を移します</td></tr>
+          <tr><td>1〜9</td><td>その番号の候補を選びます</td></tr>
+          <tr><td>Tab</td><td>候補がたくさんあるときに、表に広げます</td></tr>
+          <tr><td>Return</td><td>選んだ候補のまま、文全体を確定します</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>選び直して確定した変換は覚えておき、次に同じ読みを打ったときに最初から出します（<a href="#dictionary">辞書と学習</a>）。</p>
+  </section>
+
+  <section id="kana" class="doc-section">
+    <h2>ひらがな・カタカナ・英数</h2>
+    <div class="table-wrap">
+      <table class="keys">
+        <thead><tr><th>キー</th><th>表示</th></tr></thead>
+        <tbody>
+          <tr><td>F6 または Ctrl + U</td><td>ひらがな</td></tr>
+          <tr><td>F7 または Ctrl + I</td><td>カタカナ</td></tr>
+          <tr><td>F8 または Ctrl + O</td><td>半角カタカナ</td></tr>
+          <tr><td>F9 または Ctrl + P</td><td>全角英数（打ったキーのまま）</td></tr>
+          <tr><td>F10 または Ctrl + T</td><td>半角英数（打ったキーのまま）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>こうして決めた部分は、続けて打ってもそのままの形で残ります。</p>
+  </section>
+
+  <section id="alphabet" class="doc-section">
+    <h2>文の途中で英字を入れる</h2>
+    <p>Shift を押しながら英字を打つと、その間だけ英字になります。Shift を離すと日本語の入力に戻るので、モードを切り替えずに 1 回の Return で確定できます。</p>
+    <p class="example"><code>kyouha</code> → Shift を押しながら <code>A</code> <code>I</code> → <code>wotsukau</code> → Return<br>＝「今日はAIを使う」</p>
+    <h3>_ で囲んで英字にする</h3>
+    <p>設定の「情報」→「開発者モード」を ON にすると、「入力」のタブに「区切り記号で英字を入力」が出ます。「記号で囲んだ部分を英字で入力する」を ON にすると、<code>_</code> と <code>_</code> で囲んで打った部分が、打ったとおりの英字になります。Shift を押し続けなくてよいので、長い英単語に向いています。</p>
+    <p class="example"><code>kyouha_iroha_wotsukau</code> → Return<br>＝「今日はirohaを使う」</p>
+    <p>囲む記号は設定で変えられます。<code>__</code> と続けて打つと、記号の <code>_</code> そのものを入れられます。</p>
+  </section>
+
+  <section id="undo" class="doc-section">
+    <h2>確定を取り消す</h2>
+    <p>確定した直後に <b>Ctrl + Backspace</b> を押すと、確定する前の状態に戻ります。ほかのキーを押したり、別のアプリに移ったりした後は取り消せません。</p>
+  </section>
+
+  <section id="typo" class="doc-section">
+    <h2>打ち間違いの訂正</h2>
+    <p>設定の「入力」→「打ち間違いの訂正」を ON にすると使えます。初めて ON にしたときに、訂正に使うデータを 1 回だけダウンロードします。</p>
+    <ul>
+      <li>入力の手が止まったときに、読みの打ち間違いを直してから変換します。</li>
+      <li>直したときは、カーソルの下に「打った読み → 直した読み」が出ます。</li>
+      <li><b>直してほしくなかったときは、すぐに Backspace を押すと元に戻ります。</b></li>
+      <li>直すまでの待ち時間と、どのくらい控えめに直すかを設定で変えられます。</li>
+      <li>初期設定では、3 文字までの短い読みは直しません。</li>
+    </ul>
+  </section>
+
+  <section id="prediction" class="doc-section">
+    <h2>予測変換</h2>
+    <p>設定の「入力」→「予測変換」を ON にすると使えます。読みを 2 文字打つと、これまでに確定した言葉から続きの候補を 3 つまで出します。</p>
+    <ul>
+      <li><b>Tab</b>（または ↓）で候補を選びます。押すたびに次の候補に移ります。</li>
+      <li>候補を選んだまま続きを打つと、その候補が入ってから続きが入ります。Return なら候補を入れて確定します。</li>
+      <li>候補のもとになる入力の履歴は、予測変換が ON の間だけ残ります。設定から一覧を見たり消したりできます。</li>
+    </ul>
+  </section>
+
+  <section id="ai" class="doc-section">
+    <h2>AI に書き換えを頼む</h2>
+    <p>入力中の文を、登録しておいた指示で AI に書き換えてもらえます。指示は 3 つまで登録でき、初めは 1 つ目に英訳が入っています。</p>
+    <p class="example">あした会議やるから来て　→　<b>⌥ + Return</b>　→　Come to the meeting tomorrow.</p>
+    <ul>
+      <li>使う AI は設定の「モデル」→「AI サービス」で選びます。Apple Intelligence（macOS 26 以降）、Ollama、LM Studio のように Mac の中で動くものと、Claude や OpenAI 互換のサービスのように外部のものがあります。</li>
+      <li><b>外部のサービスを選んだときは、書き換える文がそのサービスに送られます。</b></li>
+      <li>書き換えの途中で Esc を押すと取り消せます。結果が日本語のときは、確定する前に区切りごとに直せます。</li>
+    </ul>
+  </section>
+
+  <section id="dictionary" class="doc-section">
+    <h2>辞書と学習</h2>
+    <h3>ユーザ辞書</h3>
+    <p>メニューの「ユーザ辞書…」から、読みと言葉を登録できます。Mac の「システム設定」→「キーボード」→「ユーザ辞書」に登録してある言葉も取り込めます（Mac 側の辞書は書き換えません）。</p>
+    <h3>変換の学習</h3>
+    <p>Space で候補を選び直して確定すると、その変換を覚えます。次に同じ読みを打ったときに最初から出します。設定の「辞書・学習」で、覚えた内容を 1 件ずつ直したり消したりできます。</p>
+    <h3>日付や時刻を入れる（変換ルール）</h3>
+    <p>メニューの「変換ルール…」で、読みと出力の組を登録できます。出力に日付や時刻を書いておくと、変換するたびにその日の値になります。初めから「きょう」「あした」「いま」などが入っています。</p>
+    <p class="example">きょう → 2026/11/06　　いま → 14:05</p>
+    <h3>プライベートモード</h3>
+    <p>ON の間は、変換の学習・入力の履歴・予測変換・ユーザ辞書を止めます。メニュー、設定、または Ctrl + Option + P で切り替えられ、ON の間はカーソルの横に鍵のマークが出ます。</p>
+  </section>
+
+  <section id="settings" class="doc-section" style="padding-bottom:56px">
+    <h2>設定の場所</h2>
+    <div class="table-wrap">
+      <table class="keys">
+        <thead><tr><th>タブ</th><th>おもな項目</th></tr></thead>
+        <tbody>
+          <tr><td>入力</td><td>ライブ変換、候補の数、打ち間違いの訂正、予測変換、句読点の形、AI に頼む指示</td></tr>
+          <tr><td>辞書・学習</td><td>ユーザ辞書、変換ルール、変換の学習、プライベートモード</td></tr>
+          <tr><td>選択テキスト</td><td>ほかのアプリで選んだ文を AI で書き換える機能、選んだ文字数の表示</td></tr>
+          <tr><td>モデル</td><td>かな漢字変換のモデル、AI サービスの選択</td></tr>
+          <tr><td>情報</td><td>アップデートの確認、データの置き場所（iCloud Drive や Dropbox で複数の Mac と共有）、ライセンス、アンインストール</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>さらに細かな項目や開発の情報は <a href="https://github.com/TetsuakiBaba/iroha">GitHub の README</a> にあります。</p>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <a class="brand" href="./" aria-label="いろは（iroha） トップ"><img src="assets/img/icon-512.png" alt="" width="26" height="26"><span>ろは</span></a>
+    <nav aria-label="フッター">
+      <a href="./">トップ</a>
+      <a href="https://github.com/TetsuakiBaba/iroha/releases">更新履歴</a>
+      <a href="https://github.com/TetsuakiBaba/iroha/issues">不具合・要望</a>
+      <a href="https://github.com/TetsuakiBaba/iroha">GitHub</a>
+    </nav>
+    <p class="copy">© 2026 Tetsuaki Baba</p>
+  </div>
+</footer>
+</body>
+</html>
