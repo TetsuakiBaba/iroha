@@ -130,8 +130,14 @@ img, video, svg { max-width: 100%; }
 .site-nav a:hover { background: var(--paper-deep); color: var(--ink); }
 .site-nav a.nav-cta { background: var(--ink); color: var(--paper); padding: 6px 14px; }
 .site-nav a.nav-cta:hover { background: var(--kobai); color: #fff; }
+/* このページの中の節と、別のページの間の区切り */
+.nav-sep { width: 1px; height: 18px; background: var(--line); margin: 0 8px; }
+/* いま開いているページ */
+.site-nav a[aria-current="page"] { color: var(--ink); background: var(--paper-deep); font-weight: 600; }
 @media (max-width: 760px) {
-  .site-nav a:not(.nav-cta) { display: none; }
+  /* 狭い幅では節へのリンクを省き、ページへのリンクとダウンロードだけにする */
+  .site-nav a.nav-section, .nav-sep { display: none; }
+  .site-nav a.nav-page { padding: 6px 8px; }
 }
 
 /* ---------- 霞（区切り） ---------- */

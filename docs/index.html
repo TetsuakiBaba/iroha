@@ -42,12 +42,15 @@
     <a class="brand" href="./" aria-label="いろは（iroha） トップ">
       <img src="assets/img/icon-512.png" alt="" width="30" height="30">
     </a>
-    <nav class="site-nav" aria-label="ページ内の移動">
-      <a href="#features">特長</a>
-      <a href="#kkc">かな漢字変換</a>
-      <a href="#typo">打ち間違いの訂正</a>
-      <a href="usage.html">使い方</a>
-      <a href="#faq">よくある質問</a>
+    <!-- 区切りの左はこのページの中の節（ページの順）、右は別のページ（使い方）とダウンロード。
+         ページの中の節へのリンクは、その節があるページのヘッダにだけ置く -->
+    <nav class="site-nav" aria-label="サイト内の移動">
+      <a class="nav-section" href="#features">特長</a>
+      <a class="nav-section" href="#kkc">かな漢字変換</a>
+      <a class="nav-section" href="#typo">打ち間違いの訂正</a>
+      <a class="nav-section" href="#faq">よくある質問</a>
+      <span class="nav-sep" aria-hidden="true"></span>
+      <a class="nav-page" href="usage.html">使い方</a>
       <a class="nav-cta" href="#download">ダウンロード</a>
     </nav>
   </div>
