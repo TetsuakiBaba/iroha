@@ -17,6 +17,8 @@ public struct DocumentCollection: Sendable {
         public let sentences: [[ReadingToken]]
         /// この文書に出てきた語の候補（出現ごと）
         public let terms: [DocumentTermOccurrence]
+        /// この文書で数えた表記の好み（読みごとの表記の回数）
+        public let notation: NotationPreference
     }
 
     public let documents: [Document]
@@ -48,12 +50,19 @@ public struct DocumentCollection: Sendable {
         let text = DocumentText.removingReferences(DocumentText.normalize(raw))
         let sentences = DocumentText.sentences(in: text).map { tokenizer.tokens(in: $0) }
         let terms = sentences.flatMap { DocumentTermExtractor.terms(in: $0) }
-        return Document(name: name, text: text, sentences: sentences, terms: terms)
+        return Document(
+            name: name, text: text, sentences: sentences, terms: terms,
+            notation: NotationPreference(sentences: sentences))
     }
 
     /// すべての文書から集めた語の一覧
     public var vocabulary: DocumentVocabulary {
         DocumentVocabulary(occurrences: documents.map { ($0.name, $0.terms) })
+    }
+
+    /// すべての文書で数えた表記の好み
+    public var notation: NotationPreference {
+        documents.reduce(NotationPreference.empty) { $0.adding($1.notation) }
     }
 
     static func documentURLs(in folder: URL) -> [URL] {

@@ -82,3 +82,54 @@ final class DocumentVocabularyTests: XCTestCase {
         XCTAssertNil(vocabulary.excluding(document: "x.pdf", occurrences: [a, a, b]).terms.first { $0.surface == "譜面" })
     }
 }
+
+final class NotationPreferenceTests: XCTestCase {
+
+    private func sentence(_ pairs: [(String, String?)]) -> [ReadingToken] {
+        pairs.map { ReadingToken(surface: $0.0, reading: $0.1) }
+    }
+
+    func testVariantsRequireKanjiInclusionAndOkurigana() {
+        XCTAssertTrue(NotationPreference.areVariants("及び", "および"))
+        XCTAssertTrue(NotationPreference.areVariants("切替え", "切り替え"))
+        XCTAssertTrue(NotationPreference.areVariants("きらきら", "キラキラ"))
+        XCTAssertFalse(NotationPreference.areVariants("精度", "制度"))
+        // 送り仮名のない漢字 1 字とかなは、別の語のことが多いので含めない
+        XCTAssertFalse(NotationPreference.areVariants("用", "よう"))
+        XCTAssertFalse(NotationPreference.areVariants("中", "なか"))
+        XCTAssertFalse(NotationPreference.areVariants("暮らす", "クラス"))
+    }
+
+    func testRewriteUsesTheMoreFrequentVariant() {
+        let preference = NotationPreference(sentences: [
+            sentence([("A", nil), ("及び", "および"), ("B", nil)]),
+            sentence([("及び", "および"), ("、", "、"), ("および", "および")]),
+            sentence([("及び", "および")]),
+        ])
+        XCTAssertEqual(preference.counts["および"], ["及び": 3, "および": 1])
+        XCTAssertEqual(preference.preferredSurface(for: "および", reading: "および"), "及び")
+        XCTAssertNil(preference.preferredSurface(for: "及び", reading: "および"))
+        // 割合の下限に届かなければ替えない
+        XCTAssertNil(preference.preferredSurface(for: "および", reading: "および", minimumShare: 0.8))
+        XCTAssertEqual(preference.rewrite(sentence([("A", nil), ("および", "および"), ("B", nil)])), "A及びB")
+    }
+
+    func testNonVariantSurfacesAreNotCountedTogether() {
+        let preference = NotationPreference(counts: ["ない": ["ない": 100, "内": 20]])
+        XCTAssertNil(preference.preferredSurface(for: "内", reading: "ない"))
+        XCTAssertNil(preference.preferredSurface(for: "ない", reading: "ない"))
+    }
+
+    func testSingleCharacterReadingsAreNeverRewritten() {
+        let preference = NotationPreference(counts: ["み": ["見": 10, "み": 1]])
+        XCTAssertNil(preference.preferredSurface(for: "み", reading: "み"))
+    }
+
+    func testSubtractingRemovesOneDocument() {
+        let a = NotationPreference(counts: ["および": ["及び": 3, "および": 1]])
+        let b = NotationPreference(counts: ["および": ["及び": 3]])
+        XCTAssertEqual(a.subtracting(b).counts, ["および": ["および": 1]])
+        XCTAssertEqual(a.subtracting(a).counts, [:])
+        XCTAssertEqual(b.adding(b).counts, ["および": ["及び": 6]])
+    }
+}

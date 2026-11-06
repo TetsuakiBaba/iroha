@@ -6,13 +6,16 @@ import IrohaDocuments
 //
 //   iroha-cli docs terms [フォルダ] [--min-count N] [--limit N] [--json 出力.json]
 //       文書から集めた語の一覧（出現回数の多い順）。フォルダの既定は <データフォルダ>/documents
+//   iroha-cli docs notation [フォルダ] [--limit N]
+//       表記の好み: 読みごとに、表記の違い（及び／および など）を何回ずつ使ったか
 //   iroha-cli docs evalset [フォルダ] --out 出力.jsonl [--min-length 8] [--max-length 80]
 //       文書の文から評価用の項目（読み・正解・直前の文）を作る。読みは分かち書きの自動推定なので、
 //       人が確かめて直してから使う（固有名詞の読みを間違えることがある）
 //   iroha-cli docs bench <評価.jsonl> [フォルダ] [--context none|previous] [--examples N] [--dump 出力.jsonl]
 //       評価項目を今のエンジン（IME と同じ構成・ユーザ辞書と学習は空）で変換し、
 //       ① 文の完全一致・CER、② 間違えた文のうち「ほかの文書に出てくる語」を出せていない文の数、
-//       ③ その語を単独で変換したときの第一候補・候補 10 件の中の順位 を出す。
+//       ③ その語を単独で変換したときの第一候補・候補 10 件の中の順位、
+//       ④ 変換結果を表記の好みで書き換えたときに直る文・壊れる文の数（占める割合の下限ごと）を出す。
 //       語の一覧は試す文の文書を除いて作る（leave-one-document-out。その文書を書く前の状態に近づける）
 
 func runDocumentsCommand(_ arguments: [String]) async {
@@ -23,6 +26,7 @@ func runDocumentsCommand(_ arguments: [String]) async {
     let rest = Array(arguments.dropFirst())
     switch subcommand {
     case "terms": documentTerms(rest)
+    case "notation": documentNotation(rest)
     case "evalset": documentEvalset(rest)
     case "bench": await documentBench(rest)
     default:
@@ -35,6 +39,7 @@ private func printDocumentsUsage() {
     FileHandle.standardError.write("""
     使い方:
       iroha-cli docs terms [フォルダ] [--min-count N] [--limit N] [--json 出力.json]
+      iroha-cli docs notation [フォルダ] [--limit N]
       iroha-cli docs evalset [フォルダ] --out 出力.jsonl [--min-length 8] [--max-length 80]
       iroha-cli docs bench <評価.jsonl> [フォルダ] [--context none|previous] [--examples N] [--dump 出力.jsonl]
 
@@ -106,6 +111,19 @@ private func documentTerms(_ arguments: [String]) {
             stderrLine("書き出せません: \(path)（\(error)）")
             exit(1)
         }
+    }
+}
+
+// MARK: - notation
+
+private func documentNotation(_ arguments: [String]) {
+    let (positional, options) = parseOptions(arguments)
+    let collection = loadCollection(positional.first)
+    let limit = Int(options["limit"] ?? "") ?? 100
+    let groups = collection.notation.variantGroups()
+    print("表記の違いがある読み（合計 2 回以上）: \(groups.count) 個")
+    for group in groups.prefix(limit) {
+        print("\(group.reading)\t" + group.surfaces.map { "\($0.surface) \($0.count)" }.joined(separator: "、"))
     }
 }
 
@@ -220,6 +238,23 @@ private func documentBench(_ arguments: [String]) async {
             .filter { $0.surface.count >= 2 }
     }
 
+    // 文書ごとに「その文書を除いた表記の好み」
+    let fullNotation = collection.notation
+    var notationFolds: [String: NotationPreference] = [:]
+    for document in collection.documents {
+        notationFolds[document.name] = fullNotation.subtracting(document.notation)
+    }
+    let tokenizer = SystemReadingTokenizer()
+    let shares = [0.5, 0.7, 0.9]
+    struct NotationTally {
+        var correct = 0
+        var fixed = 0
+        var broken = 0
+        var fixedExamples: [String] = []
+        var brokenExamples: [String] = []
+    }
+    var notationTallies = Array(repeating: NotationTally(), count: shares.count)
+
     let engine = makeEngine(userData: .evaluation)
     _ = try? await engine.convert(reading: "うぉーむあっぷ", context: "", candidateCount: 1)
     stderrLine("左文脈: \(usesContext ? "直前の文" : "なし")（--context previous で直前の文）")
@@ -279,11 +314,29 @@ private func documentBench(_ arguments: [String]) async {
                 examples.append(lines)
             }
         }
+        // ④ 表記の好みで書き換える（文書を除いた数え方で）
+        let outputTokens = tokenizer.tokens(in: normalized)
+        var rewrites: [String: String] = [:]
+        for (index, share) in shares.enumerated() {
+            let rewritten = notationFolds[item.document]?.rewrite(outputTokens, minimumShare: share) ?? normalized
+            rewrites[String(share)] = rewritten
+            let rewrittenCorrect = rewritten == item.expected
+            if rewrittenCorrect { notationTallies[index].correct += 1 }
+            let example = "    [\(item.document)]\n      出力: \(normalized)\n      直後: \(rewritten)\n      正解: \(item.expected)"
+            if rewrittenCorrect && !correct {
+                notationTallies[index].fixed += 1
+                if notationTallies[index].fixedExamples.count < 15 { notationTallies[index].fixedExamples.append(example) }
+            } else if !rewrittenCorrect && correct {
+                notationTallies[index].broken += 1
+                if notationTallies[index].brokenExamples.count < 15 { notationTallies[index].brokenExamples.append(example) }
+            }
+        }
         if options["dump"] != nil {
             let record: [String: Any] = [
                 "document": item.document, "sentence": item.sentence, "reading": item.reading,
                 "expected": item.expected, "output": normalized, "correct": correct,
                 "missing_terms": missing.map { ["surface": $0.surface, "reading": $0.reading, "count": $0.count] },
+                "notation_rewrites": rewrites,
             ]
             if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]),
                let line = String(data: data, encoding: .utf8) {
@@ -328,6 +381,21 @@ private func documentBench(_ arguments: [String]) async {
                      firstHits, Double(firstHits) / Double(terms.count) * 100,
                      inTop10, Double(inTop10) / Double(terms.count) * 100, terms.count - inTop10))
         for line in rankLines.prefix(exampleCount) { print("  \(line)") }
+    }
+
+    print("")
+    print("■ 変換結果を表記の好みで書き換えた場合（ほかの文書で数えた回数。最も多い表記が 2 回以上・下の割合以上のとき替える）")
+    for (index, share) in shares.enumerated() {
+        let tally = notationTallies[index]
+        print(String(format: "  割合 %.0f%%以上: 完全一致 %d (%.1f%%)  直した %d  壊した %d",
+                     share * 100, tally.correct, Double(tally.correct) / Double(items.count) * 100,
+                     tally.fixed, tally.broken))
+    }
+    if let tally = notationTallies.first {
+        print("  直した例（割合 \(Int(shares[0] * 100))%以上）:")
+        for example in tally.fixedExamples.prefix(exampleCount) { print(example) }
+        print("  壊した例（割合 \(Int(shares[0] * 100))%以上）:")
+        for example in tally.brokenExamples.prefix(exampleCount) { print(example) }
     }
 
     if let path = options["dump"] {
