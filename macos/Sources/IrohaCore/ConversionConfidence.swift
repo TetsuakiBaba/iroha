@@ -44,14 +44,16 @@ public struct ScoredConversion: Sendable {
 /// トークン列（バイト断片）を出力文字列の文字ごとの自信度に対応づける。
 /// バイト単位のトークンが多バイト文字の途中で切れていても、その文字が完成した時点で
 /// 関わったトークン全てをまとめて割り当てる
-struct ConfidenceAligner {
+public struct ConfidenceAligner {
     private var bytes = Data()
     private var pending: CharacterConfidence?
     private var assignedCharacters = 0
     private(set) var confidences: [CharacterConfidence] = []
 
+    public init() {}
+
     /// 1トークンぶんのバイト列とその自信度を追加する
-    mutating func append(_ piece: Data, confidence: CharacterConfidence) {
+    public mutating func append(_ piece: Data, confidence: CharacterConfidence) {
         bytes.append(piece)
         pending = pending.map { $0.merged(with: confidence) } ?? confidence
         guard let text = String(data: bytes, encoding: .utf8) else { return }
@@ -64,7 +66,7 @@ struct ConfidenceAligner {
 
     /// 最終的な出力文字列（不正バイトの除去・前後の空白除去を経たもの）に長さを揃えて返す。
     /// `untrimmed` は空白除去前の文字列
-    func aligned(untrimmed: String, trimmed: String) -> [CharacterConfidence] {
+    public func aligned(untrimmed: String, trimmed: String) -> [CharacterConfidence] {
         var result = confidences
         // 途中に不正バイトがあって割り当てが止まった場合は、残りを保留中の値（無ければ末尾の値）で埋める
         if result.count < untrimmed.count {

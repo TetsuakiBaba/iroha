@@ -2339,8 +2339,7 @@ final class IrohaInputController: IMKInputController {
     private func scheduleAIFixCheck() {
         aiFixIdleTask?.cancel()
         aiFixIdleTask = nil
-        // 推論エンジンが MLX のときは働かせない（`zenz` を参照すると llama.cpp のモデルを読み込んでしまう）
-        guard AIFixSettings.isActive, Self.engineBackend == .llamaCpp, liveConversionEnabled,
+        guard AIFixSettings.isActive, liveConversionEnabled,
               aiFixRequestTask == nil, aiFixUndo == nil else { return }
         let reading = composer.text
         guard !reading.isEmpty, reading.count <= AIFixRule.maximumReadingLength,
@@ -2361,7 +2360,7 @@ final class IrohaInputController: IMKInputController {
                 return (self.conversionContext + self.fixedText, shown)
             }
             guard let target, !Task.isCancelled,
-                  let scored = try? await Self.zenz.convertWithConfidence(reading: reading, context: target.context),
+                  let scored = try? await Self.convertWithConfidence(reading: reading, context: target.context),
                   AIFixRule.isSuspicious(scored, shown: target.shown, reading: reading, threshold: threshold)
             else { return }
             await MainActor.run {
@@ -2369,6 +2368,15 @@ final class IrohaInputController: IMKInputController {
                       self.lastConversion?.result == target.shown, let client = self.client() else { return }
                 self.offerAIFix(reading: reading, context: target.context, shown: target.shown, client: client)
             }
+        }
+    }
+
+    /// モデル単体の貪欲変換とマージン。推論エンジンに合わせて呼び分ける（MLX のときに `zenz` を参照すると
+    /// llama.cpp のモデルも読み込んでしまう）
+    private static func convertWithConfidence(reading: String, context: String) async throws -> ScoredConversion {
+        switch engineBackend {
+        case .mlx: return try await mlxEngine.convertWithConfidence(reading: reading, context: context)
+        case .llamaCpp: return try await zenz.convertWithConfidence(reading: reading, context: context)
         }
     }
 

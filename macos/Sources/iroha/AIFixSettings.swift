@@ -7,13 +7,13 @@ import IrohaCore
 /// 「AIで直す」の窓（`AIFixBadge`）を出す。窓をクリックするかショートカットを押すと、文脈・読み・変換結果を
 /// AI変換と同じ接続先（`TranslationService`）に送り、返ってきた案で未確定文字列を差し替える。
 /// AI に送るのは押したときだけ。プライベートモードの間は窓を出さない。
-/// 判定にモデル単体の変換（`ZenzEngine.convertWithConfidence`）を使うので、推論エンジンが MLX のときは働かない
+/// 判定にはモデル単体の変換（`ZenzEngine` / `MLXConversionEngine` の `convertWithConfidence`）を使う
 enum AIFixSettings {
 
     static let enabledKey = "aiFixEnabled"
     /// 疑う閾値（文字ごとのマージンの最小値。nat）
     static let thresholdKey = "aiFixThreshold"
-    /// 窓が出ている間だけ効くショートカット（"Ctrl+Option+A" 形式。空ならクリックだけ）
+    /// ショートカット（"Ctrl+Option+A" 形式。窓が出ていなくても入力中なら効く。空ならクリックだけ）
     static let shortcutKey = "aiFixHotkey"
     static let defaultShortcut = "Ctrl+Option+A"
 

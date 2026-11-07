@@ -202,6 +202,24 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
         return results.isEmpty ? [reading] : results
     }
 
+    /// `ZenzEngine.convertWithConfidence` と同じ: 貪欲生成の結果と、文字ごとの自信度（読み制約を満たす 1 位と 2 位の
+    /// 対数確率の差）を返す。「AIで直す」の判定に使う。何も生成できなければ読みをそのまま、自信なしとして返す
+    public func convertWithConfidence(reading: String, context leftContext: String) async throws -> ScoredConversion {
+        try ensureLoaded()
+        guard let runtime else { throw ConversionError.modelLoadFailed("内部状態が不正です") }
+        defer { trimCache() }
+        let maxNew = reading.count * 3 + 8
+        let (state, firstLogits) = start(runtime: runtime, reading: reading, leftContext: leftContext, maxNew: maxNew)
+        let generated = try generate(runtime: runtime, state: state, logits: firstLogits,
+                                     forcedFirst: nil, reading: reading, maxNew: maxNew)
+        guard !generated.text.isEmpty else {
+            let confidences = Array(repeating: CharacterConfidence(logProb: -.infinity, margin: 0, relaxed: true),
+                                    count: reading.count)
+            return ScoredConversion(text: reading, logProb: -.infinity, confidences: confidences)
+        }
+        return ScoredConversion(text: generated.text, logProb: generated.logProb, confidences: generated.confidences)
+    }
+
     // MARK: - 計測
 
     /// 計測用（iroha-cli `mlx-steps`）: 同じトークンを入れ続けて 1 トークンずつの生成を `steps` 回続け、1 ステップの平均時間（ms）を
@@ -363,15 +381,20 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
     /// `forcedFirst` があれば先頭をそのトークンに固定する
     private func generate(runtime: Runtime, state initial: DecodingState, logits initialLogits: [Float],
                           forcedFirst: (token: Int, logProb: Float)?, reading: String,
-                          maxNew: Int) throws -> (text: String, logProb: Float) {
+                          maxNew: Int) throws -> (text: String, logProb: Float, confidences: [CharacterConfidence]) {
         var state = initial
         var logits = initialLogits
         var outputBytes: [UInt8] = []
         var logProb: Float = 0
+        // 文字ごとの自信度（`ZenzEngine.generate` と同じ。先頭を固定した候補では先頭のマージンは +inf）
+        var aligner = ConfidenceAligner()
         var constraint = makeReadingConstraint(reading: reading)
         var mask = constraint?.initialMask ?? 0
         if let forcedFirst {
-            outputBytes += runtime.tokenizer.pieceBytes(Int32(forcedFirst.token))
+            let piece = runtime.tokenizer.pieceBytes(Int32(forcedFirst.token))
+            outputBytes += piece
+            aligner.append(Data(piece), confidence: CharacterConfidence(
+                logProb: forcedFirst.logProb, margin: .infinity, relaxed: false))
             logProb += forcedFirst.logProb
             if let active = constraint {
                 mask = active.advance(mask, text: runtime.tokenTexts[forcedFirst.token] ?? "")
@@ -390,7 +413,8 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
             mask = picked.mask
             logProb += picked.logProb
             if runtime.tokenIsTerminator[picked.token] { break }
-            outputBytes += runtime.tokenizer.pieceBytes(Int32(picked.token))
+            let piece = runtime.tokenizer.pieceBytes(Int32(picked.token))
+            outputBytes += piece
             // zenz の特殊トークン（私用領域 U+EE00-U+EE0F）が出たら終了（`ZenzEngine.generate` と同じ。zenz の語彙では
             // バイト単位の 3 トークンに分かれるので、終端トークンの表では捕まえられない）
             if let text = String(data: Data(outputBytes), encoding: .utf8),
@@ -398,28 +422,37 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
                 outputBytes = Array(String(text.unicodeScalars.dropLast()).utf8)
                 break
             }
+            aligner.append(Data(piece), confidence: CharacterConfidence(
+                logProb: picked.logProb, margin: picked.margin, relaxed: picked.relaxed))
             // 最後の 1 回は次のロジットが要らない
             guard iteration < limit - 1 else { break }
             logits = step(runtime: runtime, state: &state, token: Int32(picked.token))
         }
-        let text = ZenzEngine.decodeUTF8DroppingFragments(Data(outputBytes))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return (text, logProb)
+        let untrimmed = ZenzEngine.decodeUTF8DroppingFragments(Data(outputBytes))
+        let text = untrimmed.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (text, logProb, aligner.aligned(untrimmed: untrimmed, trimmed: text))
     }
 
     /// 読みと辻褄の合うトークンのうち最もロジットの高いものを選ぶ（`ZenzEngine.selectToken` と同じ規則）。
-    /// 制約を満たすトークンが無ければ制約を外して最大のものを選び、`relaxed` を真にする
+    /// 制約を満たすトークンが無ければ制約を外して最大のものを選び、`relaxed` を真にする。
+    /// `margin` は選んだトークンと、同じく制約を満たす 2 位のトークンとの対数確率の差（競合が無ければ +inf）
     private func selectToken(runtime: Runtime, logits: [Float], constraint: ReadingConstraint?, mask: UInt64)
-        -> (token: Int, mask: UInt64, relaxed: Bool, logProb: Float)? {
+        -> (token: Int, mask: UInt64, relaxed: Bool, logProb: Float, margin: Float)? {
         let vocabSize = min(logits.count, runtime.tokenTexts.count)
         let logZ = Self.logSumExp(logits)
         var best: (index: Int, logit: Float)?
         var second: Float = -.infinity
         var bestMask: UInt64 = 0
         var fallback: (index: Int, logit: Float)?
+        var fallbackSecond: Float = -.infinity
         for index in 0..<vocabSize {
             let logit = logits[index]
-            if fallback == nil || logit > fallback!.logit { fallback = (index, logit) }
+            if fallback == nil || logit > fallback!.logit {
+                fallbackSecond = fallback?.logit ?? -.infinity
+                fallback = (index, logit)
+            } else if logit > fallbackSecond {
+                fallbackSecond = logit
+            }
             guard let constraint else { continue }
             if logit <= second { continue }
             let nextMask: UInt64
@@ -439,9 +472,9 @@ public actor MLXConversionEngine: ConversionEngine, CandidateScorer {
                 bestMask = nextMask
             }
         }
-        if let best, constraint != nil { return (best.index, bestMask, false, best.logit - logZ) }
+        if let best, constraint != nil { return (best.index, bestMask, false, best.logit - logZ, best.logit - second) }
         guard let fallback else { return nil }
-        return (fallback.index, 0, constraint != nil, fallback.logit - logZ)
+        return (fallback.index, 0, constraint != nil, fallback.logit - logZ, fallback.logit - fallbackSecond)
     }
 
     private func makeReadingConstraint(reading: String) -> ReadingConstraint? {

@@ -326,7 +326,7 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   ・**AI に送るのは押したときだけ**。窓を出すだけでは送らない。プライベートモードの間は出さない
   ・自動で書き換えない（測定では Opus 5.5 でも正しい変換を壊した。iroha-bench-v1 閾値 2.0 で直した 194・壊した 26）
   ・表示がモデルの出力と違う（学習・ユーザ辞書・原稿の表記で差し替わった）ときは疑わない。固定部分・英字・表示形の上書き・
-    80文字を超える読みも対象外（第一版の制限）。推論エンジンが MLX のときは働かない（MLX 版に自信度がない）
+    80文字を超える読みも対象外（第一版の制限）。判定のマージンは推論エンジンに合わせて llama.cpp か MLX（`MLXConversionEngine.convertWithConfidence`、2026-11-08 追加）で求める
   ・依頼の文面と答えの読み方（複数行なら最後の行）は測定と同じにしてある。変えたら測り直す
   ・AI の案で確定した文は学習にも変換記録にも残さない（`segmentsFromAI`）
 - 候補ウィンドウの辞書ラティスには azooKey の特別な候補（`LatticeConverter.specialCandidateProviders`、2026-10-27）を

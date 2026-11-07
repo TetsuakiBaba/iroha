@@ -67,6 +67,28 @@ final class MLXConversionEngineTests: XCTestCase {
                        actual.indices.sorted { actual[$0] > actual[$1] }, "並び順")
     }
 
+    /// 文字ごとの自信度（「AIで直す」の判定）が ZenzEngine と同じ。マージンは対数確率の差なので 0.01 以内
+    func testConfidenceMatchesZenzEngine() async throws {
+        let path = try TestSupport.requireT5Model()
+        let llama = ZenzEngine(modelPath: path)
+        let mlx = MLXConversionEngine(modelPath: path, usesFloat32: true)
+        for input in inputs + [("まいごじかんこみで", ""), ("うんきょうはさとうはいいや", "")] {
+            let expected = try await llama.convertWithConfidence(reading: input.reading, context: input.context)
+            let actual = try await mlx.convertWithConfidence(reading: input.reading, context: input.context)
+            XCTAssertEqual(actual.text, expected.text, input.reading)
+            XCTAssertEqual(actual.confidences.count, expected.confidences.count, input.reading)
+            for (index, (a, e)) in zip(actual.confidences, expected.confidences).enumerated() {
+                XCTAssertEqual(a.relaxed, e.relaxed, "\(input.reading) \(index)")
+                if e.margin.isInfinite {
+                    XCTAssertEqual(a.margin, e.margin, "\(input.reading) \(index)")
+                } else {
+                    XCTAssertEqual(a.margin, e.margin, accuracy: 0.01, "\(input.reading) \(index)")
+                }
+                XCTAssertEqual(a.logProb, e.logProb, accuracy: 0.01, "\(input.reading) \(index)")
+            }
+        }
+    }
+
     /// bf16（IME の既定）でも貪欲生成の結果は同じ
     func testBFloat16GreedyMatchesZenzEngine() async throws {
         let path = try TestSupport.requireT5Model()
