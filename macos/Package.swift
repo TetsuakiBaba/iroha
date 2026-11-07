@@ -40,7 +40,7 @@ let package = Package(
         // IME本体（InputMethodKit）。scripts/install.shで.appバンドルに組み立てる
         .executableTarget(
             name: "iroha",
-            dependencies: ["IrohaCore", "IrohaMLX"],
+            dependencies: ["IrohaCore", "IrohaMLX", "IrohaDocuments"],
             swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
             // sqlite3: macOSのユーザ辞書（TextReplacements.db）の読み取りに使う
             linkerSettings: llamaLinkerSettings + [.linkedLibrary("sqlite3")]

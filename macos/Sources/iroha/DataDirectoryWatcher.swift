@@ -60,6 +60,8 @@ final class DataDirectoryWatcher {
         if UserRewriteRuleStore.shared.reloadIfChanged() { reloaded.append("変換ルール") }
         // 入力履歴はサブフォルダにあるのでフォルダの監視には掛からず、定期確認で拾う
         if InputHistoryStore.shared.reloadIfChanged() { reloaded.append("入力履歴") }
+        // 原稿のフォルダ（documents/）もサブフォルダなので定期確認で拾う。中身が変わったときだけ読み直す
+        DocumentNotationStore.shared.reloadIfNeeded()
         DispatchQueue.main.async {
             if PreferencesSync.shared.importIfNewer() { reloaded.append("設定") }
             if !reloaded.isEmpty {

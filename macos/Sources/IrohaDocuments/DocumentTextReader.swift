@@ -5,7 +5,8 @@ import PDFKit
 /// 文書ファイルから文字列を取り出す（macOS の機能を使う。IrohaCore には置かない）。
 ///
 /// - PDF: PDFKit
-/// - Word（.docx・.doc）・リッチテキスト（.rtf・.rtfd）・HTML・OpenDocument（.odt）: `NSAttributedString`
+/// - Word（.docx・.doc）・リッチテキスト（.rtf・.rtfd）・OpenDocument（.odt）: `NSAttributedString`
+///   （HTML は読まない。macOS の HTML の読み込みは main thread でしか使えず、IME は裏のスレッドで読むため）
 /// - テキスト（.txt・.md・.tex など）: UTF-8 のまま読む
 ///
 /// 取り出した文字列は組版の改行・空白を含むので、使う側で `DocumentText.normalize` を通す
@@ -24,7 +25,7 @@ public enum DocumentTextReader {
     }
 
     public static let pdfExtensions: Set<String> = ["pdf"]
-    public static let attributedExtensions: Set<String> = ["docx", "doc", "rtf", "rtfd", "html", "htm", "odt"]
+    public static let attributedExtensions: Set<String> = ["docx", "doc", "rtf", "rtfd", "odt"]
     public static let plainExtensions: Set<String> = ["txt", "md", "markdown", "tex", "text"]
 
     public static var supportedExtensions: Set<String> {

@@ -22,6 +22,7 @@ final class SettingsUIState: ObservableObject {
     @Published var showingRewriteRules = false
     @Published var showingConversionLog = false
     @Published var showingLearning = false
+    @Published var showingDocumentNotation = false
     @Published var showingInputHistory = false
 
     /// メニューの「ユーザ辞書...」から呼ぶ: 辞書・学習タブを開いて編集シートを出す
@@ -67,6 +68,7 @@ struct SettingsView: View {
         .sheet(isPresented: $uiState.showingRewriteRules) { UserRewriteRulesView() }
         .sheet(isPresented: $uiState.showingConversionLog) { ConversionLogView() }
         .sheet(isPresented: $uiState.showingLearning) { LearningView() }
+        .sheet(isPresented: $uiState.showingDocumentNotation) { DocumentNotationView() }
         .sheet(isPresented: $uiState.showingInputHistory) { InputHistoryView() }
     }
 }
@@ -593,6 +595,81 @@ private struct TypoThresholdRow: View {
 
 // MARK: - 辞書・学習
 
+/// 自分の原稿の表記に合わせる（`DocumentNotationSettings`）
+private struct DocumentNotationSection: View {
+    let privateMode: Bool
+    let developerMode: Bool
+    @AppStorage(DocumentNotationSettings.enabledKey) private var enabled = false
+    @AppStorage(DocumentNotationSettings.weightKey) private var weight = DocumentNotationSettings.defaultWeight
+    @ObservedObject private var store = DocumentNotationStore.shared
+    @ObservedObject private var uiState = SettingsUIState.shared
+
+    var body: some View {
+        Section("自分の原稿の表記に合わせる") {
+            HelpToggle(
+                title: "原稿の表記に合わせる", isOn: $enabled,
+                help: "フォルダに置いた自分の文書（PDF・Word・テキスト）で、同じ読みの語をどの表記で何回書いたかを数え、"
+                    + "多く使った表記が変換で選ばれやすくなるようにします"
+                    + "（「及び」を53回・「および」を30回書いていれば「及び」になりやすい）。"
+                    + "必ず置き換えるのではなく、変換モデルの判断に加えるだけなので、文脈に合わない書き換えはしません。"
+                    + "対象は、送り仮名やかな書きの違いのように同じ語の書き分けで、あなたが2通り以上の書き方をしている語だけです。"
+                    + "同じ読みの別の語（両方と療法など）は選び分けません。"
+                    + "「において」「ていく」「という」のような言い回しの中のかなは数えません。"
+                    + "文書はデータフォルダの documents フォルダに置きます。文書を足したり入れ替えたりすると、1分ほどで読み直します。"
+                    + "文書の中身はこのMacの中だけで使い、どこにも送りません。"
+                    + "この設定は他のMacと同期します。")
+            if enabled, privateMode {
+                PrivateModePausedNote(text: "プライベートモードの間は、原稿の表記に合わせるのを止めています")
+            }
+            LabeledContent("文書のフォルダ") {
+                HStack {
+                    Text(statusText).foregroundStyle(.secondary)
+                    Button("一覧...") { uiState.showingDocumentNotation = true }
+                        .disabled(store.variantGroups.isEmpty)
+                    Button("Finderで表示") {
+                        let url = DocumentNotationSettings.folderURL
+                        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                        NSWorkspace.shared.open(url)
+                    }
+                    Button("読み直す") { DocumentNotationStore.shared.reloadIfNeeded(force: true) }
+                        .disabled(!enabled || store.status == .loading)
+                }
+            }
+            if case .ready(_, _, let failures) = store.status, !failures.isEmpty {
+                Text("読めなかった文書: \(failures.joined(separator: "、"))")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            if developerMode {
+                LabeledContent {
+                    HStack {
+                        Slider(value: $weight, in: 0.5...4, step: 0.5).frame(width: 180)
+                        Text(String(format: "%.1f", weight)).monospacedDigit().frame(width: 32)
+                    }
+                } label: {
+                    HelpLabel(
+                        title: "合わせる強さ",
+                        help: "変換モデルの点数に、原稿の書き方から見た点数をどれだけの重みで足すかです（既定 2.0）。"
+                            + "大きいほど原稿の表記に寄りますが、別の語への書き換えも起きやすくなります"
+                            + "（論文12本で測ったとき、4.0 では「おすすめ」が「お進め」になりました）。")
+                }
+            }
+        }
+        .onChange(of: enabled) { _, isOn in
+            if isOn { DocumentNotationStore.shared.reloadIfNeeded() }
+        }
+    }
+
+    private var statusText: String {
+        guard enabled else { return "OFF" }
+        switch store.status {
+        case .idle: return "まだ読んでいません"
+        case .loading: return "読み込み中..."
+        case .ready(let documents, let readings, _):
+            return documents == 0 ? "文書がありません" : "文書 \(documents) 件・使い分け \(readings) 語"
+        }
+    }
+}
+
 private struct DictionarySettingsTab: View {
     @AppStorage(LearningSettings.enabledKey) private var learningEnabled = true
     @AppStorage(ConversionLogSettings.enabledKey) private var conversionLogEnabled = false
@@ -646,6 +723,8 @@ private struct DictionarySettingsTab: View {
                         + "（読み取りのみ。macOS側の辞書は変更しません）。"
                         + "取り込んだ単語をirohaで編集すると、以後の取り込みでは上書きされません。")
             }
+
+            DocumentNotationSection(privateMode: privateMode, developerMode: developerMode)
 
             Section {
                 LabeledContent("登録ルール") {
@@ -2132,7 +2211,7 @@ private struct AboutSettingsTab: View {
                     help: "ONにすると、細かな調整や開発者向けの項目を設定画面に表示します"
                         + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ・"
                         + "区切り記号で英字を入力・タップ入力（加速度センサを利用するとき）、"
-                        + "辞書・学習: 記号・顔文字・絵文字を候補に出す、"
+                        + "辞書・学習: 原稿の表記に合わせる強さ・記号・顔文字・絵文字を候補に出す、"
                         + "選択テキスト: 除外するアプリ、モデル: 推論エンジン・モデルファイルの指定・irohaを再起動・"
                         + "自分の入力で追加学習、情報: 推論の時間の表示・加速度センサを利用する）。"
                         + "OFFにしても項目が見えなくなるだけで、変えた設定はそのまま効きます"

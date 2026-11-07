@@ -2,6 +2,7 @@ import Cocoa
 
 import InputMethodKit
 import IrohaCore
+import IrohaDocuments
 import IrohaMLX
 
 /// キーイベントを処理するIMEコントローラ。
@@ -116,8 +117,18 @@ final class IrohaInputController: IMKInputController {
 
     private static func makeCoreEngine() -> any ConversionEngine {
         switch engineBackend {
-        case .llamaCpp: return withLattice(zenz)
-        case .mlx: return withLattice(mlxEngine)
+        case .llamaCpp: return withLattice(withDocumentNotation(zenz))
+        case .mlx: return withLattice(withDocumentNotation(mlxEngine))
+        }
+    }
+
+    /// 自分の原稿の表記（`DocumentNotationSettings`）をモデルの採点に加える。
+    /// 設定が OFF・プライベートモード・文書が無いときは素通し（採点を呼ばない）
+    private static func withDocumentNotation<Base: ConversionEngine & CandidateScorer>(
+        _ base: Base
+    ) -> NotationPreferenceEngine<Base> {
+        NotationPreferenceEngine(base: base, tokenizer: SystemReadingTokenizer()) {
+            DocumentNotationSettings.configuration
         }
     }
 

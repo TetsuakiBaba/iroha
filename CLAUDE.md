@@ -234,6 +234,22 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   確定しても学習しない（`unlearnableCandidates`。漢字・かなだけの候補は除く。覚えると「わらい」だけ打ったときに
   ライブ変換が絵文字になる）。macOS が描けない絵文字は OS の版の対応表ではなく Apple Color Emoji の字形で除く
   （`EmojiRenderability`。組の絵文字は字形 2 つで描かれるので「字形 1 つ」では判定しない）
+- 自分の原稿の表記に合わせる（`DocumentNotationSettings` / `DocumentNotationStore`、設定 > 辞書・学習、既定OFF・同期する。
+  重みは開発者モード・既定 2。2026-11-07）は、`<データフォルダ>/documents/` の文書（PDF・Word・テキスト。HTML は main thread
+  でしか読めないので対象外）から読みごとの表記の回数（IrohaCore の `NotationPreference`）を数え、モデルの採点に
+  「重み × Σ log((その表記の回数 + 1) / (表記の違いで最も多い表記の回数 + 1))」を足す（`NotationPreferenceEngine`。
+  `LatticeRescoringEngine` の下、モデルの直上に置くので、第一候補は表記を替えた文と合わせて採点し直し、候補ウィンドウは
+  ラティス候補の点数に足す）。文書の読み込み・分かち書き（`CFStringTokenizer`）は macOS 専用の `IrohaDocuments`。
+  プライベートモードの間は止める。必ず置き換えるユーザ辞書の形にしなかった理由と計測は
+  `experiments/document-vocabulary/README.md`（リポジトリ外。論文の本文を含む）。守ること:
+  ・**当てるのは同じ語の表記の違いだけ**（`NotationPreference.areVariants`: 漢字が包含関係、漢字とかなの組は漢字側に
+    送り仮名があるとき）。同じ読みの別の語（両方／療法）に当てると、文書と関係のない文で別の語に替えた
+    （iroha-bench-v1 で 27 項目）
+  ・「に・て・で・と」の直後の語は数えず採点もしない（において・ていく・といった の かなが動詞をかなに寄せた）。
+    読みが 1 拍の語（しゃ／者／車）と、その人が 1 通りしか書いていない語にも当てない
+  ・変えたら **論文の文と文書と関係のない文の両方**で測る: `iroha-cli docs bench <evalset.jsonl> --weights …` と、
+    `IROHA_DOCUMENTS=default IROHA_NOTATION_WEIGHT=2 iroha-cli ajimee testdata/{ajimee,iroha-bench-v1}/evaluation_items.json`。
+    2026-11-07（論文 12 本・重み 2）: 論文の文 375 件 225 → 231、iroha-bench-v1 2,248 → 2,244、AJIMEE 172 → 170
 - ユーザ定義の変換ルール（User Rewriter、`UserRewriteRule` / `UserRewriteRuleStore`）は
   エンジンのデコレータ鎖に入れず、コントローラが文節の候補ウィンドウを開くときに独立した
   候補生成源として合流させる（第一候補の直後に挿入。ライブ変換には影響しない）。
