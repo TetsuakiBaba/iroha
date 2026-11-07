@@ -17,7 +17,7 @@ import IrohaMLX
 //                                                 : 学習テキスト（U+EE02文脈 U+EE00読み U+EE01正解 の行、または
 //                                                   TSV 読み\t正解[\t文脈]）の各行に辞書ラティスの読み一致候補を付けて
 //                                                   JSONLに出す。zenzは読まない（experiments/reranker/ の学習データ）
-//   iroha-cli confidence <evaluation_items.json> [--margin 閾値] [--examples 件数]
+//   iroha-cli confidence <evaluation_items.json> [--margin 閾値] [--examples 件数] [--dump 出力.jsonl]
 //                                                 : 自信度（文字ごとのマージン）と誤変換箇所の対応を
 //                                                   AJIMEE-Benchで評価（zenz単体。誤変換検出の閾値設計用）
 //   iroha-cli mlx-steps <model.gguf...> [--steps 64] [--repeat 30] [--depth 0] [--capacity N]
@@ -584,11 +584,13 @@ case "confidence" where arguments.count >= 3:
     }
     var exampleThreshold: Float = 1.0
     var exampleCount = 12
+    var dumpPath: String?
     var optionIndex = 3
     while optionIndex + 1 < arguments.count {
         switch arguments[optionIndex] {
         case "--margin": exampleThreshold = Float(arguments[optionIndex + 1]) ?? exampleThreshold
         case "--examples": exampleCount = Int(arguments[optionIndex + 1]) ?? exampleCount
+        case "--dump": dumpPath = arguments[optionIndex + 1]
         default: break
         }
         optionIndex += 2
@@ -675,6 +677,36 @@ case "confidence" where arguments.count >= 3:
             chars.append(CharRecord(isError: mask[offset], margin: confidence.margin,
                                     logProb: confidence.logProb, relaxed: confidence.relaxed))
         }
+    }
+
+    // 1件ずつの結果を JSONL に書き出す（閾値を変えた集計や、怪しい変換を AI に渡す実験に使う）。
+    // 上位候補（n-best）も添える（AI に候補から選ばせる条件のため）
+    if let dumpPath {
+        struct DumpRecord: Encodable {
+            let index: String; let context: String; let reading: String; let output: String
+            let references: [String]; let hit: Bool
+            let margins: [Float?]; let logProbs: [Float]; let errorMask: [Bool]; let candidates: [String]
+        }
+        let contexts = Dictionary(items.map { ($0.index, $0.contextText) }, uniquingKeysWith: { first, _ in first })
+        FileManager.default.createFile(atPath: dumpPath, contents: nil)
+        guard let handle = FileHandle(forWritingAtPath: dumpPath) else {
+            FileHandle.standardError.write("書き出せません: \(dumpPath)\n".data(using: .utf8)!)
+            exit(1)
+        }
+        let encoder = JSONEncoder()
+        for record in records {
+            let context = contexts[record.index] ?? ""
+            let candidates = (try? await zenz.convert(reading: record.reading, context: context, candidateCount: 5)) ?? []
+            let dump = DumpRecord(index: record.index, context: context, reading: record.reading, output: record.output,
+                                  references: record.references, hit: record.hit,
+                                  margins: record.confidences.map { $0.margin.isFinite ? $0.margin : nil },
+                                  logProbs: record.confidences.map(\.logProb), errorMask: record.mask,
+                                  candidates: candidates)
+            guard var line = try? encoder.encode(dump) else { continue }
+            line.append(0x0A)
+            handle.write(line)
+        }
+        try? handle.close()
     }
 
     let errorItems = records.filter { !$0.hit }
