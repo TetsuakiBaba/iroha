@@ -513,9 +513,6 @@ final class IrohaInputController: IMKInputController {
             return true
         }
 
-        // AI変換のショートカット（プリセットごとに設定で自由に決める）: 未確定文字列をAIで変換する。
-        // ユーザが決めたキーなので、下の Control+. や Control+U 等の組み込みより先に見る
-        if isComposing || mode == .segmenting,
         // 原稿のフォルダの切り替え（`DocumentNotationSettings`。設定が ON のときだけ。効き方はプライベートモードと同じ）
         if DocumentNotationSettings.isEnabled, let shortcut = DocumentNotationSettings.profileShortcut,
            shortcut.matches(keyCode: event.keyCode, modifierFlags: event.modifierFlags) {
@@ -524,6 +521,9 @@ final class IrohaInputController: IMKInputController {
             return true
         }
 
+        // AI変換のショートカット（プリセットごとに設定で自由に決める）: 未確定文字列をAIで変換する。
+        // ユーザが決めたキーなので、下の Control+. や Control+U 等の組み込みより先に見る
+        if isComposing || mode == .segmenting,
            let preset = AICommitSettings.preset(
             matchingKeyCode: event.keyCode, modifierFlags: event.modifierFlags) {
             return handleAICommit(preset, client: client)
@@ -666,12 +666,11 @@ final class IrohaInputController: IMKInputController {
         privateItem.state = PrivateModeSettings.isEnabled ? .on : .off
         menu.addItem(privateItem)
 
-        let liveItem = NSMenuItem(
-            title: "ライブ変換",
-            action: #selector(toggleLiveConversion(_:)),
-        // 原稿のフォルダ（設定が ON で、文書があるときだけ）。下位メニューにせず、見出しの下に並べる
+        // 原稿のフォルダ（設定が ON で、文書があるときだけ）。下位メニューにせず、見出しの下に並べ、区切り線で囲む。
+        // 入力メニューは `indentationLevel` を無視するので（2026-11-07 ユーザの指摘）、字下げは題名の先頭の全角空白で付ける
         let profiles = DocumentNotationSettings.isEnabled ? DocumentNotationStore.shared.snapshot.names : []
         if !profiles.isEmpty {
+            menu.addItem(NSMenuItem.separator())
             let header = NSMenuItem(title: "原稿に合わせる", action: nil, keyEquivalent: "")
             header.isEnabled = false
             menu.addItem(header)
@@ -681,16 +680,20 @@ final class IrohaInputController: IMKInputController {
                 + profiles.map { (DocumentNotationSettings.displayName($0), $0, $0 == active) }
             for (index, choice) in choices.enumerated() {
                 let item = NSMenuItem(
-                    title: choice.title, action: #selector(selectDocumentProfile(_:)), keyEquivalent: "")
+                    title: "\u{3000}\u{3000}" + choice.title, action: #selector(selectDocumentProfile(_:)),
+                    keyEquivalent: "")
                 item.target = self
-                item.indentationLevel = 1
                 item.state = choice.isOn ? .on : .off
                 item.representedObject = choice.stored
                 item.tag = index
                 menu.addItem(item)
             }
+            menu.addItem(NSMenuItem.separator())
         }
 
+        let liveItem = NSMenuItem(
+            title: "ライブ変換",
+            action: #selector(toggleLiveConversion(_:)),
             keyEquivalent: ""
         )
         liveItem.target = self
@@ -795,9 +798,6 @@ final class IrohaInputController: IMKInputController {
         showNotice(text, hint: hint, lifetime: Self.privateModeNoticeLifetime)
     }
 
-    @objc private func openSettings(_ sender: Any?) {
-        (NSApp.delegate as? AppDelegate)?.openSettingsWindow()
-    }
     /// 入力メニューで原稿のフォルダを選んだ。IMK はメニューの操作を、項目そのものではなく
     /// 項目を `kIMKCommandMenuItemName` に入れた辞書で渡してくる
     @objc private func selectDocumentProfile(_ sender: Any?) {
@@ -836,6 +836,9 @@ final class IrohaInputController: IMKInputController {
         showNotice(text, hint: hint, lifetime: Self.privateModeNoticeLifetime)
     }
 
+    @objc private func openSettings(_ sender: Any?) {
+        (NSApp.delegate as? AppDelegate)?.openSettingsWindow()
+    }
 
     // メニュー操作はメインスレッドから来る（SettingsUIStateは@MainActor）
     @MainActor
