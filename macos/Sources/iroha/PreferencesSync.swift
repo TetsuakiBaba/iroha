@@ -36,6 +36,7 @@ final class PreferencesSync {
             SelectionSettings.onDemandHotkeyKey, SelectionSettings.excludedBundleIdsKey,
             SelectionSettings.characterCountKey,
             TranslationBackend.userDefaultsKey,
+            AIFixSettings.enabledKey, AIFixSettings.thresholdKey, AIFixSettings.shortcutKey,
             "ollamaModel", "lmStudioModel", "openAIModel", "openAIEndpoint", "claudeModel",
             "ollamaEndpoint", "lmStudioEndpoint",
             "autoUpdateCheck",

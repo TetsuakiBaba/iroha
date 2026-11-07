@@ -247,8 +247,79 @@ private struct InputSettingsTab: View {
                         + "⌃Returnは、テキストエディットなど多くのアプリでmacOSが右クリックメニューに使うため効きません。"
                         + "使うAIサービスは「モデル」タブで選びます。")
             }
+
+            if developerMode {
+                AIFixSection()
+            }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// 誤変換の疑いがあるときに「AIで直す」を出す（`AIFixSettings`。開発者モードの項目）
+private struct AIFixSection: View {
+    @AppStorage(AIFixSettings.enabledKey) private var enabled = false
+    @AppStorage(AIFixSettings.thresholdKey) private var threshold = Double(AIFixRule.defaultThreshold)
+    @AppStorage(AIFixSettings.shortcutKey) private var hotkey = AIFixSettings.defaultShortcut
+    @AppStorage(PrivateModeSettings.enabledKey) private var privateMode = false
+
+    var body: some View {
+        Section {
+            HelpToggle(
+                title: "誤変換の疑いがあるとき「AIで直す」を出す", isOn: $enabled,
+                help: "ライブ変換の結果に誤変換の疑いがあると、入力が止まったときに未確定文字列の右上に「AIで直す」を出します。"
+                    + "クリックするかショートカットを押すと、前の文脈・読み・変換結果をAI変換と同じAIサービス（「モデル」タブで選ぶ）に送り、"
+                    + "返ってきた案に未確定文字列を差し替えます。直後にBackspaceを押すと元の変換に戻ります。"
+                    + "AIに送るのは押したときだけです。AIの案で確定した文は、学習にも変換記録にも残しません。"
+                    + "疑いの判定には、モデルが変換したときの同音異義語どうしの確率の差を使います。"
+                    + "学習やユーザ辞書で差し替わった変換、固定した部分や英字を含む入力、80文字を超える読みでは出しません。"
+                    + "推論エンジンがMLXのとき、プライベートモードの間は働きません。"
+                    + "測定（iroha-bench-v1、閾値2.0、AIに直させた場合）では、正解率がClaude Opus 5.5で69.1%→74.3%、"
+                    + "Claude Sonnet 5.5で70.7%になり、Claude Haiku 5.5では差が確かめられず、"
+                    + "Apple Intelligenceは正しい変換を多く書き換えました。")
+            if privateMode && enabled {
+                PrivateModePausedNote(text: "プライベートモードの間は止めています")
+            }
+            HStack {
+                HelpLabel(
+                    title: "閾値",
+                    help: "同音異義語どうしの確率の差（自然対数）の最小値がこの値より小さい変換を疑います。"
+                        + "大きくするほど多くの変換に「AIで直す」が出ます。測定では、0.5で文の15〜18%、"
+                        + "1.0で28〜30%、2.0で50〜54%に出ました。")
+                Slider(value: $threshold, in: 0.25...3, step: 0.25)
+                    .disabled(!enabled)
+                Text(String(format: "%.2f", threshold))
+                    .monospacedDigit()
+                    .frame(width: 40, alignment: .trailing)
+            }
+            HStack {
+                HelpLabel(
+                    title: "ショートカット",
+                    help: "「AIで直す」が出ている間だけ効きます。「Ctrl+Option+A」のように、修飾キー（Cmd・Ctrl・Option・Shift）と"
+                        + "キーを + でつないで書きます。Cmd・Ctrl・Optionのどれかを含めてください。"
+                        + "空にするとクリックだけになります。")
+                TextField("", text: $hotkey, prompt: Text("例: \(AIFixSettings.defaultShortcut)"))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+                    .disabled(!enabled)
+                Group {
+                    let shortcut = AICommitShortcut(rawValue: hotkey)
+                    if shortcut.isEmpty {
+                        Text("クリックだけ").font(.caption).foregroundStyle(.secondary)
+                    } else if !shortcut.isValid {
+                        Text("認識できない形式です").font(.caption).foregroundStyle(.red)
+                    } else if !PrivateModeSettings.isUsable(shortcut) {
+                        Text("Cmd・Ctrl・Optionのどれかを含めてください").font(.caption).foregroundStyle(.red)
+                    } else {
+                        Image(systemName: "checkmark.circle").foregroundStyle(.green)
+                    }
+                }
+                Spacer()
+            }
+        } header: {
+            HelpSectionHeader(title: "AIで直す", developer: true)
+        }
     }
 }
 
@@ -2323,7 +2394,7 @@ private struct AboutSettingsTab: View {
                     title: "開発者モード", isOn: $developerMode,
                     help: "ONにすると、細かな調整や開発者向けの項目を設定画面に表示します"
                         + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ・"
-                        + "区切り記号で英字を入力・タップ入力（加速度センサを利用するとき）、"
+                        + "区切り記号で英字を入力・タップ入力（加速度センサを利用するとき）・AIで直す、"
                         + "辞書・学習: 自分の原稿に合わせる・記号・顔文字・絵文字を候補に出す、"
                         + "選択テキスト: 除外するアプリ、モデル: 推論エンジン・モデルファイルの指定・irohaを再起動・"
                         + "自分の入力で追加学習、情報: 推論の時間の表示・加速度センサを利用する）。"

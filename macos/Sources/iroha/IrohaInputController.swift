@@ -187,6 +187,28 @@ final class IrohaInputController: IMKInputController {
     /// ユーザが取り消した読み。同じ読みをもう一度直しにいかない
     private var typoRejectedReading: String?
 
+    /// 「AIで直す」（`AIFixSettings`）。休止で誤変換の疑いを調べる待ち
+    private var aiFixIdleTask: Task<Void, Never>?
+    /// 判定・依頼の世代。キーが来たら進めて、古い判定・依頼の結果を捨てる
+    private var aiFixGeneration = 0
+    /// 窓に「AIで直す」を出している対象（押したときに AI へ送る内容）
+    private var aiFixOffer: (reading: String, context: String, shown: String)?
+    /// AI に頼んで答えを待っている間のタスク
+    private var aiFixRequestTask: Task<Void, Never>?
+    /// 窓の知らせ（確認中・このままでよい・失敗）を閉じる待ち
+    private var aiFixMessageTask: Task<Void, Never>?
+    /// AI の案に差し替えた直後だけ持つ、元の変換（直後の Backspace で戻す）
+    private var aiFixUndo: (reading: String, original: String)?
+    /// 「今の変換 → AI の案」を `CaretPanel` に出しているか
+    private var aiFixFeedbackShown = false
+    private var aiFixFeedbackTask: Task<Void, Never>?
+    /// AI の案を取り消した読み。同じ読みには窓を出さない
+    private var aiFixRejectedReading: String?
+    /// AI の答えを待つ上限（押してから待っている操作なので、AI変換の 30 秒より短くする）
+    private static let aiFixTimeout = Duration.seconds(10)
+    /// 「今の変換 → AI の案」の知らせを閉じるまで（閉じても、次のキーまでは Backspace で戻せる）
+    private static let aiFixFeedbackLifetime = Duration.seconds(6)
+
     /// 差分が文節境界をまたいでいて 1 文節では直せないときに出す「文全体を訂正した候補」。
     /// 選ばれたら先頭の固定部分より後ろの文節をまとめて置き換える（`applyTypoWholeSentenceIfSelected`）
     private var typoWholeSentence: (candidate: String, reading: String, segmentOffset: Int)?
@@ -466,6 +488,10 @@ final class IrohaInputController: IMKInputController {
             closeCommitUndo()
         }
 
+        // 「AIで直す」: 窓が出ている間のショートカットと、AI の案に差し替えた直後の Backspace（元に戻す）。
+        // ほかのキーが来たら窓を閉じ、判定・依頼をやめる（次の休止で調べ直す）
+        if handleAIFixKey(event, client: client) { return true }
+
         // 予測変換の小窓: Tab で候補を選ぶ。選んだまま他のキーを押すと、その候補を入れてからキーを処理する
         if prediction != nil, mode == .composing, handlePredictionKey(event, client: client) {
             return true
@@ -588,6 +614,7 @@ final class IrohaInputController: IMKInputController {
     override func deactivateServer(_ sender: Any!) {
         commitCurrent(client: sender as? IMKTextInput)
         closeCommitUndo()
+        endAIFix()
         DeveloperOverlay.shared.hide()
         PrivateModeIndicator.shared.hide()
         TapInputFeedback.shared.detach(self)
@@ -612,6 +639,8 @@ final class IrohaInputController: IMKInputController {
         cancelPrediction()
         hideTypoFeedback()
         hideNotice()
+        // 「AIで直す」の窓も閉じる（この窓のクリックは iroha の窓なのでここには来ない）
+        if event != .scroll { cancelAIFix() }
         // カーソルが動いた先はアプリに聞くまで分からない。次のキーで出し直す
         PrivateModeIndicator.shared.hide()
         if event != .scroll, panelVisible {
@@ -2144,6 +2173,7 @@ final class IrohaInputController: IMKInputController {
         updateMarkedText(client: client, display: currentDisplay)
         // 打ち間違いの訂正はライブ変換のON/OFFに関わらず仕掛ける（読みを直すのが仕事なので）
         scheduleTypoCorrection()
+        scheduleAIFixCheck()
 
         // 予測の候補は手元の入力履歴を引くだけなので、変換の到着や休止を待たずに出す
         refreshPrediction()
@@ -2296,6 +2326,245 @@ final class IrohaInputController: IMKInputController {
             return prefix + lastConversion.result + addedKana + flushedSuffix
         }
         return prefix + composer.display
+    }
+
+    // MARK: - AIで直す（誤変換の疑いがあるとき。`AIFixSettings`）
+
+    /// 入力の休止を待って、表示しているライブ変換に誤変換の疑いがあるかを調べ、あれば窓を出す。
+    ///
+    /// 判定はモデル単体（`ZenzEngine.convertWithConfidence`）でもう一度貪欲に変換して得るマージンで行う。
+    /// 表示はデコレータの鎖（学習・ユーザ辞書・原稿の表記など）を通った結果なので、モデル単体の結果と
+    /// 一致したときだけ判定する（`AIFixRule.isSuspicious`）。追加の計算は休止 1 回につき生成 1 回。
+    /// AI には送らない（送るのは窓を押したとき）
+    private func scheduleAIFixCheck() {
+        aiFixIdleTask?.cancel()
+        aiFixIdleTask = nil
+        // 推論エンジンが MLX のときは働かせない（`zenz` を参照すると llama.cpp のモデルを読み込んでしまう）
+        guard AIFixSettings.isActive, Self.engineBackend == .llamaCpp, liveConversionEnabled,
+              aiFixRequestTask == nil, aiFixUndo == nil else { return }
+        let reading = composer.text
+        guard !reading.isEmpty, reading.count <= AIFixRule.maximumReadingLength,
+              reading != aiFixRejectedReading else { return }
+        let threshold = AIFixSettings.threshold
+        let delay = remainingTypoIdleDelay()
+        aiFixGeneration += 1
+        let generation = aiFixGeneration
+        aiFixIdleTask = Task { [weak self] in
+            guard let self else { return }
+            do { try await Task.sleep(for: delay) } catch { return }
+            // その読みのライブ変換が届くのを待つ（届いていなければ表示と比べられない）
+            let pendingConversion = await MainActor.run { self.conversionTask }
+            await pendingConversion?.value
+            let target: (context: String, shown: String)? = await MainActor.run {
+                guard generation == self.aiFixGeneration, self.canOfferAIFix(reading: reading),
+                      let shown = self.lastConversion?.result else { return nil }
+                return (self.conversionContext + self.fixedText, shown)
+            }
+            guard let target, !Task.isCancelled,
+                  let scored = try? await Self.zenz.convertWithConfidence(reading: reading, context: target.context),
+                  AIFixRule.isSuspicious(scored, shown: target.shown, reading: reading, threshold: threshold)
+            else { return }
+            await MainActor.run {
+                guard generation == self.aiFixGeneration, self.canOfferAIFix(reading: reading),
+                      self.lastConversion?.result == target.shown, let client = self.client() else { return }
+                self.offerAIFix(reading: reading, context: target.context, shown: target.shown, client: client)
+            }
+        }
+    }
+
+    /// 窓を出してよい状態か。第一版は合成の状態が単純なときだけにする（固定部分・英字・表示形の上書き・
+    /// 未解決のローマ字がない）。打ち間違いの訂正の知らせが出ている間も出さない（訂正の結果を先に見てもらう）
+    private func canOfferAIFix(reading: String) -> Bool {
+        AIFixSettings.isActive && mode == .composing && !isTranslating
+            && composer.text == reading && composer.pending.isEmpty
+            && fixedChunks.isEmpty && alphabetRun == nil && displayOverride == nil
+            && typoFeedback == nil && lastConversion?.reading == reading
+            && TranslationService.isAvailable
+    }
+
+    private func offerAIFix(reading: String, context: String, shown: String, client: IMKTextInput) {
+        // カーソル位置を教えてくれないアプリでは窓を出さない
+        guard let rect = caretRect(client: client, markedTextLength: currentDisplay.utf16.count) else { return }
+        aiFixOffer = (reading, context, shown)
+        AIFixBadge.shared.showOffer(near: rect, shortcut: AIFixSettings.shortcut?.rawValue) { [weak self] in
+            guard let self, let client = self.client() else { return }
+            self.requestAIFix(client: client)
+        }
+    }
+
+    /// 窓が出ている間のキーと、AI の案に差し替えた直後のキーを処理する。処理したら true
+    private func handleAIFixKey(_ event: NSEvent, client: IMKTextInput) -> Bool {
+        if let undo = aiFixUndo {
+            aiFixUndo = nil
+            hideAIFixFeedback()
+            if Int(event.keyCode) == kVK_Delete,
+               event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+               undoAIFix(undo, client: client) {
+                return true
+            }
+        }
+        if aiFixOffer != nil, let shortcut = AIFixSettings.shortcut,
+           shortcut.matches(keyCode: event.keyCode, modifierFlags: event.modifierFlags) {
+            requestAIFix(client: client)
+            return true
+        }
+        cancelAIFix()
+        return false
+    }
+
+    /// 窓に出している変換を AI に送る（窓のクリックかショートカット）
+    private func requestAIFix(client: IMKTextInput) {
+        guard let offer = aiFixOffer, canOfferAIFix(reading: offer.reading),
+              lastConversion?.result == offer.shown,
+              let rect = caretRect(client: client, markedTextLength: currentDisplay.utf16.count)
+        else {
+            cancelAIFix()
+            return
+        }
+        aiFixOffer = nil
+        aiFixIdleTask?.cancel()
+        aiFixIdleTask = nil
+        aiFixMessageTask?.cancel()
+        AIFixBadge.shared.showMessage("AIで確認中…", near: rect)
+        aiFixGeneration += 1
+        let generation = aiFixGeneration
+        let request = AIRequest(
+            instructions: AIFixRule.instructions,
+            userMessage: AIFixRule.message(context: offer.context, reading: offer.reading, conversion: offer.shown))
+        aiFixRequestTask = Task { [weak self] in
+            let result = await Self.runAIFixRequest(request)
+            guard let self else { return }
+            await MainActor.run {
+                guard generation == self.aiFixGeneration else { return }
+                self.aiFixRequestTask = nil
+                self.finishAIFix(result, offer: offer)
+            }
+        }
+    }
+
+    /// AI に頼む。`aiFixTimeout` を過ぎたら失敗にする
+    private static func runAIFixRequest(_ request: AIRequest) async -> Result<String, AIFailure> {
+        await withTaskGroup(of: Result<String, AIFailure>?.self) { group in
+            group.addTask { await TranslationService.runReportingFailure(request) }
+            group.addTask {
+                try? await Task.sleep(for: aiFixTimeout)
+                return Task.isCancelled ? nil : .failure(AIFailure(message: "10秒で答えが返りませんでした"))
+            }
+            for await result in group {
+                if let result {
+                    group.cancelAll()
+                    return result
+                }
+            }
+            return .failure(AIFailure(message: "答えが返りませんでした"))
+        }
+    }
+
+    private func finishAIFix(_ result: Result<String, AIFailure>, offer: (reading: String, context: String, shown: String)) {
+        // 待っている間にキーが来ていれば世代が進んでここには来ないが、念のため状態も確かめる
+        guard let client = client(), mode == .composing, composer.text == offer.reading,
+              lastConversion?.result == offer.shown else {
+            AIFixBadge.shared.hide()
+            return
+        }
+        switch result {
+        case .failure(let failure):
+            let reason = failure.message.count > 40 ? String(failure.message.prefix(40)) + "…" : failure.message
+            showAIFixMessage("AIに頼めませんでした（\(reason)）", client: client)
+        case .success(let output):
+            guard let answer = AIFixRule.answer(from: output, current: offer.shown) else {
+                showAIFixMessage("AIの答えを使えませんでした", client: client)
+                return
+            }
+            guard answer != offer.shown else {
+                showAIFixMessage("AI: このままでよいようです", client: client)
+                return
+            }
+            AIFixBadge.shared.hide()
+            // 文節に区切った未確定文字列にする（Enter で確定、Space で文節ごとに直せる）。
+            // AI の結果なので学習にも変換記録にも残さない（`segmentsFromAI`）
+            presentAIResultAsSegments(answer, reading: offer.reading, client: client)
+            aiFixUndo = (reading: offer.reading, original: offer.shown)
+            showAIFixFeedback(original: offer.shown, corrected: answer, client: client)
+        }
+    }
+
+    /// 窓に短い知らせを出し、少し経ったら閉じる
+    private func showAIFixMessage(_ text: String, client: IMKTextInput) {
+        guard let rect = caretRect(client: client, markedTextLength: currentDisplay.utf16.count) else {
+            AIFixBadge.shared.hide()
+            return
+        }
+        AIFixBadge.shared.showMessage(text, near: rect)
+        let generation = aiFixGeneration
+        aiFixMessageTask?.cancel()
+        aiFixMessageTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, let self else { return }
+            await MainActor.run {
+                guard generation == self.aiFixGeneration else { return }
+                AIFixBadge.shared.hide()
+            }
+        }
+    }
+
+    /// 「今の変換 → AI の案」を行の下の小窓に出す（打ち間違いの訂正の知らせと同じ書式）
+    private func showAIFixFeedback(original: String, corrected: String, client: IMKTextInput) {
+        guard let feedback = AIFixRule.feedback(original: original, corrected: corrected),
+              let rect = caretRect(client: client, markedTextLength: developerOverlayMarkedLength) else { return }
+        aiFixFeedbackShown = true
+        CaretPanel.shared.show(Self.attributedTypoFeedback(feedback), hint: Self.typoFeedbackHint, near: rect)
+        aiFixFeedbackTask?.cancel()
+        aiFixFeedbackTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.aiFixFeedbackLifetime)
+            guard !Task.isCancelled, let self else { return }
+            await MainActor.run { self.hideAIFixFeedback() }
+        }
+    }
+
+    private func hideAIFixFeedback() {
+        aiFixFeedbackTask?.cancel()
+        aiFixFeedbackTask = nil
+        guard aiFixFeedbackShown else { return }
+        aiFixFeedbackShown = false
+        CaretPanel.shared.hide()
+    }
+
+    /// AI の案に差し替えた直後の Backspace: 元のライブ変換の表示に戻す
+    private func undoAIFix(_ undo: (reading: String, original: String), client: IMKTextInput) -> Bool {
+        guard mode == .segmenting, segmentsFromAI, !panelVisible, composer.text == undo.reading else { return false }
+        segmentGeneration += 1
+        mode = .composing
+        segments = []
+        segmentBaseline = nil
+        segmentEngineBaseline = nil
+        segmentsFromAI = false
+        typoWholeSentence = nil
+        lastConversion = (undo.reading, undo.original)
+        aiFixRejectedReading = undo.reading
+        updateMarkedText(client: client, display: currentDisplay)
+        return true
+    }
+
+    /// 窓を閉じ、判定・依頼をやめる
+    private func cancelAIFix() {
+        aiFixIdleTask?.cancel()
+        aiFixIdleTask = nil
+        aiFixRequestTask?.cancel()
+        aiFixRequestTask = nil
+        aiFixMessageTask?.cancel()
+        aiFixMessageTask = nil
+        aiFixGeneration += 1
+        aiFixOffer = nil
+        AIFixBadge.shared.hide()
+    }
+
+    /// 確定・入力の終わり: 窓も取り消しも閉じる
+    private func endAIFix() {
+        cancelAIFix()
+        aiFixUndo = nil
+        aiFixRejectedReading = nil
+        hideAIFixFeedback()
     }
 
     // MARK: - AIで処理して確定（修飾キー+Enter）
@@ -2520,6 +2789,7 @@ final class IrohaInputController: IMKInputController {
         let effects = pendingCommitEffects
         pendingCommitEffects = []
         closeCommitUndo()
+        endAIFix()
         let undo = (isComposing || mode == .segmenting) && !text.isEmpty
             ? CommitUndo(
                 text: text, mode: mode, composer: composer, fixedChunks: fixedChunks,
