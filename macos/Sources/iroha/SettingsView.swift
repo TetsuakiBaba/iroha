@@ -273,7 +273,7 @@ private struct AIFixSection: View {
                     + "AIに送るのは押したときだけです。AIの案で確定した文は、学習にも変換記録にも残しません。"
                     + "疑いの判定には、モデルが変換したときの同音異義語どうしの確率の差を使います。"
                     + "学習やユーザ辞書で差し替わった変換、固定した部分や英字を含む入力、80文字を超える読みでは出しません。"
-                    + "推論エンジンがMLXのとき、プライベートモードの間は働きません。"
+                    + "推論エンジンがMLXのときは窓を出しません（ショートカットでは送れます）。プライベートモードの間は働きません。"
                     + "測定（iroha-bench-v1、閾値2.0、AIに直させた場合）では、正解率がClaude Opus 5.5で69.1%→74.3%、"
                     + "Claude Sonnet 5.5で70.7%になり、Claude Haiku 5.5では差が確かめられず、"
                     + "Apple Intelligenceは正しい変換を多く書き換えました。")
@@ -295,9 +295,9 @@ private struct AIFixSection: View {
             HStack {
                 HelpLabel(
                     title: "ショートカット",
-                    help: "「AIで直す」が出ている間だけ効きます。「Ctrl+Option+A」のように、修飾キー（Cmd・Ctrl・Option・Shift）と"
+                    help: "「AIで直す」が出ていなくても、入力中ならいつでも今の変換をAIに送ります。「Ctrl+Option+A」のように、修飾キー（Cmd・Ctrl・Option・Shift）と"
                         + "キーを + でつないで書きます。Cmd・Ctrl・Optionのどれかを含めてください。"
-                        + "空にするとクリックだけになります。")
+                        + "空にすると、窓のクリックだけになります。")
                 TextField("", text: $hotkey, prompt: Text("例: \(AIFixSettings.defaultShortcut)"))
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)

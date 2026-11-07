@@ -2375,11 +2375,25 @@ final class IrohaInputController: IMKInputController {
     /// 窓を出してよい状態か。第一版は合成の状態が単純なときだけにする（固定部分・英字・表示形の上書き・
     /// 未解決のローマ字がない）。打ち間違いの訂正の知らせが出ている間も出さない（訂正の結果を先に見てもらう）
     private func canOfferAIFix(reading: String) -> Bool {
-        AIFixSettings.isActive && mode == .composing && !isTranslating
-            && composer.text == reading && composer.pending.isEmpty
-            && fixedChunks.isEmpty && alphabetRun == nil && displayOverride == nil
-            && typoFeedback == nil && lastConversion?.reading == reading
-            && TranslationService.isAvailable
+        aiFixBlocker(reading: reading) == nil && typoFeedback == nil
+    }
+
+    /// 今の未確定文字列を AI に送れないときの理由（窓に出す）。送れるなら nil
+    private func aiFixBlocker(reading: String) -> String? {
+        guard AIFixSettings.isActive, mode == .composing, !isTranslating, composer.text == reading else {
+            return "今の入力はAIに送れません"
+        }
+        guard TranslationService.isAvailable else { return "AIサービスが設定されていません（設定 > モデル）" }
+        guard reading.count <= AIFixRule.maximumReadingLength else {
+            return "\(AIFixRule.maximumReadingLength)文字を超える読みは送れません"
+        }
+        guard fixedChunks.isEmpty, alphabetRun == nil, displayOverride == nil else {
+            return "固定した部分・英字・表示形の切り替えを含む入力は送れません"
+        }
+        guard composer.pending.isEmpty, lastConversion?.reading == reading else {
+            return "変換が終わってから押してください"
+        }
+        return nil
     }
 
     private func offerAIFix(reading: String, context: String, shown: String, client: IMKTextInput) {
@@ -2403,8 +2417,22 @@ final class IrohaInputController: IMKInputController {
                 return true
             }
         }
-        if aiFixOffer != nil, let shortcut = AIFixSettings.shortcut,
+        // ショートカットは窓が出ていなくても、入力中ならいつでも今の変換を送る（2026-11-08）
+        if AIFixSettings.isActive, mode == .composing, !composer.text.isEmpty,
+           let shortcut = AIFixSettings.shortcut,
            shortcut.matches(keyCode: event.keyCode, modifierFlags: event.modifierFlags) {
+            if aiFixRequestTask != nil { return true }  // 確認中に押し直したときは何もしない
+            if aiFixOffer == nil {
+                let reading = composer.text
+                cancelAIFix()
+                if let reason = aiFixBlocker(reading: reading) {
+                    showAIFixMessage(reason, client: client)
+                    return true
+                }
+                if let shown = lastConversion?.result {
+                    aiFixOffer = (reading, conversionContext + fixedText, shown)
+                }
+            }
             requestAIFix(client: client)
             return true
         }
@@ -2412,9 +2440,9 @@ final class IrohaInputController: IMKInputController {
         return false
     }
 
-    /// 窓に出している変換を AI に送る（窓のクリックかショートカット）
+    /// 窓に出している変換（窓が出ていなければショートカットを押したときの変換）を AI に送る
     private func requestAIFix(client: IMKTextInput) {
-        guard let offer = aiFixOffer, canOfferAIFix(reading: offer.reading),
+        guard let offer = aiFixOffer, aiFixBlocker(reading: offer.reading) == nil,
               lastConversion?.result == offer.shown,
               let rect = caretRect(client: client, markedTextLength: currentDisplay.utf16.count)
         else {

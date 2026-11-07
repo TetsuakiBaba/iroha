@@ -319,7 +319,7 @@ cd macos && swift build --build-system native && swift test --build-system nativ
 - AIで直す（`AIFixSettings` / `AIFixBadge`、判定は IrohaCore の `AIFixRule`、設定 > 入力、開発者モード・既定OFF・同期する。
   2026-11-07）は、入力の休止（打ち間違いの訂正と同じ待ち時間）でモデル単体の `ZenzEngine.convertWithConfidence` をもう一度呼び、
   その結果が表示中のライブ変換と一致し、文字ごとのマージンの最小値が閾値（既定 1.0）より小さければ、未確定文字列の右上に
-  「AIで直す」を出す。クリックかショートカット（既定 Ctrl+Option+A、窓が出ている間だけ効く）で、前の文脈・読み（カタカナ）・
+  「AIで直す」を出す。クリックかショートカット（既定 Ctrl+Option+A。2026-11-08 から窓が出ていなくても入力中ならいつでも送る）で、前の文脈・読み（カタカナ）・
   変換結果を AI変換と同じ接続先に送り、案を `presentAIResultAsSegments` で文節にして差し替え、「今の変換 → AI の案」を
   `CaretPanel` に出す。直後の Backspace で元の変換に戻す。測定と設計の記録は `experiments/ai-fallback/`（リポジトリ外。
   README.md が測定、DESIGN.md が設計案）。守ること:
