@@ -166,6 +166,59 @@ public struct NotationPreference: Codable, Sendable, Equatable {
             .map(\.key)
     }
 
+    // MARK: - 同じ読みの別の語の選び分け（話題で切り替える。NotationPreferenceEngine）
+
+    /// 語 `surface`（読み `reading`）を選ぶことの、この文書の語の使い方から見た不利さ（0 以下）。
+    ///
+    /// 同じ読みの語を「語」ごとにまとめ（表記の違いは同じ語として足す。`areVariants`）、その読みで最も多く
+    /// 使った語の回数を m、`surface` の語の回数を c として log((c + 1) / (m + 1))。「ふとう」を「符頭」と
+    /// 14 回書き「不等」を書いていない文書なら、「不等」は log(1/15)。
+    ///
+    /// 表記の好み（`penalty`）と違い、同じ読みの別の語にも当てる。どの文書の話題でも当てると、
+    /// 文書と関係のない文で「両方→療法」のように替える（2026-11-07）ので、エンジンは入力の話題が
+    /// その文書に近いときだけ、近さをかけて使う（`DocumentTopicIndex`）。
+    /// 当てない条件（読みが 1 拍・数える語でない・その読みを `minimumCount` 回未満しか使っていない）は `penalty` と同じ。
+    ///
+    /// 比べるのは漢字かカタカナを含む語どうしだけ（ひらがなだけの語は不利にもせず、比べる相手にもしない）。
+    /// 狙いは専門用語の選び分け（記譜／寄付）で、ひらがなを含めると 又は→または、時→とき、者→もの のような
+    /// 書き方の違い（`areVariants` では送り仮名が無いので別の語に分けている）まで話題で替えた（2026-11-07、iroha-bench-v1）
+    public func wordPenalty(surface: String, reading: String, minimumCount: Int = 2) -> Double {
+        guard Self.moraCount(reading) >= 2, Self.isCountable(surface), Self.hasKanjiOrKatakana(surface),
+              let surfaces = counts[reading], surfaces.values.reduce(0, +) >= minimumCount
+        else { return 0 }
+        func wordCount(_ word: String) -> Int {
+            surfaces.filter { $0.key == word || Self.areVariants($0.key, word) }.values.reduce(0, +)
+        }
+        guard let most = surfaces.keys.filter(Self.hasKanjiOrKatakana).map(wordCount).max() else { return 0 }
+        return log(Double(wordCount(surface) + 1) / Double(most + 1))
+    }
+
+    /// 漢字かカタカナ（「ー」を除く）を含むか。別の語の選び分けは、この語どうしでだけ比べる
+    static func hasKanjiOrKatakana(_ surface: String) -> Bool {
+        surface.unicodeScalars.contains { DocumentText.isKanji($0) || (DocumentText.isKatakana($0) && $0.value != 0x30FC) }
+    }
+
+    /// 分かち書きした文全体の、別の語の選び分けから見た不利さ（決まった言い回しの位置は除く）
+    public func wordPenalty(_ tokens: [ReadingToken], minimumCount: Int = 2) -> Double {
+        tokens.indices.reduce(0) { sum, index in
+            guard let reading = tokens[index].reading, !Self.isFixedKanaPosition(tokens, index) else { return sum }
+            return sum + wordPenalty(surface: tokens[index].surface, reading: reading, minimumCount: minimumCount)
+        }
+    }
+
+    /// 語 `surface` の代わりに試す、同じ読みの別の語（`minimumCount` 回以上・回数の多い順。表記の違いは除く）
+    public func wordAlternatives(for surface: String, reading: String, minimumCount: Int = 2) -> [String] {
+        guard Self.moraCount(reading) >= 2, Self.isCountable(surface), Self.hasKanjiOrKatakana(surface),
+              let surfaces = counts[reading] else { return [] }
+        return surfaces
+            .filter {
+                $0.key != surface && !Self.areVariants($0.key, surface) && $0.value >= minimumCount
+                    && Self.hasKanjiOrKatakana($0.key)
+            }
+            .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+            .map(\.key)
+    }
+
     /// 2 つの表記が「同じ語の表記の違い」か。
     ///
     /// - 両方に漢字があるとき: 片方の漢字がもう片方の漢字にすべて含まれる（切替え／切り替え）

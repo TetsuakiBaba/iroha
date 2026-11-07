@@ -29,6 +29,7 @@ final class PreferencesSync {
             PrivateModeSettings.shortcutKey, PrivateModeSettings.caretIndicatorKey,
             SymbolCandidateSettings.enabledKey, SecureInputNoticeSettings.enabledKey,
             DocumentNotationSettings.enabledKey, DocumentNotationSettings.weightKey,
+            DocumentNotationSettings.topicWeightKey,
             TypoNormalizerSettings.enabledKey, TypoNormalizerSettings.thresholdKey,
             TypoNormalizerSettings.delayMillisecondsKey, TypoNormalizerSettings.minimumLengthKey,
             SelectionSettings.enabledKey, SelectionSettings.triggerModeKey,

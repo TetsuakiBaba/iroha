@@ -179,3 +179,97 @@ final class NotationPreferenceContextTests: XCTestCase {
         XCTAssertLessThan(preference.penalty(tokens([("おい", "おい"), ("て", "て")])), 0)
     }
 }
+
+final class DocumentTopicTests: XCTestCase {
+
+    private func sentence(_ words: [(String, String)]) -> [ReadingToken] {
+        words.map { ReadingToken(surface: $0.0, reading: $0.1) }
+    }
+
+    func testWordPenaltyGroupsVariantsAsOneWord() {
+        let preference = NotationPreference(counts: ["ふとう": ["符頭": 14], "あげ": ["挙げ": 3, "あげ": 2, "上げ": 1]])
+        XCTAssertEqual(preference.wordPenalty(surface: "符頭", reading: "ふとう"), 0)
+        XCTAssertEqual(preference.wordPenalty(surface: "不等", reading: "ふとう"), log(1.0 / 15.0), accuracy: 1e-9)
+        // 挙げ＋あげ（5 回）と 上げ＋あげ（3 回）を語として比べる
+        XCTAssertEqual(preference.wordPenalty(surface: "上げ", reading: "あげ"), log(4.0 / 6.0), accuracy: 1e-9)
+        XCTAssertEqual(preference.wordAlternatives(for: "不等", reading: "ふとう"), ["符頭"])
+        // 表記の違いは別の語として試さない
+        XCTAssertEqual(preference.wordAlternatives(for: "あげ", reading: "あげ"), [])
+    }
+
+    func testTopicIndexIgnoresWordsInEveryDocument() {
+        let music = [sentence([("研究", "けんきゅう"), ("記譜", "きふ"), ("演奏", "えんそう")])]
+        let vision = [sentence([("研究", "けんきゅう"), ("白杖", "はくじょう"), ("歩行", "ほこう")])]
+        let index = DocumentTopicIndex(documents: [music, vision])
+        XCTAssertEqual(index.nearest(sentence([("演奏", "えんそう")]))?.index, 0)
+        XCTAssertEqual(index.nearest(sentence([("歩行", "ほこう")]))?.index, 1)
+        // どの文書にも出る語・文書に無い語だけなら話題は決まらない
+        XCTAssertNil(index.nearest(sentence([("研究", "けんきゅう"), ("掃除機", "そうじき")])))
+    }
+
+    func testSharedTokensExcludeTheChoice() {
+        let shared = NotationPreferenceEngine<FakeTopicScorer>.sharedTokens([
+            sentence([("不等", "ふとう"), ("の", "の"), ("演奏", "えんそう")]),
+            sentence([("符頭", "ふとう"), ("の", "の"), ("演奏", "えんそう")]),
+        ])
+        XCTAssertEqual(shared.map(\.surface), ["の", "演奏"])
+    }
+
+    func testDifferentWordIsChosenOnlyWhenTopicIsNear() async throws {
+        let tokenizer = TopicTokenizer()
+        let music = [sentence([("符頭", "ふとう"), ("演奏", "えんそう"), ("楽譜", "がくふ")])]
+        let other = [sentence([("白杖", "はくじょう"), ("歩行", "ほこう")])]
+        let preferences = [
+            NotationPreference(counts: ["ふとう": ["符頭": 14]]), NotationPreference(counts: [:]),
+        ]
+        let configuration = NotationPreferenceConfiguration(
+            preference: .empty, weight: 0, documentPreferences: preferences,
+            topicIndex: DocumentTopicIndex(documents: [music, other]), topicWeight: 4)
+        let scores: [String: Float] = ["不等の演奏": -1.0, "符頭の演奏": -2.0, "不等の歩行": -1.0, "符頭の歩行": -2.0]
+        // 話題が音楽の文書に近い（演奏）→ 符頭
+        let near = NotationPreferenceEngine(base: FakeTopicScorer(generated: "不等の演奏", scores: scores),
+                                            tokenizer: tokenizer) { configuration }
+        let nearResult = try await near.convert(reading: "ふとうのえんそう", context: "", candidateCount: 1)
+        XCTAssertEqual(nearResult, ["符頭の演奏"])
+        // 話題が別の文書（歩行）→ 試さない
+        let far = NotationPreferenceEngine(base: FakeTopicScorer(generated: "不等の歩行", scores: scores),
+                                           tokenizer: tokenizer) { configuration }
+        let farResult = try await far.convert(reading: "ふとうのほこう", context: "", candidateCount: 1)
+        XCTAssertEqual(farResult, ["不等の歩行"])
+    }
+}
+
+private actor FakeTopicScorer: ConversionEngine, CandidateScorer {
+    let generated: String
+    let scores: [String: Float]
+
+    init(generated: String, scores: [String: Float]) {
+        self.generated = generated
+        self.scores = scores
+    }
+
+    func convert(reading: String, context: String, candidateCount: Int) async throws -> [String] { [generated] }
+
+    func score(candidates: [String], reading: String, context: String) async throws -> [Float] {
+        candidates.map { scores[$0] ?? -100 }
+    }
+}
+
+/// 「符頭／不等」「の」「演奏」「歩行」だけを知っている偽の分かち書き
+private struct TopicTokenizer: ReadingTokenizer {
+    func tokens(in text: String) -> [ReadingToken] {
+        let words = ["符頭": "ふとう", "不等": "ふとう", "の": "の", "演奏": "えんそう", "歩行": "ほこう"]
+        var result: [ReadingToken] = []
+        var rest = Substring(text)
+        while !rest.isEmpty {
+            if let (word, reading) = words.first(where: { rest.hasPrefix($0.key) }) {
+                result.append(ReadingToken(surface: word, reading: reading))
+                rest = rest.dropFirst(word.count)
+            } else {
+                result.append(ReadingToken(surface: String(rest.first!), reading: nil))
+                rest = rest.dropFirst()
+            }
+        }
+        return result
+    }
+}

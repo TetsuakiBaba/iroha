@@ -129,7 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PreferencesSync.shared.start()
         // 他のMacからの同期でデータフォルダが変わったら辞書・学習・ルール・設定を読み直す
         DataDirectoryWatcher.shared.start()
-        // 自分の原稿の表記に合わせる設定が ON なら、文書を裏で読んでおく
+        // 自分の原稿に合わせる設定が ON なら、文書を裏で読んでおく
         DocumentNotationStore.shared.reloadIfNeeded()
 
         // 変換モデルが無ければバックグラウンドでダウンロード開始

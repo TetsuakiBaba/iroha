@@ -595,31 +595,35 @@ private struct TypoThresholdRow: View {
 
 // MARK: - 辞書・学習
 
-/// 自分の原稿の表記に合わせる（`DocumentNotationSettings`）
+/// 自分の原稿に合わせる（`DocumentNotationSettings`）
 private struct DocumentNotationSection: View {
     let privateMode: Bool
     let developerMode: Bool
     @AppStorage(DocumentNotationSettings.enabledKey) private var enabled = false
     @AppStorage(DocumentNotationSettings.weightKey) private var weight = DocumentNotationSettings.defaultWeight
+    @AppStorage(DocumentNotationSettings.topicWeightKey) private var topicWeight = DocumentNotationSettings.defaultTopicWeight
     @ObservedObject private var store = DocumentNotationStore.shared
     @ObservedObject private var uiState = SettingsUIState.shared
 
     var body: some View {
-        Section("自分の原稿の表記に合わせる") {
+        Section("自分の原稿に合わせる") {
             HelpToggle(
-                title: "原稿の表記に合わせる", isOn: $enabled,
+                title: "原稿の表記と用語に合わせる", isOn: $enabled,
                 help: "フォルダに置いた自分の文書（PDF・Word・テキスト）で、同じ読みの語をどの表記で何回書いたかを数え、"
-                    + "多く使った表記が変換で選ばれやすくなるようにします"
+                    + "変換に2つのことを加えます。"
+                    + "表記: 多く使った書き方が選ばれやすくなります"
                     + "（「及び」を53回・「および」を30回書いていれば「及び」になりやすい）。"
-                    + "必ず置き換えるのではなく、変換モデルの判断に加えるだけなので、文脈に合わない書き換えはしません。"
-                    + "対象は、送り仮名やかな書きの違いのように同じ語の書き分けで、あなたが2通り以上の書き方をしている語だけです。"
-                    + "同じ読みの別の語（両方と療法など）は選び分けません。"
+                    + "対象は送り仮名やかな書きの違いのように同じ語の書き分けで、あなたが2通り以上の書き方をしている語だけです。"
+                    + "用語: 入力している内容（カーソルの手前の文と、変換中の文）が文書のどれかと同じ話題のときだけ、"
+                    + "その文書で使った語が、同じ読みの別の語より選ばれやすくなります"
+                    + "（楽譜の論文の話題なら「きふ」が「寄付」より「記譜」に）。話題が違う文章では何もしません。"
+                    + "どちらも必ず置き換えるのではなく、変換モデルの判断に加えるだけなので、文脈に合わない書き換えはしません。"
                     + "「において」「ていく」「という」のような言い回しの中のかなは数えません。"
                     + "文書はデータフォルダの documents フォルダに置きます。文書を足したり入れ替えたりすると、1分ほどで読み直します。"
                     + "文書の中身はこのMacの中だけで使い、どこにも送りません。"
                     + "この設定は他のMacと同期します。")
             if enabled, privateMode {
-                PrivateModePausedNote(text: "プライベートモードの間は、原稿の表記に合わせるのを止めています")
+                PrivateModePausedNote(text: "プライベートモードの間は、原稿に合わせるのを止めています")
             }
             LabeledContent("文書のフォルダ") {
                 HStack {
@@ -642,15 +646,28 @@ private struct DocumentNotationSection: View {
             if developerMode {
                 LabeledContent {
                     HStack {
-                        Slider(value: $weight, in: 0.5...4, step: 0.5).frame(width: 180)
+                        Slider(value: $weight, in: 0...4, step: 0.5).frame(width: 180)
                         Text(String(format: "%.1f", weight)).monospacedDigit().frame(width: 32)
                     }
                 } label: {
                     HelpLabel(
-                        title: "合わせる強さ",
-                        help: "変換モデルの点数に、原稿の書き方から見た点数をどれだけの重みで足すかです（既定 2.0）。"
+                        title: "表記に合わせる強さ",
+                        help: "変換モデルの点数に、原稿の書き方から見た点数をどれだけの重みで足すかです（既定 2.0、0 で使わない）。"
                             + "大きいほど原稿の表記に寄りますが、別の語への書き換えも起きやすくなります"
                             + "（論文12本で測ったとき、4.0 では「おすすめ」が「お進め」になりました）。")
+                }
+                LabeledContent {
+                    HStack {
+                        Slider(value: $topicWeight, in: 0...4, step: 0.5).frame(width: 180)
+                        Text(String(format: "%.1f", topicWeight)).monospacedDigit().frame(width: 32)
+                    }
+                } label: {
+                    HelpLabel(
+                        title: "用語に合わせる強さ",
+                        help: "話題が近い文書の語の使い方から見た点数を、話題の近さ（0〜1）とこの重みをかけて足します"
+                            + "（既定 2.0、0 で使わない）。論文12本で測ったとき、2.0 では同じ原稿の続きの文で正解が 231 から 237 に増え、"
+                            + "関係のない文はほぼ変わりませんでした。4.0 では 241 に増えますが、"
+                            + "ほかの研究報告の文で「期間」が「機関」になるような書き換えが出ました。")
                 }
             }
         }
@@ -2211,7 +2228,7 @@ private struct AboutSettingsTab: View {
                     help: "ONにすると、細かな調整や開発者向けの項目を設定画面に表示します"
                         + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ・"
                         + "区切り記号で英字を入力・タップ入力（加速度センサを利用するとき）、"
-                        + "辞書・学習: 原稿の表記に合わせる強さ・記号・顔文字・絵文字を候補に出す、"
+                        + "辞書・学習: 原稿の表記・用語に合わせる強さ・記号・顔文字・絵文字を候補に出す、"
                         + "選択テキスト: 除外するアプリ、モデル: 推論エンジン・モデルファイルの指定・irohaを再起動・"
                         + "自分の入力で追加学習、情報: 推論の時間の表示・加速度センサを利用する）。"
                         + "OFFにしても項目が見えなくなるだけで、変えた設定はそのまま効きます"

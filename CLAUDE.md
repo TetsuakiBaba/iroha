@@ -234,8 +234,8 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   確定しても学習しない（`unlearnableCandidates`。漢字・かなだけの候補は除く。覚えると「わらい」だけ打ったときに
   ライブ変換が絵文字になる）。macOS が描けない絵文字は OS の版の対応表ではなく Apple Color Emoji の字形で除く
   （`EmojiRenderability`。組の絵文字は字形 2 つで描かれるので「字形 1 つ」では判定しない）
-- 自分の原稿の表記に合わせる（`DocumentNotationSettings` / `DocumentNotationStore`、設定 > 辞書・学習、既定OFF・同期する。
-  重みは開発者モード・既定 2。2026-11-07）は、`<データフォルダ>/documents/` の文書（PDF・Word・テキスト。HTML は main thread
+- 自分の原稿に合わせる（`DocumentNotationSettings` / `DocumentNotationStore`、設定 > 辞書・学習、既定OFF・同期する。
+  表記・用語の 2 つの重みは開発者モード・既定 2。2026-11-07）は、`<データフォルダ>/documents/` の文書（PDF・Word・テキスト。HTML は main thread
   でしか読めないので対象外）から読みごとの表記の回数（IrohaCore の `NotationPreference`）を数え、モデルの採点に
   「重み × Σ log((その表記の回数 + 1) / (表記の違いで最も多い表記の回数 + 1))」を足す（`NotationPreferenceEngine`。
   `LatticeRescoringEngine` の下、モデルの直上に置くので、第一候補は表記を替えた文と合わせて採点し直し、候補ウィンドウは
@@ -250,6 +250,14 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   ・変えたら **論文の文と文書と関係のない文の両方**で測る: `iroha-cli docs bench <evalset.jsonl> --weights …` と、
     `IROHA_DOCUMENTS=default IROHA_NOTATION_WEIGHT=2 iroha-cli ajimee testdata/{ajimee,iroha-bench-v1}/evaluation_items.json`。
     2026-11-07（論文 12 本・重み 2）: 論文の文 375 件 225 → 231、iroha-bench-v1 2,248 → 2,244、AJIMEE 172 → 170
+  ・**用語（同じ読みの別の語。記譜／寄付）は話題で切り替える**（`topicWeight`、`DocumentTopicIndex`）。左文脈と、候補のどれにも
+    共通する語から最も近い文書と近さ（入力の話題語のうちその文書に出る割合を idf で重み付け、0〜1）を求め、その文書での
+    語の回数から見た不利さ（`NotationPreference.wordPenalty`）に「重み × 近さ」をかけて足す。判定している語そのものは
+    話題の根拠にしない。比べるのは漢字・カタカナを含む語どうしだけ（ひらがなを含めると 又は→または・時→とき を替えた）。
+    近さを文書全体との余弦類似度にすると 0.05〜0.2 にしかならず効かなかった。
+    測り方は `docs bench --context previous --holdout sentence|document --topic-weights …`（sentence = 同じ原稿の続き、
+    document = 別の話題の原稿）。2026-11-07（表記 2・用語 2）: 同じ原稿の続き 231 → 237、別の話題 229 → 230、
+    iroha-bench-v1 は表記だけと比べて −1、AJIMEE +1。用語 4 は 241 だが研究報告の文で 期間→機関 などが出た
 - ユーザ定義の変換ルール（User Rewriter、`UserRewriteRule` / `UserRewriteRuleStore`）は
   エンジンのデコレータ鎖に入れず、コントローラが文節の候補ウィンドウを開くときに独立した
   候補生成源として合流させる（第一候補の直後に挿入。ライブ変換には影響しない）。

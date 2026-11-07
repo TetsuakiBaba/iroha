@@ -12,17 +12,20 @@ import IrohaDocuments
 //       文書の文から評価用の項目（読み・正解・直前の文）を作る。読みは分かち書きの自動推定なので、
 //       人が確かめて直してから使う（固有名詞の読みを間違えることがある）
 //   iroha-cli docs bench <評価.jsonl> [フォルダ] [--context none|previous] [--examples N] [--dump 出力.jsonl]
-//                        [--weights 0.5,1,2] [--show-weight 重み] [--weights-dump 出力.jsonl]
+//                        [--weights 0.5,1,2] [--topic-weights 2,4] [--notation-weight 2] [--holdout document|sentence]
+//                        [--show-setting 表記の重み:話題の重み] [--weights-dump 出力.jsonl]
 //       評価項目を今のエンジン（IME と同じ構成・ユーザ辞書と学習は空）で変換し、
 //       ① 文の完全一致・CER、② 間違えた文のうち「ほかの文書に出てくる語」を出せていない文の数、
 //       ③ その語を単独で変換したときの第一候補・候補 10 件の中の順位、
 //       ④ 変換結果を表記の好みで書き換えたときに直る文・壊れる文の数（占める割合の下限ごと）、
-//       ⑤ 表記の好みを採点に加えたとき（NotationPreferenceEngine）の重みごとの完全一致・直した・壊した を出す。
+//       ⑤ 表記の好み（--weights）と話題で切り替える項（--topic-weights、表記の重みは --notation-weight）を採点に
+//       加えたとき（NotationPreferenceEngine）の完全一致・直した・壊した を出す。数え方は --holdout（既定 document）
 //       語の一覧は試す文の文書を除いて作る（leave-one-document-out。その文書を書く前の状態に近づける）
 
 // 表記の好みを採点に加える（NotationPreferenceEngine。2026-11-07、段階 1）:
 //   どのコマンドでも、環境変数 IROHA_DOCUMENTS=<フォルダ>（default で <データフォルダ>/documents）を付けると
-//   その文書で数えた表記の好みを採点に加える。重みは IROHA_NOTATION_WEIGHT（既定 1）。
+//   その文書で数えた表記の好みを採点に加える。重みは IROHA_NOTATION_WEIGHT（既定 1）、話題で切り替える項の重みは
+//   IROHA_TOPIC_WEIGHT（既定 0 = 使わない）。
 //   docs bench は文ごとに「試す文の文書を除いた数え方」に差し替え、--weights の重みごとに測る
 
 /// 変換エンジンが変換のたびに読む、表記の好みの設定（評価では文ごとに差し替える）
@@ -40,10 +43,15 @@ final class DocumentNotationContext: @unchecked Sendable {
         }
         let folder = path == "default" ? DocumentCollection.defaultFolderURL : URL(fileURLWithPath: path, isDirectory: true)
         let weight = Double(env["IROHA_NOTATION_WEIGHT"] ?? "") ?? 1
+        let topicWeight = Double(env["IROHA_TOPIC_WEIGHT"] ?? "") ?? 0
         let collection = DocumentCollection(folder: folder)
-        value = NotationPreferenceConfiguration(preference: collection.notation, weight: weight)
+        value = NotationPreferenceConfiguration(
+            preference: collection.notation, weight: weight,
+            documentPreferences: collection.documents.map(\.notation),
+            topicIndex: DocumentTopicIndex(documents: collection.documents.map(\.sentences)), topicWeight: topicWeight)
         FileHandle.standardError.write(
-            "表記の好み: 文書 \(collection.documents.count) 件（\(folder.path)）・重み \(weight)\n".data(using: .utf8)!)
+            "表記の好み: 文書 \(collection.documents.count) 件（\(folder.path)）・表記の重み \(weight)・話題の重み \(topicWeight)\n"
+                .data(using: .utf8)!)
     }
 
     var configuration: NotationPreferenceConfiguration {
@@ -445,52 +453,105 @@ private func documentBench(_ arguments: [String]) async {
         for example in tally.brokenExamples.prefix(exampleCount) { print(example) }
     }
 
-    // ⑤ 表記の好みを採点に加える（NotationPreferenceEngine。文ごとに、その文の文書を除いた数え方で）
+    // ⑤ 表記の好み・話題で切り替える項を採点に加える（NotationPreferenceEngine）。
+    // 数え方は --holdout で選ぶ: document = 試す文の文書を除く（別の話題の新しい原稿を書く場合）、
+    // sentence = 試す文 1 文だけを除く（同じ原稿・同じ話題の続きを書く場合）
+    let holdout = options["holdout"] == "sentence" ? "sentence" : "document"
+    let notationWeightForTopic = Double(options["notation-weight"] ?? "") ?? 2
+    let topicWeights = (options["topic-weights"] ?? "").split(separator: ",").compactMap { Double($0) }
+    let settings: [(notation: Double, topic: Double)] = weights.map { ($0, 0) } + topicWeights.map { (notationWeightForTopic, $0) }
+    func label(_ setting: (notation: Double, topic: Double)) -> String {
+        String(format: "%g:%g", setting.notation, setting.topic)
+    }
     print("")
-    print("■ 表記の好みを採点に加えた場合（モデルの対数確率 ＋ 重み × 不利さ。文書を除いた数え方）")
-    print(String(format: "  重み 0（基準）: 完全一致 %d (%.1f%%)  平均 %.1fms", exact,
+    print("■ 採点に加えた場合（モデルの対数確率 ＋ 表記の重み × 不利さ ＋ 話題の重み × 近さ × 別の語の不利さ）")
+    print("  数え方: \(holdout == "sentence" ? "試す文 1 文だけを除く（同じ原稿の続き）" : "試す文の文書を除く（別の話題の原稿）")"
+          + "・左文脈: \(usesContext ? "直前の文" : "なし")")
+    print(String(format: "  基準（表記 0・話題 0）: 完全一致 %d (%.1f%%)  平均 %.1fms", exact,
                  Double(exact) / Double(items.count) * 100, totalMilliseconds / Double(items.count)))
-    var weightDump: [Double: [String]] = [:]
-    for weight in weights {
-        var correctCount = 0
+
+    struct SettingTally {
+        var correct = 0
         var fixed = 0
         var broken = 0
         var milliseconds = 0.0
         var fixedExamples: [String] = []
         var brokenExamples: [String] = []
         var outputs: [String] = []
-        for (index, item) in items.enumerated() {
+    }
+    var tallies = Array(repeating: SettingTally(), count: settings.count)
+    let documentsByName = Dictionary(uniqueKeysWithValues: collection.documents.map { ($0.name, $0) })
+    var documentFolds: [String: (NotationPreference, [NotationPreference], DocumentTopicIndex)] = [:]
+    func fold(for item: DocumentEvalItem) -> (NotationPreference, [NotationPreference], DocumentTopicIndex) {
+        if holdout == "document" {
+            if let cached = documentFolds[item.document] { return cached }
+            let others = collection.documents.filter { $0.name != item.document }
+            let result = (fullNotation.subtracting(documentsByName[item.document]?.notation ?? .empty),
+                          others.map(\.notation), DocumentTopicIndex(documents: others.map(\.sentences)))
+            documentFolds[item.document] = result
+            return result
+        }
+        guard let document = documentsByName[item.document], document.sentences.indices.contains(item.sentence) else {
+            return (fullNotation, collection.documents.map(\.notation),
+                    DocumentTopicIndex(documents: collection.documents.map(\.sentences)))
+        }
+        let own = NotationPreference(sentences: [document.sentences[item.sentence]])
+        var sentencesByDocument: [[[ReadingToken]]] = []
+        var preferences: [NotationPreference] = []
+        for other in collection.documents {
+            if other.name == item.document {
+                var sentences = other.sentences
+                sentences.remove(at: item.sentence)
+                sentencesByDocument.append(sentences)
+                preferences.append(other.notation.subtracting(own))
+            } else {
+                sentencesByDocument.append(other.sentences)
+                preferences.append(other.notation)
+            }
+        }
+        return (fullNotation.subtracting(own), preferences, DocumentTopicIndex(documents: sentencesByDocument))
+    }
+
+    for (index, item) in items.enumerated() {
+        let (pooled, preferences, topicIndex) = fold(for: item)
+        for (settingIndex, setting) in settings.enumerated() {
             DocumentNotationContext.shared.configuration = NotationPreferenceConfiguration(
-                preference: notationFolds[item.document] ?? .empty, weight: weight)
+                preference: pooled, weight: setting.notation,
+                documentPreferences: preferences, topicIndex: topicIndex, topicWeight: setting.topic)
             let start = ContinuousClock.now
             let output = (try? await engine.convert(
                 reading: item.reading, context: usesContext ? item.context : "", candidateCount: 1).first) ?? item.reading
             let elapsed = start.duration(to: .now)
-            milliseconds += Double(elapsed.components.attoseconds) / 1e15 + Double(elapsed.components.seconds) * 1e3
             let normalized = normalizeDocumentText(output)
-            outputs.append(normalized)
+            var tally = tallies[settingIndex]
+            tally.milliseconds += Double(elapsed.components.attoseconds) / 1e15 + Double(elapsed.components.seconds) * 1e3
+            tally.outputs.append(normalized)
             let isCorrect = normalized == item.expected
             let wasCorrect = baseOutputs[index] == item.expected
-            if isCorrect { correctCount += 1 }
+            if isCorrect { tally.correct += 1 }
             let example = "    [\(item.document)]\n      基準: \(baseOutputs[index])\n      加点: \(normalized)\n      正解: \(item.expected)"
             if isCorrect && !wasCorrect {
-                fixed += 1
-                if fixedExamples.count < 12 { fixedExamples.append(example) }
+                tally.fixed += 1
+                if tally.fixedExamples.count < 20 { tally.fixedExamples.append(example) }
             } else if !isCorrect && wasCorrect {
-                broken += 1
-                if brokenExamples.count < 12 { brokenExamples.append(example) }
+                tally.broken += 1
+                if tally.brokenExamples.count < 20 { tally.brokenExamples.append(example) }
             }
+            tallies[settingIndex] = tally
         }
-        DocumentNotationContext.shared.configuration = .disabled
-        weightDump[weight] = outputs
-        print(String(format: "  重み %.2f: 完全一致 %d (%.1f%%)  直した %d  壊した %d  平均 %.1fms",
-                     weight, correctCount, Double(correctCount) / Double(items.count) * 100, fixed, broken,
-                     milliseconds / Double(items.count)))
-        if options["show-weight"].flatMap(Double.init) == weight {
+        if (index + 1) % 100 == 0 { stderrLine("  採点の項: \(index + 1) / \(items.count)") }
+    }
+    DocumentNotationContext.shared.configuration = .disabled
+    for (settingIndex, setting) in settings.enumerated() {
+        let tally = tallies[settingIndex]
+        print(String(format: "  表記 %g・話題 %g: 完全一致 %d (%.1f%%)  直した %d  壊した %d  平均 %.1fms",
+                     setting.notation, setting.topic, tally.correct, Double(tally.correct) / Double(items.count) * 100,
+                     tally.fixed, tally.broken, tally.milliseconds / Double(items.count)))
+        if options["show-setting"] == label(setting) {
             print("  直した例:")
-            for example in fixedExamples { print(example) }
+            for example in tally.fixedExamples { print(example) }
             print("  壊した例:")
-            for example in brokenExamples { print(example) }
+            for example in tally.brokenExamples { print(example) }
         }
     }
     if let path = options["weights-dump"] {
@@ -498,7 +559,7 @@ private func documentBench(_ arguments: [String]) async {
         for (index, item) in items.enumerated() {
             var record: [String: Any] = ["document": item.document, "sentence": item.sentence,
                                          "expected": item.expected, "base": baseOutputs[index]]
-            for (weight, outputs) in weightDump { record[String(weight)] = outputs[index] }
+            for (settingIndex, setting) in settings.enumerated() { record[label(setting)] = tallies[settingIndex].outputs[index] }
             if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]),
                let line = String(data: data, encoding: .utf8) { lines += line + "\n" }
         }

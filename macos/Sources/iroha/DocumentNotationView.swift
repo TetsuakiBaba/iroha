@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 原稿から数えた表記の使い分けの一覧（設定 > 辞書・学習 > 自分の原稿の表記に合わせる > 一覧...）。
+/// 原稿から数えた表記の使い分けの一覧（設定 > 辞書・学習 > 自分の原稿に合わせる > 一覧...）。
 /// 見るだけ。変えたいときは文書を入れ替える（`DocumentNotationStore` が読み直す）
 struct DocumentNotationView: View {
     @Environment(\.dismiss) private var dismiss
