@@ -2,7 +2,8 @@ import Foundation
 import IrohaCore
 import IrohaDocuments
 
-/// 自分の原稿に合わせる（設定 > 辞書・学習、既定OFF・同期する。2026-11-07）。
+/// 自分の原稿に合わせる（設定 > 辞書・学習の開発者モードの節、既定OFF・同期する。2026-11-07）。
+/// 開発者モードを OFF にしても、ON にしてあれば効き続ける（隠すのは表示だけ。入力メニューの切り替えも出る）
 ///
 /// `<データフォルダ>/documents/` に置いた文書（PDF・Word・テキスト）から、読みごとにどの表記を何回使ったか
 /// （`NotationPreference`）を数え、かな漢字変換のモデルの採点に 2 つの項を加える（`NotationPreferenceEngine`）:

@@ -126,7 +126,9 @@ cd macos && swift build --build-system native && swift test --build-system nativ
 - 設定画面には一般ユーザ向けと開発者モード向けの 2 段がある（2026-10-03。`DeveloperModeSettings`、
   設定 > 情報 > 開発者モード、既定 OFF・同期しない）。細かな調整・開発者向けの項目は `if developerMode` の中に置き、
   一般ユーザの画面には出さない。隠すのは表示だけで値はそのまま効く（例外はデバッグ表示で、開発者モードが OFF なら止める）。
-  **新しい設定項目を足すときは、どちらに置くかを決めてから足す**。開発者モードの項目一覧は情報タブの「?」の文面にもあるので合わせる
+  **新しい設定項目を足すときは、どちらに置くかを決めてから足す**。開発者モードの項目一覧は情報タブの「?」の文面にもあるので合わせる。
+  開発者モードの項目には紫色の「開発者」の印を付ける（`DeveloperBadge`。項目は `HelpLabel` / `HelpToggle` の `developer: true`、
+  節ごとなら `HelpSectionHeader` の `developer: true`。2026-11-07）。**`if developerMode` の中に項目を足したら印も付ける**
 - FoundationModelsはmacOS 26+のため `#if canImport` + `@available(macOS 26.0, *)` ガード必須
   （パッケージのフロアはmacOS 14）
 - llama.cppの静的ライブラリは `./macos/scripts/build-llama.sh` で `vendor/dist` に生成（未コミット）
@@ -234,7 +236,7 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   確定しても学習しない（`unlearnableCandidates`。漢字・かなだけの候補は除く。覚えると「わらい」だけ打ったときに
   ライブ変換が絵文字になる）。macOS が描けない絵文字は OS の版の対応表ではなく Apple Color Emoji の字形で除く
   （`EmojiRenderability`。組の絵文字は字形 2 つで描かれるので「字形 1 つ」では判定しない）
-- 自分の原稿に合わせる（`DocumentNotationSettings` / `DocumentNotationStore`、設定 > 辞書・学習、既定OFF・同期する。
+- 自分の原稿に合わせる（`DocumentNotationSettings` / `DocumentNotationStore`、設定 > 辞書・学習の開発者モードの節、既定OFF・同期する。
   表記・用語の 2 つの重みは開発者モード・既定 2。2026-11-07）は、`<データフォルダ>/documents/` の文書（PDF・Word・テキスト。HTML は main thread
   でしか読めないので対象外）から読みごとの表記の回数（IrohaCore の `NotationPreference`）を数え、モデルの採点に
   「重み × Σ log((その表記の回数 + 1) / (表記の違いで最も多い表記の回数 + 1))」を足す（`NotationPreferenceEngine`。

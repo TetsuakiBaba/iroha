@@ -115,7 +115,8 @@ private struct InputSettingsTab: View {
                         title: "アプリの文章を文脈に使う", isOn: $documentContext,
                         help: "入力を始めた位置の手前にある文章（最大40文字）をアプリから読み取り、変換の文脈にします。"
                             + "文章の途中に書き足すときや、別のアプリに移った直後でも前後に合った変換になります。"
-                            + "文章を返さないアプリでは、irohaで直前に確定した文字列を文脈にします。")
+                            + "文章を返さないアプリでは、irohaで直前に確定した文字列を文脈にします。",
+                        developer: true)
                 }
             }
 
@@ -158,7 +159,7 @@ private struct InputSettingsTab: View {
                             title: "訂正する読みの最低文字数",
                             help: "読みがこの文字数に満たないときは直しません。短い読みは正しく打っていても"
                                 + "別の語の打ち間違いに見えやすいためです（例:「さど」が「さいど」に直る）。",
-                            isDisabled: !typoNormalizer)
+                            isDisabled: !typoNormalizer, developer: true)
                     }
                     TypoThresholdRow(threshold: $typoThreshold, isDisabled: !typoNormalizer)
                 }
@@ -318,7 +319,7 @@ private struct TapInputSection: View {
                 help: "試験的な機能です。⌘を押したまま本体（パームレストなど）を指で叩くと、叩いた回数に応じたキーを送ります。"
                     + "今はダブルタップ（2回）だけです。叩いた回数は加速度センサの揺れから数えるので、"
                     + "強さや場所によっては数え違えることがあります。本体を置いた机を叩いても数えることがあります。"
-                    + "ふたを閉じて外付けのキーボードだけで使っているときは使えません。")
+                    + "ふたを閉じて外付けのキーボードだけで使っているときは使えません。", developer: true)
         }
         .onAppear { accessibilityGranted = AXIsProcessTrusted() }
         .onReceive(NotificationCenter.default.publisher(for: TapInput.detectedNotification)) { _ in
@@ -337,7 +338,7 @@ private struct DelimitedAlphabetSection: View {
     @AppStorage(DelimitedAlphabetSettings.endKey) private var end = DelimitedAlphabetSettings.defaultSymbol
 
     var body: some View {
-        Section("区切り記号で英字を入力") {
+        Section {
             HelpToggle(
                 title: "記号で囲んだ部分を英字で入力する", isOn: $enabled,
                 help: "かな入力のまま、開始の記号を打つと英字入力になり、終わりの記号を打つまで打ったとおりの英字が入ります"
@@ -348,6 +349,8 @@ private struct DelimitedAlphabetSection: View {
                     + "記号そのものを入れるときは、開始の記号のあとすぐに終わりの記号を打ちます（既定なら「__」）。")
             symbolField(title: "開始の記号", text: $start)
             symbolField(title: "終わりの記号", text: $end)
+        } header: {
+            HelpSectionHeader(title: "区切り記号で英字を入力", developer: true)
         }
     }
 
@@ -459,7 +462,7 @@ private struct TypoNormalizerModelRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                HelpLabel(title: "訂正モデル", help: downloader.offerDescription)
+                HelpLabel(title: "訂正モデル", help: downloader.offerDescription, developer: true)
                 Spacer()
                 content
             }
@@ -524,7 +527,7 @@ private struct TypoDelayRow: View {
                     title: "訂正するまでの休止時間",
                     help: "キーを離してからこの時間だけ何も押さなければ訂正します。"
                         + "短いほど早く直りますが、語の途中で考えているだけのときにも動きます。",
-                    isDisabled: isDisabled)
+                    isDisabled: isDisabled, developer: true)
                 Spacer()
                 Text("\(milliseconds) ms")
                     .foregroundStyle(.secondary)
@@ -570,7 +573,7 @@ private struct TypoThresholdRow: View {
                     title: "訂正を出す確信の強さ",
                     help: "大きくするほど、モデルがよほど確信したときしか直しません。"
                         + "小さくすると打ち間違いをよく拾いますが、正しく打った読みも直してしまいます。",
-                    isDisabled: isDisabled)
+                    isDisabled: isDisabled, developer: true)
                 Spacer()
                 Text(String(format: "%.1f", threshold))
                     .foregroundStyle(.secondary)
@@ -597,9 +600,9 @@ private struct TypoThresholdRow: View {
 // MARK: - 辞書・学習
 
 /// 自分の原稿に合わせる（`DocumentNotationSettings`）
+/// 開発者モードの節（2026-11-07 に一般ユーザの画面から移した）
 private struct DocumentNotationSection: View {
     let privateMode: Bool
-    let developerMode: Bool
     @AppStorage(DocumentNotationSettings.enabledKey) private var enabled = false
     @AppStorage(DocumentNotationSettings.weightKey) private var weight = DocumentNotationSettings.defaultWeight
     @AppStorage(DocumentNotationSettings.topicWeightKey) private var topicWeight = DocumentNotationSettings.defaultTopicWeight
@@ -608,7 +611,7 @@ private struct DocumentNotationSection: View {
     @ObservedObject private var uiState = SettingsUIState.shared
 
     var body: some View {
-        Section("自分の原稿に合わせる") {
+        Section {
             HelpToggle(
                 title: "原稿の表記と用語に合わせる", isOn: $enabled,
                 help: "フォルダに置いた自分の文書（PDF・Word・テキスト）で、同じ読みの語をどの表記で何回書いたかを数え、"
@@ -669,33 +672,33 @@ private struct DocumentNotationSection: View {
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
-            if developerMode {
-                LabeledContent {
-                    HStack {
-                        Slider(value: $weight, in: 0...4, step: 0.5).frame(width: 180)
-                        Text(String(format: "%.1f", weight)).monospacedDigit().frame(width: 32)
-                    }
-                } label: {
-                    HelpLabel(
-                        title: "表記に合わせる強さ",
-                        help: "変換モデルの点数に、原稿の書き方から見た点数をどれだけの重みで足すかです（既定 2.0、0 で使わない）。"
-                            + "大きいほど原稿の表記に寄りますが、別の語への書き換えも起きやすくなります"
-                            + "（論文12本で測ったとき、4.0 では「おすすめ」が「お進め」になりました）。")
+            LabeledContent {
+                HStack {
+                    Slider(value: $weight, in: 0...4, step: 0.5).frame(width: 180)
+                    Text(String(format: "%.1f", weight)).monospacedDigit().frame(width: 32)
                 }
-                LabeledContent {
-                    HStack {
-                        Slider(value: $topicWeight, in: 0...4, step: 0.5).frame(width: 180)
-                        Text(String(format: "%.1f", topicWeight)).monospacedDigit().frame(width: 32)
-                    }
-                } label: {
-                    HelpLabel(
-                        title: "用語に合わせる強さ",
-                        help: "話題が近い文書の語の使い方から見た点数を、話題の近さ（0〜1）とこの重みをかけて足します"
-                            + "（既定 2.0、0 で使わない）。論文12本で測ったとき、2.0 では同じ原稿の続きの文で正解が 231 から 237 に増え、"
-                            + "関係のない文はほぼ変わりませんでした。4.0 では 241 に増えますが、"
-                            + "ほかの研究報告の文で「期間」が「機関」になるような書き換えが出ました。")
-                }
+            } label: {
+                HelpLabel(
+                    title: "表記に合わせる強さ",
+                    help: "変換モデルの点数に、原稿の書き方から見た点数をどれだけの重みで足すかです（既定 2.0、0 で使わない）。"
+                        + "大きいほど原稿の表記に寄りますが、別の語への書き換えも起きやすくなります"
+                        + "（論文12本で測ったとき、4.0 では「おすすめ」が「お進め」になりました）。")
             }
+            LabeledContent {
+                HStack {
+                    Slider(value: $topicWeight, in: 0...4, step: 0.5).frame(width: 180)
+                    Text(String(format: "%.1f", topicWeight)).monospacedDigit().frame(width: 32)
+                }
+            } label: {
+                HelpLabel(
+                    title: "用語に合わせる強さ",
+                    help: "話題が近い文書の語の使い方から見た点数を、話題の近さ（0〜1）とこの重みをかけて足します"
+                        + "（既定 2.0、0 で使わない）。論文12本で測ったとき、2.0 では同じ原稿の続きの文で正解が 231 から 237 に増え、"
+                        + "関係のない文はほぼ変わりませんでした。4.0 では 241 に増えますが、"
+                        + "ほかの研究報告の文で「期間」が「機関」になるような書き換えが出ました。")
+            }
+        } header: {
+            HelpSectionHeader(title: "自分の原稿に合わせる", developer: true)
         }
         .onChange(of: enabled) { _, isOn in
             if isOn { DocumentNotationStore.shared.reloadIfNeeded() }
@@ -780,7 +783,9 @@ private struct DictionarySettingsTab: View {
                         + "取り込んだ単語をirohaで編集すると、以後の取り込みでは上書きされません。")
             }
 
-            DocumentNotationSection(privateMode: privateMode, developerMode: developerMode)
+            if developerMode {
+                DocumentNotationSection(privateMode: privateMode)
+            }
 
             Section {
                 LabeledContent("登録ルール") {
@@ -799,7 +804,7 @@ private struct DictionarySettingsTab: View {
             }
 
             if developerMode {
-                Section("記号・顔文字・絵文字") {
+                Section {
                     HelpToggle(
                         title: "記号・顔文字・絵文字を候補に出す", isOn: $symbolCandidates,
                         help: "文節の読みに合う記号・顔文字・絵文字を候補ウィンドウに加えます"
@@ -809,6 +814,8 @@ private struct DictionarySettingsTab: View {
                             + "データはGoogle日本語入力のオープンソース版Mozcのものです。"
                             + "このMacで描けない新しい絵文字は出しません。"
                             + "ライブ変換には使わず、選んで確定しても学習しません。")
+                } header: {
+                    HelpSectionHeader(title: "記号・顔文字・絵文字", developer: true)
                 }
             }
 
@@ -984,7 +991,7 @@ private struct SelectionSettingsTab: View {
                     HelpSectionHeader(
                         title: "除外するアプリ",
                         help: "ここに書いたバンドルIDのアプリでは、マウス選択のトリガーを出しません"
-                            + "（カンマまたは改行区切り）。")
+                            + "（カンマまたは改行区切り）。", developer: true)
                 }
             }
 
@@ -1682,11 +1689,17 @@ private struct ModelSettingsTab: View {
                             help: "モデルを動かす仕組みです。既定は llama.cpp です。"
                                 + "MLX は T5 のモデルにだけ対応していて、1 回の変換が 2 割ほど速くなります（変換の結果は同じです）。"
                                 + "zenz のモデルでは MLX を選んでも llama.cpp で動きます。"
-                                + "変更は iroha の再起動後に反映されます。")
+                                + "変更は iroha の再起動後に反映されます。",
+                            developer: true)
                     }
-                    LabeledContent("使用中の推論エンジン") {
+                    LabeledContent {
                         Text(IrohaInputController.engineBackend.displayName)
                             .foregroundStyle(.secondary)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("使用中の推論エンジン")
+                            DeveloperBadge()
+                        }
                     }
                     if let notice = backendNotice {
                         Text(notice.text)
@@ -1695,7 +1708,7 @@ private struct ModelSettingsTab: View {
                     }
                     // 長いパスが切れないよう、ラベルは上に置いてパスに幅を全部使わせる
                     VStack(alignment: .leading, spacing: 4) {
-                        HelpLabel(title: "モデルファイル（GGUF）のパス", help: "モデルの変更はirohaの再起動後に反映されます。")
+                        HelpLabel(title: "モデルファイル（GGUF）のパス", help: "モデルの変更はirohaの再起動後に反映されます。", developer: true)
                         PathDisplay(path: modelPath, placeholder: ZenzEngine.defaultModelPath)
                         // 消えたモデルを指したままだと変換が一切できなくなるので、パスの下で知らせる
                         if !modelPath.isEmpty, !FileManager.default.fileExists(atPath: modelPath) {
@@ -1724,9 +1737,12 @@ private struct ModelSettingsTab: View {
                         Button("既定に戻す") { modelPath = "" }
                             .disabled(modelPath.isEmpty)
                     }
-                    Button("irohaを再起動") {
-                        // 終了処理の詳細（_exitを使う理由等）はAppRestarterのコメントを参照
-                        AppRestarter.restartInstalledApp()
+                    HStack(spacing: 4) {
+                        Button("irohaを再起動") {
+                            // 終了処理の詳細（_exitを使う理由等）はAppRestarterのコメントを参照
+                            AppRestarter.restartInstalledApp()
+                        }
+                        DeveloperBadge()
                     }
                 } else if !modelPath.isEmpty, !FileManager.default.fileExists(atPath: modelPath) {
                     // 開発者モードで指定したモデルが消えていると変換が一切できなくなるので、
@@ -1784,7 +1800,7 @@ private struct TrainingSection: View {
                     + "手順は 4 つ: ① 記録を1件ずつ今のモデルで変換し直す ② 間違えたものと正しかったものの一部を"
                     + "評価用に取り分ける ③ 残りの記録すべてで学習する ④ 評価用の記録をアダプタなし／ありで変換して"
                     + "結果を並べる。使った記録は .train.tsv / .mistakes.tsv / .correct.tsv としてアダプタの隣に残ります。"
-                    + "学習は数十秒〜数分かかり、その間 GPU を使います。アダプタの変更は再起動後に反映されます。")
+                    + "学習は数十秒〜数分かかり、その間 GPU を使います。アダプタの変更は再起動後に反映されます。", developer: true)
         }
         .onAppear { coordinator.refreshInfo(basePath: basePath) }
         .onReceive(NotificationCenter.default.publisher(for: ConversionLog.didChangeNotification)) { _ in
@@ -2308,12 +2324,19 @@ private struct AboutSettingsTab: View {
                     help: "ONにすると、細かな調整や開発者向けの項目を設定画面に表示します"
                         + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ・"
                         + "区切り記号で英字を入力・タップ入力（加速度センサを利用するとき）、"
-                        + "辞書・学習: 原稿の表記・用語に合わせる強さ・記号・顔文字・絵文字を候補に出す、"
+                        + "辞書・学習: 自分の原稿に合わせる・記号・顔文字・絵文字を候補に出す、"
                         + "選択テキスト: 除外するアプリ、モデル: 推論エンジン・モデルファイルの指定・irohaを再起動・"
                         + "自分の入力で追加学習、情報: 推論の時間の表示・加速度センサを利用する）。"
+                        + "開発者モードの項目には、項目名の右に紫色の「開発者」の印を付けています。"
+                        + "見出しに印があるものは、その節全体が開発者モードの項目です。"
                         + "OFFにしても項目が見えなくなるだけで、変えた設定はそのまま効きます"
                         + "（推論の時間の表示だけは止まります）。この設定は他のMacと同期しません。")
                 if developerMode {
+                    HStack(spacing: 4) {
+                        DeveloperBadge()
+                        Text("の付いた項目と節は、開発者モードのときだけ表示します")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     HelpToggle(
                         title: "推論にかかった時間と左文脈をカーソルの右下に表示する", isOn: $developerOverlay,
                         help: "開発者向けの表示です。入力を始めたときに、カーソルの左の文字をアプリから読めたか"
@@ -2323,7 +2346,8 @@ private struct AboutSettingsTab: View {
                             + "かな漢字変換と打ち間違いの訂正を実行するたびに、かかった時間を出します。"
                             + "「全体」は変換を頼んでから結果が返るまで、「NN」はそのうちニューラルネットの計算だけの時間です"
                             + "（差は辞書・学習の処理と、先に走っている推論の待ち時間）。"
-                            + "「取り消し」は、前の表示のあと次の入力で打ち切った変換の数です。この設定は他のMacと同期しません。")
+                            + "「取り消し」は、前の表示のあと次の入力で打ち切った変換の数です。この設定は他のMacと同期しません。",
+                        developer: true)
                     // センサのない Mac では「（利用不可）」を付け、OFF のまま操作できなくする
                     let sensorPresent = KeystrokeAccelerometer.isSensorPresent
                     HelpToggle(
@@ -2339,7 +2363,7 @@ private struct AboutSettingsTab: View {
                             + "センサのない Mac では「（利用不可）」と出て、ONにできません。"
                             + "センサは Apple が公開していない方法で読むので、macOS の更新で使えなくなることがあります。"
                             + "ONの間はセンサを動かし続けます。この設定は他のMacと同期しません。",
-                        isDisabled: !sensorPresent)
+                        isDisabled: !sensorPresent, developer: true)
                 }
             }
 
