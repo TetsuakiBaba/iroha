@@ -18,6 +18,10 @@ import IrohaDocuments
 ///   iroha-bench-v1 で −1。4 にすると +10 だが、研究報告の文で 期間→機関・作製→作成 のような書き換えが出た
 /// - プライベートモードの間は止める（ユーザ辞書と同じく、変換を iroha 本来の結果にする）
 /// - 文書のフォルダはデータフォルダの中なので、データフォルダを共有している Mac では同じ文書を使う
+/// - `documents/` の直下にフォルダを作ると、フォルダごとに分けて 1 つを選んで使う（`DocumentProfiles`。
+///   論文を書くときと日常とで切り替えるため。2026-11-07）。選んでいるフォルダは Mac ごとで同期しない
+///   （同時に 2 台で別の原稿を書くことがある）。切り替えは設定画面・入力メニュー・ショートカット
+///   （使わない → 1 つ目 → … → 使わない の順）。「使わない」を選べば変換は機能を入れる前と同じ結果になる
 enum DocumentNotationSettings {
 
     static let enabledKey = "documentNotation"
@@ -42,37 +46,97 @@ enum DocumentNotationSettings {
 
     static var folderURL: URL { DocumentCollection.defaultFolderURL }
 
-    /// 変換エンジンが変換のたびに読む設定（OFF・プライベートモード・未読み込みなら何もしない）
+    /// 選んでいる原稿のフォルダ（保存値。`DocumentProfileSelection`。Mac ごとで同期しない）
+    static let profileKey = "documentNotationProfile"
+    /// 原稿のフォルダを切り替えるショートカット（"Ctrl+Option+D" 形式。空なら割り当てなし・同期する）
+    static let profileShortcutKey = "documentNotationProfileHotkey"
+    static let defaultProfileShortcut = "Ctrl+Option+D"
+
+    static var storedProfile: String? {
+        get { UserDefaults.standard.string(forKey: profileKey) }
+        set { UserDefaults.standard.set(newValue, forKey: profileKey) }
+    }
+
+    /// いま使う原稿のフォルダの名前（使わない・フォルダが無いときは nil）
+    static var activeProfile: String? {
+        DocumentProfileSelection.resolve(stored: storedProfile, names: DocumentNotationStore.shared.snapshot.names)
+    }
+
+    /// 次の原稿のフォルダに切り替え、切り替えた先の名前を返す（使わないなら nil）
+    @discardableResult
+    static func selectNextProfile() -> String? {
+        let names = DocumentNotationStore.shared.snapshot.names
+        storedProfile = DocumentProfileSelection.next(stored: storedProfile, names: names)
+        return activeProfile
+    }
+
+    /// 画面に出す原稿のフォルダの名前（直下全体を使うときは「documents フォルダ」）
+    static func displayName(_ profile: String) -> String {
+        profile.isEmpty ? "documents フォルダ" : profile
+    }
+
+    static var profileShortcutText: String {
+        UserDefaults.standard.string(forKey: profileShortcutKey) ?? defaultProfileShortcut
+    }
+
+    /// 切り替えに使うショートカット（決め方はプライベートモードと同じ。`PrivateModeSettings.isUsable`）
+    static var profileShortcut: AICommitShortcut? {
+        let shortcut = AICommitShortcut(rawValue: profileShortcutText)
+        return PrivateModeSettings.isUsable(shortcut) ? shortcut : nil
+    }
+
+    /// 変換エンジンが変換のたびに読む設定（OFF・プライベートモード・使わない・未読み込みなら何もしない）
     static var configuration: NotationPreferenceConfiguration {
         guard isEnabled, !PrivateModeSettings.isEnabled else { return .disabled }
-        let store = DocumentNotationStore.shared.snapshot
+        let snapshot = DocumentNotationStore.shared.snapshot
+        guard let name = DocumentProfileSelection.resolve(stored: storedProfile, names: snapshot.names),
+              let profile = snapshot.profiles[name] else { return .disabled }
         return NotationPreferenceConfiguration(
-            preference: store.preference, weight: weight, documentPreferences: store.documentPreferences,
-            topicIndex: store.topicIndex, topicWeight: topicWeight)
+            preference: profile.preference, weight: weight, documentPreferences: profile.documentPreferences,
+            topicIndex: profile.topicIndex, topicWeight: topicWeight)
     }
 }
 
-/// 文書を読んで数えた表記の回数と話題の索引を持つ。読み込みは裏のスレッドで行う（PDF 12 本で約 2 秒）
+/// 原稿のフォルダごとに、文書を読んで数えた表記の回数と話題の索引を持つ。
+/// 読み込みは裏のスレッドで行い、すべてのフォルダをまとめて読んでおく（PDF 12 本で約 2 秒）。切り替えは読み直さない
 final class DocumentNotationStore: ObservableObject, @unchecked Sendable {
 
     static let shared = DocumentNotationStore()
 
+    /// 原稿のフォルダ 1 つの要約（設定画面に出す）
+    struct ProfileSummary: Equatable {
+        let name: String
+        let documents: Int
+        let variantReadings: Int
+    }
+
     enum Status: Equatable {
         case idle
         case loading
-        case ready(documents: Int, variantReadings: Int, failures: [String])
+        /// ignoredFiles: フォルダに分けたため使っていない、直下のファイル
+        case ready(profiles: [ProfileSummary], ignoredFiles: [String], failures: [String])
     }
+
+    typealias VariantGroup = (reading: String, surfaces: [(surface: String, count: Int)])
 
     /// 設定画面に出す状態（main thread で更新する）
     @Published private(set) var status: Status = .idle
-    /// 表記の使い分けがある読みの一覧（設定画面の一覧用。main thread で更新する）
-    @Published private(set) var variantGroups: [(reading: String, surfaces: [(surface: String, count: Int)])] = []
+    /// 原稿のフォルダごとの、表記の使い分けがある読みの一覧（設定画面の一覧用。main thread で更新する）
+    @Published private(set) var variantGroups: [String: [VariantGroup]] = [:]
 
-    /// 変換のたびに読むもの（すべての文書を合わせた表記の回数・文書ごとの回数・話題の索引）
-    struct Snapshot {
-        var preference: NotationPreference = .empty
-        var documentPreferences: [NotationPreference] = []
+    /// 原稿のフォルダ 1 つぶんの、変換のたびに読むもの
+    struct Profile {
+        /// そのフォルダの文書を合わせた表記の回数
+        var preference: NotationPreference
+        /// 文書ごとの表記の回数（用語の選び分けに使う）
+        var documentPreferences: [NotationPreference]
         var topicIndex: DocumentTopicIndex?
+    }
+
+    struct Snapshot {
+        /// 原稿のフォルダの名前（並びは `DocumentProfiles.folders` の順）
+        var names: [String] = []
+        var profiles: [String: Profile] = [:]
     }
 
     private let lock = NSLock()
@@ -95,7 +159,8 @@ final class DocumentNotationStore: ObservableObject, @unchecked Sendable {
     func reloadIfNeeded(force: Bool = false) {
         guard DocumentNotationSettings.isEnabled else { return }
         queue.async { [self] in
-            let signature = Self.signature(of: DocumentNotationSettings.folderURL)
+            let root = DocumentNotationSettings.folderURL
+            let signature = Self.signature(of: root)
             lock.lock()
             let skip = isLoading || (!force && signature == loadedSignature)
             if !skip { isLoading = true }
@@ -103,23 +168,33 @@ final class DocumentNotationStore: ObservableObject, @unchecked Sendable {
             guard !skip else { return }
             DispatchQueue.main.async { self.status = .loading }
 
-            let collection = DocumentCollection(folder: DocumentNotationSettings.folderURL)
-            let preference = collection.notation
-            let groups = preference.variantGroups()
-            let snapshot = Snapshot(
-                preference: preference, documentPreferences: collection.documents.map(\.notation),
-                topicIndex: DocumentTopicIndex(documents: collection.documents.map(\.sentences)))
+            let (folders, ignoredFiles) = DocumentProfiles.folders(in: root)
+            var snapshot = Snapshot()
+            var summaries: [ProfileSummary] = []
+            var groups: [String: [VariantGroup]] = [:]
+            var failures: [String] = []
+            for folder in folders {
+                let collection = DocumentCollection(folder: folder.url)
+                let preference = collection.notation
+                let variantGroups = preference.variantGroups()
+                snapshot.names.append(folder.name)
+                snapshot.profiles[folder.name] = Profile(
+                    preference: preference, documentPreferences: collection.documents.map(\.notation),
+                    topicIndex: DocumentTopicIndex(documents: collection.documents.map(\.sentences)))
+                summaries.append(ProfileSummary(
+                    name: folder.name, documents: collection.documents.count, variantReadings: variantGroups.count))
+                groups[folder.name] = variantGroups
+                failures += collection.failures.map { folder.name.isEmpty ? $0.name : "\(folder.name)/\($0.name)" }
+            }
             lock.lock()
             current = snapshot
             loadedSignature = signature
             isLoading = false
             lock.unlock()
-            NSLog("iroha: 原稿を読み込みました（文書 \(collection.documents.count) 件・表記の使い分け \(groups.count) 語）")
+            NSLog("iroha: 原稿を読み込みました（\(summaries.map { "\($0.name.isEmpty ? "直下" : $0.name) \($0.documents) 件" }.joined(separator: "・"))）")
             DispatchQueue.main.async {
                 self.variantGroups = groups
-                self.status = .ready(
-                    documents: collection.documents.count, variantReadings: groups.count,
-                    failures: collection.failures.map(\.name))
+                self.status = .ready(profiles: summaries, ignoredFiles: ignoredFiles, failures: failures)
             }
         }
     }

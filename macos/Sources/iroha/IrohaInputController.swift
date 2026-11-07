@@ -516,6 +516,14 @@ final class IrohaInputController: IMKInputController {
         // AI変換のショートカット（プリセットごとに設定で自由に決める）: 未確定文字列をAIで変換する。
         // ユーザが決めたキーなので、下の Control+. や Control+U 等の組み込みより先に見る
         if isComposing || mode == .segmenting,
+        // 原稿のフォルダの切り替え（`DocumentNotationSettings`。設定が ON のときだけ。効き方はプライベートモードと同じ）
+        if DocumentNotationSettings.isEnabled, let shortcut = DocumentNotationSettings.profileShortcut,
+           shortcut.matches(keyCode: event.keyCode, modifierFlags: event.modifierFlags) {
+            DocumentNotationSettings.selectNextProfile()
+            showDocumentProfileNotice()
+            return true
+        }
+
            let preset = AICommitSettings.preset(
             matchingKeyCode: event.keyCode, modifierFlags: event.modifierFlags) {
             return handleAICommit(preset, client: client)
@@ -661,6 +669,28 @@ final class IrohaInputController: IMKInputController {
         let liveItem = NSMenuItem(
             title: "ライブ変換",
             action: #selector(toggleLiveConversion(_:)),
+        // 原稿のフォルダ（設定が ON で、文書があるときだけ）。下位メニューにせず、見出しの下に並べる
+        let profiles = DocumentNotationSettings.isEnabled ? DocumentNotationStore.shared.snapshot.names : []
+        if !profiles.isEmpty {
+            let header = NSMenuItem(title: "原稿に合わせる", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+            let active = DocumentNotationSettings.activeProfile
+            let choices: [(title: String, stored: String, isOn: Bool)] =
+                [("使わない", DocumentProfileSelection.off, active == nil)]
+                + profiles.map { (DocumentNotationSettings.displayName($0), $0, $0 == active) }
+            for (index, choice) in choices.enumerated() {
+                let item = NSMenuItem(
+                    title: choice.title, action: #selector(selectDocumentProfile(_:)), keyEquivalent: "")
+                item.target = self
+                item.indentationLevel = 1
+                item.state = choice.isOn ? .on : .off
+                item.representedObject = choice.stored
+                item.tag = index
+                menu.addItem(item)
+            }
+        }
+
             keyEquivalent: ""
         )
         liveItem.target = self
@@ -768,6 +798,44 @@ final class IrohaInputController: IMKInputController {
     @objc private func openSettings(_ sender: Any?) {
         (NSApp.delegate as? AppDelegate)?.openSettingsWindow()
     }
+    /// 入力メニューで原稿のフォルダを選んだ。IMK はメニューの操作を、項目そのものではなく
+    /// 項目を `kIMKCommandMenuItemName` に入れた辞書で渡してくる
+    @objc private func selectDocumentProfile(_ sender: Any?) {
+        let item = sender as? NSMenuItem
+            ?? (sender as? [String: Any])?[kIMKCommandMenuItemName] as? NSMenuItem
+            ?? (sender as? NSDictionary)?[kIMKCommandMenuItemName] as? NSMenuItem
+        guard let stored = item?.representedObject as? String else { return }
+        DocumentNotationSettings.storedProfile = stored
+        showDocumentProfileNotice()
+    }
+
+    /// どの原稿のフォルダに切り替わったかを小窓に出す（モードの表示は変わらないので、知らせないと気づけない）
+    private func showDocumentProfileNotice() {
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let text = NSMutableAttributedString(
+            string: "原稿に合わせる ",
+            attributes: [.font: font, .foregroundColor: NSColor.tertiaryLabelColor])
+        let name: String
+        if DocumentNotationStore.shared.snapshot.names.isEmpty {
+            name = "文書がありません"
+        } else {
+            name = DocumentNotationSettings.activeProfile.map(DocumentNotationSettings.displayName) ?? "使わない"
+        }
+        text.append(NSAttributedString(
+            string: name,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+            ]))
+        if PrivateModeSettings.isEnabled {
+            text.append(NSAttributedString(
+                string: "（プライベートモードの間は止めています）",
+                attributes: [.font: font, .foregroundColor: NSColor.tertiaryLabelColor]))
+        }
+        let hint = DocumentNotationSettings.profileShortcut.map { "\($0.rawValue) で切り替え" } ?? "入力メニューで切り替え"
+        showNotice(text, hint: hint, lifetime: Self.privateModeNoticeLifetime)
+    }
+
 
     // メニュー操作はメインスレッドから来る（SettingsUIStateは@MainActor）
     @MainActor

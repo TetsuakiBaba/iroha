@@ -1,6 +1,7 @@
 import ApplicationServices
 import SwiftUI
 import IrohaCore
+import IrohaDocuments
 import IrohaMLX
 
 /// 設定ウィンドウのタブ
@@ -602,6 +603,7 @@ private struct DocumentNotationSection: View {
     @AppStorage(DocumentNotationSettings.enabledKey) private var enabled = false
     @AppStorage(DocumentNotationSettings.weightKey) private var weight = DocumentNotationSettings.defaultWeight
     @AppStorage(DocumentNotationSettings.topicWeightKey) private var topicWeight = DocumentNotationSettings.defaultTopicWeight
+    @AppStorage(DocumentNotationSettings.profileKey) private var storedProfile = ""
     @ObservedObject private var store = DocumentNotationStore.shared
     @ObservedObject private var uiState = SettingsUIState.shared
 
@@ -620,8 +622,12 @@ private struct DocumentNotationSection: View {
                     + "どちらも必ず置き換えるのではなく、変換モデルの判断に加えるだけなので、文脈に合わない書き換えはしません。"
                     + "「において」「ていく」「という」のような言い回しの中のかなは数えません。"
                     + "文書はデータフォルダの documents フォルダに置きます。文書を足したり入れ替えたりすると、1分ほどで読み直します。"
+                    + "documents の中にフォルダを作ると（例: documents/論文、documents/小説）、フォルダごとに分けて、"
+                    + "使うフォルダを1つ選べます。このとき documents の直下に置いたファイルは使いません。"
+                    + "論文を書くときは「論文」、日常の文章では「使わない」のように、入力メニューかショートカットで切り替えます。"
+                    + "「使わない」を選んでいる間の変換は、この設定が OFF のときと同じです。"
                     + "文書の中身はこのMacの中だけで使い、どこにも送りません。"
-                    + "この設定は他のMacと同期します。")
+                    + "この設定は他のMacと同期します（どのフォルダを選んでいるかは同期しません）。")
             if enabled, privateMode {
                 PrivateModePausedNote(text: "プライベートモードの間は、原稿に合わせるのを止めています")
             }
@@ -639,9 +645,29 @@ private struct DocumentNotationSection: View {
                         .disabled(!enabled || store.status == .loading)
                 }
             }
-            if case .ready(_, _, let failures) = store.status, !failures.isEmpty {
-                Text("読めなかった文書: \(failures.joined(separator: "、"))")
-                    .font(.caption).foregroundStyle(.orange)
+            if enabled, case .ready(let profiles, _, _) = store.status, !profiles.isEmpty {
+                LabeledContent("使う原稿") {
+                    Picker("", selection: profileSelection) {
+                        Text("使わない").tag(DocumentProfileSelection.off)
+                        ForEach(profiles, id: \.name) { profile in
+                            Text("\(DocumentNotationSettings.displayName(profile.name))（\(profile.documents) 件）")
+                                .tag(profile.name)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                DocumentProfileShortcutField()
+            }
+            if case .ready(_, let ignoredFiles, let failures) = store.status {
+                if !ignoredFiles.isEmpty {
+                    Text("フォルダに分けているので、documents の直下のファイルは使っていません: \(ignoredFiles.joined(separator: "、"))")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                if !failures.isEmpty {
+                    Text("読めなかった文書: \(failures.joined(separator: "、"))")
+                        .font(.caption).foregroundStyle(.orange)
+                }
             }
             if developerMode {
                 LabeledContent {
@@ -676,13 +702,26 @@ private struct DocumentNotationSection: View {
         }
     }
 
+    /// 使う原稿の選択。保存値が無い・消えたフォルダを指すときも、実際に使うフォルダを選んだ状態で見せる
+    private var profileSelection: Binding<String> {
+        Binding(
+            get: {
+                _ = storedProfile  // 保存値が変わったら描き直す
+                return DocumentNotationSettings.activeProfile ?? DocumentProfileSelection.off
+            },
+            set: { storedProfile = $0 })
+    }
+
     private var statusText: String {
         guard enabled else { return "OFF" }
         switch store.status {
         case .idle: return "まだ読んでいません"
         case .loading: return "読み込み中..."
-        case .ready(let documents, let readings, _):
-            return documents == 0 ? "文書がありません" : "文書 \(documents) 件・使い分け \(readings) 語"
+        case .ready(let profiles, _, _):
+            let documents = profiles.reduce(0) { $0 + $1.documents }
+            if documents == 0 { return "文書がありません" }
+            if profiles.count == 1 { return "文書 \(documents) 件・使い分け \(profiles[0].variantReadings) 語" }
+            return "フォルダ \(profiles.count) 個・文書 \(documents) 件"
         }
     }
 }
@@ -1380,6 +1419,47 @@ private struct PrivateModeShortcutField: View {
         }
         return nil
     }
+}
+
+/// 原稿のフォルダを切り替えるショートカットの入力欄（`DocumentNotationSettings.profileShortcut`）。
+/// 決め方と効き方はプライベートモードのショートカットと同じ
+private struct DocumentProfileShortcutField: View {
+    @AppStorage(DocumentNotationSettings.profileShortcutKey) private var hotkey = DocumentNotationSettings.defaultProfileShortcut
+
+    var body: some View {
+        HStack {
+            HelpLabel(
+                title: "切り替えのショートカット",
+                help: "押すたびに「使わない → 1つ目のフォルダ → 2つ目 → … → 使わない」の順に切り替わり、"
+                    + "どれになったかをカーソルの下に表示します。入力メニューからも選べます。"
+                    + "「Ctrl+Option+D」のように、修飾キー（Cmd・Ctrl・Option・Shift）とキーを + でつないで書きます。"
+                    + "Cmd・Ctrl・Optionのどれかを含めてください。irohaで入力しているときに効きます。"
+                    + "空にすると割り当てなしになります。")
+            TextField("", text: $hotkey, prompt: Text("例: \(DocumentNotationSettings.defaultProfileShortcut)"))
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 180)
+            Group {
+                if shortcut.isEmpty {
+                    Text("なし").font(.caption).foregroundStyle(.secondary)
+                } else if !shortcut.isValid {
+                    Text("認識できない形式です").font(.caption).foregroundStyle(.red)
+                } else if !PrivateModeSettings.isUsable(shortcut) {
+                    Text("Cmd・Ctrl・Optionのどれかを含めてください").font(.caption).foregroundStyle(.red)
+                } else {
+                    Image(systemName: "checkmark.circle").foregroundStyle(.green)
+                }
+            }
+            Spacer()
+        }
+        if PrivateModeSettings.isUsable(shortcut),
+           let privateShortcut = PrivateModeSettings.shortcut, privateShortcut.isSameKey(as: shortcut) {
+            Text("プライベートモードの切り替えと同じキーです（プライベートモードの切り替えが動きます）")
+                .font(.caption).foregroundStyle(.orange)
+        }
+    }
+
+    private var shortcut: AICommitShortcut { AICommitShortcut(rawValue: hotkey) }
 }
 
 private struct AICommitShortcutField: View {

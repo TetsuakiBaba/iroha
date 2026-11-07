@@ -240,7 +240,12 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   「重み × Σ log((その表記の回数 + 1) / (表記の違いで最も多い表記の回数 + 1))」を足す（`NotationPreferenceEngine`。
   `LatticeRescoringEngine` の下、モデルの直上に置くので、第一候補は表記を替えた文と合わせて採点し直し、候補ウィンドウは
   ラティス候補の点数に足す）。文書の読み込み・分かち書き（`CFStringTokenizer`）は macOS 専用の `IrohaDocuments`。
-  プライベートモードの間は止める。必ず置き換えるユーザ辞書の形にしなかった理由と計測は
+  プライベートモードの間は止める。`documents/` の直下にフォルダを作ると、フォルダごとに分けて 1 つを選んで使う
+  （`DocumentProfiles` / `DocumentProfileSelection`。論文と日常の切り替え用。2026-11-07）。フォルダがあると直下のファイルは
+  使わない（共通の分として足すと算数が 1 段増えるため）。選択は Mac ごとで同期しない（キー `documentNotationProfile`、
+  「使わない」は "/"、保存値が無い・消えたフォルダなら最初のフォルダ）。切り替えは設定画面・入力メニュー・ショートカット
+  （既定 Ctrl+Option+D、使わない → 1 つ目 → … → 使わない）。「使わない」の変換は機能 OFF と同じ結果になるので、
+  関係のない文の計測は要らない。必ず置き換えるユーザ辞書の形にしなかった理由と計測は
   `experiments/document-vocabulary/README.md`（リポジトリ外。論文の本文を含む）。守ること:
   ・**当てるのは同じ語の表記の違いだけ**（`NotationPreference.areVariants`: 漢字が包含関係、漢字とかなの組は漢字側に
     送り仮名があるとき）。同じ読みの別の語（両方／療法）に当てると、文書と関係のない文で別の語に替えた

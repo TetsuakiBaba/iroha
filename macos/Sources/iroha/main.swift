@@ -90,6 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             default: SettingsUIState.shared.selectedTab = .input
             }
             NSApp.setActivationPolicy(.regular)
+            // 原稿の一覧・使う原稿の選択を出すため、文書を読んでおく（IME として起動したときと同じ）
+            DocumentNotationStore.shared.reloadIfNeeded()
             openSettingsWindow()
             // UI確認用: 環境変数で高さを上書きできる（縦長タブのスクリーンショット用）
             if let raw = ProcessInfo.processInfo.environment["IROHA_SETTINGS_HEIGHT"],

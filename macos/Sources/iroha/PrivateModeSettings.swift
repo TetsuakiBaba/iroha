@@ -61,6 +61,11 @@ enum PrivateModeSettings {
 
     /// 入力メニューの項目に添えるキーの表示（キーが1文字のときだけ。それ以外は出さない）
     static var menuKeyEquivalent: (key: String, modifiers: NSEvent.ModifierFlags)? {
+        keyEquivalent(of: shortcut)
+    }
+
+    /// 入力メニューの項目に添えるキーの表示（ほかの切り替えのショートカットにも使う）
+    static func keyEquivalent(of shortcut: AICommitShortcut?) -> (key: String, modifiers: NSEvent.ModifierFlags)? {
         guard let shortcut, let parsed = GlobalShortcut.parse(shortcut.rawValue),
               let key = shortcut.rawValue.split(separator: "+").last?
                 .trimmingCharacters(in: .whitespaces).lowercased(),
