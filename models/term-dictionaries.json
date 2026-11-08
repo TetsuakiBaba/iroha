@@ -5,13 +5,13 @@
       "id": "jmdict-medicine",
       "name": "医学",
       "group": "分野別の用語（JMdict）",
-      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
-      "entries": 4476,
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-08 版）",
+      "entries": 4477,
       "kind": "noun",
       "file": {
-        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-medicine-20261108.tsv",
-        "bytes": 165967,
-        "sha256": "0a36e3315de7aa025d3a73c821abffb1f68932e94709e5dc22f7443670eb801a"
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-medicine-20261108-6317c777.tsv",
+        "bytes": 166017,
+        "sha256": "cc1488a331bf721ecd0a5bbc82429309370f1ecfeec08038dfb4a11d18e62e53"
       },
       "license": "CC BY-SA 4.0",
       "sources": [
@@ -24,7 +24,7 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "7f3c233c2f5a763cad7c37da397af620106f105824b2bab44c9729232207b95d"
+      "contentSha256": "6317c7774f4dba60a4dde20f6827e239a3ddc0bb913220fd81f00897c4995187"
     },
     {
       "id": "jmdict-computing",
@@ -80,13 +80,13 @@
       "id": "jmdict-economics",
       "name": "経済・金融",
       "group": "分野別の用語（JMdict）",
-      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
-      "entries": 930,
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-08 版）",
+      "entries": 932,
       "kind": "noun",
       "file": {
-        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-economics-20261108.tsv",
-        "bytes": 35983,
-        "sha256": "edc8120aab9a1e7dd3a4a317f5ae9708f73f68eedaf5db235c37c54bae19aa3c"
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-economics-20261108-6ee511fe.tsv",
+        "bytes": 36047,
+        "sha256": "6cb537dfd0bfe4da2ccea819d1250db24ac01a7f69396c2d2cf6d44fe4774a82"
       },
       "license": "CC BY-SA 4.0",
       "sources": [
@@ -99,7 +99,7 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "b08a2c9b98cc1dad9d97b5bbcc5ed7f200de76c65e36be742203d148d9642de4"
+      "contentSha256": "6ee511fe2ae2efca5b01f78049de76b009ea9b706a9bd7c3f361010b5baa226f"
     },
     {
       "id": "jmdict-mathematics",
