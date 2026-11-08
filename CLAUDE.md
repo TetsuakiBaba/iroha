@@ -252,8 +252,12 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   ・使う元データは再配布の条件を確かめたものだけ（JMdict CC BY-SA 4.0・百薬辞書 CC BY 4.0・郵便番号データ・Wikidata CC0）。
     万病辞書・JMED-DICT mini・ComeJisyo（条件を確認できない）、SKK の専門辞書（GPL v2）、Mozc の dictionary_oss は使わない。
     **JMdict のライセンスは配る版を新しく保つことを求める**ので定期的に作り直す（アプリは設定画面を開いたときに入れ直す）
-  ・ライセンスと出典はカタログの辞書ごとに持ち、入れたときに記録へ写して 設定 > 情報 のライセンス一覧に出す（アプリに焼き込まない）
-  ・iroha-cli は `IROHA_TERM_DICTIONARIES=installed`（入れた辞書）か `=a.tsv,b.tsv` で候補に加える（既定は使わない）
+  ・ライセンスと出典（ライセンス文書の URL を含む）はカタログの辞書ごとに持ち、入れたときに記録へ写して 設定 > 情報 の
+    ライセンス一覧に出す（アプリに焼き込まない）。辞書ファイルの先頭の「#」行と Release の NOTICE.txt に、条文が求める注記
+    （著作権表示・EDRDG の出典の文・ライセンスへのリンク・加工した旨・無保証）を書く。注記の中身は
+    `build-term-dictionaries.py` の `SOURCE_*` にまとめてある（2026-11-08 に条文を読み直して合わせた）
+  ・iroha-cli は `IROHA_TERM_DICTIONARIES=installed`（入れた辞書）か `=a.tsv,b.tsv` で候補に加える（既定は使わない）。
+    `iroha-cli terms list | install <ID> | remove <ID>` でアプリと同じ経路の取得を確かめる
 - 自分の原稿に合わせる（`DocumentNotationSettings` / `DocumentNotationStore`、設定 > 辞書・学習の開発者モードの節、既定OFF・同期する。
   表記・用語の 2 つの重みは開発者モード・既定 2。2026-11-07）は、`<データフォルダ>/documents/` の文書（PDF・Word・テキスト。HTML は main thread
   でしか読めないので対象外）から読みごとの表記の回数（IrohaCore の `NotationPreference`）を数え、モデルの採点に

@@ -51,13 +51,27 @@ WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
 
 # MARK: - 出典（カタログの sources と辞書の注記に使う）
 
+# 各項目: name・holder・license・url（アプリの 設定 > 情報 に出す）、licenseURL（ライセンス文書。アプリにも出す）、
+# notices（辞書ファイルの先頭と NOTICE.txt に書く注記）。条文は 2026-11-08 に読み直して合わせた:
+#   - CC BY / BY-SA 4.0 の 3(a): 作成者・著作権表示・ライセンスへの言及と URI・無保証への言及・元データの URI・加工した旨
+#   - CC BY-SA 4.0 の 3(b): 加工したものも CC BY-SA 4.0 で配る。追加の条件を付けない
+#   - EDRDG: 出典を示す、ライセンス文書かその場所へのリンクを添える、データを新しい版へ定期的に更新する手順を持つ、
+#     そのデータに著作権を主張しない、無保証（利用者が責任を負う）
 SOURCE_JMDICT = {
     "name": "JMdict",
-    "holder": "Electronic Dictionary Research and Development Group",
+    "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
     "license": "CC BY-SA 4.0",
     "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
-    # EDRDG のライセンスは、ライセンス文書の写しかその場所へのリンクを添えることを求める
     "licenseURL": "https://www.edrdg.org/edrdg/licence.html",
+    "notices": [
+        "This dictionary uses the JMdict dictionary files. These files are the property of the Electronic Dictionary"
+        " Research and Development Group, and are used in conformance with the Group's licence"
+        " (https://www.edrdg.org/edrdg/licence.html).",
+        "Copyright: James William Breen and the Electronic Dictionary Research and Development Group",
+        "ライセンス: CC BY-SA 4.0（https://creativecommons.org/licenses/by-sa/4.0/deed.ja）。この辞書も CC BY-SA 4.0 で配布する",
+        "使ったのは日本語の見出し（keb）・読み（reb）・分野の印（field）だけで、英語などの訳語は含めていない",
+        "無保証: EDRDG のライセンス（Section 5）のとおり、データは無保証で、利用者が責任を負う",
+    ],
 }
 SOURCE_HYAKUYAKU = {
     "name": "百薬辞書（HYAKUYAKU_v20210706）",
@@ -65,13 +79,24 @@ SOURCE_HYAKUYAKU = {
     "license": "CC BY 4.0",
     "url": "https://sociocom.naist.jp/hyakuyaku-dic/",
     "licenseURL": "https://creativecommons.org/licenses/by/4.0/deed.ja",
+    "notices": [
+        "著作権者: 奈良先端科学技術大学院大学 ソーシャル・コンピューティング研究室（© SOCIOCOM 2021）",
+        "ライセンス: CC BY 4.0（https://creativecommons.org/licenses/by/4.0/deed.ja）。この辞書も CC BY 4.0 で配布する",
+        "使ったのは「出現形」「出現形よみ」の列だけで、「一般名」（KEGG DRUG にもとづく）などは含めていない",
+        "無保証: 元データの読みは自動で付けたもので誤りを含みうる。元データの提供者は、完全な信頼性を保証せず責任を負わないとしている",
+    ],
 }
 SOURCE_KEN_ALL = {
     "name": "郵便番号データ",
     "holder": "日本郵便株式会社",
     "license": "著作権を主張しない（配布自由）",
     "url": "https://www.post.japanpost.jp/service/search/zipcode/download/readme.html",
-    "licenseURL": "https://www.post.japanpost.jp/service/search/zipcode/download/readme.html",
+    "licenseURL": "https://www.post.japanpost.jp/service/search/zipcode/download/utf-readme.html",
+    "notices": [
+        "利用条件: 日本郵便株式会社は郵便番号データについて著作権を主張せず、自由に配布してよいとしている"
+        "（https://www.post.japanpost.jp/service/search/zipcode/download/utf-readme.html の「使用・再配布・移植・改良について」）",
+        "使ったのは都道府県・市区町村・町域の名前と読みだけで、郵便番号は含めていない",
+    ],
 }
 SOURCE_WIKIDATA = {
     "name": "Wikidata",
@@ -79,7 +104,18 @@ SOURCE_WIKIDATA = {
     "license": "CC0 1.0",
     "url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
     "licenseURL": "https://creativecommons.org/publicdomain/zero/1.0/deed.ja",
+    "notices": [
+        "ライセンス: Wikidata の構造化データ（項目のラベル・かなの読み P1814）は CC0 1.0"
+        "（https://creativecommons.org/publicdomain/zero/1.0/deed.ja）。この辞書も CC0 1.0 で配布する",
+    ],
 }
+
+# 全部の辞書ファイルに書く注記
+COMMON_NOTICES = [
+    "加工: 元データから語を選び、読みをひらがなにそろえ、重複を除くなど加工して作成した"
+    "（iroha、https://github.com/TetsuakiBaba/iroha、macos/scripts/build-term-dictionaries.py）",
+    "この辞書は現状のまま提供し、内容の正確さを保証しない。元データのライセンスのほかに条件は付けない",
+]
 
 # MARK: - JMdict の分野のまとめ方
 
@@ -368,11 +404,11 @@ def build_wikidata() -> list[Pack]:
 def write_pack(pack: Pack, version: str) -> dict:
     DIST.mkdir(parents=True, exist_ok=True)
     file_name = f"{pack.id}-{version}.tsv"
-    lines = [f"# iroha 専門辞書: {pack.name}（{pack.id}、{version}）"]
+    lines = [f"# iroha 専門辞書: {pack.name}（{pack.id}、{version}）。{pack.summary}"]
     for source in pack.sources:
         lines.append(f"# 出典: {source['name']}（{source['holder']}、{source['url']}）")
-        lines.append(f"# ライセンス: {source['license']}（{source['licenseURL']}）")
-    lines.append("# 元データから読みをひらがなにそろえ、重複を除くなど加工して作成。この辞書も元データと同じ条件で配布する")
+        lines += [f"# {notice}" for notice in source["notices"]]
+    lines += [f"# {line}" for line in COMMON_NOTICES]
     lines.append("# 形式: 読み<TAB>語")
     lines += [f"{r}\t{w}" for r, w in sorted(pack.pairs)]
     data = ("\n".join(lines) + "\n").encode("utf-8")
@@ -390,9 +426,34 @@ def write_pack(pack: Pack, version: str) -> dict:
             "sha256": hashlib.sha256(data).hexdigest(),
         },
         "license": pack.license,
-        "sources": [{k: source[k] for k in ("name", "holder", "license", "url")} for source in pack.sources],
+        "sources": [{k: source[k] for k in ("name", "holder", "license", "url", "licenseURL")} for source in pack.sources],
         "version": version,
     }
+
+
+def write_notice(packs: list[Pack], version: str) -> None:
+    """Release に一緒に載せる、出典とライセンスの一覧（ライセンス文書の場所と注記）"""
+    lines = [
+        f"iroha 専門辞書（{version}）の出典とライセンス",
+        "",
+        "各辞書は元データのライセンスに従って配布する。辞書ファイルの先頭の「#」行にも同じ注記がある。",
+        "",
+    ]
+    sources = []
+    for pack in packs:
+        for source in pack.sources:
+            if source not in sources:
+                sources.append(source)
+    for source in sources:
+        files = [f"{p.id}-{version}.tsv" for p in packs if source in p.sources]
+        lines.append(f"■ {source['name']}（{source['holder']}）")
+        lines.append(f"  出典: {source['url']}")
+        lines.append(f"  ライセンス文書: {source['licenseURL']}")
+        lines += [f"  {notice}" for notice in source["notices"]]
+        lines.append(f"  辞書: {', '.join(files)}")
+        lines.append("")
+    lines += COMMON_NOTICES
+    (DIST / "NOTICE.txt").write_text("\n".join(lines) + "\n")
 
 
 def build() -> None:
@@ -407,6 +468,7 @@ def build() -> None:
         entry = write_pack(pack, version)
         entries.append(entry)
         print(f"{pack.id:34} {entry['entries']:>8,} 語  {entry['file']['bytes'] / 1e6:6.2f} MB  {pack.name}")
+    write_notice(packs, version)
     catalog = {"formatVersion": 1, "dictionaries": entries}
     (DIST / "catalog.json").write_text(json.dumps(catalog, ensure_ascii=False, indent=2) + "\n")
     print(f"==> {DIST / 'catalog.json'}")

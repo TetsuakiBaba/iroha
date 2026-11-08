@@ -1568,6 +1568,39 @@ case "typo":
         exit(1)
     }
 
+case "terms":
+    // 専門辞書の一覧・取得・削除（IME 本体の 設定 > 辞書・学習 > 専門辞書 と同じ経路。カタログは IROHA_TERM_DICTIONARY_CATALOG で変えられる）
+    //   iroha-cli terms list | install <ID> | remove <ID>
+    let sub = arguments.count > 2 ? arguments[2] : "list"
+    do {
+        switch sub {
+        case "list":
+            let catalog = try await TermDictionaryFetcher.fetchCatalog()
+            let installed = Set(TermDictionaryInstall.installedRecords().map(\.id))
+            for dictionary in catalog.dictionaries {
+                let mark = installed.contains(dictionary.id) ? "入れている" : ""
+                print("\(dictionary.id)\t\(dictionary.name)\t\(dictionary.entries)語\t\(dictionary.license)\t\(mark)")
+            }
+        case "install" where arguments.count > 3:
+            let catalog = try await TermDictionaryFetcher.fetchCatalog()
+            guard let dictionary = catalog.dictionary(id: arguments[3]) else {
+                FileHandle.standardError.write("カタログに無い ID です: \(arguments[3])\n".data(using: .utf8)!)
+                exit(1)
+            }
+            let record = try await TermDictionaryFetcher.install(dictionary)
+            print("入れました: \(record.id)（\(record.entries)語、SHA-256 \(record.sha256)）→ \(TermDictionaryInstall.fileURL(id: record.id).path)")
+        case "remove" where arguments.count > 3:
+            try TermDictionaryInstall.remove(id: arguments[3])
+            print("外しました: \(arguments[3])")
+        default:
+            FileHandle.standardError.write("使い方: iroha-cli terms list | install <ID> | remove <ID>\n".data(using: .utf8)!)
+            exit(1)
+        }
+    } catch {
+        FileHandle.standardError.write("\(error.localizedDescription)\n".data(using: .utf8)!)
+        exit(1)
+    }
+
 case "docs":
     await runDocumentsCommand(Array(arguments.dropFirst(2)))
 

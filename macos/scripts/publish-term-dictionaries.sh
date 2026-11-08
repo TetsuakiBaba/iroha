@@ -32,18 +32,24 @@ if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
   echo "==> プレリリース $TAG を作る"
   NOTES=$(mktemp)
   cat > "$NOTES" <<'EOF'
-iroha の設定（辞書・学習 > 専門辞書）から追加する辞書です。アプリが必要なときにだけ取得します。
+iroha の設定（辞書・学習 > 専門辞書）から追加する辞書です。アプリは「追加」を押したときにだけ取得します。
 
-各ファイルは「読み<TAB>語」のテキストで、先頭の「#」行に出典とライセンスがあります。
-元データから読みをひらがなにそろえ、重複を除くなど加工して作成しました。各辞書は元データと同じ条件で配布します。
+各ファイルは「読み<TAB>語」のテキストで、先頭の「#」行に出典・著作権・ライセンス・加工した旨を書いています。
+出典とライセンスの一覧は NOTICE.txt にもあります。元データから語を選び、読みをひらがなにそろえ、重複を除くなど
+加工して作りました。各辞書は元データと同じライセンスで配布し、ほかに条件は付けません。内容の正確さは保証しません。
 
-- 分野別の用語（jmdict-*）: JMdict（© Electronic Dictionary Research and Development Group、CC BY-SA 4.0）
-  https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html ・ライセンス https://www.edrdg.org/edrdg/licence.html
-- 薬の名前（hyakuyaku）: 百薬辞書（© 奈良先端科学技術大学院大学 ソーシャル・コンピューティング研究室、CC BY 4.0）
+- 分野別の用語（jmdict-*）: CC BY-SA 4.0（https://creativecommons.org/licenses/by-sa/4.0/deed.ja）
+  This dictionary uses the JMdict dictionary files. These files are the property of the Electronic Dictionary Research
+  and Development Group, and are used in conformance with the Group's licence (https://www.edrdg.org/edrdg/licence.html).
+  Copyright: James William Breen and the Electronic Dictionary Research and Development Group.
+  https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html
+  JMdict の新しい版から作り直して公開し直します（ファイル名の日付が作った日）。アプリは設定画面を開いたときに入れ直します。
+- 薬の名前（hyakuyaku）: CC BY 4.0（https://creativecommons.org/licenses/by/4.0/deed.ja）
+  百薬辞書 HYAKUYAKU_v20210706、© 奈良先端科学技術大学院大学 ソーシャル・コンピューティング研究室（SOCIOCOM）
   https://sociocom.naist.jp/hyakuyaku-dic/
-- 地名（japanpost-places）: 日本郵便の郵便番号データ（日本郵便株式会社は郵便番号データの著作権を主張しない）
-  https://www.post.japanpost.jp/service/search/zipcode/download/readme.html
-- 人名・駅・神社と寺院・旧市区町村（wikidata-*）: Wikidata（CC0 1.0）
+- 地名（japanpost-places）: 日本郵便株式会社の郵便番号データ。同社は郵便番号データの著作権を主張せず、自由な配布を認めています
+  https://www.post.japanpost.jp/service/search/zipcode/download/utf-readme.html
+- 人名・駅・神社と寺院・旧市区町村（wikidata-*）: Wikidata の構造化データ、CC0 1.0（https://creativecommons.org/publicdomain/zero/1.0/deed.ja）
   https://www.wikidata.org/wiki/Wikidata:Licensing
 EOF
   gh release create "$TAG" --repo "$REPO" --prerelease \
@@ -52,7 +58,8 @@ EOF
 fi
 
 echo "==> 辞書を載せる"
-gh release upload "$TAG" --repo "$REPO" --clobber "$DIST"/*.tsv
+# NOTICE.txt（出典とライセンスの一覧）は作り直すたびに上書きする
+gh release upload "$TAG" --repo "$REPO" --clobber "$DIST"/*.tsv "$DIST/NOTICE.txt"
 
 echo "==> 載せたファイルを確かめる（カタログの大きさと SHA-256 と照合）"
 python3 -I - "$DIST/catalog.json" <<'EOF'

@@ -867,8 +867,10 @@ private struct TermDictionarySection: View {
         lines.append(String(format: "ダウンロードする大きさは約%.1fMBです。", megabytes))
         for source in dictionary.sources {
             lines.append("出典: \(source.name)（© \(source.holder)、\(source.license)）\(source.url)")
+            if let licenseURL = source.licenseURL { lines.append("ライセンス文書: \(licenseURL)") }
         }
-        lines.append("元データから読みをひらがなにそろえ、重複を除くなど加工して作っています。")
+        lines.append("元データから読みをひらがなにそろえ、重複を除くなど加工して作っています。"
+            + "辞書は元データと同じライセンスで配布しており、内容の正確さは保証しません。")
         return lines.joined(separator: "\n")
     }
 }
@@ -2356,10 +2358,18 @@ private struct TermDictionaryLicenseRows: View {
             LicenseRow(
                 name: item.source.name, holder: item.source.holder, license: item.source.license,
                 note: "専門辞書（\(item.dictionaries.joined(separator: "・"))）", url: item.source.url)
+            if let licenseURL = item.source.licenseURL, let destination = URL(string: licenseURL) {
+                HStack(spacing: 4) {
+                    Text("ライセンス文書:")
+                    Link(licenseURL, destination: destination).lineLimit(1).truncationMode(.middle)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         }
         if !sources.isEmpty {
             Text("専門辞書は、元データから読みをひらがなにそろえ、重複を除くなど加工して作っています。"
-                + "加工した辞書も元データと同じライセンスで配布しています。")
+                + "加工した辞書も元データと同じライセンスで配布しています。内容の正確さは保証しません。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

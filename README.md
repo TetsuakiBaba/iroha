@@ -452,7 +452,8 @@ float16 でも照合は通る（greedy 200/200 一致・margin 最大差 0.0043�
 - 一覧: [models/term-dictionaries.json](models/term-dictionaries.json)。アプリが焼き込んでいるのはこの URL だけで、
   辞書ごとの名前・大きさ・SHA-256・ライセンス・出典はこのファイルにある。URL は環境変数 `IROHA_TERM_DICTIONARY_CATALOG` で上書きできる
 - 本体: GitHub Releases の専用タグ `term-dictionaries-v1`（**プレリリース**）。ファイル名は `<ID>-<作った日>.tsv`
-  （1行が「読み<TAB>語」、先頭の「#」行に出典とライセンス）
+  （1行が「読み<TAB>語」、先頭の「#」行に出典・著作権・ライセンス・加工した旨・無保証）。出典とライセンスの一覧を
+  `NOTICE.txt` として一緒に載せる。各辞書は元データと同じライセンスで配り（JMdict 由来は CC BY-SA 4.0）、ほかに条件は付けない
 - アプリは落としたあと大きさと SHA-256 を照合してから置く。辞書ラティスには azooKey のユーザ辞書の形式（LOUDS）に
   書き出して読ませる。書き出しは辞書の組み合わせごとに1回だけで、`~/Library/Caches/iroha/term-dictionary-lattice/` に残す
 - 作り直したときは、アプリが設定画面を開いたときに入れている辞書を入れ直す（カタログの SHA-256 が変わったとき）。
@@ -463,6 +464,8 @@ python3 -I macos/scripts/build-term-dictionaries.py fetch   # 元データを ve
 python3 -I macos/scripts/build-term-dictionaries.py build   # dist/term-dictionaries/ に辞書とカタログを書く
 ./macos/scripts/publish-term-dictionaries.sh                # Release へ載せて照合し、models/term-dictionaries.json を更新
 # models/term-dictionaries.json をコミットして push
+.build/release/iroha-cli terms list                        # 公開した一覧が見えるか
+.build/release/iroha-cli terms install jmdict-medicine     # アプリと同じ経路で取得・照合・設置できるか（remove で外す）
 IROHA_TERM_DICTIONARIES=installed .build/release/iroha-cli convert --n 10 <読み>   # 入れた辞書での候補を見る
 ```
 

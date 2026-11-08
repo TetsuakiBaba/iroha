@@ -28,12 +28,15 @@ public struct TermDictionaryCatalog: Codable, Sendable {
         public let holder: String
         public let license: String
         public let url: String
+        /// ライセンス文書の場所（EDRDG はライセンス文書かその場所へのリンクを添えることを求める）。無いこともある
+        public let licenseURL: String?
 
-        public init(name: String, holder: String, license: String, url: String) {
+        public init(name: String, holder: String, license: String, url: String, licenseURL: String? = nil) {
             self.name = name
             self.holder = holder
             self.license = license
             self.url = url
+            self.licenseURL = licenseURL
         }
     }
 
