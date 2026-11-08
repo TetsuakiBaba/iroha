@@ -1,0 +1,461 @@
+{
+  "formatVersion": 1,
+  "dictionaries": [
+    {
+      "id": "jmdict-medicine",
+      "name": "医学",
+      "group": "分野別の用語（JMdict）",
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
+      "entries": 4476,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-medicine-20261108.tsv",
+        "bytes": 165967,
+        "sha256": "0a36e3315de7aa025d3a73c821abffb1f68932e94709e5dc22f7443670eb801a"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "JMdict",
+          "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
+          "license": "CC BY-SA 4.0",
+          "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
+          "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "jmdict-computing",
+      "name": "情報・コンピュータ",
+      "group": "分野別の用語（JMdict）",
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
+      "entries": 14280,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-computing-20261108.tsv",
+        "bytes": 704568,
+        "sha256": "965b21c89ef281d991d56df405a94880cc5a5c2c359ec300dc2aacbd236cf82c"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "JMdict",
+          "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
+          "license": "CC BY-SA 4.0",
+          "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
+          "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "jmdict-law",
+      "name": "法律・政治",
+      "group": "分野別の用語（JMdict）",
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
+      "entries": 1044,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-law-20261108.tsv",
+        "bytes": 44446,
+        "sha256": "131fb2531763f1a760f9719b7c11171e35cf3d97eed7b90af5f119344e770514"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "JMdict",
+          "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
+          "license": "CC BY-SA 4.0",
+          "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
+          "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "jmdict-economics",
+      "name": "経済・金融",
+      "group": "分野別の用語（JMdict）",
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
+      "entries": 930,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-economics-20261108.tsv",
+        "bytes": 35983,
+        "sha256": "edc8120aab9a1e7dd3a4a317f5ae9708f73f68eedaf5db235c37c54bae19aa3c"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "JMdict",
+          "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
+          "license": "CC BY-SA 4.0",
+          "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
+          "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "jmdict-mathematics",
+      "name": "数学・統計",
+      "group": "分野別の用語（JMdict）",
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
+      "entries": 1617,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-mathematics-20261108.tsv",
+        "bytes": 52449,
+        "sha256": "57c481fdd4c8b4fc4d816606ffb78db4152433a0262df8a0dc3a1161de06abba"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "JMdict",
+          "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
+          "license": "CC BY-SA 4.0",
+          "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
+          "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "jmdict-physics",
+      "name": "物理・天文",
+      "group": "分野別の用語（JMdict）",
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
+      "entries": 1797,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-physics-20261108.tsv",
+        "bytes": 62199,
+        "sha256": "bff6fc53aca5b6a45193aaa5ebd994077d6a7b527232d8683dfeb8b8ecf1f88b"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "JMdict",
+          "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
+          "license": "CC BY-SA 4.0",
+          "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
+          "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "jmdict-chemistry",
+      "name": "化学",
+      "group": "分野別の用語（JMdict）",
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
+      "entries": 1437,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-chemistry-20261108.tsv",
+        "bytes": 52347,
+        "sha256": "9ccbaf2e542ae821d7ba16a565a01dc387caa69a856ab1d7cdaf4322e1e63f60"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "JMdict",
+          "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
+          "license": "CC BY-SA 4.0",
+          "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
+          "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "jmdict-engineering",
+      "name": "工学",
+      "group": "分野別の用語（JMdict）",
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
+      "entries": 880,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-engineering-20261108.tsv",
+        "bytes": 32258,
+        "sha256": "33c5ba67f3c3dfa9cebfe4702a28e572db6fff10af11edab8be52a7658406990"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "JMdict",
+          "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
+          "license": "CC BY-SA 4.0",
+          "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
+          "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "jmdict-biology",
+      "name": "生物",
+      "group": "分野別の用語（JMdict）",
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
+      "entries": 1387,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-biology-20261108.tsv",
+        "bytes": 41611,
+        "sha256": "2edf23d8f351f04f0ff9dad4b7ba6c06b5420d794f7900a225b3ca51c3e45efa"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "JMdict",
+          "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
+          "license": "CC BY-SA 4.0",
+          "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
+          "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "jmdict-geoscience",
+      "name": "地学",
+      "group": "分野別の用語（JMdict）",
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
+      "entries": 659,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-geoscience-20261108.tsv",
+        "bytes": 21308,
+        "sha256": "f721bd8572cbfbba99cedbd8a1eb085e13f25a5b46252751751515157adc9530"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "JMdict",
+          "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
+          "license": "CC BY-SA 4.0",
+          "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
+          "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "jmdict-linguistics",
+      "name": "言語学",
+      "group": "分野別の用語（JMdict）",
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
+      "entries": 1131,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-linguistics-20261108.tsv",
+        "bytes": 34687,
+        "sha256": "a61aaedf88f45e37722bf6b0cfbc98cedc33a36d616b7e17d145f5231fe04dc1"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "JMdict",
+          "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
+          "license": "CC BY-SA 4.0",
+          "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
+          "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "jmdict-religion",
+      "name": "宗教・哲学",
+      "group": "分野別の用語（JMdict）",
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
+      "entries": 2614,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-religion-20261108.tsv",
+        "bytes": 67879,
+        "sha256": "b54a7f1260006fc355ca73df79bf8f2ab8ed5a9893ead94a9b68c8219e56de3f"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "JMdict",
+          "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
+          "license": "CC BY-SA 4.0",
+          "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
+          "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "jmdict-psychology",
+      "name": "心理学",
+      "group": "分野別の用語（JMdict）",
+      "summary": "JMdict の分野の印から作成（JMdict 2026-11-07 版）",
+      "entries": 263,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/jmdict-psychology-20261108.tsv",
+        "bytes": 12664,
+        "sha256": "bf9cdffcc510639a9f0d9c43ec8a389951cb016cd01a967cef1c2585562a642d"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "JMdict",
+          "holder": "James William Breen and the Electronic Dictionary Research and Development Group",
+          "license": "CC BY-SA 4.0",
+          "url": "https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html",
+          "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "hyakuyaku",
+      "name": "薬の名前",
+      "group": "医療（百薬辞書）",
+      "summary": "医療文書から集めた医薬品名と読み（2021年7月版。読みは自動で付けたもので誤りを含むことがある）",
+      "entries": 16547,
+      "kind": "noun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/hyakuyaku-20261108.tsv",
+        "bytes": 1009289,
+        "sha256": "a91386063e2f52e25772ba32e261d2cc6492953d6a8fa36ebcb6d111ca0c5320"
+      },
+      "license": "CC BY 4.0",
+      "sources": [
+        {
+          "name": "百薬辞書（HYAKUYAKU_v20210706）",
+          "holder": "奈良先端科学技術大学院大学 ソーシャル・コンピューティング研究室",
+          "license": "CC BY 4.0",
+          "url": "https://sociocom.naist.jp/hyakuyaku-dic/",
+          "licenseURL": "https://creativecommons.org/licenses/by/4.0/deed.ja"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "japanpost-places",
+      "name": "地名（市区町村・町域）",
+      "group": "地名・固有名詞",
+      "summary": "日本郵便の郵便番号データの都道府県・市区町村・町域の名前",
+      "entries": 86273,
+      "kind": "place",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/japanpost-places-20261108.tsv",
+        "bytes": 2994490,
+        "sha256": "de24dc8c1bc676089fec053712cefecd5fee4a0e00f468faffdcf30ec8c09031"
+      },
+      "license": "著作権を主張しない（配布自由）",
+      "sources": [
+        {
+          "name": "郵便番号データ",
+          "holder": "日本郵便株式会社",
+          "license": "著作権を主張しない（配布自由）",
+          "url": "https://www.post.japanpost.jp/service/search/zipcode/download/readme.html",
+          "licenseURL": "https://www.post.japanpost.jp/service/search/zipcode/download/utf-readme.html"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "wikidata-people",
+      "name": "人名",
+      "group": "地名・固有名詞",
+      "summary": "Wikidata でかなの読み（P1814）が付いている人名の項目",
+      "entries": 215389,
+      "kind": "person",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/wikidata-people-20261108.tsv",
+        "bytes": 7507861,
+        "sha256": "7ec47775e2a85ddfdf017fe2d15d338f95d94c924e638e2fbff676d2574febf3"
+      },
+      "license": "CC0 1.0",
+      "sources": [
+        {
+          "name": "Wikidata",
+          "holder": "Wikidata の編集者",
+          "license": "CC0 1.0",
+          "url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
+          "licenseURL": "https://creativecommons.org/publicdomain/zero/1.0/deed.ja"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "wikidata-stations",
+      "name": "駅",
+      "group": "地名・固有名詞",
+      "summary": "Wikidata でかなの読み（P1814）が付いている駅の項目",
+      "entries": 13973,
+      "kind": "place",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/wikidata-stations-20261108.tsv",
+        "bytes": 429317,
+        "sha256": "fd739e8d874e3eea417c9bc239373655426e22890e9ca7c124a28a45e67b1d28"
+      },
+      "license": "CC0 1.0",
+      "sources": [
+        {
+          "name": "Wikidata",
+          "holder": "Wikidata の編集者",
+          "license": "CC0 1.0",
+          "url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
+          "licenseURL": "https://creativecommons.org/publicdomain/zero/1.0/deed.ja"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "wikidata-shrines-temples",
+      "name": "神社・寺院",
+      "group": "地名・固有名詞",
+      "summary": "Wikidata でかなの読み（P1814）が付いている神社・寺院の項目",
+      "entries": 12336,
+      "kind": "properNoun",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/wikidata-shrines-temples-20261108.tsv",
+        "bytes": 461890,
+        "sha256": "f30d501f30c4a765f2622c8879e540abc45440bc92614b08c1b32dbdb2ab6755"
+      },
+      "license": "CC0 1.0",
+      "sources": [
+        {
+          "name": "Wikidata",
+          "holder": "Wikidata の編集者",
+          "license": "CC0 1.0",
+          "url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
+          "licenseURL": "https://creativecommons.org/publicdomain/zero/1.0/deed.ja"
+        }
+      ],
+      "version": "20261108"
+    },
+    {
+      "id": "wikidata-former-municipalities",
+      "name": "旧市区町村",
+      "group": "地名・固有名詞",
+      "summary": "Wikidata でかなの読み（P1814）が付いている旧市区町村の項目",
+      "entries": 10897,
+      "kind": "place",
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/wikidata-former-municipalities-20261108.tsv",
+        "bytes": 321926,
+        "sha256": "a1c1e1531da59779e00ad52ab03431feecbf0c25e8c8f984be27d4bf28641e70"
+      },
+      "license": "CC0 1.0",
+      "sources": [
+        {
+          "name": "Wikidata",
+          "holder": "Wikidata の編集者",
+          "license": "CC0 1.0",
+          "url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
+          "licenseURL": "https://creativecommons.org/publicdomain/zero/1.0/deed.ja"
+        }
+      ],
+      "version": "20261108"
+    }
+  ]
+}
