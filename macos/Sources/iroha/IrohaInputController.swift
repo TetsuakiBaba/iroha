@@ -2154,7 +2154,11 @@ final class IrohaInputController: IMKInputController {
         let segmentStart = segments[..<min(currentSegmentIndex, segments.count)]
             .reduce(0) { $0 + $1.result.utf16.count }
         let anchor = client().flatMap { caretRect(client: $0, markedTextLength: segmentStart) }
-        CandidateWindow.shared.show(candidates, grid: grid, near: anchor) { [weak self] index in
+        // 専門辞書の語を含む候補には、辞書の名前の印を付ける
+        let lookup = TermDictionaryStore.shared.lookup
+        let reading = currentSegmentIndex < segments.count ? segments[currentSegmentIndex].reading : ""
+        let labels = lookup.isEmpty ? [] : candidates.map { lookup.labels(reading: reading, candidate: $0) }
+        CandidateWindow.shared.show(candidates, labels: labels, grid: grid, near: anchor) { [weak self] index in
             self?.choosePanelCandidate(at: index)
         }
     }

@@ -1570,7 +1570,8 @@ case "typo":
 
 case "terms":
     // 専門辞書の一覧・取得・削除（IME 本体の 設定 > 辞書・学習 > 専門辞書 と同じ経路。カタログは IROHA_TERM_DICTIONARY_CATALOG で変えられる）
-    //   iroha-cli terms list | install <ID> | remove <ID>
+    //   iroha-cli terms list | install <ID> | remove <ID> | lookup <読み> <候補>…
+    //   lookup は候補ウィンドウの印と同じ引き方で、候補ごとに載っている辞書の名前を出す
     let sub = arguments.count > 2 ? arguments[2] : "list"
     do {
         switch sub {
@@ -1592,8 +1593,14 @@ case "terms":
         case "remove" where arguments.count > 3:
             try TermDictionaryInstall.remove(id: arguments[3])
             print("外しました: \(arguments[3])")
+        case "lookup" where arguments.count > 4:
+            let lookup = TermDictionaryLookup(records: TermDictionaryInstall.installedRecords())
+            for candidate in arguments[4...] {
+                let labels = lookup.labels(reading: arguments[3], candidate: candidate)
+                print("\(candidate)\t\(labels.isEmpty ? "-" : labels.joined(separator: " "))")
+            }
         default:
-            FileHandle.standardError.write("使い方: iroha-cli terms list | install <ID> | remove <ID>\n".data(using: .utf8)!)
+            FileHandle.standardError.write("使い方: iroha-cli terms list | install <ID> | remove <ID> | lookup <読み> <候補>…\n".data(using: .utf8)!)
             exit(1)
         }
     } catch {

@@ -68,6 +68,33 @@ final class TermDictionaryTests: XCTestCase {
         return catalogURL
     }
 
+    func testLookupFindsDictionaryNames() {
+        // build-term-dictionaries.py と同じく、読み・語の順（UTF-8 のバイト順）に並べる
+        func table(_ label: String, _ pairs: [(String, String)]) -> TermDictionaryLookup.Table {
+            let lines = pairs.map { "\($0.0)\t\($0.1)" }.sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }
+            let data = Data(("# 注記\n# 形式: 読み<TAB>語\n" + lines.joined(separator: "\n") + "\n").utf8)
+            return .init(label: label, data: data, start: TermDictionaryLookup.bodyStart(data))
+        }
+        let engineering = table("工学", [("ちらく", "地絡"), ("ちら", "散ら"), ("へんちょう", "変調"), ("ぞんで", "ゾンデ")])
+        let medicine = table("医学", [("ぞんで", "ゾンデ"), ("けっしゅ", "血腫"), ("ちらくしょう", "地絡症")]
+            + (0..<500).map { ("あ\($0)", "亜\($0)") })
+        let lookup = TermDictionaryLookup(tables: [engineering, medicine])
+
+        XCTAssertEqual(lookup.labels(reading: "ちらく", candidate: "地絡"), ["工学"])
+        // 語の後ろに助詞などのかなが続く候補
+        XCTAssertEqual(lookup.labels(reading: "ちらくが", candidate: "地絡が"), ["工学"])
+        XCTAssertEqual(lookup.labels(reading: "ぞんでを", candidate: "ゾンデを"), ["工学", "医学"])
+        XCTAssertEqual(lookup.labels(reading: "けっしゅ", candidate: "血腫"), ["医学"])
+        XCTAssertEqual(lookup.labels(reading: "あ123", candidate: "亜123"), ["医学"])
+        // 辞書に無い語・読みの違う語・語の後ろがかなでない候補には付けない
+        XCTAssertEqual(lookup.labels(reading: "ちらく", candidate: "散楽"), [])
+        XCTAssertEqual(lookup.labels(reading: "へんちょう", candidate: "偏重"), [])
+        XCTAssertEqual(lookup.labels(reading: "ちらくが", candidate: "地絡画"), [])
+        XCTAssertEqual(TermDictionaryLookup.empty.labels(reading: "ちらく", candidate: "地絡"), [])
+        XCTAssertEqual(TermDictionaryLookup.label(for: "地名（市区町村・町域）"), "地名")
+        XCTAssertEqual(TermDictionaryLookup.label(for: "工学"), "工学")
+    }
+
     func testSamplesAreOptional() throws {
         let catalogURL = try makeCatalog(text: sampleText)
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: catalogURL)) as? [String: Any])

@@ -26,6 +26,7 @@ public final class TermDictionaryStore: @unchecked Sendable {
     private let reloadLock = NSLock()
     private var cached: TermDictionary = .empty
     private var records: [TermDictionaryInstall.Record] = []
+    private var cachedLookup: TermDictionaryLookup = .empty
     /// 最後に読み込んだときの辞書の組。変わっていなければ読み直さない
     private var loadedSignature: String?
 
@@ -42,6 +43,13 @@ public final class TermDictionaryStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return cached
+    }
+
+    /// 候補ウィンドウで、候補が載っている辞書の名前を引くもの
+    public var lookup: TermDictionaryLookup {
+        lock.lock()
+        defer { lock.unlock() }
+        return cachedLookup
     }
 
     /// 読み込んだ辞書の素性
@@ -73,8 +81,10 @@ public final class TermDictionaryStore: @unchecked Sendable {
         } else {
             dictionary = .empty
         }
+        let lookup = TermDictionaryLookup(records: found)
         lock.lock()
         cached = dictionary
+        cachedLookup = lookup
         records = found
         loadedSignature = signature
         lock.unlock()

@@ -10,6 +10,7 @@ import IrohaCore
 /// - 候補が 1 列に収まらなければ Tab で列を横に並べた表に広げる。画面の幅に収まらない列は、
 ///   選んでいる列が見えるように左右をずらして出す
 /// - キーボードフォーカスは取らない（nonactivating）。候補のクリックは受ける
+/// - 専門辞書の語を含む候補は、右に辞書の名前を小さな印で出す（`TermDictionaryLookup`）
 ///
 /// IMKのコールバックと同じくメインスレッドから使う
 final class CandidateWindow {
@@ -57,13 +58,13 @@ final class CandidateWindow {
     var isVisible: Bool { panel.isVisible }
 
     /// 候補を出す。`anchor` が nil（カーソル位置を教えてくれないアプリ）ならマウスポインタの位置に出す。
-    /// 候補をクリックすると `onClick` にその番号が来る
-    func show(_ candidates: [String], grid: CandidateGrid, near anchor: NSRect?,
+    /// 候補をクリックすると `onClick` にその番号が来る。`labels` は候補ごとの印（専門辞書の名前。無ければ空）
+    func show(_ candidates: [String], labels: [[String]] = [], grid: CandidateGrid, near anchor: NSRect?,
               onClick: @escaping (Int) -> Void) {
         let mouse = NSEvent.mouseLocation
         self.anchor = anchor ?? NSRect(x: mouse.x, y: mouse.y, width: 0, height: 0)
         firstVisibleColumn = 0
-        gridView.texts = candidates
+        gridView.setTexts(candidates, labels: labels)
         gridView.onClick = onClick
         update(grid)
     }
@@ -130,18 +131,31 @@ final class CandidateWindow {
 /// 候補を 9 件ずつの列に分けて描く。各行の左に列の中の番号（1〜9）を出す。
 /// クリックは非アクティブなアプリの窓でも最初の1回で届くようにする（`acceptsFirstMouse`）
 private final class CandidateGridView: NSView {
-    var texts: [String] = [] {
-        didSet { textWidths = texts.map { ($0 as NSString).size(withAttributes: [.font: font]).width } }
-    }
+    private(set) var texts: [String] = []
+    /// 候補ごとの印（専門辞書の名前）
+    private var labels: [[String]] = []
     var grid = CandidateGrid(count: 0)
     var visibleColumns: Range<Int> = 0..<0
     var onClick: ((Int) -> Void)?
 
+    /// 候補の文字と印を合わせた幅
     private var textWidths: [CGFloat] = []
+
+    func setTexts(_ texts: [String], labels: [[String]]) {
+        self.texts = texts
+        self.labels = texts.indices.map { $0 < labels.count ? labels[$0] : [] }
+        textWidths = texts.indices.map { index in
+            (texts[index] as NSString).size(withAttributes: [.font: font]).width + labelsWidth(self.labels[index])
+        }
+    }
 
     private let font = NSFont.systemFont(ofSize: 15)
     private let numberFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
     private let footerFont = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+    private let labelFont = NSFont.systemFont(ofSize: 10)
+    /// 候補の文字と印の間・印どうしの間
+    private let labelGap: CGFloat = 6
+    private let labelPadding: CGFloat = 4
     let horizontalInset: CGFloat = 4
     private let verticalPadding: CGFloat = 4
     private let cellPadding: CGFloat = 8
@@ -236,9 +250,37 @@ private final class CandidateGridView: NSView {
         ]
         let text = texts[index] as NSString
         let textSize = text.size(withAttributes: textAttributes)
-        text.draw(at: NSPoint(x: rect.minX + cellPadding + numberWidth + numberGap,
-                              y: rect.minY + (rect.height - textSize.height) / 2),
+        let textX = rect.minX + cellPadding + numberWidth + numberGap
+        text.draw(at: NSPoint(x: textX, y: rect.minY + (rect.height - textSize.height) / 2),
                   withAttributes: textAttributes)
+        drawLabels(labels[index], from: textX + textSize.width, in: rect, selected: isSelected)
+    }
+
+    private func labelSize(_ label: String) -> NSSize {
+        let size = (label as NSString).size(withAttributes: [.font: labelFont])
+        return NSSize(width: ceil(size.width) + labelPadding * 2, height: ceil(size.height) + 2)
+    }
+
+    private func labelsWidth(_ labels: [String]) -> CGFloat {
+        labels.map { labelGap + labelSize($0).width }.reduce(0, +)
+    }
+
+    /// 専門辞書の名前を、角の丸い枠に入れて候補の右に並べる
+    private func drawLabels(_ labels: [String], from x: CGFloat, in rect: NSRect, selected: Bool) {
+        let color: NSColor = selected ? .alternateSelectedControlTextColor : .secondaryLabelColor
+        var left = x
+        for label in labels {
+            left += labelGap
+            let size = labelSize(label)
+            let box = NSRect(x: left, y: rect.minY + (rect.height - size.height) / 2, width: size.width, height: size.height)
+            (selected ? NSColor.white.withAlphaComponent(0.25) : NSColor.quaternaryLabelColor).setFill()
+            NSBezierPath(roundedRect: box, xRadius: 3, yRadius: 3).fill()
+            let attributes: [NSAttributedString.Key: Any] = [.font: labelFont, .foregroundColor: color]
+            let textHeight = (label as NSString).size(withAttributes: attributes).height
+            (label as NSString).draw(at: NSPoint(x: box.minX + labelPadding, y: box.minY + (box.height - textHeight) / 2),
+                                     withAttributes: attributes)
+            left += size.width
+        }
     }
 
     private func drawFooter() {

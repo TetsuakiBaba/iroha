@@ -243,6 +243,9 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   入れた辞書は `<データフォルダ>/dictionaries/<ID>.tsv` と `<ID>.json`（出典・ライセンスの記録）。守ること:
   ・**候補ウィンドウにだけ効かせる**（ユーザの判断）。辞書ラティスの候補に語として加わり、モデルの採点で並ぶ。
     ライブ変換の第一候補・ユーザ辞書の語の境目の判定（`wordBoundaries`）には入れない
+  ・候補ウィンドウでは、専門辞書の語（か、その語＋読みの残りのかな）になっている候補の右に辞書の名前を小さな印で出す
+    （`TermDictionaryLookup`。入れた辞書ファイルをマップして二分探索で引くので、辞書ファイルは読み・語の UTF-8 のバイト順に
+    並べたままにする。`iroha-cli terms lookup <読み> <候補>…` で確かめられる）。基本の辞書にもある語（地名の「中央」など）にも付く
   ・辞書ラティスへは azooKey のユーザ辞書の形式（LOUDS、`DictionaryBuilder.exportDictionary`）に書き出して読ませる
     （`~/Library/Caches/iroha/term-dictionary-lattice/<組み合わせのハッシュ>/`、組み合わせごとに 1 回。全 38 万語で release 4.4 秒）。
     **動的ユーザ辞書（`importDynamicUserDictionary`）にしない**: ラティスは読みの頭からの部分が本体の辞書のどの語の頭とも
