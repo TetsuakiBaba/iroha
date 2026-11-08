@@ -23,7 +23,8 @@
           "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "7f3c233c2f5a763cad7c37da397af620106f105824b2bab44c9729232207b95d"
     },
     {
       "id": "jmdict-computing",
@@ -47,7 +48,8 @@
           "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "660f9d6ebc593559e06501cab3aad4bbb7e85e40721d651dea86ae87ea53084b"
     },
     {
       "id": "jmdict-law",
@@ -71,7 +73,8 @@
           "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "7ca50461c082748f881aba587a13815871d5bb1ceb207d5d3539cf72cd02c622"
     },
     {
       "id": "jmdict-economics",
@@ -95,7 +98,8 @@
           "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "b08a2c9b98cc1dad9d97b5bbcc5ed7f200de76c65e36be742203d148d9642de4"
     },
     {
       "id": "jmdict-mathematics",
@@ -119,7 +123,8 @@
           "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "cdb59dfb2d2f3e823ee3ba2e8347014c71c219ee082f6536d186720c6d2a80e3"
     },
     {
       "id": "jmdict-physics",
@@ -143,7 +148,8 @@
           "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "233b12e5c044bff2bb5b57002eed056304c63bfdf21e972795448a983ec061d4"
     },
     {
       "id": "jmdict-chemistry",
@@ -167,7 +173,8 @@
           "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "9e22752dd0b64e46bf378e70ae4fb80b71171b9a92eff6724656696bc51405a0"
     },
     {
       "id": "jmdict-engineering",
@@ -191,7 +198,8 @@
           "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "1134b61d6a696831e8c860f46e3315b20416fd23d2369e16e803f1e292c2bbfa"
     },
     {
       "id": "jmdict-biology",
@@ -215,7 +223,8 @@
           "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "efaadcea270d8fafa9e2aa53731a253063a91f4e3806eafa8111bc83113cc7e3"
     },
     {
       "id": "jmdict-geoscience",
@@ -239,7 +248,8 @@
           "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "85c10aa7eb1a4e52f588b0db7a4e5b86a71857e00221e7d6a7af4a008cf780dd"
     },
     {
       "id": "jmdict-linguistics",
@@ -263,7 +273,8 @@
           "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "2263d570687c060a32b214bcce177b08360797f27c33a406d3ae71c692625428"
     },
     {
       "id": "jmdict-religion",
@@ -287,7 +298,8 @@
           "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "46e3b3ced1664273d7074647dd80d475a187d11af33f09ed39f284f272e0889a"
     },
     {
       "id": "jmdict-psychology",
@@ -311,7 +323,8 @@
           "licenseURL": "https://www.edrdg.org/edrdg/licence.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "050ceda2f619bfc3d5243ffd1b0c549a3cc9ebf6c1ba62ac8fcbb61db7e52ec4"
     },
     {
       "id": "hyakuyaku",
@@ -335,7 +348,8 @@
           "licenseURL": "https://creativecommons.org/licenses/by/4.0/deed.ja"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "256a9e6d49f3b846dbeb36c478be51c768058f337844778764cbec8db22aec7d"
     },
     {
       "id": "japanpost-places",
@@ -359,7 +373,8 @@
           "licenseURL": "https://www.post.japanpost.jp/service/search/zipcode/download/utf-readme.html"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "81e6b3ad1c1a996e87da61b2b9bd57a91a7904fc0ff5e63944d87f3ee90f110b"
     },
     {
       "id": "wikidata-people",
@@ -383,7 +398,8 @@
           "licenseURL": "https://creativecommons.org/publicdomain/zero/1.0/deed.ja"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "39567d230297d78b54c89a1cd6c21db3ed36b533de8af8d8138e35d327f1f46f"
     },
     {
       "id": "wikidata-stations",
@@ -407,7 +423,8 @@
           "licenseURL": "https://creativecommons.org/publicdomain/zero/1.0/deed.ja"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "75216ace245c4f546c70f4ce609157a999874cd97c28cb3c0359a046c9d28ca1"
     },
     {
       "id": "wikidata-shrines-temples",
@@ -431,7 +448,8 @@
           "licenseURL": "https://creativecommons.org/publicdomain/zero/1.0/deed.ja"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "91c25129d36c5b39b647f3540c797fe7bfd3c6fe71c8e4131571add34352384e"
     },
     {
       "id": "wikidata-former-municipalities",
@@ -455,7 +473,8 @@
           "licenseURL": "https://creativecommons.org/publicdomain/zero/1.0/deed.ja"
         }
       ],
-      "version": "20261108"
+      "version": "20261108",
+      "contentSha256": "bb7d58a6d3e7a9216368df5ff29260d2f08fb6a7b562dc216a56ec0bbbe5a32c"
     }
   ]
 }

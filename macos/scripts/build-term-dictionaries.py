@@ -4,6 +4,10 @@
     python3 -I macos/scripts/build-term-dictionaries.py fetch   # 元データを vendor/term-dictionary-sources/ に取る
     python3 -I macos/scripts/build-term-dictionaries.py build   # dist/term-dictionaries/ に辞書と catalog.json を書く
 
+語の一覧が前の版（models/term-dictionaries.json）と同じ辞書は、書き出さずに前の版をそのまま使う（URL も変えない。
+アプリも入れ直さない）。JMdict 以外の元データが取れなかったときも前の版を使う。毎月 GitHub Actions
+（.github/workflows/term-dictionaries.yml）が fetch → build → 公開 を回す。
+
 公開は macos/scripts/publish-term-dictionaries.sh（Release への載せ方とカタログの更新）。
 
 元データとライセンス（再配布の条件を確かめたものだけを使う。2026-11-08 確認）:
@@ -248,20 +252,25 @@ def wikidata_query(pattern: str, kana_filter: str | None) -> str:
     )
 
 
-def fetch() -> None:
-    SOURCES.mkdir(parents=True, exist_ok=True)
-    print("==> JMdict")
+def fetch_jmdict() -> None:
     (SOURCES / "JMdict_e.gz").write_bytes(http_get(JMDICT_URL))
-    print("==> 郵便番号データ")
+
+
+def fetch_ken_all() -> None:
     (SOURCES / "utf_ken_all.zip").write_bytes(http_get(KEN_ALL_URL))
-    print("==> 百薬辞書")
+
+
+def fetch_hyakuyaku() -> None:
     page = http_get(HYAKUYAKU_PAGE).decode("utf-8", "replace")
     match = re.search(r'data-downloadurl="([^"]+)"', page)
     if match is None:
         raise RuntimeError("百薬辞書のダウンロード先がページに見つかりません")
     (SOURCES / "hyakuyaku.zip").write_bytes(http_get(match.group(1).replace("&#038;", "&")))
+
+
+def fetch_wikidata() -> None:
     for pack_id, name, pattern, partitioned, _ in WIKIDATA_GROUPS:
-        print(f"==> Wikidata: {name}")
+        print(f"    {name}")
         rows: list[dict] = []
         if partitioned:
             used = "".join(KANA_PARTITIONS)
@@ -277,8 +286,32 @@ def fetch() -> None:
             for r in rows
         ]
         (SOURCES / f"{pack_id}.json").write_text(json.dumps(simplified, ensure_ascii=False))
-        print(f"    {len(simplified)} 件")
-    (SOURCES / "fetched.json").write_text(json.dumps({"date": date.today().isoformat()}))
+        print(f"      {len(simplified)} 件")
+
+
+# (名前, 取得する関数, 取れなかったら止めるか)。JMdict はライセンスが新しい版への更新を求めるので、取れなければ止める。
+# ほかは取れなければ前の版（models/term-dictionaries.json に載っているもの）をそのまま使う
+FETCHERS = [
+    ("jmdict", fetch_jmdict, True),
+    ("japanpost", fetch_ken_all, False),
+    ("hyakuyaku", fetch_hyakuyaku, False),
+    ("wikidata", fetch_wikidata, False),
+]
+
+
+def fetch() -> None:
+    SOURCES.mkdir(parents=True, exist_ok=True)
+    fetched = []
+    for name, function, required in FETCHERS:
+        print(f"==> {name}")
+        try:
+            function()
+            fetched.append(name)
+        except Exception as error:  # noqa: BLE001
+            if required:
+                raise
+            print(f"    取得できませんでした（前の版を使います）: {error}", file=sys.stderr)
+    (SOURCES / "fetched.json").write_text(json.dumps({"date": date.today().isoformat(), "sources": fetched}))
 
 
 # MARK: - 作成
@@ -401,9 +434,21 @@ def build_wikidata() -> list[Pack]:
     return packs
 
 
+PREVIOUS_CATALOG = ROOT / "models" / "term-dictionaries.json"
+RELEASE_URL = "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1"
+ALL_SOURCES = [SOURCE_JMDICT, SOURCE_HYAKUYAKU, SOURCE_KEN_ALL, SOURCE_WIKIDATA]
+
+
+def content_sha256(pack: Pack) -> str:
+    """語の一覧（注記の行を除く）の SHA-256。前の版と同じなら載せ直さない"""
+    body = "\n".join(f"{r}\t{w}" for r, w in sorted(pack.pairs))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
 def write_pack(pack: Pack, version: str) -> dict:
     DIST.mkdir(parents=True, exist_ok=True)
-    file_name = f"{pack.id}-{version}.tsv"
+    # 同じ日に作り直しても公開中のファイルを上書きしないよう、語の一覧のハッシュの先頭をファイル名に入れる
+    file_name = f"{pack.id}-{version}-{content_sha256(pack)[:8]}.tsv"
     lines = [f"# iroha 専門辞書: {pack.name}（{pack.id}、{version}）。{pack.summary}"]
     for source in pack.sources:
         lines.append(f"# 出典: {source['name']}（{source['holder']}、{source['url']}）")
@@ -421,31 +466,32 @@ def write_pack(pack: Pack, version: str) -> dict:
         "entries": len(pack.pairs),
         "kind": pack.kind,
         "file": {
-            "url": f"https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1/{file_name}",
+            "url": f"{RELEASE_URL}/{file_name}",
             "bytes": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
         },
         "license": pack.license,
         "sources": [{k: source[k] for k in ("name", "holder", "license", "url", "licenseURL")} for source in pack.sources],
         "version": version,
+        "contentSha256": content_sha256(pack),
     }
 
 
-def write_notice(packs: list[Pack], version: str) -> None:
+def write_notice(entries: list[dict], version: str) -> None:
     """Release に一緒に載せる、出典とライセンスの一覧（ライセンス文書の場所と注記）"""
     lines = [
-        f"iroha 専門辞書（{version}）の出典とライセンス",
+        f"iroha 専門辞書の出典とライセンス（{version} 更新）",
         "",
         "各辞書は元データのライセンスに従って配布する。辞書ファイルの先頭の「#」行にも同じ注記がある。",
         "",
     ]
-    sources = []
-    for pack in packs:
-        for source in pack.sources:
-            if source not in sources:
-                sources.append(source)
-    for source in sources:
-        files = [f"{p.id}-{version}.tsv" for p in packs if source in p.sources]
+    for source in ALL_SOURCES:
+        files = [
+            e["file"]["url"].rsplit("/", 1)[-1] for e in entries
+            if any(s["name"] == source["name"] for s in e["sources"])
+        ]
+        if not files:
+            continue
         lines.append(f"■ {source['name']}（{source['holder']}）")
         lines.append(f"  出典: {source['url']}")
         lines.append(f"  ライセンス文書: {source['licenseURL']}")
@@ -457,21 +503,48 @@ def write_notice(packs: list[Pack], version: str) -> None:
 
 
 def build() -> None:
-    fetched = json.loads((SOURCES / "fetched.json").read_text())["date"]
-    version = fetched.replace("-", "")
-    packs = build_jmdict() + [build_hyakuyaku(), build_ken_all()] + build_wikidata()
-    if DIST.exists():
-        for old in DIST.glob("*.tsv"):
-            old.unlink()
+    fetched = json.loads((SOURCES / "fetched.json").read_text())
+    version = fetched["date"].replace("-", "")
+    available = set(fetched.get("sources", [name for name, _, _ in FETCHERS]))
+    previous = {}
+    if PREVIOUS_CATALOG.exists():
+        previous = {e["id"]: e for e in json.loads(PREVIOUS_CATALOG.read_text())["dictionaries"]}
+
+    # 元データごとに作る。取れなかった元データの辞書は前の版を使う
+    groups: list[tuple[str, list[str], object]] = [
+        ("jmdict", [g[0] for g in JMDICT_GROUPS], build_jmdict),
+        ("hyakuyaku", ["hyakuyaku"], lambda: [build_hyakuyaku()]),
+        ("japanpost", ["japanpost-places"], lambda: [build_ken_all()]),
+        ("wikidata", [g[0] for g in WIKIDATA_GROUPS], build_wikidata),
+    ]
+    DIST.mkdir(parents=True, exist_ok=True)
+    for old in DIST.glob("*.tsv"):
+        old.unlink()
     entries = []
-    for pack in packs:
-        entry = write_pack(pack, version)
-        entries.append(entry)
-        print(f"{pack.id:34} {entry['entries']:>8,} 語  {entry['file']['bytes'] / 1e6:6.2f} MB  {pack.name}")
-    write_notice(packs, version)
+    changed = 0
+    for source_name, ids, builder in groups:
+        if source_name not in available:
+            missing = [i for i in ids if i not in previous]
+            if missing:
+                raise RuntimeError(f"{source_name} を取得できず、前の版もありません: {missing}")
+            for pack_id in ids:
+                entries.append(previous[pack_id])
+                print(f"{pack_id:34} 前の版のまま（元データを取得できなかった）")
+            continue
+        for pack in builder():
+            old = previous.get(pack.id)
+            if old is not None and old.get("contentSha256") == content_sha256(pack):
+                entries.append(old)
+                print(f"{pack.id:34} {old['entries']:>8,} 語  変更なし（{old['version']} 版のまま）")
+                continue
+            entry = write_pack(pack, version)
+            entries.append(entry)
+            changed += 1
+            print(f"{pack.id:34} {entry['entries']:>8,} 語  {entry['file']['bytes'] / 1e6:6.2f} MB  {pack.name}（新しい版）")
+    write_notice(entries, version)
     catalog = {"formatVersion": 1, "dictionaries": entries}
     (DIST / "catalog.json").write_text(json.dumps(catalog, ensure_ascii=False, indent=2) + "\n")
-    print(f"==> {DIST / 'catalog.json'}")
+    print(f"==> 新しい版 {changed} 個。{DIST / 'catalog.json'}")
 
 
 if __name__ == "__main__":

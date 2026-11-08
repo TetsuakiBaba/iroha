@@ -451,18 +451,21 @@ float16 でも照合は通る（greedy 200/200 一致・margin 最大差 0.0043�
 
 - 一覧: [models/term-dictionaries.json](models/term-dictionaries.json)。アプリが焼き込んでいるのはこの URL だけで、
   辞書ごとの名前・大きさ・SHA-256・ライセンス・出典はこのファイルにある。URL は環境変数 `IROHA_TERM_DICTIONARY_CATALOG` で上書きできる
-- 本体: GitHub Releases の専用タグ `term-dictionaries-v1`（**プレリリース**）。ファイル名は `<ID>-<作った日>.tsv`
+- 本体: GitHub Releases の専用タグ `term-dictionaries-v1`（**プレリリース**）。ファイル名は `<ID>-<作った日>-<語の一覧のハッシュ8桁>.tsv`
   （1行が「読み<TAB>語」、先頭の「#」行に出典・著作権・ライセンス・加工した旨・無保証）。出典とライセンスの一覧を
   `NOTICE.txt` として一緒に載せる。各辞書は元データと同じライセンスで配り（JMdict 由来は CC BY-SA 4.0）、ほかに条件は付けない
 - アプリは落としたあと大きさと SHA-256 を照合してから置く。辞書ラティスには azooKey のユーザ辞書の形式（LOUDS）に
   書き出して読ませる。書き出しは辞書の組み合わせごとに1回だけで、`~/Library/Caches/iroha/term-dictionary-lattice/` に残す
 - 作り直したときは、アプリが設定画面を開いたときに入れている辞書を入れ直す（カタログの SHA-256 が変わったとき）。
-  **JMdict のライセンスは配る版を新しく保つことを求める**ので、定期的に作り直して公開し直す
+  **JMdict のライセンスは配る版を新しく保つことを求める**ので、GitHub Actions（[term-dictionaries.yml](.github/workflows/term-dictionaries.yml)）が
+  毎月 1 日（日本時間 2 日 3:00）に作り直して公開し、カタログをコミットする。語の一覧が変わっていない辞書は載せ直さず、
+  今と一つ前のカタログが指さない古いファイルは Release から消す。JMdict を取れなければ止まり、ほかの元データが取れなければ前の版を使う
 
 ```sh
 python3 -I macos/scripts/build-term-dictionaries.py fetch   # 元データを vendor/term-dictionary-sources/ に取る
 python3 -I macos/scripts/build-term-dictionaries.py build   # dist/term-dictionaries/ に辞書とカタログを書く
-./macos/scripts/publish-term-dictionaries.sh                # Release へ載せて照合し、models/term-dictionaries.json を更新
+./macos/scripts/publish-term-dictionaries.sh                # Release へ載せて照合・古い版を消し、models/term-dictionaries.json を更新
+# （手で回す場合。普段は毎月の GitHub Actions が同じ手順を回す。Actions の画面の「Run workflow」でもすぐ回せる）
 # models/term-dictionaries.json をコミットして push
 .build/release/iroha-cli terms list                        # 公開した一覧が見えるか
 .build/release/iroha-cli terms install jmdict-medicine     # アプリと同じ経路で取得・照合・設置できるか（remove で外す）

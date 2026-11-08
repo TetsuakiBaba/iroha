@@ -1,0 +1,52 @@
+# 専門辞書（設定 > 辞書・学習 > 専門辞書）を毎月作り直して公開する。
+#
+# JMdict のライセンス（EDRDG licence Section 4）は、データを使うソフトウェアに「新しい版へ定期的に更新する手順」を
+# 求める。この workflow がその手順: 元データを取り直し（fetch）、語の一覧が変わった辞書だけを書き出し（build）、
+# Release term-dictionaries-v1（プレリリース）に載せて照合し、古い版を消し（publish）、カタログをコミットする。
+# アプリは設定画面を開いたときにカタログを読み、作り直された辞書を入れ直す。
+# JMdict を取れなければ fetch で止まる（失敗の通知が届く）。ほかの元データが取れなければ前の版をそのまま使う。
+# 手で回すときは Actions の画面から「Run workflow」。
+name: 専門辞書の作り直し
+
+on:
+  schedule:
+    - cron: '0 18 1 * *'   # 毎月 1 日 18:00 UTC（日本時間 2 日 3:00）
+  workflow_dispatch:
+
+permissions:
+  contents: write # Release への載せ替えとカタログのコミット
+
+concurrency:
+  group: term-dictionaries
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 元データを取る
+        run: python3 -I macos/scripts/build-term-dictionaries.py fetch
+
+      - name: 辞書を作る
+        run: python3 -I macos/scripts/build-term-dictionaries.py build
+
+      - name: Release に載せる
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./macos/scripts/publish-term-dictionaries.sh
+
+      - name: カタログをコミットする
+        run: |
+          if git diff --quiet -- models/term-dictionaries.json; then
+            echo "カタログに変更なし"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add models/term-dictionaries.json
+          git commit -m "専門辞書を作り直す（$(date -u +%Y-%m-%d)）"
+          git pull --rebase origin main
+          git push origin HEAD:main

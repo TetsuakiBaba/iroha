@@ -6,13 +6,15 @@
 #   python3 -I macos/scripts/build-term-dictionaries.py build
 #   ./macos/scripts/publish-term-dictionaries.sh
 #   （そのあと models/term-dictionaries.json をコミットして push する。アプリはこのファイルを読む）
+#   毎月 GitHub Actions（.github/workflows/term-dictionaries.yml）が同じ手順を回し、カタログのコミットまで行う
 #
 # 配布の考えかた:
 #   - 辞書ごとにライセンスが違う（JMdict: CC BY-SA 4.0、百薬辞書: CC BY 4.0、Wikidata: CC0、
 #     郵便番号データ: 日本郵便が著作権を主張しない）。本体コード(MIT)とは別に、アプリが入れるときにだけ取る
 #   - 各辞書ファイルの先頭の「#」行に出典とライセンスを書いてある。Release の説明にも同じものを書く
-#   - ファイル名に作った日を入れる（<ID>-<YYYYMMDD>.tsv）。作り直しても前の版の URL は残るので、
-#     古いカタログを読んだアプリが壊れない。アプリはカタログの SHA-256 が変わったら入れ直す
+#   - ファイル名に作った日と語の一覧のハッシュの先頭を入れる（<ID>-<YYYYMMDD>-<8桁>.tsv）。作り直しても
+#     前の版の URL は残るので、古いカタログを読んだアプリが壊れない。アプリはカタログの SHA-256 が変わったら入れ直す。
+#     語の一覧が変わっていない辞書は載せ直さない。今と一つ前のカタログが指さないファイルは消す
 #   - JMdict のライセンスは配る版を新しく保つことを求める。fetch から作り直してこのスクリプトを回す
 #   - **必ずプレリリースとして作る**。通常リリースにすると GitHub の releases/latest が
 #     これを指してしまい、UpdateChecker（アプリの更新通知）が壊れる
@@ -57,9 +59,14 @@ EOF
   rm -f "$NOTES"
 fi
 
-echo "==> 辞書を載せる"
-# NOTICE.txt（出典とライセンスの一覧）は作り直すたびに上書きする
-gh release upload "$TAG" --repo "$REPO" --clobber "$DIST"/*.tsv "$DIST/NOTICE.txt"
+echo "==> 新しい版の辞書と NOTICE.txt を載せる"
+# build は語の一覧が変わった辞書だけを書き出す（変わっていない辞書は前の版の URL のまま）。
+# NOTICE.txt（出典とライセンスの一覧）は毎回上書きする
+shopt -s nullglob
+NEW_FILES=("$DIST"/*.tsv)
+shopt -u nullglob
+echo "    新しい版: ${#NEW_FILES[@]} 個"
+gh release upload "$TAG" --repo "$REPO" --clobber ${NEW_FILES[@]+"${NEW_FILES[@]}"} "$DIST/NOTICE.txt"
 
 echo "==> 載せたファイルを確かめる（カタログの大きさと SHA-256 と照合）"
 python3 -I - "$DIST/catalog.json" <<'EOF'
@@ -72,6 +79,27 @@ for entry in catalog["dictionaries"]:
     if not ok:
         sys.exit(1)
 EOF
+
+echo "==> 使わなくなった古い版を Release から消す"
+# 残すのは、新しいカタログと一つ前のカタログ（今 push してあるもの）が指すファイルと NOTICE.txt。
+# 一つ前のカタログを読んだばかりのアプリが取りにいくファイルを消さないため、一つ前の分も残す
+KEEP=$(python3 -I -c '
+import json, sys
+names = {"NOTICE.txt"}
+for path in sys.argv[1:]:
+    try:
+        catalog = json.load(open(path))
+    except FileNotFoundError:
+        continue
+    names |= {e["file"]["url"].rsplit("/", 1)[-1] for e in catalog["dictionaries"]}
+print("\n".join(sorted(names)))
+' "$DIST/catalog.json" models/term-dictionaries.json)
+gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' | while read -r name; do
+  if ! grep -qxF "$name" <<<"$KEEP"; then
+    echo "    消す: $name"
+    gh release delete-asset "$TAG" "$name" --repo "$REPO" --yes
+  fi
+done
 
 cp "$DIST/catalog.json" models/term-dictionaries.json
 echo "==> models/term-dictionaries.json を更新しました。コミットして push すると、アプリの一覧に出ます"
