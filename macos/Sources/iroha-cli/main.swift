@@ -46,12 +46,42 @@ import IrohaMLX
 //   明示指定はそのまま使う）。convert / segment / repl はIME本体と同じデータを使う
 //   IROHA_LATTICE=off で辞書ラティスを使わずzenz単体、IROHA_LATTICE=always で第一候補も
 //   ラティス候補の再採点で決める（既定は候補ウィンドウのみラティス。IME本体と同じ）
+//   IROHA_TERM_DICTIONARIES=installed で IME 本体に入れた専門辞書を、=a.tsv,b.tsv でその辞書ファイルを
+//   候補ウィンドウの辞書ラティスに加える（既定は使わない）
 //   IROHA_NO_LATIN=1 で読みにラテン文字がないときの英字出力を禁じる（実験用。USB等も出なくなる）
 //   IROHA_NO_CONSTRAINT=1 で読み制約（constrained decoding）を丸ごと切り素の貪欲生成にする
 //   （実験用。Python側の制約なし計測と突き合わせるとき）
 //   IROHA_BACKEND=mlx でかな漢字変換を MLX 版エンジン（MLXConversionEngine、T5 と GPT-2）で動かす
 //   （IME 本体の 設定 > モデル > 推論エンジン と同じ。IROHA_MLX_DTYPE=f32 で bf16 ではなく f32 にする）
 //   データフォルダはIME本体の設定（保存場所の変更）に従う。IROHA_DATA_DIR で上書き可能
+
+/// 専門辞書（IROHA_TERM_DICTIONARIES）。`installed` なら IME 本体で入れた辞書、それ以外はカンマ区切りの
+/// 辞書ファイル（読み<TAB>語）を一時フォルダに書き出して使う。指定が無ければ使わない（IME 本体と違い、既定は無し）
+func cliTermDictionary() -> TermDictionary {
+    guard let value = ProcessInfo.processInfo.environment["IROHA_TERM_DICTIONARIES"], !value.isEmpty else {
+        return .empty
+    }
+    let dictionary: TermDictionary
+    if value == "installed" {
+        TermDictionaryStore.shared.reload()
+        dictionary = TermDictionaryStore.shared.current
+    } else {
+        guard let dictionaryURL = LatticeConverter.defaultDictionaryURL() else { return .empty }
+        let packs = value.split(separator: ",").map { path -> (kind: TermDictionary.Kind, pairs: [(reading: String, word: String)]) in
+            let text = (try? String(contentsOfFile: String(path), encoding: .utf8)) ?? ""
+            return (.noun, TermDictionary.parse(text))
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iroha-cli-terms-\(UUID().uuidString)", isDirectory: true)
+        let started = Date()
+        let count = (try? TermDictionary.export(packs: packs, dictionaryURL: dictionaryURL, to: directory)) ?? 0
+        FileHandle.standardError.write(String(
+            format: "専門辞書の書き出し: %d 語・%.1f 秒\n", count, Date().timeIntervalSince(started)).data(using: .utf8)!)
+        dictionary = TermDictionary(latticeDirectory: directory, entryCount: count)
+    }
+    FileHandle.standardError.write("専門辞書: \(dictionary.entryCount) 語（IROHA_TERM_DICTIONARIES）\n".data(using: .utf8)!)
+    return dictionary
+}
 
 /// IME本体と同じデータフォルダを使う（設定 > 情報 > データの保存場所 で変えた場所を追う）
 func configureDataDirectory() {
@@ -153,7 +183,10 @@ func makeEngine(userData: UserDataMode = .ime) -> any ConversionEngine {
     }
     // 辞書ラティス + zenz採点（IME本体と同じ構成）。辞書が無い・OFF指定ならzenz単体
     let latticeMode = ProcessInfo.processInfo.environment["IROHA_LATTICE"] ?? ""
-    let lattice = LatticeConverter.defaultDictionaryURL().map { LatticeConverter(dictionaryURL: $0) }
+    let termDictionary = cliTermDictionary()
+    let lattice = LatticeConverter.defaultDictionaryURL().map {
+        LatticeConverter(dictionaryURL: $0) { termDictionary }
+    }
     func withLattice<Base: ConversionEngine & CandidateScorer>(_ base: Base) -> any ConversionEngine {
         guard latticeMode != "off", let lattice else { return base }
         return LatticeRescoringEngine(

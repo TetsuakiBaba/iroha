@@ -58,6 +58,8 @@ final class DataDirectoryWatcher {
         if UserDictionaryStore.shared.reloadIfChanged() { reloaded.append("ユーザ辞書") }
         if LearningStore.shared.reloadIfChanged() { reloaded.append("学習") }
         if UserRewriteRuleStore.shared.reloadIfChanged() { reloaded.append("変換ルール") }
+        // 専門辞書は dictionaries/ の下にあり、フォルダの監視には掛からない。定期確認で拾う
+        if TermDictionaryStore.shared.reload() { reloaded.append("専門辞書") }
         // 入力履歴はサブフォルダにあるのでフォルダの監視には掛からず、定期確認で拾う
         if InputHistoryStore.shared.reloadIfChanged() { reloaded.append("入力履歴") }
         // 原稿のフォルダ（documents/）もサブフォルダなので定期確認で拾う。中身が変わったときだけ読み直す

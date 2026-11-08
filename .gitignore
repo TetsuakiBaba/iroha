@@ -8,6 +8,8 @@ vendor/dist/
 # 打ち間違い訂正モデル（install-typo-normalizer.sh が書き出しから作る）。
 # /export-scale-16x/ は学習機からの書き出しの置き場所。どちらも重みなのでgitには入れない
 vendor/typo-normalizer/
+# 専門辞書の元データ（build-term-dictionaries.py fetch が取る。作った辞書は dist/term-dictionaries/）
+vendor/term-dictionary-sources/
 /export-scale-16x/
 vendor/dist-windows/
 vendor/dist-windows-vulkan/

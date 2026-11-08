@@ -265,6 +265,29 @@ macOS側の辞書は変更しない。ローマ字入力では到達できない
 ASCIIショートカット）は取り込みの対象外。取り込んだ単語をirohaで編集すると
 以後の同期では上書きされない。
 
+### 専門辞書
+
+設定 > 辞書・学習 > 専門辞書 で、分野の用語や地名・人名の辞書を1つずつ「追加」「削除」できる。
+辞書はアプリに含まれておらず、「追加」を押したときにダウンロードして `<データフォルダ>/dictionaries/` に置く
+（保存場所を共有フォルダにしていれば他のMacでも使える）。
+
+- 専門辞書の語は**文節の候補ウィンドウにだけ出る**（スペースキーで変換したときの候補）。辞書ラティスに語として加わり、
+  並び順は変換モデルが前後の文から決める。ライブ変換で最初に出る変換（モデルの生成）は変えない。
+  ユーザ辞書のように読みが一致したら置き換える形にしないのは、語数の多い辞書では「かんせん → 感染」が
+  文脈と関係なく「観戦」を上書きするなど、ほかの文の変換を壊すため。候補から選んで確定すると、
+  変換の学習で次からその語に変換する
+- 配布している辞書（再配布の条件を確かめたものだけ。2026-11-08 時点）:
+
+| 辞書 | 元データ | ライセンス |
+|---|---|---|
+| 分野別の用語（医学・情報・法律・経済・数学・物理・化学・工学・生物・地学・言語学・宗教哲学・心理学） | [JMdict](https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html) の分野の印（EDRDG） | CC BY-SA 4.0 |
+| 薬の名前 | [百薬辞書](https://sociocom.naist.jp/hyakuyaku-dic/)（奈良先端科学技術大学院大学 ソーシャル・コンピューティング研究室） | CC BY 4.0 |
+| 地名（市区町村・町域） | 日本郵便の[郵便番号データ](https://www.post.japanpost.jp/service/search/zipcode/download/readme.html) | 著作権を主張しない（配布自由） |
+| 人名・駅・神社と寺院・旧市区町村 | [Wikidata](https://www.wikidata.org/) のかなの読み（P1814） | CC0 |
+
+万病辞書・JMED-DICT mini・ComeJisyo は再配布の条件を確認できず、SKK の専門辞書は GPL v2 のため使っていない。
+Wikidata のかなの読みは固有名詞（人名・駅・神社と寺院・地名）にほぼ限られ、病名や化合物にはほとんど付いていない。
+
 ### 変換ルール（User Rewriter）
 
 メニューの「変換ルール...」（または設定 > 辞書・学習 > 変換ルール > 「編集...」）から、
@@ -359,7 +382,7 @@ fとんはあらったほうが →  「布団は」（ローマ字がかなに�
 |---|---|---|---|
 | アプリ | `macos/` | 追跡 | macOS 版（Swift パッケージ。IME 本体・変換エンジン・CLI・追加学習） |
 | | `windows/` | 追跡 | Windows 版（TSF） |
-| 配布・評価 | `models/` | 追跡 | アプリがダウンロードするモデルの一覧（`typo-normalizer.json`） |
+| 配布・評価 | `models/` | 追跡 | アプリがダウンロードするモデル・辞書の一覧（`typo-normalizer.json`・`term-dictionaries.json`） |
 | | `testdata/` | 追跡 | 評価セット（`eval.tsv`、`iroha/typo/`。`ajimee/` は取得して置く） |
 | 学習データを作る | `dataset/iroha-typo-normalizer/` | コードだけ追跡 | 公開データから学習データを作る Python パッケージ。作ったデータは `dataset/iroha-typo-normalizer/data/`（追跡しない） |
 | 学習・検証 | `training/` | 追跡しない | モデルの学習。直下がかな漢字変換モデル（llm-jp・T5）、`typo-normalizer/` が打ち間違いの訂正 |
@@ -421,6 +444,27 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
 | float32（`--float32`） | 12,795,360 B (12.2 MiB) | 20,229 B |
 
 float16 でも照合は通る（greedy 200/200 一致・margin 最大差 0.0043、θ別の訂正率の表も float32 と同一）。
+
+#### 専門辞書の配布
+
+専門辞書（上記）も**アプリに同梱していない**。辞書ごとにライセンスが違うので、本体コード(MIT)と分けて配る。
+
+- 一覧: [models/term-dictionaries.json](models/term-dictionaries.json)。アプリが焼き込んでいるのはこの URL だけで、
+  辞書ごとの名前・大きさ・SHA-256・ライセンス・出典はこのファイルにある。URL は環境変数 `IROHA_TERM_DICTIONARY_CATALOG` で上書きできる
+- 本体: GitHub Releases の専用タグ `term-dictionaries-v1`（**プレリリース**）。ファイル名は `<ID>-<作った日>.tsv`
+  （1行が「読み<TAB>語」、先頭の「#」行に出典とライセンス）
+- アプリは落としたあと大きさと SHA-256 を照合してから置く。辞書ラティスには azooKey のユーザ辞書の形式（LOUDS）に
+  書き出して読ませる。書き出しは辞書の組み合わせごとに1回だけで、`~/Library/Caches/iroha/term-dictionary-lattice/` に残す
+- 作り直したときは、アプリが設定画面を開いたときに入れている辞書を入れ直す（カタログの SHA-256 が変わったとき）。
+  **JMdict のライセンスは配る版を新しく保つことを求める**ので、定期的に作り直して公開し直す
+
+```sh
+python3 -I macos/scripts/build-term-dictionaries.py fetch   # 元データを vendor/term-dictionary-sources/ に取る
+python3 -I macos/scripts/build-term-dictionaries.py build   # dist/term-dictionaries/ に辞書とカタログを書く
+./macos/scripts/publish-term-dictionaries.sh                # Release へ載せて照合し、models/term-dictionaries.json を更新
+# models/term-dictionaries.json をコミットして push
+IROHA_TERM_DICTIONARIES=installed .build/release/iroha-cli convert --n 10 <読み>   # 入れた辞書での候補を見る
+```
 
 ##### モデルのライセンス
 
@@ -591,5 +635,6 @@ git tag v0.4.0 && git push origin v0.4.0
   [swift-tokenizers](https://github.com/ensan-hcl/swift-tokenizers): Apache-2.0）
 - 辞書データ [azooKey_dictionary_storage](https://github.com/azooKey/azooKey_dictionary_storage): Apache-2.0
 - 記号・顔文字・絵文字のデータ [Mozc](https://github.com/google/mozc)（Google Inc.）: BSD 3-Clause
+- 専門辞書（設定で追加したときだけダウンロード）: [JMdict](https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html)（EDRDG）CC BY-SA 4.0・[百薬辞書](https://sociocom.naist.jp/hyakuyaku-dic/)（NAIST ソーシャル・コンピューティング研究室）CC BY 4.0・日本郵便の郵便番号データ・[Wikidata](https://www.wikidata.org/) CC0
 - アプリアイコン・メニューバーアイコンの書体 [Tsukimi Rounded](https://fonts.google.com/specimen/Tsukimi+Rounded)（Takashi Funayama氏）: SIL Open Font License 1.1
 - 設計にあたり [azooKey-Desktop](https://github.com/azooKey/azooKey-Desktop) / Zenzai の公開知見を参考にした

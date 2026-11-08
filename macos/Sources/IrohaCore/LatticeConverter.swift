@@ -50,11 +50,24 @@ public actor LatticeConverter {
             && FileManager.default.fileExists(atPath: url.appendingPathComponent("louds/charID.chid").path)
     }
 
+    /// 候補を作る変換器（専門辞書をユーザ辞書として読む）
     private let converter: KanaKanjiConverter
+    /// ユーザ辞書の語の境目を決める変換器（専門辞書を読まない）。
+    /// 本体の辞書の読み込み（`DicdataStore`）は `converter` と共有する。ユーザ辞書の置き場所は変換器ごとの
+    /// 状態にあり、1つの変換器で置き場所を切り替えると切り替えるたびに読み直しになるので、2つに分けている
+    private let boundaryConverter: KanaKanjiConverter
     private let workDirectory: URL
+    /// 専門辞書（`TermDictionary`）。候補を作るときだけラティスに加わる
+    private let termDictionary: @Sendable () -> TermDictionary
 
-    public init(dictionaryURL: URL) {
-        converter = KanaKanjiConverter(dictionaryURL: dictionaryURL)
+    public init(
+        dictionaryURL: URL,
+        termDictionary: @escaping @Sendable () -> TermDictionary = { .empty }
+    ) {
+        let store = DicdataStore(dictionaryURL: dictionaryURL)
+        converter = KanaKanjiConverter(dicdataStore: store)
+        boundaryConverter = KanaKanjiConverter(dicdataStore: store)
+        self.termDictionary = termDictionary
         // 学習は使わない（irohaは自前の学習を持つ）が、APIが保存先を要求するので一時フォルダを渡す
         workDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("iroha-lattice", isDirectory: true)
@@ -99,7 +112,8 @@ public actor LatticeConverter {
     public func rawCandidates(reading: String, count: Int) -> [Candidate] {
         guard !reading.isEmpty else { return [] }
         let readingLength = reading.count
-        return request(reading: reading, count: count).map {
+        let userDictionaryURL = termDictionary().latticeDirectory ?? workDirectory
+        return request(reading: reading, count: count, converter: converter, userDictionaryURL: userDictionaryURL).map {
             Candidate(text: $0.text, value: Double($0.value), isFullMatch: $0.rubyCount == readingLength)
         }
     }
@@ -114,14 +128,17 @@ public actor LatticeConverter {
     /// （`LatticeRescoringEngine` の候補には混ぜない）。読み全体の候補が無ければ nil
     public func wordBoundaries(reading: String, userWords: [(reading: String, word: String)]) -> Set<Int>? {
         guard !reading.isEmpty else { return nil }
-        converter.importDynamicUserDictionary(userWords.map {
+        // 専門辞書の語は入れない（ユーザ辞書をライブ変換に当てる位置を、専門辞書で変えない）
+        let words = userWords.map {
             DicdataElement(
                 word: $0.word, ruby: hiraganaToKatakana($0.reading),
                 cid: CIDData.固有名詞.cid, mid: MIDData.一般.mid, value: -10)
-        })
-        defer { converter.importDynamicUserDictionary([]) }
+        }
         let readingLength = reading.count
-        guard let best = request(reading: reading, count: 1).first(where: { $0.rubyCount == readingLength })
+        guard let best = request(
+            reading: reading, count: 1, converter: boundaryConverter, userDictionaryURL: workDirectory,
+            extraWords: words
+        ).first(where: { $0.rubyCount == readingLength })
         else { return nil }
         var boundaries: Set<Int> = [0]
         var position = 0
@@ -132,7 +149,18 @@ public actor LatticeConverter {
         return boundaries
     }
 
-    private func request(reading: String, count: Int) -> [KanaKanjiConverterModule.Candidate] {
+    /// `userDictionaryURL` は azooKey のユーザ辞書の形式の置き場所（専門辞書。無ければ空のフォルダ）。
+    /// `extraWords` はこの変換の間だけラティスに加える語（返る前に外す）
+    private func request(
+        reading: String, count: Int, converter: KanaKanjiConverter, userDictionaryURL: URL,
+        extraWords: [DicdataElement] = []
+    ) -> [KanaKanjiConverterModule.Candidate] {
+        if !extraWords.isEmpty {
+            converter.importDynamicUserDictionary(extraWords)
+        }
+        defer {
+            if !extraWords.isEmpty { converter.importDynamicUserDictionary([]) }
+        }
         var composing = ComposingText()
         composing.insertAtCursorPosition(reading, inputStyle: .direct)
         let options = ConvertRequestOptions(
@@ -142,7 +170,7 @@ public actor LatticeConverter {
             keyboardLanguage: .ja_JP,
             learningType: .nothing,
             memoryDirectoryURL: workDirectory,
-            sharedContainerURL: workDirectory,
+            sharedContainerURL: userDictionaryURL,
             // azooKey の絵文字の置換は確定後の予測にしか使われないので渡さない
             // （絵文字は SymbolCandidateTable から候補ウィンドウに足す）
             textReplacer: .empty,

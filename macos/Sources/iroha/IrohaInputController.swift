@@ -76,7 +76,8 @@ final class IrohaInputController: IMKInputController {
             NSLog("iroha: 辞書ラティスの辞書が見つかりません。zenz単体で変換します")
             return nil
         }
-        return LatticeConverter(dictionaryURL: dictionaryURL)
+        // 専門辞書（設定 > 辞書・学習）の語は候補ウィンドウの候補を作るときだけ加わる
+        return LatticeConverter(dictionaryURL: dictionaryURL) { TermDictionaryStore.shared.current }
     }()
 
     /// zenzモデルの実体（llama.cpp）。`engineBackend` が MLX なら作られない（static let は初回参照時に作る）

@@ -236,6 +236,24 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   確定しても学習しない（`unlearnableCandidates`。漢字・かなだけの候補は除く。覚えると「わらい」だけ打ったときに
   ライブ変換が絵文字になる）。macOS が描けない絵文字は OS の版の対応表ではなく Apple Color Emoji の字形で除く
   （`EmojiRenderability`。組の絵文字は字形 2 つで描かれるので「字形 1 つ」では判定しない）
+- 専門辞書（`TermDictionary` / `TermDictionaryStore` / `TermDictionaryFetcher`、`macos/Sources/IrohaCore/TermDictionary/`、
+  設定 > 辞書・学習 > 専門辞書、一般ユーザ向け。2026-11-08）は、配布している辞書を 1 つずつ追加・削除する。
+  一覧は `models/term-dictionaries.json`、本体は Release `term-dictionaries-v1`（**必ず `--prerelease`**）、
+  作り方は `macos/scripts/build-term-dictionaries.py`（fetch / build）と `publish-term-dictionaries.sh`。
+  入れた辞書は `<データフォルダ>/dictionaries/<ID>.tsv` と `<ID>.json`（出典・ライセンスの記録）。守ること:
+  ・**候補ウィンドウにだけ効かせる**（ユーザの判断）。辞書ラティスの候補に語として加わり、モデルの採点で並ぶ。
+    ライブ変換の第一候補・ユーザ辞書の語の境目の判定（`wordBoundaries`）には入れない
+  ・辞書ラティスへは azooKey のユーザ辞書の形式（LOUDS、`DictionaryBuilder.exportDictionary`）に書き出して読ませる
+    （`~/Library/Caches/iroha/term-dictionary-lattice/<組み合わせのハッシュ>/`、組み合わせごとに 1 回。全 38 万語で release 4.4 秒）。
+    **動的ユーザ辞書（`importDynamicUserDictionary`）にしない**: ラティスは読みの頭からの部分が本体の辞書のどの語の頭とも
+    一致しなくなった所で先を探すのをやめ、動的ユーザ辞書の語はその判定に加わらないので、多くの人名・地名に届かない
+    （引くたびに全件をなめるので遅くもある）。LatticeConverter は本体の辞書を共有する変換器を 2 つ持つ
+    （候補用は専門辞書を読む、境目の判定用は読まない）
+  ・使う元データは再配布の条件を確かめたものだけ（JMdict CC BY-SA 4.0・百薬辞書 CC BY 4.0・郵便番号データ・Wikidata CC0）。
+    万病辞書・JMED-DICT mini・ComeJisyo（条件を確認できない）、SKK の専門辞書（GPL v2）、Mozc の dictionary_oss は使わない。
+    **JMdict のライセンスは配る版を新しく保つことを求める**ので定期的に作り直す（アプリは設定画面を開いたときに入れ直す）
+  ・ライセンスと出典はカタログの辞書ごとに持ち、入れたときに記録へ写して 設定 > 情報 のライセンス一覧に出す（アプリに焼き込まない）
+  ・iroha-cli は `IROHA_TERM_DICTIONARIES=installed`（入れた辞書）か `=a.tsv,b.tsv` で候補に加える（既定は使わない）
 - 自分の原稿に合わせる（`DocumentNotationSettings` / `DocumentNotationStore`、設定 > 辞書・学習の開発者モードの節、既定OFF・同期する。
   表記・用語の 2 つの重みは開発者モード・既定 2。2026-11-07）は、`<データフォルダ>/documents/` の文書（PDF・Word・テキスト。HTML は main thread
   でしか読めないので対象外）から読みごとの表記の回数（IrohaCore の `NotationPreference`）を数え、モデルの採点に

@@ -800,6 +800,121 @@ private struct DocumentNotationSection: View {
     }
 }
 
+/// 専門辞書（設定 > 辞書・学習）。配布している辞書の一覧から、1つずつ追加・削除する
+private struct TermDictionarySection: View {
+    @ObservedObject private var downloader = TermDictionaryDownloader.shared
+
+    var body: some View {
+        Section {
+            if let catalog = downloader.catalog {
+                ForEach(catalog.groups, id: \.name) { group in
+                    FormSubheader(group.name)
+                    ForEach(group.dictionaries) { dictionary in
+                        TermDictionaryRow(
+                            id: dictionary.id, name: dictionary.name, entries: dictionary.entries,
+                            help: Self.help(for: dictionary), dictionary: dictionary)
+                    }
+                }
+            } else {
+                catalogStatus
+                // 一覧が取れなくても、入れている辞書は外せるようにする
+                ForEach(downloader.installed.values.sorted { $0.id < $1.id }) { record in
+                    TermDictionaryRow(
+                        id: record.id, name: record.name, entries: record.entries,
+                        help: "\(record.group)。ライセンス: \(record.license)", dictionary: nil)
+                }
+            }
+        } header: {
+            HelpSectionHeader(
+                title: "専門辞書",
+                help: "分野の用語や地名・人名の辞書を追加すると、その語を文節の候補ウィンドウに出します"
+                    + "（スペースキーで変換したときの候補）。並び順は変換モデルが前後の文から決めます。"
+                    + "ライブ変換で最初に出る変換は変えません。候補から選んで確定すると、"
+                    + "変換の学習で次からその語に変換します。"
+                    + "辞書はアプリに含まれていません。追加を押したときにダウンロードし、"
+                    + "データの保存場所の中に置きます（共有フォルダにしていれば他のMacでも使えます）。"
+                    + "辞書ごとの出典とライセンスは「?」と、設定 > 情報 のライセンス一覧にあります。"
+                    + "辞書が作り直されたときは、この画面を開いたときに入れ直します。")
+        }
+        .onAppear { if downloader.catalog == nil { downloader.refreshCatalog() } }
+    }
+
+    @ViewBuilder
+    private var catalogStatus: some View {
+        switch downloader.catalogState {
+        case .loading:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("辞書の一覧を取得中…").foregroundStyle(.secondary)
+            }
+        case .failed(let message):
+            HStack {
+                Text("辞書の一覧を取得できませんでした: \(message)")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                Spacer()
+                Button("再試行") { downloader.refreshCatalog() }
+            }
+        case .idle:
+            EmptyView()
+        }
+    }
+
+    private static func help(for dictionary: TermDictionaryCatalog.Dictionary) -> String {
+        var lines: [String] = []
+        if let summary = dictionary.summary { lines.append(summary + "。") }
+        let megabytes = Double(dictionary.file.bytes) / 1_000_000
+        lines.append(String(format: "ダウンロードする大きさは約%.1fMBです。", megabytes))
+        for source in dictionary.sources {
+            lines.append("出典: \(source.name)（© \(source.holder)、\(source.license)）\(source.url)")
+        }
+        lines.append("元データから読みをひらがなにそろえ、重複を除くなど加工して作っています。")
+        return lines.joined(separator: "\n")
+    }
+}
+
+/// 専門辞書の1行（名前・語数・追加/削除）
+private struct TermDictionaryRow: View {
+    let id: String
+    let name: String
+    let entries: Int
+    let help: String
+    /// カタログの項目（一覧が取れていないときは nil。そのときは追加できない）
+    let dictionary: TermDictionaryCatalog.Dictionary?
+    @ObservedObject private var downloader = TermDictionaryDownloader.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                HelpLabel(title: name, help: help)
+                Text("\(entries.formatted())語").foregroundStyle(.secondary)
+                Spacer()
+                control
+            }
+            if case .downloading(let value) = downloader.progress[id] {
+                ProgressView(value: value)
+            }
+            if case .failed(let message) = downloader.progress[id] {
+                Text(message).font(.caption).foregroundStyle(.red)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var control: some View {
+        if case .downloading = downloader.progress[id] {
+            HStack(spacing: 6) {
+                Text("ダウンロード中").foregroundStyle(.secondary)
+                Button("中止") { downloader.remove(id: id) }
+            }
+        } else if downloader.installed[id] != nil {
+            Button("削除") { downloader.remove(id: id) }
+        } else if let dictionary {
+            Button("追加") { downloader.install(dictionary) }
+        }
+    }
+}
+
 private struct DictionarySettingsTab: View {
     @AppStorage(LearningSettings.enabledKey) private var learningEnabled = true
     @AppStorage(ConversionLogSettings.enabledKey) private var conversionLogEnabled = false
@@ -853,6 +968,8 @@ private struct DictionarySettingsTab: View {
                         + "（読み取りのみ。macOS側の辞書は変更しません）。"
                         + "取り込んだ単語をirohaで編集すると、以後の取り込みでは上書きされません。")
             }
+
+            TermDictionarySection()
 
             if developerMode {
                 DocumentNotationSection(privateMode: privateMode)
@@ -2229,6 +2346,26 @@ private struct TypoNormalizerLicenseRows: View {
     }
 }
 
+/// 入れている専門辞書の出典とライセンス（入れているときだけ出す）。入れたときの記録から取る
+private struct TermDictionaryLicenseRows: View {
+    @ObservedObject private var downloader = TermDictionaryDownloader.shared
+
+    var body: some View {
+        let sources = downloader.installedSources
+        ForEach(sources, id: \.source) { item in
+            LicenseRow(
+                name: item.source.name, holder: item.source.holder, license: item.source.license,
+                note: "専門辞書（\(item.dictionaries.joined(separator: "・"))）", url: item.source.url)
+        }
+        if !sources.isEmpty {
+            Text("専門辞書は、元データから読みをひらがなにそろえ、重複を除くなど加工して作っています。"
+                + "加工した辞書も元データと同じライセンスで配布しています。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 /// データの保存場所（設定 > 情報）。iCloud Drive / Dropbox のフォルダを指定して他のMacと共有する
 private struct DataDirectorySection: View {
     @State private var pendingURL: URL?
@@ -2387,6 +2524,7 @@ private struct AboutSettingsTab: View {
                     note: "アプリアイコン・メニューバーアイコンの書体",
                     url: "https://fonts.google.com/specimen/Tsukimi+Rounded")
                 TypoNormalizerLicenseRows()
+                TermDictionaryLicenseRows()
             }
 
             Section("開発者向け") {

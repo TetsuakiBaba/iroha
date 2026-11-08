@@ -25,6 +25,8 @@ enum Uninstaller {
         //    保存場所をiCloud/Dropbox等に変えている場合、そのフォルダは他のMacと共有中
         //    なので消さない（既定の場所だけ消す）
         let sharedDataPath = DataDirectory.isDefault ? nil : DataDirectory.url.path
+        // 専門辞書を辞書ラティス用に書き出したもの（キャッシュ。入れた辞書から作り直せる）は常に消す
+        try? FileManager.default.removeItem(at: TermDictionaryStore.defaultCacheURL)
         if purgeData {
             try? FileManager.default.removeItem(at: DataDirectory.defaultURL)
             SecretStore.set("", for: RemoteTranslator.openAIKeyAccount)
