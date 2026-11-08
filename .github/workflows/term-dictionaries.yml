@@ -23,7 +23,7 @@ concurrency:
 jobs:
   rebuild:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120 # Wikidata の人名を頭文字ごとに約 180 回問い合わせるので 40 分前後かかる
     steps:
       - uses: actions/checkout@v4
 

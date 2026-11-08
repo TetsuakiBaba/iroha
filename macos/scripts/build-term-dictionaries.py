@@ -156,15 +156,11 @@ WIKIDATA_GROUPS = [
     ("wikidata-former-municipalities", "旧市区町村", "?item wdt:P31 wd:Q18663566 .", False, "place"),
 ]
 
-# 人名は件数が多く 1 回の問い合わせでは打ち切られるので、読みの頭文字で分けて取る
-KANA_PARTITIONS = [
-    "ぁあぃいぅう", "ぇえぉおか", "がきぎく", "ぐけげこ", "ごさざし", "じすずせ", "ぜそぞた", "だちぢっつ",
-    "づてでとど", "なにぬねの", "はばぱひ", "びぴふぶぷ", "へべぺほぼぽ", "まみむめも", "ゃやゅゆょよ",
-    "らりるれろ", "ゎわゐゑをんゔ",
-    "ァアィイゥウェエォオ", "カガキギクグケゲコゴ", "サザシジスズセゼソゾ", "タダチヂッツヅテデトド",
-    "ナニヌネノ", "ハバパヒビピフブプ", "ヘベペホボポ", "マミムメモ", "ャヤュユョヨ", "ラリルレロ",
-    "ヮワヰヱヲンヴヵヶ",
-]
+# 人名は件数が多く 1 回の問い合わせでは打ち切られるので、読みの頭文字 1 文字ずつに分けて取る。
+# Wikidata の問い合わせサービスは 60 秒で打ち切って途中までの応答を返し、しかもそれを同じ問い合わせに対して
+# キャッシュする（2026-11-08、GitHub Actions で 5 文字ずつの分け方が毎回同じ位置で途切れた）。
+# 1 文字ずつにして時間内に収め、正規表現より速い前方一致（STRSTARTS）を使う
+KANA_INITIALS = [chr(c) for c in range(ord("ぁ"), ord("ゖ") + 1)] + [chr(c) for c in range(ord("ァ"), ord("ヺ") + 1)]
 
 
 # MARK: - 正規化
@@ -231,9 +227,12 @@ def http_get(url: str, timeout: int = 300) -> bytes:
 
 
 def sparql(query: str) -> list[dict]:
-    url = WIKIDATA_SPARQL + "?" + urllib.parse.urlencode({"query": query, "format": "json"})
     for attempt in range(4):
+        # 取り直すときは問い合わせ文に注記を足して、キャッシュされた（途中で打ち切られた）応答を使わせない
+        text = query if attempt == 0 else f"{query}\n# retry {attempt} {time.time()}"
+        url = WIKIDATA_SPARQL + "?" + urllib.parse.urlencode({"query": text, "format": "json"})
         try:
+            # 打ち切られた応答は JSON の途中で終わるので、ここで読めずに例外になる
             data = json.loads(http_get(url))
             return data["results"]["bindings"]
         except Exception as error:  # noqa: BLE001  打ち切り・混雑はしばらく待って取り直す
@@ -273,12 +272,11 @@ def fetch_wikidata() -> None:
         print(f"    {name}")
         rows: list[dict] = []
         if partitioned:
-            used = "".join(KANA_PARTITIONS)
-            filters = [f'FILTER(REGEX(?kana, "^[{p}]"))' for p in KANA_PARTITIONS]
-            filters.append(f'FILTER(!REGEX(?kana, "^[{used}]"))')
+            filters = [f'FILTER(STRSTARTS(?kana, "{c}"))' for c in KANA_INITIALS]
+            filters.append('FILTER(!REGEX(?kana, "^[ぁ-ゖァ-ヺ]"))')  # かな以外で始まる読み
             for kana_filter in filters:
                 rows += sparql(wikidata_query(pattern, kana_filter))
-                time.sleep(2)
+                time.sleep(1)
         else:
             rows = sparql(wikidata_query(pattern, None))
         simplified = [
