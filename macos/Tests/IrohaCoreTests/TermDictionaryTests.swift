@@ -68,6 +68,19 @@ final class TermDictionaryTests: XCTestCase {
         return catalogURL
     }
 
+    func testSamplesAreOptional() throws {
+        let catalogURL = try makeCatalog(text: sampleText)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: catalogURL)) as? [String: Any])
+        var dictionaries = try XCTUnwrap(json["dictionaries"] as? [[String: Any]])
+        // 例の無い前のカタログも読める
+        XCTAssertNil(try JSONDecoder().decode(TermDictionaryCatalog.self,
+            from: JSONSerialization.data(withJSONObject: json)).dictionaries[0].samples)
+        dictionaries[0]["samples"] = [["word": "心筋梗塞", "reading": "しんきんこうそく"]]
+        json["dictionaries"] = dictionaries
+        let catalog = try JSONDecoder().decode(TermDictionaryCatalog.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(catalog.dictionaries[0].samples, [.init(word: "心筋梗塞", reading: "しんきんこうそく")])
+    }
+
     func testInstallLoadAndRemove() async throws {
         let catalog = try await TermDictionaryFetcher.fetchCatalog(from: try makeCatalog(text: sampleText))
         XCTAssertEqual(catalog.groups.map(\.name), ["分野別の用語（テスト）"])

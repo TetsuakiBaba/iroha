@@ -203,13 +203,39 @@ class Pack:
         self.summary = summary
         self.sources = sources
         self.pairs: set[tuple[str, str]] = set()
+        # 例として見せる語を選ぶときの優先度（大きいほど先。無い組は 0）
+        self.priority: dict[tuple[str, str], int] = {}
 
-    def add(self, reading: str, word: str) -> None:
+    def add(self, reading: str, word: str, priority: int = 0) -> None:
         r = normalized_reading(reading)
         w = normalized_word(word)
         if r is None or w is None or w == r:
             return
         self.pairs.add((r, w))
+        if priority > self.priority.get((r, w), 0):
+            self.priority[(r, w)] = priority
+
+    def samples(self, count: int = 8) -> list[dict]:
+        """設定画面の「?」に出す、収録している語の例。
+
+        漢字かカタカナを含む 2〜7 文字の語から、優先度の高い順に、同じ優先度の中では「読み・語」のハッシュの順に選ぶ。
+        ハッシュで選ぶので、語の一覧が少し変わっても例はほとんど入れ替わらない
+        """
+        def order(pair: tuple[str, str]) -> tuple[int, str]:
+            return (-self.priority.get(pair, 0), hashlib.sha256(f"{pair[0]}\t{pair[1]}".encode("utf-8")).hexdigest())
+
+        chosen: list[dict] = []
+        seen: set[str] = set()
+        for reading, word in sorted(self.pairs, key=order):
+            if not 2 <= len(word) <= 7 or "・" in word or not re.search(r"[\u3400-\u9fff\u30a1-\u30fa]", word):
+                continue
+            if word in seen:
+                continue
+            seen.add(word)
+            chosen.append({"word": word, "reading": reading})
+            if len(chosen) == count:
+                break
+        return chosen
 
     @property
     def license(self) -> str:
@@ -384,7 +410,9 @@ def build_hyakuyaku() -> Pack:
         # 英語名（「Epalrestat」）はかなの読みから出す語ではないので入れない。略語（「ＰＳＬ」）は残す
         if re.search(r"[a-zａ-ｚ]", surface) or re.search(r"\s|　", surface):
             continue
-        pack.add(row["出現形よみ"], surface)
+        # 例には医療文書での出現頻度が高い名前を先に選ぶ（「頻度レベル」は「5-10%」「0-5%」「出現なし」など）
+        level = re.match(r"(\d+)-", row["頻度レベル"])
+        pack.add(row["出現形よみ"], surface, 2 if level and int(level.group(1)) >= 5 else 1 if level else 0)
     return pack
 
 
@@ -461,6 +489,7 @@ def write_pack(pack: Pack, version: str) -> dict:
         "name": pack.name,
         "group": pack.group,
         "summary": pack.summary,
+        "samples": pack.samples(),
         "entries": len(pack.pairs),
         "kind": pack.kind,
         "file": {
@@ -532,7 +561,8 @@ def build() -> None:
         for pack in builder():
             old = previous.get(pack.id)
             if old is not None and old.get("contentSha256") == content_sha256(pack):
-                entries.append(old)
+                # 例は語の一覧から決まるので、前の版のままでも作り直す（例の選び方を変えたときに反映するため）
+                entries.append({**old, "samples": pack.samples()})
                 print(f"{pack.id:34} {old['entries']:>8,} 語  変更なし（{old['version']} 版のまま）")
                 continue
             entry = write_pack(pack, version)

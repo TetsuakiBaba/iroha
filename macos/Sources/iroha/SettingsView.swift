@@ -863,6 +863,10 @@ private struct TermDictionarySection: View {
     private static func help(for dictionary: TermDictionaryCatalog.Dictionary) -> String {
         var lines: [String] = []
         if let summary = dictionary.summary { lines.append(summary + "。") }
+        if let samples = dictionary.samples, !samples.isEmpty {
+            lines.append("収録している語の例: "
+                + samples.map { "\($0.word)（\($0.reading)）" }.joined(separator: "、"))
+        }
         let megabytes = Double(dictionary.file.bytes) / 1_000_000
         lines.append(String(format: "ダウンロードする大きさは約%.1fMBです。", megabytes))
         for source in dictionary.sources {

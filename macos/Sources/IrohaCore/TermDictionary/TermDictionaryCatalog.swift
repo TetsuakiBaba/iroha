@@ -40,6 +40,17 @@ public struct TermDictionaryCatalog: Codable, Sendable {
         }
     }
 
+    /// 収録している語の例の1件（設定画面の「?」に出す）
+    public struct Sample: Codable, Sendable, Equatable {
+        public let word: String
+        public let reading: String
+
+        public init(word: String, reading: String) {
+            self.word = word
+            self.reading = reading
+        }
+    }
+
     public struct Dictionary: Codable, Sendable, Identifiable, Equatable {
         public let id: String
         /// 設定画面に出す名前（「医学」「人名」）
@@ -48,6 +59,8 @@ public struct TermDictionaryCatalog: Codable, Sendable {
         public let group: String
         /// 中身の説明（「?」に出す）
         public let summary: String?
+        /// 収録している語の例（「?」に出す）。作るときに選ぶ。前のカタログには無い
+        public let samples: [Sample]?
         /// 収録している「読み・語」の組の数
         public let entries: Int
         public let file: File
@@ -60,11 +73,12 @@ public struct TermDictionaryCatalog: Codable, Sendable {
 
         public init(id: String, name: String, group: String, summary: String?, entries: Int,
                     file: File, kind: TermDictionary.Kind?, license: String, sources: [Source],
-                    version: String) {
+                    version: String, samples: [Sample]? = nil) {
             self.id = id
             self.name = name
             self.group = group
             self.summary = summary
+            self.samples = samples
             self.entries = entries
             self.file = file
             self.kind = kind

@@ -24,7 +24,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "6317c7774f4dba60a4dde20f6827e239a3ddc0bb913220fd81f00897c4995187"
+      "contentSha256": "6317c7774f4dba60a4dde20f6827e239a3ddc0bb913220fd81f00897c4995187",
+      "samples": [
+        {
+          "word": "虹彩毛様体炎",
+          "reading": "こうさいもうようたいえん"
+        },
+        {
+          "word": "腎臓結石",
+          "reading": "じんぞうけっせき"
+        },
+        {
+          "word": "血腫",
+          "reading": "けっしゅ"
+        },
+        {
+          "word": "穿頭術",
+          "reading": "せんとうじゅつ"
+        },
+        {
+          "word": "トラコーマ",
+          "reading": "とらこーま"
+        },
+        {
+          "word": "飛沫核感染",
+          "reading": "ひまつかくかんせん"
+        },
+        {
+          "word": "誤嚥性肺炎",
+          "reading": "ごえんせいはいえん"
+        },
+        {
+          "word": "ゾンデ",
+          "reading": "ぞんで"
+        }
+      ]
     },
     {
       "id": "jmdict-computing",
@@ -49,7 +83,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "660f9d6ebc593559e06501cab3aad4bbb7e85e40721d651dea86ae87ea53084b"
+      "contentSha256": "660f9d6ebc593559e06501cab3aad4bbb7e85e40721d651dea86ae87ea53084b",
+      "samples": [
+        {
+          "word": "代替トラック",
+          "reading": "だいたいとらっく"
+        },
+        {
+          "word": "クロッキング",
+          "reading": "くろっきんぐ"
+        },
+        {
+          "word": "データエンジン",
+          "reading": "でーたえんじん"
+        },
+        {
+          "word": "ヒープ領域",
+          "reading": "ひーぷりょういき"
+        },
+        {
+          "word": "R言語",
+          "reading": "あーるげんご"
+        },
+        {
+          "word": "等時性伝送",
+          "reading": "とうじせいでんそう"
+        },
+        {
+          "word": "アナログ装置",
+          "reading": "あなろぐそうち"
+        },
+        {
+          "word": "多言語サポート",
+          "reading": "たげんごさぽーと"
+        }
+      ]
     },
     {
       "id": "jmdict-law",
@@ -74,7 +142,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "7ca50461c082748f881aba587a13815871d5bb1ceb207d5d3539cf72cd02c622"
+      "contentSha256": "7ca50461c082748f881aba587a13815871d5bb1ceb207d5d3539cf72cd02c622",
+      "samples": [
+        {
+          "word": "不同意性交罪",
+          "reading": "ふどういせいこうざい"
+        },
+        {
+          "word": "日本銀行法",
+          "reading": "にっぽんぎんこうほう"
+        },
+        {
+          "word": "みなし道路",
+          "reading": "みなしどうろ"
+        },
+        {
+          "word": "心神耗弱",
+          "reading": "しんしんこうじゃく"
+        },
+        {
+          "word": "都市計画区域",
+          "reading": "としけいかくくいき"
+        },
+        {
+          "word": "国会法",
+          "reading": "こっかいほう"
+        },
+        {
+          "word": "遺言執行者",
+          "reading": "いごんしっこうしゃ"
+        },
+        {
+          "word": "特定障害者",
+          "reading": "とくていしょうがいしゃ"
+        }
+      ]
     },
     {
       "id": "jmdict-economics",
@@ -99,7 +201,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "6ee511fe2ae2efca5b01f78049de76b009ea9b706a9bd7c3f361010b5baa226f"
+      "contentSha256": "6ee511fe2ae2efca5b01f78049de76b009ea9b706a9bd7c3f361010b5baa226f",
+      "samples": [
+        {
+          "word": "売り繋ぎ",
+          "reading": "うりつなぎ"
+        },
+        {
+          "word": "強気",
+          "reading": "つよき"
+        },
+        {
+          "word": "乖離率",
+          "reading": "かいりりつ"
+        },
+        {
+          "word": "最終財",
+          "reading": "さいしゅうざい"
+        },
+        {
+          "word": "持株比率",
+          "reading": "もちかぶひりつ"
+        },
+        {
+          "word": "テコ入れ",
+          "reading": "てこいれ"
+        },
+        {
+          "word": "上値抵抗線",
+          "reading": "うわねていこうせん"
+        },
+        {
+          "word": "抵抗線",
+          "reading": "ていこうせん"
+        }
+      ]
     },
     {
       "id": "jmdict-mathematics",
@@ -124,7 +260,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "cdb59dfb2d2f3e823ee3ba2e8347014c71c219ee082f6536d186720c6d2a80e3"
+      "contentSha256": "cdb59dfb2d2f3e823ee3ba2e8347014c71c219ee082f6536d186720c6d2a80e3",
+      "samples": [
+        {
+          "word": "二項分布",
+          "reading": "にこうぶんぷ"
+        },
+        {
+          "word": "尽数",
+          "reading": "じんすう"
+        },
+        {
+          "word": "方程式系",
+          "reading": "ほうていしきけい"
+        },
+        {
+          "word": "賓辞",
+          "reading": "ひんじ"
+        },
+        {
+          "word": "アルチン環",
+          "reading": "あるちんかん"
+        },
+        {
+          "word": "有理関数",
+          "reading": "ゆうりかんすう"
+        },
+        {
+          "word": "小円",
+          "reading": "しょうえん"
+        },
+        {
+          "word": "全数調査",
+          "reading": "ぜんすうちょうさ"
+        }
+      ]
     },
     {
       "id": "jmdict-physics",
@@ -149,7 +319,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "233b12e5c044bff2bb5b57002eed056304c63bfdf21e972795448a983ec061d4"
+      "contentSha256": "233b12e5c044bff2bb5b57002eed056304c63bfdf21e972795448a983ec061d4",
+      "samples": [
+        {
+          "word": "閉殻",
+          "reading": "へいかく"
+        },
+        {
+          "word": "熱核融合",
+          "reading": "ねつかくゆうごう"
+        },
+        {
+          "word": "天馬座",
+          "reading": "てんばざ"
+        },
+        {
+          "word": "運動摩擦",
+          "reading": "うんどうまさつ"
+        },
+        {
+          "word": "α崩壊",
+          "reading": "あるふぁほうかい"
+        },
+        {
+          "word": "デネブ",
+          "reading": "でねぶ"
+        },
+        {
+          "word": "望遠鏡座",
+          "reading": "ぼうえんきょうざ"
+        },
+        {
+          "word": "ベテルギウス",
+          "reading": "べてるぎうす"
+        }
+      ]
     },
     {
       "id": "jmdict-chemistry",
@@ -174,7 +378,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "9e22752dd0b64e46bf378e70ae4fb80b71171b9a92eff6724656696bc51405a0"
+      "contentSha256": "9e22752dd0b64e46bf378e70ae4fb80b71171b9a92eff6724656696bc51405a0",
+      "samples": [
+        {
+          "word": "閉殻",
+          "reading": "へいかく"
+        },
+        {
+          "word": "レスベラトロル",
+          "reading": "れすべらとろる"
+        },
+        {
+          "word": "試薬",
+          "reading": "しやく"
+        },
+        {
+          "word": "電着",
+          "reading": "でんちゃく"
+        },
+        {
+          "word": "吸蔵",
+          "reading": "きゅうぞう"
+        },
+        {
+          "word": "酵素",
+          "reading": "こうそ"
+        },
+        {
+          "word": "ヒポキサンチン",
+          "reading": "ひぽきさんちん"
+        },
+        {
+          "word": "アマルガム",
+          "reading": "あまるがむ"
+        }
+      ]
     },
     {
       "id": "jmdict-engineering",
@@ -199,7 +437,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "1134b61d6a696831e8c860f46e3315b20416fd23d2369e16e803f1e292c2bbfa"
+      "contentSha256": "1134b61d6a696831e8c860f46e3315b20416fd23d2369e16e803f1e292c2bbfa",
+      "samples": [
+        {
+          "word": "ゾンデ",
+          "reading": "ぞんで"
+        },
+        {
+          "word": "熱帯雨林気候",
+          "reading": "ねったいうりんきこう"
+        },
+        {
+          "word": "セルラー",
+          "reading": "せるらー"
+        },
+        {
+          "word": "地絡",
+          "reading": "ちらく"
+        },
+        {
+          "word": "変調",
+          "reading": "へんちょう"
+        },
+        {
+          "word": "溝削り",
+          "reading": "みぞけずり"
+        },
+        {
+          "word": "加圧力",
+          "reading": "かあつりょく"
+        },
+        {
+          "word": "抵抗線",
+          "reading": "ていこうせん"
+        }
+      ]
     },
     {
       "id": "jmdict-biology",
@@ -224,7 +496,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "efaadcea270d8fafa9e2aa53731a253063a91f4e3806eafa8111bc83113cc7e3"
+      "contentSha256": "efaadcea270d8fafa9e2aa53731a253063a91f4e3806eafa8111bc83113cc7e3",
+      "samples": [
+        {
+          "word": "閉殻",
+          "reading": "へいかく"
+        },
+        {
+          "word": "タクソン",
+          "reading": "たくそん"
+        },
+        {
+          "word": "疑似餌",
+          "reading": "ぎじえ"
+        },
+        {
+          "word": "繭糸",
+          "reading": "けんし"
+        },
+        {
+          "word": "縄張り",
+          "reading": "なわばり"
+        },
+        {
+          "word": "相引",
+          "reading": "そういん"
+        },
+        {
+          "word": "合弁花冠",
+          "reading": "ごうべんかかん"
+        },
+        {
+          "word": "若虫",
+          "reading": "わかむし"
+        }
+      ]
     },
     {
       "id": "jmdict-geoscience",
@@ -249,7 +555,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "85c10aa7eb1a4e52f588b0db7a4e5b86a71857e00221e7d6a7af4a008cf780dd"
+      "contentSha256": "85c10aa7eb1a4e52f588b0db7a4e5b86a71857e00221e7d6a7af4a008cf780dd",
+      "samples": [
+        {
+          "word": "方鉛鉱",
+          "reading": "ほうえんこう"
+        },
+        {
+          "word": "溶蝕",
+          "reading": "ようしょく"
+        },
+        {
+          "word": "阿武隈石",
+          "reading": "あぶくませき"
+        },
+        {
+          "word": "超海洋",
+          "reading": "ちょうかいよう"
+        },
+        {
+          "word": "豊羽鉱",
+          "reading": "とよはこう"
+        },
+        {
+          "word": "沼鉄鉱",
+          "reading": "しょうてっこう"
+        },
+        {
+          "word": "片麻岩",
+          "reading": "へんまがん"
+        },
+        {
+          "word": "直閃石",
+          "reading": "ちょくせんせき"
+        }
+      ]
     },
     {
       "id": "jmdict-linguistics",
@@ -274,7 +614,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "2263d570687c060a32b214bcce177b08360797f27c33a406d3ae71c692625428"
+      "contentSha256": "2263d570687c060a32b214bcce177b08360797f27c33a406d3ae71c692625428",
+      "samples": [
+        {
+          "word": "エ段",
+          "reading": "えだん"
+        },
+        {
+          "word": "オ段",
+          "reading": "おだん"
+        },
+        {
+          "word": "定動詞",
+          "reading": "ていどうし"
+        },
+        {
+          "word": "外置変形",
+          "reading": "がいちへんけい"
+        },
+        {
+          "word": "半過去",
+          "reading": "はんかこ"
+        },
+        {
+          "word": "賓辞",
+          "reading": "ひんじ"
+        },
+        {
+          "word": "接続詞",
+          "reading": "せつぞくし"
+        },
+        {
+          "word": "類義",
+          "reading": "るいぎ"
+        }
+      ]
     },
     {
       "id": "jmdict-religion",
@@ -299,7 +673,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "46e3b3ced1664273d7074647dd80d475a187d11af33f09ed39f284f272e0889a"
+      "contentSha256": "46e3b3ced1664273d7074647dd80d475a187d11af33f09ed39f284f272e0889a",
+      "samples": [
+        {
+          "word": "衆徒",
+          "reading": "しゅと"
+        },
+        {
+          "word": "人天",
+          "reading": "にんてん"
+        },
+        {
+          "word": "居士",
+          "reading": "こじ"
+        },
+        {
+          "word": "回心",
+          "reading": "えしん"
+        },
+        {
+          "word": "名詮自性",
+          "reading": "みょうせんじしょう"
+        },
+        {
+          "word": "無為自然",
+          "reading": "むいしぜん"
+        },
+        {
+          "word": "キニク派",
+          "reading": "きにくは"
+        },
+        {
+          "word": "般若心経",
+          "reading": "はんにゃしんぎょう"
+        }
+      ]
     },
     {
       "id": "jmdict-psychology",
@@ -324,7 +732,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "050ceda2f619bfc3d5243ffd1b0c549a3cc9ebf6c1ba62ac8fcbb61db7e52ec4"
+      "contentSha256": "050ceda2f619bfc3d5243ffd1b0c549a3cc9ebf6c1ba62ac8fcbb61db7e52ec4",
+      "samples": [
+        {
+          "word": "抑うつ症群",
+          "reading": "よくうつしょうぐん"
+        },
+        {
+          "word": "二分心",
+          "reading": "にぶんしん"
+        },
+        {
+          "word": "死恐怖症",
+          "reading": "しきょうふしょう"
+        },
+        {
+          "word": "防衛機制",
+          "reading": "ぼうえいきせい"
+        },
+        {
+          "word": "見当識",
+          "reading": "けんとうしき"
+        },
+        {
+          "word": "タナトス",
+          "reading": "たなとす"
+        },
+        {
+          "word": "症状精神病",
+          "reading": "しょうじょうせいしんびょう"
+        },
+        {
+          "word": "おなら恐怖症",
+          "reading": "おならきょうふしょう"
+        }
+      ]
     },
     {
       "id": "hyakuyaku",
@@ -349,7 +791,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "256a9e6d49f3b846dbeb36c478be51c768058f337844778764cbec8db22aec7d"
+      "contentSha256": "256a9e6d49f3b846dbeb36c478be51c768058f337844778764cbec8db22aec7d",
+      "samples": [
+        {
+          "word": "ボリコナゾール",
+          "reading": "ぼりこなぞーる"
+        },
+        {
+          "word": "プロポフォール",
+          "reading": "ぷろぽふぉーる"
+        },
+        {
+          "word": "ゾレドロン酸",
+          "reading": "ぞれどろんさん"
+        },
+        {
+          "word": "広域抗生剤",
+          "reading": "こういきこうせいざい"
+        },
+        {
+          "word": "アトバコン",
+          "reading": "あとばこん"
+        },
+        {
+          "word": "ベプリジル",
+          "reading": "べぷりじる"
+        },
+        {
+          "word": "テイコプラニン",
+          "reading": "ていこぷらにん"
+        },
+        {
+          "word": "ソラフェニブ",
+          "reading": "そらふぇにぶ"
+        }
+      ]
     },
     {
       "id": "japanpost-places",
@@ -374,7 +850,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "81e6b3ad1c1a996e87da61b2b9bd57a91a7904fc0ff5e63944d87f3ee90f110b"
+      "contentSha256": "81e6b3ad1c1a996e87da61b2b9bd57a91a7904fc0ff5e63944d87f3ee90f110b",
+      "samples": [
+        {
+          "word": "東嶺町",
+          "reading": "ひがしみねまち"
+        },
+        {
+          "word": "新宮南",
+          "reading": "しんぐうみなみ"
+        },
+        {
+          "word": "曽我部町重利",
+          "reading": "そがべちょうしげとし"
+        },
+        {
+          "word": "常安寺",
+          "reading": "じょうあんじ"
+        },
+        {
+          "word": "与板町蔦都",
+          "reading": "よいたまちつたいち"
+        },
+        {
+          "word": "南有馬町丁",
+          "reading": "みなみありまちょうてい"
+        },
+        {
+          "word": "飯南町横野",
+          "reading": "いいなんちょうよこの"
+        },
+        {
+          "word": "南外土場",
+          "reading": "なんがいどば"
+        }
+      ]
     },
     {
       "id": "wikidata-people",
@@ -399,7 +909,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "39567d230297d78b54c89a1cd6c21db3ed36b533de8af8d8138e35d327f1f46f"
+      "contentSha256": "39567d230297d78b54c89a1cd6c21db3ed36b533de8af8d8138e35d327f1f46f",
+      "samples": [
+        {
+          "word": "奥野耕平",
+          "reading": "おくのこうへい"
+        },
+        {
+          "word": "松平勝以",
+          "reading": "まつだいらかつゆき"
+        },
+        {
+          "word": "吉原ナツキ",
+          "reading": "よしはらなつき"
+        },
+        {
+          "word": "濵ノ石政吉",
+          "reading": "はまのいしまさきち"
+        },
+        {
+          "word": "立花種忠",
+          "reading": "たちばなたねただ"
+        },
+        {
+          "word": "中島歌子",
+          "reading": "なかじまうたこ"
+        },
+        {
+          "word": "三谷将太",
+          "reading": "みたにしょうた"
+        },
+        {
+          "word": "前川祐一",
+          "reading": "まえかわゆういち"
+        }
+      ]
     },
     {
       "id": "wikidata-stations",
@@ -424,7 +968,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "75216ace245c4f546c70f4ce609157a999874cd97c28cb3c0359a046c9d28ca1"
+      "contentSha256": "75216ace245c4f546c70f4ce609157a999874cd97c28cb3c0359a046c9d28ca1",
+      "samples": [
+        {
+          "word": "信貴山下駅",
+          "reading": "しぎさんしたえき"
+        },
+        {
+          "word": "白川口駅",
+          "reading": "しらかわぐちえき"
+        },
+        {
+          "word": "薩摩松元駅",
+          "reading": "さつままつもとえき"
+        },
+        {
+          "word": "鶴舞",
+          "reading": "つるまい"
+        },
+        {
+          "word": "皆野駅",
+          "reading": "みなのえき"
+        },
+        {
+          "word": "新浜松駅",
+          "reading": "しんはままつえき"
+        },
+        {
+          "word": "稲村ヶ崎駅",
+          "reading": "いなむらがさきえき"
+        },
+        {
+          "word": "久慈",
+          "reading": "くじ"
+        }
+      ]
     },
     {
       "id": "wikidata-shrines-temples",
@@ -449,7 +1027,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "91c25129d36c5b39b647f3540c797fe7bfd3c6fe71c8e4131571add34352384e"
+      "contentSha256": "91c25129d36c5b39b647f3540c797fe7bfd3c6fe71c8e4131571add34352384e",
+      "samples": [
+        {
+          "word": "常安寺",
+          "reading": "じょうあんじ"
+        },
+        {
+          "word": "伊奴寝子社",
+          "reading": "いぬねこしゃ"
+        },
+        {
+          "word": "長姫神社",
+          "reading": "おさひめじんじゃ"
+        },
+        {
+          "word": "三玉神社",
+          "reading": "みたまじんじゃ"
+        },
+        {
+          "word": "璉珹寺",
+          "reading": "れんじょうじ"
+        },
+        {
+          "word": "浄聖院",
+          "reading": "じょうせいいん"
+        },
+        {
+          "word": "種徳院",
+          "reading": "しゅとくいん"
+        },
+        {
+          "word": "城輪神社",
+          "reading": "きのわじんじゃ"
+        }
+      ]
     },
     {
       "id": "wikidata-former-municipalities",
@@ -474,7 +1086,41 @@
         }
       ],
       "version": "20261108",
-      "contentSha256": "bb7d58a6d3e7a9216368df5ff29260d2f08fb6a7b562dc216a56ec0bbbe5a32c"
+      "contentSha256": "bb7d58a6d3e7a9216368df5ff29260d2f08fb6a7b562dc216a56ec0bbbe5a32c",
+      "samples": [
+        {
+          "word": "木崎村",
+          "reading": "きざきむら"
+        },
+        {
+          "word": "松岡町",
+          "reading": "まつおかまち"
+        },
+        {
+          "word": "里垣村",
+          "reading": "さとがきむら"
+        },
+        {
+          "word": "中臼杵村",
+          "reading": "なかうすきむら"
+        },
+        {
+          "word": "浅川町",
+          "reading": "あさかわまち"
+        },
+        {
+          "word": "今泉村",
+          "reading": "いまいずみむら"
+        },
+        {
+          "word": "宇島町",
+          "reading": "うのしままち"
+        },
+        {
+          "word": "東水引村",
+          "reading": "ひがしみずひきむら"
+        }
+      ]
     }
   ]
 }
