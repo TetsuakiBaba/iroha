@@ -250,7 +250,41 @@
   </div>
 </section>
 
-<svg class="kasumi kin" aria-hidden="true" style="background:color-mix(in srgb, var(--paper-deep) 70%, transparent)"><use href="#kasumi"/></svg>
+<svg class="kasumi fuji" aria-hidden="true" style="background:color-mix(in srgb, var(--paper-deep) 70%, transparent)"><use href="#kasumi"/></svg>
+
+<!-- ===== 専門辞書 ===== -->
+<!-- 実演の候補は iroha-kkc-v1（Q5_K_M）・ユーザ辞書と学習なしで、工学の専門辞書（jmdict-engineering）の有無を
+     iroha-cli convert --n で出したもの（2026-11-08）。語の数は models/term-dictionaries.json の 19 種 -->
+<section id="terms" class="section" aria-labelledby="terms-title">
+  <div class="wrap split">
+    <div>
+      <p class="eyebrow fuji">せんもんじしょ</p>
+      <h2 id="terms-title">専門の言葉は、<br>辞書を足して候補に</h2>
+      <p class="section-lead" style="margin-bottom:0">仕事や勉強で使う分野の辞書を追加できます。追加した辞書の言葉は、変換の候補に出るようになります。</p>
+      <ul class="points">
+        <li><b>分野の用語・薬の名前・地名・駅名・人名など 19 種類。</b>医学、情報・コンピュータ、法律、工学、数学など 13 分野の用語と、薬の名前、地名、駅、人名、神社・寺院、旧市区町村から、使うものだけを選べます。</li>
+        <li><b>辞書の言葉は、Space で開く候補の一覧に出ます。</b>打つそばからの変換は変えないので、ほかの文の変換が崩れることはありません。</li>
+        <li>設定 &gt; 辞書・学習 &gt; 専門辞書 で追加します。追加したときに、その辞書を 1 回だけダウンロードします。</li>
+      </ul>
+    </div>
+
+    <div>
+      <div class="demo-window" id="terms-demo" aria-label="専門辞書の実演">
+        <div class="demo-titlebar" aria-hidden="true"><i></i><i></i><i></i><span>メモ</span></div>
+        <div class="demo-body">
+          <div class="demo-text" aria-live="off"><span class="done"></span><span class="composing"></span><span class="caret"></span><ol class="cand-window" aria-hidden="true"></ol></div>
+          <div class="demo-keys" aria-hidden="true"><span class="label">打ったキー</span><span class="keys"></span></div>
+        </div>
+      </div>
+      <p class="demo-status" aria-live="polite"></p>
+      <div class="typo-steps terms-steps terms-samples" role="group" aria-label="例を選ぶ"></div>
+      <div class="typo-steps terms-steps terms-dict" role="group" aria-label="辞書のあり・なしを選ぶ"></div>
+      <p class="demo-note">表示している変換と候補は iroha の実際の出力です（候補は上の 5 件）。</p>
+    </div>
+  </div>
+</section>
+
+<svg class="kasumi kin" aria-hidden="true"><use href="#kasumi"/></svg>
 
 <!-- ===== その他の機能 ===== -->
 <section id="more" class="section" aria-labelledby="more-title">
@@ -579,6 +613,7 @@
       <li>打ち間違い訂正モデル iroha-typo: CC BY-SA 4.0。学習元の一覧はアプリの設定 →「情報」→「ライセンス」にあります</li>
       <li><a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a>: MIT License</li>
       <li>候補を作るしくみ <a href="https://github.com/azooKey/AzooKeyKanaKanjiConverter">AzooKeyKanaKanjiConverter</a>（ensan / azooKey）: MIT License。辞書データ <a href="https://github.com/azooKey/azooKey_dictionary_storage">azooKey_dictionary_storage</a>: Apache License 2.0</li>
+      <li>専門辞書（設定で追加したときにダウンロード）: 分野の用語は <a href="https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html">JMdict</a>（James William Breen and the Electronic Dictionary Research and Development Group、<a href="https://www.edrdg.org/edrdg/licence.html">CC BY-SA 4.0</a>）、薬の名前は百薬辞書（CC BY 4.0）、地名は日本郵便の郵便番号データ、駅・人名・神社・寺院・旧市区町村は <a href="https://www.wikidata.org/">Wikidata</a>（CC0 1.0）から作っています。追加した辞書の出典とライセンスは、アプリの設定 →「情報」→「ライセンス」に出ます</li>
       <li>記号・顔文字・絵文字のデータ <a href="https://github.com/google/mozc">Mozc</a>（Google Inc.）: BSD 3-Clause License</li>
       <li>ロゴの書体 <a href="https://github.com/mt-funa/Tsukimi-Rounded">Tsukimi Rounded</a>（Takashi Funayama 氏）: <a href="assets/fonts/OFL.txt">SIL Open Font License 1.1</a></li>
     </ul>
