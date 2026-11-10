@@ -838,6 +838,141 @@
     io.observe(root);
   }
 
+  // ---------- 「こえ」モード ----------
+  // キーを押している間に話した内容が入力中の文字として見え、離すと iroha の変換に置き換わる。そのあとは打った文と同じで、
+  // Space で文節に分け、選んだ文節を打ち直すと文全体を変換し直す。
+  // 録音している間は、アプリと同じ「聞いています」をカーソルの近くに出す。
+  // partials は読み上げ音声（say -v Kyoko「来週の講演の準備を進めています」）を iroha-cli voice --stream に渡したときの途中結果
+  // （[前の表示からの間（ミリ秒）, 表示]。届いた時刻のまとまりに合わせてある）。start は離したあとの変換と iroha-cli segment の区切り。
+  // steps は打ち直しの途中の読み全体を iroha-cli に渡した結果（2026-11-11。iroha-kkc-v1 Q5_K_M・ユーザ辞書と学習なし）
+  const KOE_SAMPLE = {
+    partials: [
+      [400, "来"], [60, "来週"], [60, "来週の"],
+      [900, "来週の公"], [60, "来週の公演"], [60, "来週の公演の"], [60, "来週の公演の準"], [60, "来週の公演の準備"],
+      [1000, "来週の公演の準備を"], [60, "来週の公演の準備を進"], [60, "来週の公演の準備を進め"], [60, "来週の公演の準備を進めて"],
+      [60, "来週の公演の準備を進めてい"], [60, "来週の公演の準備を進めていま"], [60, "来週の公演の準備を進めています"],
+      [60, "来週の公演の準備を進めています。"],
+    ],
+    start: [["来週の"], ["公演の"], ["準備を"], ["進めています。"]],
+    move: 1,
+    steps: [
+      ["da", [["来週の"], ["だ"], ["準備を"], ["進めています。"]]],
+      ["i", [["来週の"], ["大"], ["準備を"], ["進めています。"]]],
+      ["ga", [["来週の"], ["ダイが"], ["準備を"], ["進めています。"]]],
+      ["ku", [["来週の"], ["大学"], ["準備を"], ["進めています。"]]],
+      ["no", [["来週の"], ["大学の"], ["準備を"], ["進めています。"]]],
+      ["ko", [["来週の"], ["大学の小"], ["準備を"], ["進めています。"]]],
+      ["u", [["来週の"], ["大学の公"], ["準備を"], ["進めています。"]]],
+      ["e", [["来週の"], ["大学の考え"], ["準備を"], ["進めています。"]]],
+      ["nn", [["来週の"], ["大学の講演"], ["準備を"], ["進めています。"]]],
+      ["no", [["来週の"], ["大学の講演の"], ["準備を"], ["進めています。"]]],
+    ],
+    listening: "キーを押すと、カーソルの近くに「聞いています」と出ます。",
+    speaking: "話している間、話した内容が入力中の文字として見えます。",
+    released: "キーを離すと、確定されずに入力中の文字として入ります。",
+    retyping: "直したい文節「公演の」を選んで、キーボードで打ち直します。",
+    found: "「公演の」を「だいがくのこうえんの」に打ち直して、「大学の講演の」になりました。",
+  };
+
+  function runKoe() {
+    const root = document.getElementById("koe-demo");
+    if (!root) return;
+    const v = demoView(root);
+    const status = document.querySelector("#koe .demo-status");
+    const ex = KOE_SAMPLE;
+    let token = 0;
+
+    function segments(list, sel, prev) {
+      v.composing.innerHTML = "";
+      list.forEach(([text], i) => {
+        const span = document.createElement("span");
+        span.className = "seg" + (i === sel ? " sel" : "");
+        if (prev && i !== sel && prev[i] && prev[i][0] !== text) span.classList.add("changed");
+        span.textContent = text;
+        v.composing.append(span);
+      });
+    }
+
+    function reset() {
+      v.done.textContent = "";
+      v.composing.textContent = "";
+      v.setKey("");
+      v.popup.classList.remove("show");
+      status.textContent = "";
+    }
+
+    const joined = (list) => list.map(([t]) => t).join("");
+    const last = ex.steps[ex.steps.length - 1][1];
+    holdDemoHeights(root, v, status, {
+      texts: [joined(ex.start)],
+      dones: [joined(last)],
+      segs: [ex.start, ...ex.steps.map(([, list]) => list)].map((list) => list.map(([t]) => t)),
+      keys: [["右 ⌘", "押したまま話す"], ["右 ⌘", "離す"], ["space", "文節に分ける"], ["→", "直したい文節を選ぶ"], ["return", "全体を確定"], ...ex.steps.map(([k]) => [k])],
+      statuses: [ex.listening, ex.speaking, ex.released, ex.retyping, ex.found],
+    });
+
+    async function play(my) {
+      const alive = () => my === token;
+      reset();
+      v.setKey("右 ⌘", "押したまま話す");
+      v.popup.classList.add("show");
+      status.textContent = ex.listening;
+      await wait(1500);
+      if (!alive()) return false;
+      status.textContent = ex.speaking;
+      for (const [delay, text] of ex.partials) {
+        await wait(delay);
+        if (!alive()) return false;
+        v.composing.textContent = text;
+      }
+      await wait(900);
+      if (!alive()) return false;
+      v.popup.classList.remove("show");
+      v.setKey("右 ⌘", "離す");
+      v.composing.textContent = joined(ex.start);
+      status.textContent = ex.released;
+      await wait(2000);
+      if (!alive()) return false;
+      v.setKey("space", "文節に分ける");
+      segments(ex.start, 0);
+      await wait(1300);
+      if (!alive()) return false;
+      v.setKey("→".repeat(ex.move), "直したい文節を選ぶ");
+      segments(ex.start, ex.move);
+      status.textContent = ex.retyping;
+      await wait(1600);
+      let prev = ex.start;
+      for (const [key, list] of ex.steps) {
+        if (!alive()) return false;
+        v.setKey(key);
+        segments(list, ex.move, prev);
+        prev = list;
+        await wait(480);
+      }
+      if (!alive()) return false;
+      status.textContent = ex.found;
+      await wait(2600);
+      if (!alive()) return false;
+      v.setKey("return", "全体を確定");
+      v.done.textContent = joined(prev);
+      v.composing.textContent = "";
+      await wait(2400);
+      return alive();
+    }
+
+    async function loop() {
+      const my = ++token;
+      if (reduceMotion) { reset(); segments(last, ex.move, ex.start); status.textContent = ex.found; return; }
+      while (await play(my)) { /* 繰り返す */ }
+    }
+
+    if (!("IntersectionObserver" in window)) return loop();
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { loop(); io.disconnect(); }
+    }, { threshold: 0.3 });
+    io.observe(root);
+  }
+
   // ---------- 開発者モードの説明（切り替えで出す。ページを開き直すと閉じた状態に戻る） ----------
   function setupDevmode() {
     const toggle = document.getElementById("devmode-toggle");
@@ -855,6 +990,7 @@
   runTypo();
   runTerms();
   runRetype();
+  runKoe();
   setupDevmode();
   setupCitations();
 })();

@@ -650,7 +650,12 @@ git tag v0.4.0 && git push origin v0.4.0
 
 ## コントリビューター
 
-- [shiratsumu](https://github.com/shiratsumu) — ユーザフィードバック
+研究室内の利用フィードバック協力者:
+
+- [shiratsumu](https://github.com/shiratsumu)
+- [onoryu](https://github.com/onoryu)
+- Taisei Kato
+- Ryusei Akaike
 
 ## ライセンスと帰属
 

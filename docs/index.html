@@ -286,11 +286,10 @@
 
 <svg class="kasumi" aria-hidden="true"><use href="#kasumi"/></svg>
 
-<!-- ===== 文節の打ち直し・「こえ」モード（v0.17.0） ===== -->
-<!-- 仕様の正は README.md（キー操作の表の「文字キー（文節変換中）」と「「こえ」モード」の節）と Release v0.17.0 の本文。
+<!-- ===== 文節の打ち直し（v0.17.0） ===== -->
+<!-- 仕様の正は README.md（キー操作の表の「文字キー（文節変換中）」）と Release v0.17.0 の本文。
      実演の変換は iroha-kkc-v1（Q5_K_M）・ユーザ辞書と学習なしで、読みの頭から 1 字ずつ iroha-cli に渡した結果（2026-11-10）。
-     3 つの見本は実機でも確かめてある。「こえ」モードは試作（開発者モード）なので、完成した機能のようには書かない。
-     精度の数字・他製品との比較・新規性の主張は、測っていない・調べていないので書かない -->
+     3 つの見本は実機でも確かめてある -->
 <section id="retype" class="section section-tint" aria-labelledby="retype-title">
   <div class="wrap split">
     <div>
@@ -318,29 +317,43 @@
     </div>
   </div>
 
-  <div class="wrap">
-    <div class="trial-card" aria-labelledby="koe-title">
-      <div class="trial-head">
-        <h3 id="koe-title">「こえ」モード</h3>
-        <span class="trial-badge">試作</span>
-        <span class="trial-req">開発者モードの項目・初期設定は OFF・macOS 26 以降</span>
-      </div>
-      <p>決めたキー（初期設定は右 ⌘）を押している間に話した内容が、確定されずに入力中の文字として入ります。音声認識が出した漢字かな交じりの結果を読み（ひらがな）に戻してから、キーボードで打ったときと同じかな漢字変換モデルに渡すので、スペースキーの候補・文節の打ち直し・続きのキー入力が、打った文と同じようにできます。</p>
-      <ol class="koe-flow">
-        <li><b>声で入れる</b><span>キーを押したまま話し、離すと、長い文がまとめて入力中の文字になります。</span></li>
-        <li><b>聞き違えた文節だけを打ち直す</b><span>スペースキーで文節変換に入り、違っていた文節を選んでキーボードで打ちます。</span></li>
-        <li><b>文全体が変換し直される</b><span>直した文節に合わせて前後の表記も変わり、Return で確定します。</span></li>
-      </ol>
-      <ul class="trial-notes">
-        <li>音声認識はこの Mac の中で行い、音声を外部に送りません。</li>
+</section>
+
+<!-- ===== 「こえ」モード（v0.17.0） ===== -->
+<!-- 仕様の正は README.md の「「こえ」モード」の節。アプリでは開発者モードの項目（初期設定は OFF）なので、使い方にそれを書く。
+     精度の数字・他製品との比較・新規性の主張は、測っていない・調べていないので書かない。
+     実演は、読み上げ音声（say -v Kyoko）を iroha-cli voice --stream に渡した途中結果と変換、文節の区切り（iroha-cli segment）、
+     打ち直しの途中の読み全体を iroha-cli に渡した結果（2026-11-11。iroha-kkc-v1 Q5_K_M・ユーザ辞書と学習なし）。
+     「聞いています」はアプリが録音中にカーソルの近くへ出す表示（VoiceInput.swift の「● 聞いています」） -->
+<section id="koe" class="section" aria-labelledby="koe-title">
+  <div class="wrap split">
+    <div>
+      <p class="eyebrow moegi">こえもーど</p>
+      <h2 id="koe-title">声で入れて、<br>キーボードで直す</h2>
+      <p class="section-lead" style="margin-bottom:0">決めたキー（初期設定は右 ⌘）を押している間に話した内容が、確定されずに入力中の文字として入ります。</p>
+      <ul class="points">
+        <li><b>打った文と同じかな漢字変換に渡します。</b>音声認識が出した漢字かな交じりの結果を読み（ひらがな）に戻してから変換するので、スペースキーの候補・文節の打ち直し・続きのキー入力が、打った文と同じようにできます。</li>
+        <li><b>音声認識はこの Mac の中で行います。</b>音声を外部に送りません。</li>
         <li>読みは音声認識の表記から求め直すので、人名などで取り違えることがあります。そのときは、スペースキーの候補か文節の打ち直しで直します。</li>
-        <li>使うには、設定 &gt; 情報 で開発者モードを ON にし、設定 &gt; 入力 &gt;「こえ」モード を ON にします。マイクの使用は設定画面から許可します。</li>
+        <li>使うには、設定 &gt; 情報 で開発者モードを ON にし、設定 &gt; 入力 &gt;「こえ」モード を ON にします（初期設定は OFF、macOS 26 以降）。マイクの使用は設定画面から許可します。</li>
       </ul>
+    </div>
+
+    <div>
+      <div class="demo-window" id="koe-demo" aria-label="「こえ」モードの実演">
+        <div class="demo-titlebar" aria-hidden="true"><i></i><i></i><i></i><span>メモ</span></div>
+        <div class="demo-body">
+          <div class="demo-text" aria-live="off"><span class="done"></span><span class="composing"></span><span class="caret"></span><span class="typo-popup koe-listening" aria-hidden="true"><i></i>聞いています</span></div>
+          <div class="demo-keys" aria-hidden="true"><span class="label">押したキー</span><span class="keys"></span></div>
+        </div>
+      </div>
+      <p class="demo-status" aria-live="polite"></p>
+      <p class="demo-note">読み上げた音声を iroha に渡したときの実際の出力です（話している間の表示、離したあとの変換、打ち直しの変換）。太い下線が、選んでいる文節です。</p>
     </div>
   </div>
 </section>
 
-<svg class="kasumi kin" aria-hidden="true" style="background:color-mix(in srgb, var(--paper-deep) 70%, transparent)"><use href="#kasumi"/></svg>
+<svg class="kasumi kin" aria-hidden="true"><use href="#kasumi"/></svg>
 
 <!-- ===== その他の機能 ===== -->
 <section id="more" class="section" aria-labelledby="more-title">
@@ -661,6 +674,7 @@
       <p>一方、iroha の開発そのものは、Keita Miwa 氏によるニューラルかな漢字変換の取り組みと、その成果を誰もが使える形で公開してきた一連のオープンソースソフトウェアに強く影響を受けています。</p>
       <p>iPhone 向けの日本語入力 <a href="https://github.com/azooKey/azooKey">azooKey</a>、ニューラルかな漢字変換エンジン Zenzai、変換モデル <a href="https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf">zenz</a> とその学習データ <a href="https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset">zenz-v2.5-dataset</a>、かな漢字変換のライブラリ <a href="https://github.com/azooKey/AzooKeyKanaKanjiConverter">AzooKeyKanaKanjiConverter</a>、そして Mac 向けの <a href="https://github.com/azooKey/azooKey-Desktop">azooKey-Desktop</a>。言語モデルでかな漢字変換を行うという考え方を、実際に毎日使える日本語入力として示し、そのコード・モデル・データを公開してくださったことが、iroha を作り始めるきっかけになりました。</p>
       <p>iroha-kkc は zenz-v2.5-dataset で学習しており、変換の候補を作るしくみには AzooKeyKanaKanjiConverter と azooKey の辞書データを使っています。これらの公開がなければ、iroha をこの形で作ることはできませんでした。Keita Miwa 氏に、心より感謝いたします。</p>
+      <p>研究室内で iroha を日々使い、フィードバックを寄せてくださった次の方々に感謝いたします（研究室内の利用フィードバック協力者）: <a href="https://github.com/shiratsumu">shiratsumu</a>、<a href="https://github.com/onoryu">onoryu</a>、Taisei Kato、Ryusei Akaike。</p>
     </div>
     <h3 class="credits-head">ライセンス</h3>
     <ul class="credits">
