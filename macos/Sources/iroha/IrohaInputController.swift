@@ -1631,7 +1631,14 @@ final class IrohaInputController: IMKInputController {
             return true
         case kVK_Delete:
             hidePanel()
-            exitSegmentModeToKana(client: client)
+            // 選んでいる文節の読みを後ろから 1 文字消す（2026-11-11。それまではかな入力に戻っていた）。
+            // 声で入れた文の言いよどみなど、文の途中の文節だけを消すのに使う。かな入力に戻すのは Esc。
+            // 文節の区切りがまだ届いていないとき（文節が読み全体の 1 つしかない）は、今までどおりかな入力に戻る
+            if !segmentationPending, segments.indices.contains(currentSegmentIndex) {
+                startSegmentEdit(nil, client: client)
+            } else {
+                exitSegmentModeToKana(client: client)
+            }
             return true
         default:
             // 候補ウィンドウが開いていれば、番号キーはその列の番号の候補を選ぶ
@@ -1681,9 +1688,12 @@ final class IrohaInputController: IMKInputController {
     /// 固定部分（表示形を指定した部分・英字）は変えず、左文脈として使う。ライブ変換が OFF なら、打ち直している間は
     /// かなのまま見せ、終えたときに変換し直す。
     /// Return で全体を確定、Space で今の文節の候補、←→ で隣の文節へ（いずれも打ち直しを終えてから）。
-    /// Esc と、空にしたあとの Backspace で、打ち直す前の文節列に戻す。
-    /// 文節を空にして終えたら、その文節は消える（表示のとおりに確定する）
-    private func startSegmentEdit(_ character: Character, client: IMKTextInput) {
+    /// Esc で、打ち直す前の文節列に戻す。
+    /// 文節を空にして終えたら、その文節は消える（表示のとおりに確定する）。
+    ///
+    /// `character` が nil なら Backspace で始める: 文節の読みをそのまま打ち直しの読みにして、後ろから 1 文字消す
+    /// （消している間は変換を止めて読みをかなで見せる。続きを打つか、打ち直しを終えたときに変換し直す）
+    private func startSegmentEdit(_ character: Character?, client: IMKTextInput) {
         // 「文全体を訂正した候補」を選んでいたら、ここで文節に反映される
         hidePanel()
         guard segments.indices.contains(currentSegmentIndex) else { return }
@@ -1699,13 +1709,32 @@ final class IrohaInputController: IMKInputController {
         let scopeStart = whole ? min(segmentFixedCount, index) : index
         let scopeEnd = whole ? segments.count : index + 1
         var composer = Self.makeComposer()
-        composer.input(character)
+        if let character {
+            composer.input(character)
+        } else {
+            composer.replaceText(segments[index].reading)
+            composer.deleteBackward()
+        }
         segmentEdit = SegmentEdit(
             composer: composer, scopeStart: scopeStart, originalSegments: segments, originalIndex: index,
             before: Array(segments[scopeStart..<index]), after: Array(segments[(index + 1)..<scopeEnd]),
             outside: Array(segments[scopeEnd...]), splits: whole)
         segmentsRetyped = true
-        segmentEditDidChange(client: client)
+        if character != nil {
+            segmentEditDidChange(client: client)
+        } else {
+            conversionTask?.cancel()
+            showSegmentEdit(client: client)
+            endSegmentModeIfEmptied(client: client)
+        }
+    }
+
+    /// Backspace で最後の文節まで消して未確定文字列が空になったら、文節変換を終える
+    /// （かな入力中に Backspace で全部消したときと同じ、何も入力していない状態にする）
+    private func endSegmentModeIfEmptied(client: IMKTextInput) {
+        guard segmentEdit != nil, segments.allSatisfy({ $0.result.isEmpty }) else { return }
+        finishSegmentEdit(client: client, reconverts: false)
+        exitSegmentModeToKana(client: client)
     }
 
     /// 打ち直している間のキー。処理したら true/false（アプリに渡すか）、打ち直しを終えて
@@ -1714,15 +1743,17 @@ final class IrohaInputController: IMKInputController {
         guard var edit = segmentEdit else { return nil }
         switch Int(event.keyCode) {
         case kVK_Delete:
-            if edit.composer.isEmpty {
-                cancelSegmentEdit(client: client)
-            } else {
+            // 空になったら、それ以上は何もしない（2026-11-11。それまでは打ち直す前に戻していた。
+            // Backspace で文節を消せるようにしたので、戻すと、押し続けたときに「消す → 戻る」を繰り返す）。
+            // 戻すのは Esc
+            if !edit.composer.isEmpty {
                 edit.composer.deleteBackward()
                 // 削除中は変換を止め、打ち直しの読みをかなで見せる（入力中の Backspace と同じ。次の 1 文字で再開する）
                 edit.shown = nil
                 segmentEdit = edit
                 conversionTask?.cancel()
                 showSegmentEdit(client: client)
+                endSegmentModeIfEmptied(client: client)
             }
             return true
         case kVK_Escape:
@@ -1738,7 +1769,15 @@ final class IrohaInputController: IMKInputController {
             }
             // Space・↓ はこのあと今の文節の候補を開くので、文節を分け直さない（候補を引く文節が途中で変わらないように）
             let opensCandidates = [kVK_Space, kVK_DownArrow].contains(Int(event.keyCode))
+            // 空にした文節はここで消え、選択はその場所に来た文節（次の文節。最後の文節を消したなら前の文節）に移る。
+            // 消した文節から見て隣へ行く ← → は、それで済んでいるので、もう 1 つ動かさない
+            let removes = edit.composer.isEmpty
+            let wasLast = currentSegmentIndex == segments.count - 1
             finishSegmentEdit(client: client, reconverts: !opensCandidates)
+            if removes, !event.modifierFlags.contains(.shift) {
+                let key = Int(event.keyCode)
+                if (key == kVK_RightArrow && !wasLast) || (key == kVK_LeftArrow && wasLast) { return true }
+            }
             return nil
         }
     }
@@ -1864,10 +1903,21 @@ final class IrohaInputController: IMKInputController {
             syncCompositionWithRetypedSegment(at: edit.scopeStart, removed: spanSegments.isEmpty)
         }
         segmentGeneration += 1
+        // 英字の文節を Backspace で短くしただけなら、英字のままにする（かな漢字変換に通さない。候補は英字の変種）
+        let alphabetOnly = !edit.splits && spanSegments.count == 1 && Self.isAlphabetText(spanSegments[0].reading)
+            && spanSegments[0].reading == spanSegments[0].result
+        if alphabetOnly {
+            segments[edit.scopeStart].candidates = Self.alphabetCandidates(spanSegments[0].result)
+        }
         refreshSegmentDisplay(client: client)
-        if reconverts, !span.exact, !spanSegments.isEmpty {
+        if reconverts, !span.exact, !spanSegments.isEmpty, !alphabetOnly {
             reconvertRetypedSpan(start: edit.scopeStart, count: spanSegments.count, splits: edit.splits)
         }
+    }
+
+    /// 英字・数字・ASCII の記号だけの文字列か（かなに戻さない固定部分として扱う）
+    private static func isAlphabetText(_ text: String) -> Bool {
+        !text.isEmpty && text.unicodeScalars.allSatisfy { $0.isASCII }
     }
 
     /// 打ち直しを終えたあと、範囲（`start` から `count` 文節）の読みを変換し直して文節に分け直す。
@@ -1924,8 +1974,15 @@ final class IrohaInputController: IMKInputController {
     private func syncCompositionWithRetypedSegment(at index: Int, removed: Bool) {
         guard !segmentsFromAI, index < segmentFixedCount else { return }
         // 英字入力中の英字は、固定部分の後ろに 1 つだけある
-        let chunk = removed || !segments.indices.contains(index) ? nil
+        var chunk = removed || !segments.indices.contains(index) ? nil
             : FixedChunk(reading: segments[index].reading, text: segments[index].result, kind: .liveConversion)
+        // 英字のままの文節（英字を Backspace で短くした）は、英字の固定部分のままにする（かなに戻さない）
+        if let text = chunk?.text, chunk?.reading == text, Self.isAlphabetText(text) {
+            chunk?.kind = .alphabet
+            if index < fixedChunks.count, fixedChunks[index].kind == .alphabet {
+                chunk?.delimited = fixedChunks[index].delimited
+            }
+        }
         if index < fixedChunks.count {
             if let chunk { fixedChunks[index] = chunk } else { fixedChunks.remove(at: index) }
         } else {
