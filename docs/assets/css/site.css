@@ -261,6 +261,37 @@ img, video, svg { max-width: 100%; }
 #terms .terms-steps button[aria-pressed="true"] { background: var(--fuji-pale); border-color: var(--fuji); }
 #terms .terms-dict { margin-top: 0.5rem; }
 
+/* ---------- 文節の打ち直し・「こえ」モード ---------- */
+#retype-demo .demo-text { min-height: 4.8em; }
+/* 打ち直しで表記が変わった、選んでいない文節 */
+.demo-text .seg.changed { animation: seg-changed 1.6s ease-out; }
+@keyframes seg-changed {
+  0% { background: color-mix(in srgb, var(--kin-pale) 100%, transparent); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .demo-text .seg.changed { animation: none; } }
+.trial-card {
+  margin-top: 44px; background: var(--card); border: 1px dashed var(--line); border-radius: var(--radius);
+  padding: 24px 26px 22px;
+}
+.trial-card p { margin: 0; color: var(--ink-soft); line-height: 1.9; }
+.trial-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 12px; }
+.trial-head h3 { margin: 0; font-size: 20px; }
+.trial-badge {
+  font-size: 12px; font-weight: 600; letter-spacing: .08em; color: var(--fuji);
+  border: 1px solid var(--fuji); border-radius: 999px; padding: 1px 10px;
+}
+.trial-req { font-size: 13px; color: var(--ink-faint); }
+.koe-flow { list-style: none; counter-reset: koe; padding: 0; margin: 20px 0 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 760px) { .koe-flow { grid-template-columns: 1fr; } }
+.koe-flow li {
+  counter-increment: koe; background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 16px; display: grid; gap: 6px; align-content: start;
+}
+.koe-flow li b::before { content: counter(koe) ". "; color: var(--kobai); }
+.koe-flow li span { font-size: 14px; color: var(--ink-soft); line-height: 1.8; }
+.trial-notes { margin: 18px 0 0; padding-left: 1.2em; color: var(--ink-soft); font-size: 14px; line-height: 1.9; }
+
 /* ---------- 章 ---------- */
 section { scroll-margin-top: 72px; }
 .section { padding: 72px 0; }

@@ -284,7 +284,63 @@
   </div>
 </section>
 
-<svg class="kasumi kin" aria-hidden="true"><use href="#kasumi"/></svg>
+<svg class="kasumi" aria-hidden="true"><use href="#kasumi"/></svg>
+
+<!-- ===== 文節の打ち直し・「こえ」モード（v0.17.0） ===== -->
+<!-- 仕様の正は README.md（キー操作の表の「文字キー（文節変換中）」と「「こえ」モード」の節）と Release v0.17.0 の本文。
+     実演の変換は iroha-kkc-v1（Q5_K_M）・ユーザ辞書と学習なしで、読みの頭から 1 字ずつ iroha-cli に渡した結果（2026-11-10）。
+     3 つの見本は実機でも確かめてある。「こえ」モードは試作（開発者モード）なので、完成した機能のようには書かない。
+     精度の数字・他製品との比較・新規性の主張は、測っていない・調べていないので書かない -->
+<section id="retype" class="section section-tint" aria-labelledby="retype-title">
+  <div class="wrap split">
+    <div>
+      <p class="eyebrow">ぶんせつのうちなおし</p>
+      <h2 id="retype-title">文の一部だけを、<br>確定せずに打ち直す</h2>
+      <p class="section-lead" style="margin-bottom:0">スペースキーで文節変換に入り、直したい文節を ← → で選んで、そのまま文字を打ちます。確定してから消して打ち直す必要はありません。</p>
+      <ul class="points">
+        <li><b>打つたびに、文全体を新しい読みで変換し直します。</b>直した文節に合わせて、前後の表記も変わります。「橋を渡る」の「渡る」を「つかう」に打ち直すと「箸を使う」になります。</li>
+        <li>Return で全体を確定、スペースキーで今の文節の候補、Esc で打ち直す前に戻ります。</li>
+        <li>設定は要りません（v0.17.0 から）。文節変換中に文字を打つと打ち直しになるので、続きを打つときは先に Return で確定します。</li>
+      </ul>
+    </div>
+
+    <div>
+      <div class="demo-window" id="retype-demo" aria-label="文節の打ち直しの実演">
+        <div class="demo-titlebar" aria-hidden="true"><i></i><i></i><i></i><span>メモ</span></div>
+        <div class="demo-body">
+          <div class="demo-text" aria-live="off"><span class="done"></span><span class="composing"></span><span class="caret"></span></div>
+          <div class="demo-keys" aria-hidden="true"><span class="label">打ったキー</span><span class="keys"></span></div>
+        </div>
+      </div>
+      <p class="demo-status" aria-live="polite"></p>
+      <div class="typo-steps retype-steps" role="group" aria-label="例を選ぶ"></div>
+      <p class="demo-note">表示している変換は iroha の実際の出力です。太い下線が、選んでいる文節です。</p>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="trial-card" aria-labelledby="koe-title">
+      <div class="trial-head">
+        <h3 id="koe-title">「こえ」モード</h3>
+        <span class="trial-badge">試作</span>
+        <span class="trial-req">開発者モードの項目・初期設定は OFF・macOS 26 以降</span>
+      </div>
+      <p>決めたキー（初期設定は右 ⌘）を押している間に話した内容が、確定されずに入力中の文字として入ります。音声認識が出した漢字かな交じりの結果を読み（ひらがな）に戻してから、キーボードで打ったときと同じかな漢字変換モデルに渡すので、スペースキーの候補・文節の打ち直し・続きのキー入力が、打った文と同じようにできます。</p>
+      <ol class="koe-flow">
+        <li><b>声で入れる</b><span>キーを押したまま話し、離すと、長い文がまとめて入力中の文字になります。</span></li>
+        <li><b>聞き違えた文節だけを打ち直す</b><span>スペースキーで文節変換に入り、違っていた文節を選んでキーボードで打ちます。</span></li>
+        <li><b>文全体が変換し直される</b><span>直した文節に合わせて前後の表記も変わり、Return で確定します。</span></li>
+      </ol>
+      <ul class="trial-notes">
+        <li>音声認識はこの Mac の中で行い、音声を外部に送りません。</li>
+        <li>読みは音声認識の表記から求め直すので、人名などで取り違えることがあります。そのときは、スペースキーの候補か文節の打ち直しで直します。</li>
+        <li>使うには、設定 &gt; 情報 で開発者モードを ON にし、設定 &gt; 入力 &gt;「こえ」モード を ON にします。マイクの使用は設定画面から許可します。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<svg class="kasumi kin" aria-hidden="true" style="background:color-mix(in srgb, var(--paper-deep) 70%, transparent)"><use href="#kasumi"/></svg>
 
 <!-- ===== その他の機能 ===== -->
 <section id="more" class="section" aria-labelledby="more-title">
