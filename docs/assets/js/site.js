@@ -124,6 +124,62 @@
     };
   }
 
+  // 実演の窓の文字・打ったキーの行・説明文は、出しうる内容のうち最も高いものに合わせて高さを取っておく。
+  // 内容（とくに狭い画面での行数）で高さが変わると、その下の内容が上下に動いて読みにくいため。
+  // renders はそれぞれ parts の中身を書き換えて 1 つの内容を出す関数。測ったあと parts の中身は元に戻す。
+  // 画面の幅が変わったら測り直し、測っていない内容で高くなったときもその高さを保つ
+  function holdHeight(box, parts, renders) {
+    let held = 0;
+    const measure = () => {
+      const saved = parts.map((p) => p.innerHTML);
+      box.style.minHeight = "";
+      let max = box.getBoundingClientRect().height;
+      for (const render of renders) {
+        render();
+        max = Math.max(max, box.getBoundingClientRect().height);
+      }
+      parts.forEach((p, i) => { p.innerHTML = saved[i]; });
+      held = Math.ceil(max);
+      box.style.minHeight = held + "px";
+    };
+    measure();
+    let width = window.innerWidth;
+    window.addEventListener("resize", () => {
+      if (window.innerWidth === width) return;
+      width = window.innerWidth;
+      measure();
+    });
+    if (document.fonts) document.fonts.ready.then(measure);
+    if ("ResizeObserver" in window) {
+      new ResizeObserver(() => {
+        const h = Math.ceil(box.getBoundingClientRect().height);
+        if (h > held) { held = h; box.style.minHeight = held + "px"; }
+      }).observe(box);
+    }
+  }
+
+  // 実演の窓（demoView）の 3 か所の高さを取っておく。texts は未確定の文字、dones は確定した文字、
+  // segs は文節に分けた表示（[表記…] の並び）、keys は [キー, 説明]、statuses は説明文
+  function holdDemoHeights(root, v, status, { texts = [], dones = [], segs = [], keys = [], statuses = [] }) {
+    const text = root.querySelector(".demo-text");
+    const show = (done, composing) => () => { v.done.textContent = done; v.composing.textContent = composing; };
+    const showSegs = (list) => () => {
+      v.done.textContent = "";
+      v.composing.innerHTML = "";
+      list.forEach((t, i) => {
+        const span = document.createElement("span");
+        span.className = "seg" + (i === 0 ? " sel" : "");
+        span.textContent = t;
+        v.composing.append(span);
+      });
+    };
+    holdHeight(text, [v.done, v.composing], [
+      ...texts.map((t) => show("", t)), ...dones.map((t) => show(t, "")), ...segs.map(showSegs),
+    ]);
+    holdHeight(root.querySelector(".demo-keys"), [v.keys], keys.map(([k, n]) => () => v.setKey(k, n)));
+    if (status) holdHeight(status, [status], statuses.map((t) => () => { status.textContent = t; }));
+  }
+
   // 1 打ちごとの [打ったキー, その時点のライブ変換の表示]
   // 文全体を読んで変換する効果: あとから打った「プレゼント」を読んで、前の「送る」が「贈る」に変わる。
   // 途中の「プレゼン」では「送る」に戻る。iroha-kkc-v1（Q5_K_M）でユーザ辞書・学習なしの出力（2026-11-08）
@@ -190,6 +246,15 @@
     if (!root) return;
     const v = demoView(root);
     const caption = document.getElementById("hero-caption");
+    holdDemoHeights(root, v, caption, {
+      texts: HERO_SENTENCES.flatMap((h) => [
+        ...h.steps.map(([, shown]) => shown), ...(h.typo ? [h.typo.shown] : []), ...(h.ai ? [h.ai.result] : []),
+      ]),
+      keys: HERO_SENTENCES.flatMap((h) => [
+        ...h.steps.map(([k]) => [k]), ...(h.ai ? [[h.ai.key, h.ai.label]] : []),
+      ]).concat([["return"]]),
+      statuses: HERO_SENTENCES.map((h) => h.caption),
+    });
     if (reduceMotion) {
       v.done.textContent = OKURU[OKURU.length - 1][1];
       caption.textContent = HERO_SENTENCES[0].caption;
@@ -311,6 +376,13 @@
       b.addEventListener("click", () => { current = idx; loop(); });
       picker.appendChild(b);
       return b;
+    });
+    holdDemoHeights(root, v, status, {
+      texts: TYPO_EXAMPLES.flatMap((ex) => [...ex.typed.map(([, shown]) => shown), ...(ex.fix ? [ex.fix.shown] : [])]),
+      keys: TYPO_EXAMPLES.flatMap((ex) => ex.typed.map(([k]) => [k])).concat([["return"]]),
+      statuses: TYPO_EXAMPLES.map((ex) => ex.note).concat([
+        "手が止まりました…", "直しました。 このすぐ後に Backspace を押すと元に戻ります。", "正しく打った文なので、そのままにします。",
+      ]),
     });
 
     function reset() {
@@ -514,6 +586,20 @@
       ? `${ex.label}の専門辞書から「${ex.term}」が候補に出ました。`
       : `辞書がないと、候補に「${ex.term}」は出てきません。`);
 
+    holdDemoHeights(root, v, status, {
+      texts: TERMS_SAMPLES.flatMap((ex) => ex.typed.map(([, shown]) => shown)),
+      dones: TERMS_SAMPLES.flatMap((ex) => ex.dict.candidates.map(([t]) => t + ex.rest)),
+      segs: TERMS_SAMPLES.flatMap((ex) => [
+        ...ex.prep.map(([, , first, rest]) => [first, rest]),
+        ...ex.dict.candidates.concat(ex.nodict).map(([t]) => (ex.rest ? [t, ex.rest] : [t])),
+      ]),
+      keys: TERMS_SAMPLES.flatMap((ex) => [...ex.typed.map(([k]) => [k]), ...ex.prep.map(([k, n]) => [k, n]), ex.open])
+        .concat([["↓"], ["return"], ["esc"]]),
+      statuses: TERMS_SAMPLES.flatMap((ex) => [
+        `「${ex.reading}」と打つと…`, `打つそばからの変換では「${ex.live}」になりました。`, found(ex, true), found(ex, false),
+      ]),
+    });
+
     function showResult(ex, d) {
       const pick = d ? ex.dict.pick : 0;
       segments(cands(ex, d)[pick][0], ex.rest);
@@ -677,6 +763,17 @@
       v.setKey("");
       status.textContent = "";
     }
+
+    const joined = (list) => list.map(([t]) => t).join("");
+    holdDemoHeights(root, v, status, {
+      texts: RETYPE_SAMPLES.map((ex) => joined(ex.start)),
+      dones: RETYPE_SAMPLES.map((ex) => joined(ex.steps[ex.steps.length - 1][1])),
+      segs: RETYPE_SAMPLES.flatMap((ex) => [ex.start, ...ex.steps.map(([, list]) => list)].map((list) => list.map(([t]) => t))),
+      keys: RETYPE_SAMPLES.flatMap((ex) => [[ex.typed], ...ex.steps.map(([k]) => [k]), ["→".repeat(ex.move), "直したい文節を選ぶ"]])
+        .concat([["space", "文節に分ける"], ["return", "全体を確定"]]),
+      statuses: RETYPE_SAMPLES.flatMap((ex) => [`「${joined(ex.start)}」と打ってあるところから…`, ex.found])
+        .concat(["選んだ文節を、そのまま打ち直します。"]),
+    });
 
     function showResult(ex) {
       const last = ex.steps[ex.steps.length - 1][1];
