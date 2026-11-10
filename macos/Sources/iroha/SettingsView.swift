@@ -1,6 +1,7 @@
 import ApplicationServices
 import SwiftUI
 import IrohaCore
+import IrohaVoice
 import IrohaDocuments
 import IrohaMLX
 
@@ -224,6 +225,7 @@ private struct InputSettingsTab: View {
 
             if developerMode {
                 DelimitedAlphabetSection()
+                VoiceInputSection()
             }
 
             // 加速度センサを利用するとき（設定 > 情報 > 開発者向け）だけ出す
@@ -400,6 +402,156 @@ private struct TapInputSection: View {
 
     private func describe(_ detection: TapInput.Detection) -> String {
         "\(detection.message)（\(detection.date.formatted(date: .omitted, time: .standard))）"
+    }
+}
+
+/// 「こえ」モード（`VoiceInput`）。キーを押している間だけ録音し、認識結果を読みに戻して未確定文字列に入れる
+private struct VoiceInputSection: View {
+    @AppStorage(VoiceInputSettings.enabledKey) private var enabled = false
+    @AppStorage(VoiceInputSettings.holdKeyKey) private var holdKey = VoiceInputSettings.HoldKey.rightCommand.rawValue
+    @AppStorage(VoiceInputSettings.recognizerKey) private var recognizer = VoiceRecognizerKind.speech.rawValue
+    @State private var microphone = VoiceMicrophone.status
+    @State private var assets: VoiceAssetStatus?
+    @State private var downloadProgress: Double?
+    @State private var downloadError: String?
+
+    private var supported: Bool { VoiceRecognition.isSupported }
+    private var recognizerKind: VoiceRecognizerKind { VoiceRecognizerKind(rawValue: recognizer) ?? .speech }
+
+    var body: some View {
+        Section {
+            HelpToggle(
+                title: supported ? "「こえ」モードを使う" : "「こえ」モードを使う（macOS 26 以降）", isOn: $enabled,
+                help: "ONの間、下で決めたキーを押している間だけマイクで録音し、キーを離すと、話した内容を入力中の文字（未確定文字列）に入れます。"
+                    + "確定はしません。話した内容は読み（ひらがな）に戻してからirohaのかな漢字変換に通すので、"
+                    + "キーボードで打ったときと同じように、Spaceで候補を選ぶ・文節を区切り直す・続きをキーボードで打つ・Returnで確定する、ができます。"
+                    + "英字・数字は読みに戻さず、音声認識が出した表記のまま入ります。"
+                    + "キーを離した直後、音声認識がそのまま出した表記をカーソルの近くに数秒表示します（irohaの変換と比べるため）。"
+                    + "キーを押してすぐ離したとき、押している間にほかのキーやクリックを使ったとき（ショートカット）は録音を捨てます。"
+                    + "音声認識はこのMacの中で行い、音声を外部に送りません。"
+                    + "声で入れた文は、変換の学習・変換記録・入力履歴に残しません（読みが打ったものではないため）。"
+                    + "英数モードでは、音声認識の表記をそのまま入れます。この設定は他のMacと同期しません。",
+                isDisabled: !supported)
+                .disabled(!supported)
+            Picker(selection: $holdKey) {
+                ForEach(VoiceInputSettings.HoldKey.allCases) { key in
+                    Text(key.label).tag(key.rawValue)
+                }
+            } label: {
+                HelpLabel(
+                    title: "押している間だけ録音するキー",
+                    help: "このキーだけを押し続けている間、録音します。ほかのキーと一緒に押したとき（右⌘+Cなど）は録音しません。"
+                        + "JIS配列のMacBookには右Optionがありません。"
+                        + "fn（地球儀）は、システム設定 > キーボードで「地球儀キーを押して」に別の動作を割り当てていると、その動作も起きます。",
+                    isDisabled: !enabled)
+            }
+            .disabled(!enabled)
+            Picker(selection: $recognizer) {
+                Text("新しいモデル").tag(VoiceRecognizerKind.speech.rawValue)
+                Text("音声入力と同じ系統").tag(VoiceRecognizerKind.dictation.rawValue)
+            } label: {
+                HelpLabel(
+                    title: "音声認識",
+                    help: "macOS の 2 種類の音声認識から選びます。どちらもこのMacの中で動きます。"
+                        + "「新しいモデル」（SpeechTranscriber）は速く、句点や疑問符は文が終わったと見たときだけ付けます。読点はほとんど付けません。"
+                        + "「音声入力と同じ系統」（DictationTranscriber）は読点も付けます。",
+                    isDisabled: !enabled)
+            }
+            .disabled(!enabled)
+            if enabled {
+                microphoneRow
+                assetsRow
+            }
+        } header: {
+            HelpSectionHeader(
+                title: "「こえ」モード",
+                help: "試作中の機能です。音声で話した内容を、キーボードで打った読みと同じようにかな漢字変換へ通します。"
+                    + "音声認識の出した表記から読みを求め直すので、読みを取り違えることがあります"
+                    + "（人名、「何時」をいつと読む、など）。そのときはSpaceの候補やキーボードで直します。", developer: true)
+        }
+        .task(id: recognizer) { await refresh() }
+        .onChange(of: enabled) { _, _ in Task { await refresh() } }
+    }
+
+    @ViewBuilder
+    private var microphoneRow: some View {
+        LabeledContent("マイク") {
+            switch microphone {
+            case .authorized:
+                Label("許可されています", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+            case .notDetermined:
+                HStack {
+                    Text("未許可").foregroundStyle(.orange)
+                    Button("許可を求める") {
+                        Task {
+                            _ = await VoiceMicrophone.requestAccess()
+                            microphone = VoiceMicrophone.status
+                        }
+                    }
+                }
+            case .denied:
+                HStack {
+                    Text("許可されていません").foregroundStyle(.orange)
+                    Button("システム設定を開く") {
+                        if let url = URL(
+                            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    Button("再確認") { microphone = VoiceMicrophone.status }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var assetsRow: some View {
+        LabeledContent("音声認識のデータ") {
+            if let downloadProgress {
+                ProgressView(value: downloadProgress).frame(width: 160)
+            } else {
+                switch assets {
+                case .installed:
+                    Label("入っています", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+                case .notInstalled:
+                    HStack {
+                        Text("入っていません").foregroundStyle(.orange)
+                        Button("ダウンロード") { download() }
+                    }
+                case .downloading:
+                    Text("ダウンロード中").foregroundStyle(.secondary)
+                case .unsupported:
+                    Text("このMacでは使えません").foregroundStyle(.orange)
+                case nil:
+                    Text("確認中").foregroundStyle(.secondary)
+                }
+            }
+        }
+        if let downloadError {
+            Text(downloadError).font(.caption).foregroundStyle(.red)
+        }
+    }
+
+    private func refresh() async {
+        microphone = VoiceMicrophone.status
+        assets = await VoiceRecognition.assetStatus(kind: recognizerKind)
+    }
+
+    private func download() {
+        let kind = recognizerKind
+        downloadProgress = 0
+        downloadError = nil
+        Task {
+            do {
+                try await VoiceRecognition.installAssets(kind: kind) { value in
+                    DispatchQueue.main.async { if downloadProgress != nil { downloadProgress = value } }
+                }
+            } catch {
+                downloadError = "ダウンロードできません: \(error.localizedDescription)"
+            }
+            downloadProgress = nil
+            await refresh()
+        }
     }
 }
 
@@ -2546,7 +2698,7 @@ private struct AboutSettingsTab: View {
                     title: "開発者モード", isOn: $developerMode,
                     help: "ONにすると、細かな調整や開発者向けの項目を設定画面に表示します"
                         + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ・"
-                        + "区切り記号で英字を入力・タップ入力（加速度センサを利用するとき）・AIで直す、"
+                        + "区切り記号で英字を入力・「こえ」モード・タップ入力（加速度センサを利用するとき）・AIで直す、"
                         + "辞書・学習: 自分の原稿に合わせる・記号・顔文字・絵文字を候補に出す、"
                         + "選択テキスト: 除外するアプリ、モデル: 推論エンジン・モデルファイルの指定・irohaを再起動・"
                         + "自分の入力で追加学習、情報: 推論の時間の表示・加速度センサを利用する）。"

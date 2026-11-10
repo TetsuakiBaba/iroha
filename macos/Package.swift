@@ -40,7 +40,7 @@ let package = Package(
         // IME本体（InputMethodKit）。scripts/install.shで.appバンドルに組み立てる
         .executableTarget(
             name: "iroha",
-            dependencies: ["IrohaCore", "IrohaMLX", "IrohaDocuments"],
+            dependencies: ["IrohaCore", "IrohaMLX", "IrohaDocuments", "IrohaVoice"],
             swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
             // sqlite3: macOSのユーザ辞書（TextReplacements.db）の読み取りに使う
             linkerSettings: llamaLinkerSettings + [.linkedLibrary("sqlite3")]
@@ -53,10 +53,18 @@ let package = Package(
             swiftSettings: [.unsafeFlags(llamaHeaderFlags)],
             linkerSettings: [.linkedFramework("PDFKit")]
         ),
+        // 「こえ」モードの録音と音声認識（Speech・AVFoundation を使う macOS 専用の部分。macOS 26 以降で動く）。
+        // 認識結果を読みと固定部分に分ける規則は OS に依存しないので IrohaCore の Voice/ に置く
+        .target(
+            name: "IrohaVoice",
+            dependencies: ["IrohaCore", "IrohaDocuments"],
+            swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
+            linkerSettings: [.linkedFramework("Speech"), .linkedFramework("AVFoundation")]
+        ),
         // 変換エンジンをコマンドラインで試す検証用ハーネス
         .executableTarget(
             name: "iroha-cli",
-            dependencies: ["IrohaCore", "IrohaMLX", "IrohaDocuments"],
+            dependencies: ["IrohaCore", "IrohaMLX", "IrohaDocuments", "IrohaVoice"],
             swiftSettings: [.unsafeFlags(llamaHeaderFlags)],
             linkerSettings: llamaLinkerSettings
         ),

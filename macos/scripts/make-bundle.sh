@@ -79,5 +79,7 @@ else
   TIMESTAMP="--timestamp"
   [ "${SIGN_TIMESTAMP:-1}" = "0" ] && TIMESTAMP="--timestamp=none"
   codesign --force --options runtime "$TIMESTAMP" --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/iroha-train"
-  codesign --force --options runtime "$TIMESTAMP" --sign "$SIGN_IDENTITY" "$APP"
+  # 本体にはマイクの権限を付ける（「こえ」モード。hardened runtime では権限ファイルに無い機器は使えない）
+  codesign --force --options runtime "$TIMESTAMP" --entitlements Resources/iroha.entitlements \
+    --sign "$SIGN_IDENTITY" "$APP"
 fi

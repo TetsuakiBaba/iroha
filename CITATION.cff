@@ -20,8 +20,8 @@ authors:
 repository-code: "https://github.com/TetsuakiBaba/iroha"
 url: "https://tetsuakibaba.github.io/iroha/"
 license: MIT
-version: "0.16.0"
-date-released: "2026-11-09"
+version: "0.17.0"
+date-released: "2026-11-10"
 keywords:
   - Japanese input method
   - kana-kanji conversion

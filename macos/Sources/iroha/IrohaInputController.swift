@@ -4,11 +4,13 @@ import InputMethodKit
 import IrohaCore
 import IrohaDocuments
 import IrohaMLX
+import IrohaVoice
 
 /// キーイベントを処理するIMEコントローラ。
 ///
 /// - ライブ変換: 入力のたびに読みをLLM（zenz-v3）へ送り、変換結果を未確定文字列として表示
-/// - スペースキー: 文節変換モードへ（←→で文節移動、Shift+←→で伸縮、Spaceで候補ウィンドウ）
+/// - スペースキー: 文節変換モードへ（←→で文節移動、Shift+←→で伸縮、Spaceで候補ウィンドウ、
+///   文字を打つと選んでいる文節だけを打ち直す）
 /// - Enterで確定、Escでかな表示に戻す/取消、BSで編集
 /// - Ctrl+BS: 確定した直後なら確定を取り消し、確定する前の未確定文字列に戻す（`undoCommit`）
 /// - F6-F10 / Ctrl+U,I,O,P,T: ひらがな/カタカナ/半角カナ/全角英数/半角英数
@@ -323,6 +325,9 @@ final class IrohaInputController: IMKInputController {
         var segmentBaseline: String?
         var segmentEngineBaseline: String?
         var segmentsFromAI: Bool
+        var segmentsRetyped: Bool
+        var segmentFixedCount: Int
+        var compositionHasVoice: Bool
         var recentCommitted: String
         var recentCommittedHasPrivateText: Bool
         var documentContext: String?
@@ -373,6 +378,46 @@ final class IrohaInputController: IMKInputController {
     /// 今の文節列がAI変換の結果から作ったものか（`presentAIResultAsSegments`）。
     /// 真なら確定しても学習・変換記録に残さない
     private var segmentsFromAI = false
+    /// 文節変換中に 1 文節を打ち直している状態（`startSegmentEdit`）。nil なら打ち直していない。
+    ///
+    /// 打ち直すたびに、範囲（`scopeStart` 以降）の読み全体を変換し直して文節に分け直す。
+    /// 範囲は、読みから変換した文節を打ち直すなら読みから変換した文節の全部（固定部分は左文脈として使う）、
+    /// 固定部分・AI の結果から作った文節を打ち直すならその 1 文節だけ
+    private struct SegmentEdit {
+        /// 打ち直しの読み（文節ごとに別のローマ字合成を持つ。全体の `composer` は終わったときに合わせる）
+        var composer: RomajiComposer
+        /// 変換し直す範囲の始まり（文節列の位置）。これより前の文節は変えない
+        var scopeStart: Int
+        /// 打ち直す前の文節列と選んでいた位置（Esc・空での Backspace で戻す）
+        var originalSegments: [BunsetsuSegment]
+        var originalIndex: Int
+        /// 範囲の中で、打ち直す文節の前・後ろにあった文節（打ち直す前の変換）
+        var before: [BunsetsuSegment]
+        var after: [BunsetsuSegment]
+        /// 範囲より後ろの文節（変えない）
+        var outside: [BunsetsuSegment]
+        /// 範囲を文節に分け直すか（偽なら 1 文節のまま）
+        var splits: Bool
+        /// 最後に届いた変換。`editReading` はそのときの打ち直しの読み、`segments` は範囲の文節列、
+        /// `current` は打ち直しの読みの終わりを含む文節、`aligned` はその文節の終わりが読みの終わりと一致するか
+        var shown: (editReading: String, segments: [BunsetsuSegment], current: Int, aligned: Bool)?
+    }
+    private var segmentEdit: SegmentEdit?
+    /// 今の文節列に、打ち直した文節があるか。読み全体が入力したときと変わっているので、
+    /// 真なら確定しても学習・変換記録に残さない（学習は「読み全体 → 確定」と「直す前の結果」で覚える）
+    private var segmentsRetyped = false
+    /// 文節列の先頭のうち、固定部分（`fixedChunks` と英字入力）から作った文節の数。
+    /// 打ち直しを終えたとき、固定部分と `composer` のどちらを合わせるかを決める
+    private var segmentFixedCount = 0
+    /// 今の合成に「こえ」モードで入れた読みが含まれるか（`insertVoiceTranscript`）。
+    /// 声で入れた読みは音声認識の表記から求め直したもので、打った読みではないので、
+    /// 真なら確定しても学習・変換記録・入力履歴に残さない。合成の始まりで偽に戻す
+    private var compositionHasVoice = false
+    /// 「こえ」モードで話している間の、音声認識の途中結果（表記）。未確定文字列の末尾に足して見せる（`showVoicePartial`）。
+    /// キーを離して認識が終わると、読みに戻した合成に置き換わる。合成の状態（読み・固定部分）には入れない
+    private var voicePartial: String?
+    /// 声の認識結果を入れる処理の世代（固定部分の前の読みを変換している間に、次の結果が来たら古いほうを捨てる）
+    private var voiceInsertGeneration = 0
     private var currentSegmentIndex = 0
     /// 非同期の文節処理が古い状態に適用されるのを防ぐ世代カウンタ
     private var segmentGeneration = 0
@@ -416,7 +461,11 @@ final class IrohaInputController: IMKInputController {
     // MARK: - IMKInputController
 
     override func recognizedEvents(_ sender: Any!) -> Int {
-        Int(NSEvent.EventTypeMask.keyDown.rawValue)
+        // 「こえ」モードは修飾キーの押し離しを見る（設定が OFF のときは今までどおりキーだけを受ける）
+        if VoiceInputSettings.isEnabled || VoiceInput.shared.isBusy {
+            return Int(NSEvent.EventTypeMask([.keyDown, .flagsChanged]).rawValue)
+        }
+        return Int(NSEvent.EventTypeMask.keyDown.rawValue)
     }
 
     override func activateServer(_ sender: Any!) {
@@ -429,6 +478,7 @@ final class IrohaInputController: IMKInputController {
         hideNotice()
         developerOverlayMarkedLength = 0
         if let client = sender as? IMKTextInput { followPrivateModeIndicator(client: client) }
+        VoiceInput.shared.controllerActivated(self)
         // タップ入力の小窓はこのコントローラのカーソル位置に出す
         TapInputFeedback.shared.attach(self) { [weak self] in self?.developerOverlayCaretRect() }
         // 他アプリでのクリック・スクロール・アプリ切替の合図はアクティブなコントローラ（自分）が受ける
@@ -466,6 +516,11 @@ final class IrohaInputController: IMKInputController {
     }
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+        // 修飾キーの押し離し（「こえ」モードのキー）。アプリにはそのまま渡す
+        if let event, event.type == .flagsChanged {
+            VoiceInput.shared.handleFlagsChanged(event, controller: self)
+            return false
+        }
         let handled = handleKey(event, client: sender)
         // アプリに渡したキー（矢印・英数モードの入力など）はアプリが処理してからカーソルが動くので、
         // 鍵のマークは少し待ってから置き直す
@@ -478,6 +533,8 @@ final class IrohaInputController: IMKInputController {
               let client = sender as? IMKTextInput else { return false }
 
         lastKeyEventTime = .now
+        // 「こえ」モードのキーを押している間に他のキーが来たら、ショートカットに使ったとみなして録音を捨てる
+        VoiceInput.shared.noteKeyDown()
         // 加速度センサのグラフ（開発者モード）。設定が OFF になっていればここでセンサを止める
         KeystrokeAccelerometer.shared.noteKeyDown(event)
         // 句読点スタイルの知らせは次のキーで閉じる（この後の Control+. なら出し直す）
@@ -613,6 +670,7 @@ final class IrohaInputController: IMKInputController {
     }
 
     override func deactivateServer(_ sender: Any!) {
+        VoiceInput.shared.controllerDeactivated(self)
         commitCurrent(client: sender as? IMKTextInput)
         closeCommitUndo()
         endAIFix()
@@ -1430,6 +1488,9 @@ final class IrohaInputController: IMKInputController {
         mode = .segmenting
         segmentGeneration += 1
         let generation = segmentGeneration
+        segmentEdit = nil
+        segmentsRetyped = false
+        segmentFixedCount = fixedSegments.count
 
         // 暫定表示: 残りの読み全体を1文節として今の表示内容をそのまま使う
         let interim = (lastConversion?.reading == reading) ? lastConversion!.result : reading
@@ -1501,6 +1562,11 @@ final class IrohaInputController: IMKInputController {
     }
 
     private func handleSegmenting(_ event: NSEvent, client: IMKTextInput) -> Bool {
+        // 文節を打ち直している間: 文字・Backspace・Esc はその文節に効く。それ以外のキーは、
+        // 打ち直しを終えてから、いつもの文節変換のキーとして処理する（Return で全体を確定、Space で候補など）
+        if segmentEdit != nil, let handled = handleSegmentEditKey(event, client: client) {
+            return handled
+        }
         let shift = event.modifierFlags.contains(.shift)
         switch Int(event.keyCode) {
         case kVK_Space, kVK_DownArrow:
@@ -1576,10 +1642,19 @@ final class IrohaInputController: IMKInputController {
                 }
                 return true
             }
-            // 文字入力なら全文節を確定して新しい入力を始める
+            // 文字入力なら、選んでいる文節をその文字から打ち直す（2026-11-10。それまでは全文節を確定して
+            // 新しい入力を始めていた）。長い文の一部だけを直すのに、確定してから消して打ち直さなくて済む。
+            // 文節の区切りがまだ届いていないとき（Space の直後。文節が読み全体の 1 つしかない）と、
+            // 英字入力を始める文字（Shift+英字・区切り記号）は、今までどおり確定して新しい入力を始める
             if let characters = event.characters, let first = characters.first,
                let scalar = first.unicodeScalars.first, scalar.isASCII,
                (0x21...0x7E).contains(scalar.value) {
+                let startsAlphabet = Self.startsAlphabetRun(first)
+                    || (DelimitedAlphabetSettings.isEnabled && first == DelimitedAlphabetSettings.start)
+                if !segmentationPending, !startsAlphabet, segments.indices.contains(currentSegmentIndex) {
+                    startSegmentEdit(first, client: client)
+                    return true
+                }
                 commitSegments(client: client)
                 if DelimitedAlphabetSettings.isEnabled, first == DelimitedAlphabetSettings.start {
                     startDelimitedAlphabet(client: client)
@@ -1595,6 +1670,269 @@ final class IrohaInputController: IMKInputController {
             commitSegments(client: client)
             return false
         }
+    }
+
+    // MARK: - 文節の打ち直し（文節変換中に文字を打つ）
+
+    /// 選んでいる文節を、打った文字から打ち直す。
+    ///
+    /// 打つたびに、文全体（読みから変換した文節の全部）を新しい読みで変換し直す。打ち直した文節に合わせて
+    /// 前後の文節も変わる（「こどもの公演に」の「こどもの」を「だいがくの」にすると「大学の講演に」）。
+    /// 固定部分（表示形を指定した部分・英字）は変えず、左文脈として使う。ライブ変換が OFF なら、打ち直している間は
+    /// かなのまま見せ、終えたときに変換し直す。
+    /// Return で全体を確定、Space で今の文節の候補、←→ で隣の文節へ（いずれも打ち直しを終えてから）。
+    /// Esc と、空にしたあとの Backspace で、打ち直す前の文節列に戻す。
+    /// 文節を空にして終えたら、その文節は消える（表示のとおりに確定する）
+    private func startSegmentEdit(_ character: Character, client: IMKTextInput) {
+        // 「文全体を訂正した候補」を選んでいたら、ここで文節に反映される
+        hidePanel()
+        guard segments.indices.contains(currentSegmentIndex) else { return }
+        // 候補の取得・文節の伸縮の結果があとから届いて、打ち直している文節を書き換えないようにする
+        conversionTask?.cancel()
+        segmentGeneration += 1
+        typoCorrectionTask?.cancel()
+        typoCorrectionTask = nil
+        typoWholeSentence = nil
+        let index = currentSegmentIndex
+        // 読みから変換した文節なら、読みから変換した文節の全部を変換し直す
+        let whole = !segmentsFromAI && index >= segmentFixedCount
+        let scopeStart = whole ? min(segmentFixedCount, index) : index
+        let scopeEnd = whole ? segments.count : index + 1
+        var composer = Self.makeComposer()
+        composer.input(character)
+        segmentEdit = SegmentEdit(
+            composer: composer, scopeStart: scopeStart, originalSegments: segments, originalIndex: index,
+            before: Array(segments[scopeStart..<index]), after: Array(segments[(index + 1)..<scopeEnd]),
+            outside: Array(segments[scopeEnd...]), splits: whole)
+        segmentsRetyped = true
+        segmentEditDidChange(client: client)
+    }
+
+    /// 打ち直している間のキー。処理したら true/false（アプリに渡すか）、打ち直しを終えて
+    /// いつもの文節変換のキーとして処理を続けるなら nil
+    private func handleSegmentEditKey(_ event: NSEvent, client: IMKTextInput) -> Bool? {
+        guard var edit = segmentEdit else { return nil }
+        switch Int(event.keyCode) {
+        case kVK_Delete:
+            if edit.composer.isEmpty {
+                cancelSegmentEdit(client: client)
+            } else {
+                edit.composer.deleteBackward()
+                // 削除中は変換を止め、打ち直しの読みをかなで見せる（入力中の Backspace と同じ。次の 1 文字で再開する）
+                edit.shown = nil
+                segmentEdit = edit
+                conversionTask?.cancel()
+                showSegmentEdit(client: client)
+            }
+            return true
+        case kVK_Escape:
+            cancelSegmentEdit(client: client)
+            return true
+        default:
+            if let first = event.characters?.first, let scalar = first.unicodeScalars.first, scalar.isASCII,
+               (0x21...0x7E).contains(scalar.value) {
+                edit.composer.input(first)
+                segmentEdit = edit
+                segmentEditDidChange(client: client)
+                return true
+            }
+            // Space・↓ はこのあと今の文節の候補を開くので、文節を分け直さない（候補を引く文節が途中で変わらないように）
+            let opensCandidates = [kVK_Space, kVK_DownArrow].contains(Int(event.keyCode))
+            finishSegmentEdit(client: client, reconverts: !opensCandidates)
+            return nil
+        }
+    }
+
+    /// 打ち直している範囲の、今見せる文節列と、カーソルを置く文節（範囲の中の位置）。
+    ///
+    /// 届いている変換が今の読みのものならそれを使う。読みが伸びただけなら、増えたかなと未解決ローマ字を
+    /// カーソルのある文節の後ろに足す（その文節の終わりが打ち直しの終わりと一致しているときだけ。一致していないと
+    /// 足す場所が読みの順とずれる）。それ以外（変換がまだ無い・文字を消した）は、前後を打ち直す前の変換のままにして、
+    /// 打ち直しの読みをかなで見せる
+    private func segmentEditSpan(_ edit: SegmentEdit) -> (segments: [BunsetsuSegment], current: Int, exact: Bool) {
+        let text = edit.composer.text
+        let pending = edit.composer.pending
+        if let shown = edit.shown, shown.segments.indices.contains(shown.current) {
+            if text == shown.editReading, pending.isEmpty {
+                return (shown.segments, shown.current, true)
+            }
+            if shown.aligned, text.hasPrefix(shown.editReading) {
+                var segments = shown.segments
+                let added = String(text.dropFirst(shown.editReading.count))
+                segments[shown.current].reading += added
+                segments[shown.current].result += added + pending
+                return (segments, shown.current, false)
+            }
+        }
+        let editing = BunsetsuSegment(reading: text, result: text + pending, candidates: nil)
+        return (edit.before + [editing] + edit.after, edit.before.count, false)
+    }
+
+    /// 打ち直しの内容を文節列に写して表示する（どの確定の経路でも、表示のとおりに確定されるようにする）
+    private func showSegmentEdit(client: IMKTextInput) {
+        guard let edit = segmentEdit, edit.scopeStart <= segments.count else { return }
+        let span = segmentEditSpan(edit)
+        segments = Array(segments[..<edit.scopeStart]) + span.segments + edit.outside
+        currentSegmentIndex = edit.scopeStart + span.current
+        refreshSegmentDisplay(client: client)
+    }
+
+    /// 打ち直しの読みが変わった: 表示を更新し、範囲の読み全体を変換し直す
+    private func segmentEditDidChange(client: IMKTextInput) {
+        showSegmentEdit(client: client)
+        conversionTask?.cancel()
+        guard let edit = segmentEdit, liveConversionEnabled else { return }
+        let editReading = edit.composer.text
+        guard edit.shown?.editReading != editReading else { return }
+        let beforeReading = edit.before.map(\.reading).joined()
+        let reading = beforeReading + editReading + edit.after.map(\.reading).joined()
+        guard !reading.isEmpty else { return }
+        let editEnd = beforeReading.count + editReading.count
+        let scopeStart = edit.scopeStart
+        let splits = edit.splits
+        let context = conversionContext + segments[..<min(scopeStart, segments.count)].map(\.result).joined()
+        conversionTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let full = try await Self.engine.convert(
+                    reading: reading, context: context, candidateCount: 1).first ?? reading
+                guard !Task.isCancelled else { return }
+                let pieces = Self.retypedSegments(reading: reading, conversion: full, splits: splits)
+                // 打ち直しの読みの終わりを含む文節
+                var end = 0, current = 0, aligned = false
+                for (index, piece) in pieces.enumerated() {
+                    end += piece.reading.count
+                    current = index
+                    if end >= editEnd {
+                        aligned = end == editEnd && editEnd > 0
+                        break
+                    }
+                }
+                let shown = (editReading: editReading, segments: pieces, current: current, aligned: aligned)
+                await MainActor.run {
+                    guard self.mode == .segmenting, var edit = self.segmentEdit, edit.scopeStart == scopeStart,
+                          edit.composer.text.hasPrefix(editReading), let client = self.client() else { return }
+                    edit.shown = shown
+                    self.segmentEdit = edit
+                    self.showSegmentEdit(client: client)
+                }
+            } catch is CancellationError {
+            } catch {
+                await MainActor.run { self.reportConversionError(error, context: "変換エラー") }
+            }
+        }
+    }
+
+    /// 変換結果を文節列にする（分け直さない範囲は 1 文節）
+    private static func retypedSegments(reading: String, conversion: String, splits: Bool) -> [BunsetsuSegment] {
+        guard splits else { return [BunsetsuSegment(reading: reading, result: conversion, candidates: nil)] }
+        return ReadingAligner.segmentReading(reading, conversion: conversion).map {
+            BunsetsuSegment(reading: $0.reading, result: $0.conversion, candidates: nil)
+        }
+    }
+
+    /// 打ち直しをやめて、打ち直す前の文節列に戻す
+    private func cancelSegmentEdit(client: IMKTextInput) {
+        guard let edit = segmentEdit else { return }
+        conversionTask?.cancel()
+        segmentEdit = nil
+        segments = edit.originalSegments
+        currentSegmentIndex = edit.originalIndex
+        refreshSegmentDisplay(client: client)
+    }
+
+    /// 打ち直しを終える: 未解決のローマ字を確定し、文節列を表示のとおりにする。空にした文節は消す。
+    /// 全体の読み（`composer`）と固定部分も合わせて、Esc でかなに戻したときに打ち直した読みが出るようにする。
+    /// 表示が今の読みの変換になっていなければ（変換が届く前に終えた・文字を消したあと・ライブ変換が OFF）、
+    /// 範囲をもう一度変換し直す（Return で確定したときは、表示のとおりに確定されて変換し直さない）
+    private func finishSegmentEdit(client: IMKTextInput, reconverts: Bool = true) {
+        guard var edit = segmentEdit else { return }
+        conversionTask?.cancel()
+        edit.composer.flush()
+        segmentEdit = nil
+        guard edit.scopeStart <= segments.count else { return }
+        let span = segmentEditSpan(edit)
+        let spanSegments = span.segments.filter { !$0.reading.isEmpty || !$0.result.isEmpty }
+        segments = Array(segments[..<edit.scopeStart]) + spanSegments + edit.outside
+        let current = edit.scopeStart + min(span.current, max(0, spanSegments.count - 1))
+        currentSegmentIndex = max(0, min(current, segments.count - 1))
+        if edit.splits {
+            // 全体の読みを、読みから変換した文節の読みの並びに合わせる
+            composer.replaceText(segments[min(segmentFixedCount, segments.count)...].map(\.reading).joined())
+            cancelConversion()
+        } else {
+            syncCompositionWithRetypedSegment(at: edit.scopeStart, removed: spanSegments.isEmpty)
+        }
+        segmentGeneration += 1
+        refreshSegmentDisplay(client: client)
+        if reconverts, !span.exact, !spanSegments.isEmpty {
+            reconvertRetypedSpan(start: edit.scopeStart, count: spanSegments.count, splits: edit.splits)
+        }
+    }
+
+    /// 打ち直しを終えたあと、範囲（`start` から `count` 文節）の読みを変換し直して文節に分け直す。
+    /// 結果が届くまでに確定した・文節を動かした（伸縮・候補ウィンドウ）なら何もしない
+    private func reconvertRetypedSpan(start: Int, count: Int, splits: Bool) {
+        guard start + count <= segments.count else { return }
+        let span = Array(segments[start..<(start + count)])
+        let reading = span.map(\.reading).joined()
+        guard !reading.isEmpty else { return }
+        let shownResults = span.map(\.result)
+        let context = conversionContext + segments[..<start].map(\.result).joined()
+        let generation = segmentGeneration
+        conversionTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let full = try await Self.engine.convert(
+                    reading: reading, context: context, candidateCount: 1).first ?? reading
+                guard !Task.isCancelled else { return }
+                let pieces = Self.retypedSegments(reading: reading, conversion: full, splits: splits)
+                await MainActor.run {
+                    guard self.mode == .segmenting, generation == self.segmentGeneration, self.segmentEdit == nil,
+                          !self.panelVisible, start + count <= self.segments.count,
+                          self.segments[start..<(start + count)].map(\.result) == shownResults,
+                          let client = self.client() else { return }
+                    // 選んでいる文節は、読みの同じ位置を含む文節に移す
+                    let selected = self.currentSegmentIndex
+                    var offset: Int?
+                    if selected >= start, selected < start + count {
+                        offset = self.segments[start...selected].reduce(0) { $0 + $1.reading.count }
+                    }
+                    self.segments.replaceSubrange(start..<(start + count), with: pieces)
+                    if let offset {
+                        var end = 0, index = 0
+                        for (pieceIndex, piece) in pieces.enumerated() {
+                            end += piece.reading.count
+                            index = pieceIndex
+                            if end >= offset { break }
+                        }
+                        self.currentSegmentIndex = start + index
+                    } else if selected >= start + count {
+                        self.currentSegmentIndex = selected + pieces.count - count
+                    }
+                    self.refreshSegmentDisplay(client: client)
+                }
+            } catch is CancellationError {
+            } catch {
+                await MainActor.run { self.reportConversionError(error, context: "変換エラー") }
+            }
+        }
+    }
+
+    /// 打ち直した固定部分の文節に合わせて、固定部分（`fixedChunks`・英字入力）を直す。
+    /// AI の結果から作った文節列（`segmentsFromAI`）は、もとの読みと対応していないので触らない
+    private func syncCompositionWithRetypedSegment(at index: Int, removed: Bool) {
+        guard !segmentsFromAI, index < segmentFixedCount else { return }
+        // 英字入力中の英字は、固定部分の後ろに 1 つだけある
+        let chunk = removed || !segments.indices.contains(index) ? nil
+            : FixedChunk(reading: segments[index].reading, text: segments[index].result, kind: .liveConversion)
+        if index < fixedChunks.count {
+            if let chunk { fixedChunks[index] = chunk } else { fixedChunks.remove(at: index) }
+        } else {
+            alphabetRun = nil
+            if let chunk { fixedChunks.append(chunk) }
+        }
+        if chunk == nil { segmentFixedCount -= 1 }
     }
 
     // MARK: - 打ち間違いの訂正（TypoNormalizer）
@@ -2037,6 +2375,8 @@ final class IrohaInputController: IMKInputController {
         segmentBaseline = nil
         segmentEngineBaseline = nil
         segmentsFromAI = false
+        segmentEdit = nil
+        segmentsRetyped = false
         hidePanel()
         cancelConversion()
         updateMarkedText(client: client, display: kanaDisplay)
@@ -2057,7 +2397,8 @@ final class IrohaInputController: IMKInputController {
     /// 次に同じ読みを丸ごと入力し、エンジンがまた同じ結果を出したときだけ再現する。
     /// 学習が差し替えた結果を、ユーザがエンジンの結果に戻して確定したら、その学習を消す
     private func learnIfCorrected(committed: String) {
-        guard LearningSettings.isActive, !segmentsFromAI, !segments.isEmpty, !committed.isEmpty,
+        guard LearningSettings.isActive, !segmentsFromAI, !segmentsRetyped, !compositionHasVoice,
+              !segments.isEmpty, !committed.isEmpty,
               let baseline = segmentBaseline, committed != baseline else { return }
         // 変換ルールの出力（日付・時刻など）や、候補ウィンドウ専用のユーザ辞書語を選んだ確定は
         // 学習しない。覚えると「きょう → 2026/09/06」が翌日以降も第一候補になったり、
@@ -2082,7 +2423,8 @@ final class IrohaInputController: IMKInputController {
     /// 学習と同じく変換ルールの出力や候補ウィンドウ専用の語（`unlearnableCandidates`）を含む確定は残さない
     /// （毎回変わる日付や、読みと対応しない定型文は学習例にならない）
     private func logSegmentsCommit(committed: String) {
-        guard ConversionLogSettings.isActive, !segmentsFromAI, !segments.isEmpty, !committed.isEmpty,
+        guard ConversionLogSettings.isActive, !segmentsFromAI, !segmentsRetyped, !segments.isEmpty,
+              !committed.isEmpty,
               !segments.contains(where: { $0.unlearnableCandidates.contains($0.result) }) else { return }
         logConversion(
             mode: .segments, context: conversionContext, reading: segments.map(\.reading).joined(),
@@ -2101,6 +2443,8 @@ final class IrohaInputController: IMKInputController {
         committed: String, segments: [ConversionLogEntry.Segment]? = nil
     ) {
         guard ConversionLogSettings.isActive, !reading.isEmpty, !committed.isEmpty else { return }
+        // 声で入れた読みは音声認識の表記から求め直したもので、打った読みではない（`compositionHasVoice`）
+        guard !compositionHasVoice else { return }
         // プライベートモード中に始めた合成を、モードを切ってから確定した場合。左文脈にモード中の確定が入っている
         if documentContext == nil, recentCommittedHasPrivateText { return }
         let source: ConversionLogEntry.ContextSource =
@@ -2218,6 +2562,12 @@ final class IrohaInputController: IMKInputController {
     /// ちらつき防止: 入力が進んで読みが伸びた場合も、前回の変換結果を接頭辞として
     /// 使い続け、新しく増えたかなだけを末尾に足す（新しい変換結果が届いたら置き換わる）
     private var currentDisplay: String {
+        // 話している間は、音声認識の途中結果を末尾に足して見せる
+        compositionDisplay + (voicePartial ?? "")
+    }
+
+    /// 合成の表示（音声認識の途中結果を除く）
+    private var compositionDisplay: String {
         let prefix = fixedText
         if alphabetRun != nil { return prefix + composer.display + alphabetRunDisplay }
         if let displayOverride { return prefix + displayOverride }
@@ -2685,6 +3035,9 @@ final class IrohaInputController: IMKInputController {
         segmentBaseline = output
         segmentEngineBaseline = output
         segmentsFromAI = true
+        segmentEdit = nil
+        segmentsRetyped = false
+        segmentFixedCount = 0
         currentSegmentIndex = 0
         refreshSegmentDisplay(client: client)
     }
@@ -2762,6 +3115,183 @@ final class IrohaInputController: IMKInputController {
     }
 
     /// 指定文字列を確定して状態をリセットする
+    // MARK: - 「こえ」モード（音声で読みを入れる。`VoiceInput`）
+
+    /// 音声認識の結果を、打った読みと同じように未確定文字列へ入れる（確定はしない）。
+    ///
+    /// 認識結果（漢字かな交じり）は分かち書きして読みに戻し（`VoiceTranscript`）、読みは合成中の読みの末尾に足して
+    /// ライブ変換に任せる。英字・数字など読みに戻さない部分は、Shift+英字と同じ固定部分にする。
+    /// 固定部分より前の読みは、固定するときの表示を先に変換しておく（未変換のまま固定するとかなで残るため）。
+    /// 英数モードでは合成を作れないので、認識結果の表記をそのまま確定する
+    func insertVoiceTranscript(_ recognized: String) {
+        guard !isTranslating, let client = client() else { return }
+        let style = Self.punctuationStyle
+        let transcript = VoiceRecognition.transcript(
+            from: recognized, comma: String(style.first ?? "、"), period: String(style.last ?? "。"))
+        guard !transcript.isEmpty else {
+            clearVoicePartial()
+            return
+        }
+        guard japaneseMode else {
+            closeCommitUndo()
+            voicePartial = nil
+            commitText(transcript.surface, client: client)
+            return
+        }
+        // 文節変換中なら、そこまでを確定してから続きとして入れる
+        if mode == .segmenting { commitCurrent(client: client) }
+        closeCommitUndo()
+        endAIFix()
+        cancelPrediction()
+        hideTypoFeedback()
+        typoUndoAvailable = false
+        captureDocumentContextIfStarting(client: client)
+        // 次の 1 文字を打ったときと同じ準備: 英字入力を閉じ、F6 等の表示形を固定する
+        finishAlphabetRun()
+        lockDisplayOverride()
+        composer.flush()
+
+        voiceInsertGeneration += 1
+        let generation = voiceInsertGeneration
+        // 固定部分の前にある読み（今の合成の読みに続く分を含む）を、左文脈つきで順に変換する
+        let parts = transcript.parts
+        let needsConversion = parts.enumerated().contains { index, part in
+            guard case .fixed = part else { return false }
+            return index > 0 || !composer.text.isEmpty
+        }
+        guard needsConversion else {
+            applyVoiceTranscript(transcript, locked: [:], client: client)
+            return
+        }
+        let baseContext = conversionContext + fixedText
+        let baseReading = composer.text
+        Task { [weak self] in
+            guard let self else { return }
+            var context = baseContext
+            var reading = baseReading
+            var locked: [Int: (reading: String, text: String)] = [:]
+            for (index, part) in parts.enumerated() {
+                switch part {
+                case .reading(let kana, _):
+                    reading += kana
+                case .fixed(let text):
+                    if !reading.isEmpty {
+                        let converted = (try? await Self.engine.convert(
+                            reading: reading, context: context, candidateCount: 1))?.first ?? reading
+                        locked[index] = (reading, converted)
+                        context += converted
+                        reading = ""
+                    }
+                    context += text
+                }
+            }
+            let result = locked
+            await MainActor.run {
+                guard generation == self.voiceInsertGeneration, let client = self.client() else { return }
+                self.applyVoiceTranscript(transcript, locked: result, client: client)
+            }
+        }
+    }
+
+    /// 読みと固定部分を合成に入れる。`locked` は固定部分（`parts` の位置）ごとの「その前の読み → 変換結果」。
+    /// 変換を待つ間に合成が変わって読みが合わなくなっていたら、今のライブ変換の結果かかなで固定する
+    private func applyVoiceTranscript(
+        _ transcript: VoiceTranscript, locked: [Int: (reading: String, text: String)], client: IMKTextInput
+    ) {
+        guard !isTranslating else { return }
+        if mode == .segmenting { commitCurrent(client: client) }
+        captureDocumentContextIfStarting(client: client)
+        voicePartial = nil
+        // 合成が空のところへ入れたときだけ、あとで音声認識の表記と変換結果を比べる
+        // （打った読みに続けたときは、どこからが声の分かを表示から切り分けられない）
+        let comparesWithRecognition = !isComposing
+        finishAlphabetRun()
+        lockDisplayOverride()
+        for (index, part) in transcript.parts.enumerated() {
+            composer.flush()
+            switch part {
+            case .reading(let kana, _):
+                composer.replaceText(composer.text + kana)
+            case .fixed(let fixed):
+                let reading = composer.text
+                if !reading.isEmpty {
+                    let text: String
+                    if let conversion = locked[index], conversion.reading == reading {
+                        text = conversion.text
+                    } else if let lastConversion, lastConversion.reading == reading {
+                        text = lastConversion.result
+                    } else {
+                        text = reading
+                    }
+                    fixedChunks.append(FixedChunk(reading: reading, text: text, kind: .liveConversion))
+                    composer = Self.makeComposer()
+                    cancelConversion()
+                }
+                fixedChunks.append(FixedChunk(reading: fixed, text: fixed, kind: .alphabet))
+            }
+        }
+        compositionHasVoice = true
+        // 声で入れた読みは打ち間違いの訂正に通さない（打鍵の誤りを直すモデルで、認識の誤りは対象外）
+        cancelTypoCorrection()
+        typoRejectedReading = composer.text
+        composerDidChange(client: client)
+        if comparesWithRecognition { showVoiceComparison(recognized: transcript.surface) }
+    }
+
+    /// 話している間の音声認識の途中結果を、未確定文字列の末尾に足して見せる。見せられたら true
+    /// （文節変換中などで見せられないときは false。呼び出し側が小窓に出す）
+    func showVoicePartial(_ recognized: String) -> Bool {
+        guard mode == .composing, !isTranslating, let client = client() else { return false }
+        let surface = VoiceRecognition.transcript(from: recognized).surface
+        guard !surface.isEmpty else { return true }
+        if voicePartial == nil {
+            closeCommitUndo()
+            cancelPrediction()
+            hideTypoFeedback()
+            // 左文脈は、未確定文字列を出す前に読む
+            captureDocumentContextIfStarting(client: client)
+        }
+        voicePartial = surface
+        updateMarkedText(client: client, display: currentDisplay)
+        return true
+    }
+
+    /// 見せていた途中結果を消す（録音を捨てた・認識できなかった）
+    func clearVoicePartial() {
+        guard voicePartial != nil else { return }
+        voicePartial = nil
+        if mode == .composing, let client = client() {
+            updateMarkedText(client: client, display: currentDisplay)
+        }
+    }
+
+    /// 音声認識の表記と、iroha が変換した結果の違う箇所を小窓に出す（試作の間の確認用。同じなら「音声認識と同じ」）。
+    /// 変換結果はライブ変換と同じ呼び出しで求める（ライブ変換の表示が届くのを待つ仕組みを足さないため）
+    private func showVoiceComparison(recognized: String) {
+        let style = Self.punctuationStyle
+        // 句読点は設定のスタイルで読みに入れているので、比べる側もそろえる
+        let recognized = recognized.replacingOccurrences(of: "、", with: String(style.first ?? "、"))
+            .replacingOccurrences(of: "。", with: String(style.last ?? "。"))
+        let reading = composer.text
+        let prefix = fixedText
+        let context = conversionContext + prefix
+        let generation = voiceInsertGeneration
+        Task { [weak self] in
+            guard let self else { return }
+            var converted = ""
+            if !reading.isEmpty {
+                converted = (try? await Self.engine.convert(
+                    reading: reading, context: context, candidateCount: 1))?.first ?? reading
+            }
+            let summary = VoiceComparison.summary(recognized: recognized, converted: prefix + converted)
+            await MainActor.run {
+                guard generation == self.voiceInsertGeneration, self.mode == .composing,
+                      self.composer.text == reading else { return }
+                TapInputFeedback.shared.show(summary, duration: summary == "音声認識と同じ" ? 1.5 : 6)
+            }
+        }
+    }
+
     // MARK: - 確定の取り消し
 
     private func deferCommitEffect(_ effect: @escaping () -> Void) {
@@ -2813,6 +3343,9 @@ final class IrohaInputController: IMKInputController {
         segmentBaseline = undo.segmentBaseline
         segmentEngineBaseline = undo.segmentEngineBaseline
         segmentsFromAI = undo.segmentsFromAI
+        segmentsRetyped = undo.segmentsRetyped
+        segmentFixedCount = undo.segmentFixedCount
+        compositionHasVoice = undo.compositionHasVoice
         recentCommitted = undo.recentCommitted
         recentCommittedHasPrivateText = undo.recentCommittedHasPrivateText
         documentContext = undo.documentContext
@@ -2838,7 +3371,9 @@ final class IrohaInputController: IMKInputController {
                 displayOverride: displayOverride, displayOverrideRejectedLearning: displayOverrideRejectedLearning,
                 lastConversion: lastConversion, segments: segments, currentSegmentIndex: currentSegmentIndex,
                 segmentBaseline: segmentBaseline, segmentEngineBaseline: segmentEngineBaseline,
-                segmentsFromAI: segmentsFromAI, recentCommitted: recentCommitted,
+                segmentsFromAI: segmentsFromAI, segmentsRetyped: segmentsRetyped,
+                segmentFixedCount: segmentFixedCount, compositionHasVoice: compositionHasVoice,
+                recentCommitted: recentCommitted,
                 recentCommittedHasPrivateText: recentCommittedHasPrivateText, documentContext: documentContext,
                 effects: effects)
             : nil
@@ -2858,6 +3393,12 @@ final class IrohaInputController: IMKInputController {
         segmentBaseline = nil
         segmentEngineBaseline = nil
         segmentsFromAI = false
+        segmentEdit = nil
+        segmentsRetyped = false
+        compositionHasVoice = false
+        voicePartial = nil
+        // 変換を待っている声の認識結果があっても、確定のあとには入れない
+        voiceInsertGeneration += 1
         typoCorrectionTask?.cancel()
         typoCorrectionTask = nil
         typoWholeSentence = nil
@@ -2890,7 +3431,10 @@ final class IrohaInputController: IMKInputController {
     /// デバッグ表示に残っている前の入力の数字もここで消し、読めたかどうかを出し直す
     /// （新しい入力の数字と並べないため）
     private func captureDocumentContextIfStarting(client: IMKTextInput) {
-        guard !isComposing else { return }
+        // 音声認識の途中結果を見せている間は読み直さない（最初の途中結果を出す前に読んである。
+        // いま読むと、未確定文字列として見せている途中結果が文脈に混ざる）
+        guard !isComposing, voicePartial == nil else { return }
+        compositionHasVoice = false
         // デバッグ表示が ON のときは、1 文字目の表示を待たせている処理を工程ごとに測って出す
         let clock = ContinuousClock()
         var lapStart = clock.now
@@ -3050,7 +3594,7 @@ final class IrohaInputController: IMKInputController {
     /// （読みにひらがな以外が混ざる・表記に英数字が混ざるものはそこで落ちる）
     /// - Parameter composerText: 入力中の読み（flush 済みの `composer.text`）を確定する表記。文節変換中は使わない
     private func recordInputHistory(composerText: String?) {
-        guard PredictionSettings.isActive else { return }
+        guard PredictionSettings.isActive, !compositionHasVoice else { return }
         var pieces: [(reading: String, text: String)] = []
         if mode == .segmenting {
             guard !segmentsFromAI else { return }

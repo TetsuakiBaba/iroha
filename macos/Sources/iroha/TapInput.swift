@@ -246,7 +246,7 @@ final class TapInputFeedback {
         caretRect = nil
     }
 
-    /// Secure Input の知らせ（`SecureInputNotice`）もこの小窓を使う（文が長いので長めに出す）
+    /// Secure Input の知らせ（`SecureInputNotice`）と「こえ」モードの録音中の表示（`VoiceInput`）もこの小窓を使う
     func show(_ text: String, duration: TimeInterval = TapInputFeedback.duration) {
         label.stringValue = text
         label.sizeToFit()
@@ -262,6 +262,13 @@ final class TapInputFeedback {
         let work = DispatchWorkItem { [weak self] in self?.panel.orderOut(nil) }
         hideWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
+    }
+
+    /// 時間を待たずに閉じる（「こえ」モードの録音中の表示を消すとき）
+    func hide() {
+        hideWork?.cancel()
+        hideWork = nil
+        panel.orderOut(nil)
     }
 
     /// カーソル行の下。予測・訂正の小窓と重なるならその下、画面の下に収まらなければ行の上

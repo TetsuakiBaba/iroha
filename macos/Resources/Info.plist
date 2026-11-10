@@ -19,7 +19,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.16.0</string>
+	<string>0.17.0</string>
 	<key>CFBundleVersion</key>
 	<string>7</string>
 	<key>ComponentInputModeDict</key>
@@ -99,6 +99,10 @@
 	<string>iroha_Connection</string>
 	<key>InputMethodServerControllerClass</key>
 	<string>IrohaInputController</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>「こえ」モードで、キーを押している間に話した内容を文字にするためにマイクを使います。音声はこのMacの中で処理し、外部に送りません。</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>「こえ」モードで、話した内容をこのMacの中で文字にします。</string>
 	<key>LSBackgroundOnly</key>
 	<true/>
 	<key>LSMinimumSystemVersion</key>
