@@ -973,6 +973,23 @@
     io.observe(root);
   }
 
+  // ---------- 節の中身を、画面に入ったときに浮かび上がらせる ----------
+  // 動きを減らす設定のとき・IntersectionObserver がないときは何もしない（中身は最初から見えている）
+  function setupReveal() {
+    if (reduceMotion || !("IntersectionObserver" in window)) return;
+    const targets = document.querySelectorAll("main .section > .wrap, main .section > .narrow");
+    if (!targets.length) return;
+    document.documentElement.classList.add("reveal-on");
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (!e.isIntersecting) return;
+        e.target.classList.add("is-in");
+        io.unobserve(e.target);
+      });
+    }, { rootMargin: "0px 0px -12% 0px" });
+    targets.forEach((t) => io.observe(t));
+  }
+
   // ---------- 開発者モードの説明（切り替えで出す。ページを開き直すと閉じた状態に戻る） ----------
   function setupDevmode() {
     const toggle = document.getElementById("devmode-toggle");
@@ -992,5 +1009,6 @@
   runRetype();
   runKoe();
   setupDevmode();
+  setupReveal();
   setupCitations();
 })();

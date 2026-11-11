@@ -3,51 +3,45 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>iroha（いろは） — Mac のための日本語入力</title>
-<meta name="description" content="iroha は、AI が文を読んで変換する Mac のための日本語入力です。変換はすべてこの Mac の中で行い、打った文字を外に送りません。無料・オープンソース。">
-<meta name="theme-color" content="#fbf7ef" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#171a29" media="(prefers-color-scheme: dark)">
+<title>iroha — 文字入力のいろは</title>
+<meta name="description" content="iroha（いろは）は、Mac のための文字入力です。キーボードで打った文字も、声で入れた言葉も、同じ変換で文にします。機能と機能、人と人をつなげることを、文字入力の基本と考えて作っています。無料・オープンソース。">
+<meta name="theme-color" content="#fbfaf6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#11100e" media="(prefers-color-scheme: dark)">
 <link rel="canonical" href="https://tetsuakibaba.github.io/iroha/">
 <!-- 共有用の画像は website/ogp/（ogp.html を build.sh で docs/assets/img/ogp.png にする） -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="iroha（いろは）">
 <meta property="og:locale" content="ja_JP">
 <meta property="og:url" content="https://tetsuakibaba.github.io/iroha/">
-<meta property="og:title" content="iroha（いろは） — Mac のための日本語入力">
-<meta property="og:description" content="AI が文を読んで変換する日本語入力。変換はすべてこの Mac の中で。無料・オープンソース。">
+<meta property="og:title" content="iroha — 文字入力のいろは">
+<meta property="og:description" content="Mac のための文字入力。キーボードで打った文字も、声で入れた言葉も、同じ変換で文にします。無料・オープンソース。">
 <meta property="og:image" content="https://tetsuakibaba.github.io/iroha/assets/img/ogp.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="iroha（いろは）。日本語を、もっと心地よく書こう。「記者が汽車で帰社した」と変換した画面の例">
+<meta property="og:image:alt" content="iroha（いろは）。文字入力のいろは。「記者が汽車で帰社した」と変換した画面の例">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/png" href="assets/img/favicon-64.png">
 <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+<!-- 書体は「写経」「青空写経」と同じ 3 つ（どれも SIL Open Font License 1.1）を Google Fonts から読む:
+     Zen Kaku Gothic New（本文）・Shippori Mincho（見出し）・Yuji Syuku（題と大きな見出し） -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Yuji+Syuku&family=Shippori+Mincho:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="assets/css/site.css">
 </head>
 <body>
-
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <!-- 霞（すやり霞）: 角の丸い横長の帯を少しずらして重ねる -->
-  <symbol id="kasumi" viewBox="0 0 1440 56" preserveAspectRatio="xMidYMid slice">
-    <rect x="-40" y="8" width="620" height="18" rx="9" fill="currentColor" opacity=".9"/>
-    <rect x="180" y="30" width="520" height="16" rx="8" fill="currentColor" opacity=".6"/>
-    <rect x="820" y="4" width="460" height="16" rx="8" fill="currentColor" opacity=".7"/>
-    <rect x="980" y="26" width="560" height="20" rx="10" fill="currentColor" opacity=".9"/>
-    <rect x="640" y="40" width="300" height="10" rx="5" fill="currentColor" opacity=".45"/>
-  </symbol>
-</svg>
 
 <header class="site-header">
   <div class="wrap">
     <a class="brand" href="./" aria-label="いろは（iroha） トップ">
       <img src="assets/img/icon-512.png" alt="" width="30" height="30">
+      <span class="brand-en">IROHA</span>
     </a>
     <!-- 区切りの左はこのページの中の節（ページの順）、右は別のページ（使い方）とダウンロード。
          ページの中の節へのリンクは、その節があるページのヘッダにだけ置く -->
     <nav class="site-nav" aria-label="サイト内の移動">
-      <a class="nav-section" href="#features">特長</a>
-      <a class="nav-section" href="#kkc">かな漢字変換</a>
-      <a class="nav-section" href="#typo">打ち間違いの訂正</a>
+      <a class="nav-section" href="#functions">機能</a>
+      <a class="nav-section" href="#people">人</a>
       <a class="nav-section" href="#faq">よくある質問</a>
       <span class="nav-sep" aria-hidden="true"></span>
       <a class="nav-page" href="usage.html">使い方</a>
@@ -60,14 +54,14 @@
 
 <!-- ===== トップ ===== -->
 <section class="hero" aria-labelledby="hero-title">
-  <div class="iroha-poem" aria-hidden="true">色は匂へど　散りぬるを<br>我が世誰ぞ　常ならむ</div>
   <div class="wrap hero-grid">
     <div>
-      <h1 id="hero-title"><span class="nw">日本語を、</span><wbr><span class="nw">もっと<span class="accent">心地よく</span></span><wbr><span class="nw">書こう。</span></h1>
-      <p class="lead">iroha は、AI が文を読んで変換する Mac のための日本語入力です。変換はすべてこの Mac の中で行い、打った文字を外に送りません。</p>
+      <p class="eyebrow"><span>Mac のための文字入力</span><span class="eyebrow-en">IROHA</span></p>
+      <h1 id="hero-title"><span class="nw">文字入力の</span><wbr><span class="nw accent">いろは</span></h1>
+      <p class="lead">iroha（いろは）は、Mac のための文字入力です。<br>キーボードで打った文字も、声で入れた言葉も、同じ変換で文にします。<br>機能と機能、人と人をつなげることを、文字入力の基本と考えて作っています。</p>
       <div class="cta-row">
         <a class="btn btn-primary" href="#download">無料でダウンロード</a>
-        <a class="btn btn-ghost" href="#promo">動画で見る</a>
+        <a class="btn btn-ghost" href="usage.html">使い方を見る</a>
       </div>
       <div class="meta-row">
         <span class="chip">macOS 14 以降</span>
@@ -88,62 +82,26 @@
       <p class="demo-note">表示している変換と訂正は iroha の実際の出力です。英訳の文は、使う AI サービスによって変わります。</p>
     </div>
   </div>
+  <a class="hero-next" href="#functions">機能</a>
 </section>
 
-<svg class="kasumi" aria-hidden="true"><use href="#kasumi"/></svg>
-
-<!-- ===== プロモーション動画 ===== -->
-<section id="promo" class="section" aria-labelledby="promo-title" style="padding-top:40px">
-  <div class="narrow">
-    <h2 id="promo-title" class="visually-hidden">1 分でわかる iroha</h2>
-    <div class="video-frame">
-      <!-- 組み立ては website/promo/remotion（npm run render。録画は website/raw/、台本は website/keys/） -->
-      <video controls playsinline preload="metadata" poster="assets/video/promo-poster.jpg" aria-label="1 分でわかる iroha（音楽つき）">
-        <source src="assets/video/promo.mp4" type="video/mp4">
-      </video>
-    </div>
-    <p class="video-caption">iroha の実際の画面です（音楽が流れます）。英訳の文は、使う AI サービスによって変わります。</p>
-  </div>
-</section>
-
-<!-- ===== 特長 ===== -->
-<section id="features" class="section section-tint" aria-labelledby="features-title">
+<!-- ===== 機能 ===== -->
+<!-- サイトの主題は「つなげる」（機能と人）。いちばん上の言葉は「文字入力のいろは」（2026-11-11、ユーザの判断）。性能や機能の数を売り込む書き方はしない。
+     節は「機能」と「人」に分ける。見出しや各節の文に「つなげる」を無理に入れない（「機能をつなげる」「人をつなげる」は
+     無理やりに見えるので 2026-11-11 にやめた）。つなげるという考えは、いちばん上の説明と 2 つの節の説明にだけ書く -->
+<section id="functions" class="section group-head" aria-labelledby="functions-title">
   <div class="wrap">
-    <p class="eyebrow">とくちょう</p>
-    <h2 id="features-title">打つことに集中できる日本語入力</h2>
-    <p class="section-lead">iroha は、文全体を読んでから漢字を選びます。区切りを指定したり、候補を選び直したりする手間が少なくなります。</p>
-    <div class="cards">
-      <article class="card">
-        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h10M4 17h7"/><path d="M17 14l3 3-3 3"/></svg></div>
-        <h3>打つそばから変換</h3>
-        <p>キーを打つたびに、その時点の文を変換して表示します。打ち終えたら Return で確定するだけです。</p>
-      </article>
-      <article class="card">
-        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5h14v10H9l-4 4z"/><path d="M9 9h6M9 12h4"/></svg></div>
-        <h3>前の文に合わせて変換</h3>
-        <p>すでに書いてある文を手がかりにして、同じ読みでも場面に合う漢字を選びます。</p>
-      </article>
-      <article class="card">
-        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M10 11l1.5 1.5L14.5 9"/></svg></div>
-        <h3>この Mac の中で完結</h3>
-        <p>変換に使う AI は Mac の中で動きます。打った文字を外のサーバーに送らず、ネットにつながっていなくても使えます。</p>
-      </article>
-      <article class="card">
-        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 18l6-12 6 12"/><path d="M6.5 13h7"/><path d="M15 6l2 2 4-4"/></svg></div>
-        <h3>打ち間違いを直す</h3>
-        <p>「jっこうしました」のような打ち間違いを、手が止まったときに直してから変換します（設定で ON）。</p>
-      </article>
-    </div>
+    <p class="eyebrow"><span class="eyebrow-en">FUNCTIONS</span></p>
+    <h2 id="functions-title" class="big-title">機能</h2>
+    <p class="section-lead">かな漢字変換、打ち間違いの訂正、辞書、声の入力、AI。別々に使われてきた機能を、1 つの入力の流れの中でつなげています。</p>
   </div>
 </section>
-
-<svg class="kasumi fuji" aria-hidden="true" style="background:color-mix(in srgb, var(--paper-deep) 70%, transparent)"><use href="#kasumi"/></svg>
 
 <!-- ===== iroha-kkc ===== -->
 <section id="kkc" class="section" aria-labelledby="kkc-title">
   <div class="wrap split">
     <div>
-      <p class="eyebrow fuji">かなかんじへんかん</p>
+      <p class="eyebrow"><span>かな漢字変換</span><span class="eyebrow-en">CONVERSION</span></p>
       <p class="model-name"><span>iroha-kkc</span> <small>かな漢字変換モデル</small></p>
       <h2 id="kkc-title">速くて正確な、<br>iroha のための変換モデル</h2>
       <p class="section-lead" style="margin-bottom:0">iroha-kkc は、iroha のために一から作ったかな漢字変換の AI です。打つたびに変換をやり直すライブ変換に向けて、速さを第一に設計しました。</p>
@@ -217,16 +175,14 @@
   </div>
 </section>
 
-<svg class="kasumi moegi" aria-hidden="true"><use href="#kasumi"/></svg>
-
 <!-- ===== iroha-typo ===== -->
 <section id="typo" class="section section-tint" aria-labelledby="typo-title">
   <div class="wrap split">
     <div>
-      <p class="eyebrow moegi">うちまちがいのていせい</p>
+      <p class="eyebrow"><span>打ち間違いの訂正</span><span class="eyebrow-en">TYPO CORRECTION</span></p>
       <p class="model-name"><span>iroha-typo</span> <small>打ち間違い訂正モデル</small></p>
       <h2 id="typo-title">打ち間違いを、<br>手が止まったときに直す</h2>
-      <p class="section-lead" style="margin-bottom:0">iroha-typo は、変換の前に「読み」の打ち間違いを直す小さな AI です。入力の手がふっと止まったときに読みを見直し、直してから漢字にします。</p>
+      <p class="section-lead" style="margin-bottom:0">iroha-typo は、変換の前に「読み」の打ち間違いを直す小さな AI です。入力の手が止まったときに読みを見直し、直してから漢字にします。</p>
       <ul class="points">
         <li><b>打ち間違いの約 4 件に 3 件を直し、正しく打った文は 1 文も書き換えませんでした。</b>（iroha のために書き下ろした 200 文のテストで）</li>
         <li><b>直したらカーソルの下に知らせます。</b>直してほしくなかったときは、すぐに Backspace を押すと元に戻ります。</li>
@@ -250,15 +206,13 @@
   </div>
 </section>
 
-<svg class="kasumi fuji" aria-hidden="true" style="background:color-mix(in srgb, var(--paper-deep) 70%, transparent)"><use href="#kasumi"/></svg>
-
 <!-- ===== 専門辞書 ===== -->
 <!-- 実演の候補は iroha-kkc-v1（Q5_K_M）・ユーザ辞書と学習なしで、工学の専門辞書（jmdict-engineering）の有無を
      iroha-cli convert --n で出したもの（2026-11-08）。語の数は models/term-dictionaries.json の 19 種 -->
 <section id="terms" class="section" aria-labelledby="terms-title">
   <div class="wrap split">
     <div>
-      <p class="eyebrow fuji">せんもんじしょ</p>
+      <p class="eyebrow"><span>専門辞書</span><span class="eyebrow-en">DICTIONARIES</span></p>
       <h2 id="terms-title">専門の言葉は、<br>辞書を足して候補に</h2>
       <p class="section-lead" style="margin-bottom:0">仕事や勉強で使う分野の辞書を追加できます。追加した辞書の言葉は、変換の候補に出るようになります。</p>
       <ul class="points">
@@ -284,8 +238,6 @@
   </div>
 </section>
 
-<svg class="kasumi" aria-hidden="true"><use href="#kasumi"/></svg>
-
 <!-- ===== 文節の打ち直し（v0.17.0） ===== -->
 <!-- 仕様の正は README.md（キー操作の表の「文字キー（文節変換中）」）と Release v0.17.0 の本文。
      実演の変換は iroha-kkc-v1（Q5_K_M）・ユーザ辞書と学習なしで、読みの頭から 1 字ずつ iroha-cli に渡した結果（2026-11-10）。
@@ -293,7 +245,7 @@
 <section id="retype" class="section section-tint" aria-labelledby="retype-title">
   <div class="wrap split">
     <div>
-      <p class="eyebrow">ぶんせつのうちなおし</p>
+      <p class="eyebrow"><span>文節の打ち直し</span><span class="eyebrow-en">RETYPE</span></p>
       <h2 id="retype-title">文の一部だけを、<br>確定せずに打ち直す</h2>
       <p class="section-lead" style="margin-bottom:0">スペースキーで文節変換に入り、直したい文節を ← → で選んで、そのまま文字を打ちます。確定してから消して打ち直す必要はありません。</p>
       <ul class="points">
@@ -328,7 +280,7 @@
 <section id="koe" class="section" aria-labelledby="koe-title">
   <div class="wrap split">
     <div>
-      <p class="eyebrow moegi">こえもーど</p>
+      <p class="eyebrow"><span>「こえ」モード</span><span class="eyebrow-en">VOICE</span></p>
       <h2 id="koe-title">声で入れて、<br>キーボードで直す</h2>
       <p class="section-lead" style="margin-bottom:0">決めたキー（初期設定は右 ⌘）を押している間に話した内容が、確定されずに入力中の文字として入ります。</p>
       <ul class="points">
@@ -353,12 +305,10 @@
   </div>
 </section>
 
-<svg class="kasumi kin" aria-hidden="true"><use href="#kasumi"/></svg>
-
 <!-- ===== その他の機能 ===== -->
-<section id="more" class="section" aria-labelledby="more-title">
+<section id="more" class="section section-tint" aria-labelledby="more-title">
   <div class="wrap">
-    <p class="eyebrow fuji">そのほかのきのう</p>
+    <p class="eyebrow"><span>そのほか</span><span class="eyebrow-en">MORE</span></p>
     <h2 id="more-title">毎日の入力を手伝う機能</h2>
     <p class="section-lead">どれも設定で ON・OFF を切り替えられます。くわしい操作は<a href="usage.html">使い方</a>のページにまとめています。</p>
     <div class="feature-grid">
@@ -406,6 +356,65 @@
   </div>
 </section>
 
+<!-- ===== 人 ===== -->
+<!-- iroha を語るうえで欠かせない人を述べる: 作者・稲永先生・Keita Miwa 氏・研究室の協力者（2026-11-11、ユーザの判断）。
+     「書く人と読む人」のようなつながりの説明は、説明が過ぎるのでやめた。文章は、前に「謝辞とライセンス」にあった謝辞がもと -->
+<section id="people" class="section" aria-labelledby="people-title">
+  <div class="narrow">
+    <p class="eyebrow"><span class="eyebrow-en">PEOPLE</span></p>
+    <h2 id="people-title" class="big-title">人</h2>
+    <div class="people">
+      <div class="people-item">
+        <h3>馬場 哲晃<small>作者</small></h3>
+        <p>東京都立大学。学生時代、稲永 紘之 先生の指導のもとで、「一括変換処理方式におけるカナ漢字変換システムの構築」という卒業研究に取り組みました。いつか自分のかな漢字変換システムを開発してみたいという思いは、そのころから持ち続けてきたものです。</p>
+        <p>2025 年に、選んだ文を AI で翻訳・校正・書き換える Mac のアプリ <a href="https://tetsuakibaba.github.io/GenGo/">GenGo</a> を作り、2026 年 8 月に iroha の開発を始めました。</p>
+      </div>
+      <div class="people-item">
+        <h3>稲永 紘之 先生<small>卒業研究の指導</small></h3>
+        <p>Microsoft IME にかな漢字変換辞書を提供していた方です。作者の卒業研究を指導し、かな漢字変換の研究に導いてくださいました。心より感謝いたします。</p>
+      </div>
+      <div class="people-item">
+        <h3>Keita Miwa 氏<small>azooKey・zenz の作者</small></h3>
+        <p>iroha の開発は、Keita Miwa 氏によるニューラルかな漢字変換の取り組みと、その成果を誰もが使える形で公開してきた一連のオープンソースソフトウェアに強く影響を受けています。</p>
+        <p>iPhone 向けの日本語入力 <a href="https://github.com/azooKey/azooKey">azooKey</a>、ニューラルかな漢字変換エンジン Zenzai、変換モデル <a href="https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf">zenz</a> とその学習データ <a href="https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset">zenz-v2.5-dataset</a>、かな漢字変換のライブラリ <a href="https://github.com/azooKey/AzooKeyKanaKanjiConverter">AzooKeyKanaKanjiConverter</a>、そして Mac 向けの <a href="https://github.com/azooKey/azooKey-Desktop">azooKey-Desktop</a>。言語モデルでかな漢字変換を行うという考え方を、実際に毎日使える日本語入力として示し、そのコード・モデル・データを公開してくださったことが、iroha を作り始めるきっかけになりました。</p>
+        <p>iroha-kkc は zenz-v2.5-dataset で学習しており、変換の候補を作るしくみには AzooKeyKanaKanjiConverter と azooKey の辞書データを使っています。これらの公開がなければ、iroha をこの形で作ることはできませんでした。Keita Miwa 氏に、心より感謝いたします。</p>
+      </div>
+      <div class="people-item">
+        <h3>協力者<small>研究室内の利用フィードバック</small></h3>
+        <p>研究室内で iroha を日々使い、フィードバックを寄せてくださった方々です。感謝いたします。</p>
+        <p><a href="https://github.com/shiratsumu">shiratsumu</a>、<a href="https://github.com/onoryu">onoryu</a>、Taisei Kato、Ryusei Akaike</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 打つことへの取り組み ===== -->
+<!-- iroha の名前の下に、キーを打つことへの取り組みをまとめる（2026-11-11、ユーザの考え）。
+     「タイプのいろは」はブラインドタッチの基本を学ぶページで、これから作る（できたらここにリンクを入れる）。
+     「青空写経」は公開済みの別のサイト。プログラミングの「写経」は載せない（2026-11-11、ユーザの判断）。
+     このサイトの見た目は「写経」「青空写経」に合わせてある -->
+<section id="typing" class="section" aria-labelledby="typing-title">
+  <div class="wrap">
+    <p class="eyebrow"><span>打つことの、いろは</span><span class="eyebrow-en">TYPING</span></p>
+    <h2 id="typing-title">打つことへの取り組み</h2>
+    <p class="section-lead">文字入力は、キーを打つことから始まります。iroha のほかに、打つことそのものに取り組む場所を用意しています。</p>
+    <ol class="works works-2">
+      <li>
+        <span class="mark" aria-hidden="true">一</span>
+        <h3>タイプのいろは</h3>
+        <p>キーボードを見ずに打つ、ブラインドタッチの基本を学ぶページです。</p>
+        <span class="soon">準備中</span>
+      </li>
+      <li>
+        <span class="mark" aria-hidden="true">二</span>
+        <h3>青空写経</h3>
+        <p>青空文庫の名作を、原稿用紙に一字ずつ書き写します。</p>
+        <a class="btn btn-ghost" href="https://tetsuakibaba.github.io/AozoraShakyo/">青空写経を開く</a>
+      </li>
+    </ol>
+  </div>
+</section>
+
 <!-- ===== プライバシー ===== -->
 <section id="privacy" class="section section-tint" aria-labelledby="privacy-title">
   <div class="wrap">
@@ -425,7 +434,7 @@
 <section id="download" class="section" aria-labelledby="download-title">
   <div class="wrap split">
     <div>
-      <p class="eyebrow">だうんろーど</p>
+      <p class="eyebrow"><span>はじめる</span><span class="eyebrow-en">DOWNLOAD</span></p>
       <h2 id="download-title">はじめかた</h2>
       <ol class="steps">
         <li><b>ダウンロードして開く。</b>「最新版をダウンロード」のボタンから <code>iroha-x.y.z.zip</code> を入手し、展開した <b>iroha.app</b> をダブルクリックします。自動でインストールされます。</li>
@@ -451,12 +460,10 @@
   </div>
 </section>
 
-<svg class="kasumi" aria-hidden="true"><use href="#kasumi"/></svg>
-
 <!-- ===== よくある質問 ===== -->
 <section id="faq" class="section" aria-labelledby="faq-title" style="padding-top:40px">
   <div class="narrow faq">
-    <p class="eyebrow">よくあるしつもん</p>
+    <p class="eyebrow"><span>質問と答え</span><span class="eyebrow-en">FAQ</span></p>
     <h2 id="faq-title">よくある質問</h2>
     <details>
       <summary>本当に無料ですか？</summary>
@@ -496,7 +503,7 @@
 <!-- ===== 詳しく知りたい方へ ===== -->
 <section id="papers" class="section section-tint" aria-labelledby="papers-title">
   <div class="wrap">
-    <p class="eyebrow fuji">もっとくわしく</p>
+    <p class="eyebrow"><span>もっと詳しく</span><span class="eyebrow-en">PAPERS</span></p>
     <h2 id="papers-title">詳しく知りたい方へ</h2>
     <p class="section-lead">iroha-kkc と iroha-typo のしくみ、テストの作り方、ほかのモデルとの比較は、論文にまとめています。</p>
     <div class="docs-grid">
@@ -571,13 +578,11 @@
   </div>
 </section>
 
-<svg class="kasumi" aria-hidden="true" style="background:color-mix(in srgb, var(--paper-deep) 70%, transparent)"><use href="#kasumi"/></svg>
-
 <!-- ===== これまでの歩み =====
      日付は GitHub のコミットとリリースの日付（iroha は 2026-08-30、GenGo は 2025-09-04 が最初の公開）。項目を足すときも、学習の手順（回数など）は書かない -->
 <section id="history" class="section" aria-labelledby="history-title">
   <div class="narrow">
-    <p class="eyebrow kin">これまでの歩み</p>
+    <p class="eyebrow"><span>これまでの歩み</span><span class="eyebrow-en">HISTORY</span></p>
     <h2 id="history-title">iroha ができるまで</h2>
     <p class="section-lead">卒業研究で触れたかな漢字変換から、GenGo を経て、今の iroha までの主な出来事です。</p>
     <ol class="timeline">
@@ -668,15 +673,7 @@
 <!-- ===== ライセンス ===== -->
 <section id="credits" class="section" aria-labelledby="credits-title">
   <div class="narrow">
-    <h2 id="credits-title" style="font-size:22px">謝辞とライセンス</h2>
-    <div class="thanks">
-      <p>作者（馬場 哲晃）は学生時代、Microsoft IME にかな漢字変換辞書を提供していた稲永 紘之 先生の指導のもとで、「一括変換処理方式におけるカナ漢字変換システムの構築」という卒業研究に取り組みました。いつか自分のかな漢字変換システムを開発してみたいという思いは、そのころから持ち続けてきたものです。かな漢字変換の研究に導いてくださった稲永 紘之 先生に、心より感謝いたします。</p>
-      <p>一方、iroha の開発そのものは、Keita Miwa 氏によるニューラルかな漢字変換の取り組みと、その成果を誰もが使える形で公開してきた一連のオープンソースソフトウェアに強く影響を受けています。</p>
-      <p>iPhone 向けの日本語入力 <a href="https://github.com/azooKey/azooKey">azooKey</a>、ニューラルかな漢字変換エンジン Zenzai、変換モデル <a href="https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf">zenz</a> とその学習データ <a href="https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset">zenz-v2.5-dataset</a>、かな漢字変換のライブラリ <a href="https://github.com/azooKey/AzooKeyKanaKanjiConverter">AzooKeyKanaKanjiConverter</a>、そして Mac 向けの <a href="https://github.com/azooKey/azooKey-Desktop">azooKey-Desktop</a>。言語モデルでかな漢字変換を行うという考え方を、実際に毎日使える日本語入力として示し、そのコード・モデル・データを公開してくださったことが、iroha を作り始めるきっかけになりました。</p>
-      <p>iroha-kkc は zenz-v2.5-dataset で学習しており、変換の候補を作るしくみには AzooKeyKanaKanjiConverter と azooKey の辞書データを使っています。これらの公開がなければ、iroha をこの形で作ることはできませんでした。Keita Miwa 氏に、心より感謝いたします。</p>
-      <p>研究室内で iroha を日々使い、フィードバックを寄せてくださった次の方々に感謝いたします（研究室内の利用フィードバック協力者）: <a href="https://github.com/shiratsumu">shiratsumu</a>、<a href="https://github.com/onoryu">onoryu</a>、Taisei Kato、Ryusei Akaike。</p>
-    </div>
-    <h3 class="credits-head">ライセンス</h3>
+    <h2 id="credits-title" style="font-size:22px">ライセンス</h2>
     <ul class="credits">
       <li>iroha のソースコード: MIT License</li>
       <li>かな漢字変換モデル iroha-kkc: CC BY-SA 4.0。学習データ <a href="https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset">zenz-v2.5-dataset</a>（Keita Miwa 氏、CC BY-SA 4.0）</li>
@@ -686,6 +683,7 @@
       <li>専門辞書（設定で追加したときにダウンロード）: 分野の用語は <a href="https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html">JMdict</a>（James William Breen and the Electronic Dictionary Research and Development Group、<a href="https://www.edrdg.org/edrdg/licence.html">CC BY-SA 4.0</a>）、薬の名前は百薬辞書（CC BY 4.0）、地名は日本郵便の郵便番号データ、駅・人名・神社・寺院・旧市区町村は <a href="https://www.wikidata.org/">Wikidata</a>（CC0 1.0）から作っています。追加した辞書の出典とライセンスは、アプリの設定 →「情報」→「ライセンス」に出ます</li>
       <li>記号・顔文字・絵文字のデータ <a href="https://github.com/google/mozc">Mozc</a>（Google Inc.）: BSD 3-Clause License</li>
       <li>ロゴの書体 <a href="https://github.com/mt-funa/Tsukimi-Rounded">Tsukimi Rounded</a>（Takashi Funayama 氏）: <a href="assets/fonts/OFL.txt">SIL Open Font License 1.1</a></li>
+      <li>このサイトの書体 Yuji Syuku・Shippori Mincho・Zen Kaku Gothic New（<a href="https://fonts.google.com/">Google Fonts</a> から読み込み）: SIL Open Font License 1.1</li>
     </ul>
   </div>
 </section>
