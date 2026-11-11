@@ -37,7 +37,10 @@ struct SkillSettingsTab: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("集めたコード \(state.codeCount) 個、\(SkillState.requiredForAll) 個で全部")
                 }
-                if state.isAllUnlocked {
+                if state.isDeveloperUnlocked {
+                    Label("開発者用コードで、すべてのスキルを解除しています。", systemImage: "checkmark.seal.fill")
+                        .foregroundStyle(.green)
+                } else if state.isAllUnlocked {
                     Label("コードが \(SkillState.requiredForAll) つ揃いました。すべてのスキルを使えます。", systemImage: "checkmark.seal.fill")
                         .foregroundStyle(.green)
                 }
@@ -52,6 +55,7 @@ struct SkillSettingsTab: View {
                         + "コード 1 つで、下の一覧からスキルを 1 つ選んで解除できます。"
                         + "別々の作品のコードが \(SkillState.requiredForAll) つ揃うと、すべてのスキルを使えるようになります"
                         + "（同じ作品のコードは 1 つと数えます）。"
+                        + "開発者用コードを持っている人は、下のコードの欄に入れると、1 つですべて解除されます。"
                         + "解除したスキルの設定項目は、それぞれのタブに出ます。"
                         + "解除の記録はデータフォルダの skills.json に置き、同じデータフォルダを使う Mac で共有します。")
             }
@@ -81,7 +85,7 @@ struct SkillSettingsTab: View {
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
-                        .frame(width: 180)
+                        .frame(width: 230)  // 開発者用コード（ハイフン込みで 19 文字）が収まる幅
                         .onSubmit(submitCode)
                     Button("コードを入れる", action: submitCode)
                         .disabled(codeText.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -152,6 +156,9 @@ struct SkillSettingsTab: View {
             } else {
                 message = Message(text: "作品 \(work) のコードを受け取りました。下の一覧からスキルを 1 つ選んでください。", isError: false)
             }
+        case .developer:
+            codeText = ""
+            message = Message(text: "開発者用コードを受け取りました。すべてのスキルを解除しました。", isError: false)
         case .alreadyUsed(let work):
             message = Message(text: "作品 \(work) のコードは、もう入れてあります。別の作品のコードを入れてください。", isError: true)
         case .invalid, .noID:

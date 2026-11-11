@@ -145,6 +145,77 @@ final class SkillStateTests: XCTestCase {
     }
 }
 
+final class SkillDeveloperCodeTests: XCTestCase {
+
+    /// テスト用のコード（本物の開発者用コードはソースにもテストにも書かない）
+    private let code = "ABCDEFGH23456789"
+    private var hashes: Set<String> { [SkillCode.developerHash(of: code)] }
+
+    func testRecognizesDeveloperCode() {
+        XCTAssertTrue(SkillCode.isDeveloperCode("abcd-efgh-2345-6789", hashes: hashes))
+        XCTAssertTrue(SkillCode.isDeveloperCode(SkillCode.formatDeveloperCode(code), hashes: hashes))
+        XCTAssertFalse(SkillCode.isDeveloperCode("ABCD-EFGH-2345-6780", hashes: hashes))
+        XCTAssertFalse(SkillCode.isDeveloperCode("ABCD-EFGH", hashes: hashes))
+        XCTAssertFalse(SkillCode.isDeveloperCode(code, hashes: []))
+    }
+
+    func testHashDoesNotContainCode() {
+        let hash = SkillCode.developerHash(of: code)
+        XCTAssertEqual(hash.count, 64)
+        XCTAssertFalse(hash.uppercased().contains(code))
+    }
+
+    func testNewDeveloperCode() {
+        let code = SkillCode.newDeveloperCode()
+        XCTAssertEqual(code.count, SkillCode.developerCodeLength)
+        XCTAssertEqual(SkillCode.normalize(code), code)
+        XCTAssertEqual(SkillCode.formatDeveloperCode("ABCDEFGH23456789"), "ABCD-EFGH-2345-6789")
+    }
+
+    /// 開発者用コードは ID が無くても受け取り、1 つですべて解除する
+    func testDeveloperCodeUnlocksEverything() {
+        var state = SkillState()
+        XCTAssertFalse(state.isUnlocked("prediction"))
+        let date = Date(timeIntervalSince1970: 1000)
+        XCTAssertEqual(state.add(code: "abcd-efgh-2345-6789", date: date, developerHashes: hashes), .developer)
+        XCTAssertTrue(state.isAllUnlocked)
+        XCTAssertTrue(state.isDeveloperUnlocked)
+        XCTAssertTrue(state.isUnlocked("prediction"))
+        XCTAssertEqual(state.codeCount, 0)
+        XCTAssertEqual(state.unusedCodeCount, 0)
+        // もう一度入れても日時は変わらない
+        XCTAssertEqual(state.add(code: code, date: Date(timeIntervalSince1970: 2000), developerHashes: hashes), .developer)
+        XCTAssertEqual(state.developerUnlockedAt, date)
+    }
+
+    /// ハッシュ値を登録していない版では、ふつうのコードとして扱って通さない
+    func testUnknownDeveloperCodeIsInvalid() {
+        var state = SkillState(id: "7QF2MX8K", idCreatedAt: Date(timeIntervalSince1970: 1000))
+        XCTAssertEqual(state.add(code: code, developerHashes: []), .invalid)
+        XCTAssertFalse(state.isAllUnlocked)
+    }
+
+    func testMergeKeepsDeveloperUnlock() {
+        var unlocked = SkillState()
+        XCTAssertEqual(
+            unlocked.add(code: code, date: Date(timeIntervalSince1970: 1000), developerHashes: hashes), .developer)
+        let other = SkillState(id: "7QF2MX8K", idCreatedAt: Date(timeIntervalSince1970: 500))
+        XCTAssertTrue(other.merged(with: unlocked).isDeveloperUnlocked)
+        XCTAssertTrue(unlocked.merged(with: other).isDeveloperUnlocked)
+        XCTAssertEqual(other.merged(with: unlocked).id, "7QF2MX8K")
+    }
+
+    /// 開発者用コードの項目がない前の版のファイルも読める
+    func testDecodesStateWithoutDeveloperField() throws {
+        let json = #"{"entries":[],"id":"7QF2MX8K","idCreatedAt":"2026-01-01T00:00:00Z","version":1}"#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let state = try decoder.decode(SkillState.self, from: Data(json.utf8))
+        XCTAssertFalse(state.isDeveloperUnlocked)
+        XCTAssertEqual(state.id, "7QF2MX8K")
+    }
+}
+
 final class SkillStoreTests: XCTestCase {
 
     private var directory: URL!

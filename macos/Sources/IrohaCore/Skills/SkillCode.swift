@@ -91,6 +91,48 @@ public enum SkillCode {
         return code(id: id, work: work) == normalized ? work : nil
     }
 
+    // MARK: - 開発者用コード
+
+    /// 開発者用コードの長さ（表示は 4 文字ずつ `XXXX-XXXX-XXXX-XXXX`）
+    public static let developerCodeLength = 16
+
+    /// 開発者用コードのハッシュ値（`developerHash`）。
+    ///
+    /// 開発者用コードは、どの ID の iroha でも 1 つで全スキルを解除するコード（2026-11-11。作者が身近なメンバーに渡す用）。
+    /// **コードそのものはソースにもリポジトリにも書かない**（ここに置くのはハッシュ値だけなので、ソースを読んでも分からない）。
+    /// コードを替えるときは `iroha-cli skill developer new` で新しいコードとハッシュ値を作り、ここを差し替える
+    /// （前のコードも使えるままにするなら足す）。解除の記録はコードではなく日時で持つので、替えても解除済みの人はそのまま
+    public static let developerCodeHashes: Set<String> = [
+        "286d6bfd66c11f1c710f27c2171bbe4407b92770330870ea7492ad77ea84c4eb",  // 2026-11-11 に作ったコード
+    ]
+
+    private static let developerHashPrefix = "iroha-developer-code-v1:"
+
+    /// 開発者用コード（照合用の形）のハッシュ値
+    public static func developerHash(of normalizedCode: String) -> String {
+        SHA256.hex(Data((developerHashPrefix + normalizedCode).utf8))
+    }
+
+    /// 新しい開発者用コード（乱数 80 ビット。照合用の形）
+    public static func newDeveloperCode() -> String {
+        String((0..<developerCodeLength).map { _ in alphabet[Int.random(in: 0..<alphabet.count)] })
+    }
+
+    /// 開発者用コードの表示（4 文字ずつハイフンで区切る）
+    public static func formatDeveloperCode(_ code: String) -> String {
+        guard code.count == developerCodeLength else { return code }
+        let characters = Array(code)
+        return stride(from: 0, to: characters.count, by: 4)
+            .map { String(characters[$0..<$0 + 4]) }
+            .joined(separator: "-")
+    }
+
+    /// 入力されたコードが開発者用コードか
+    public static func isDeveloperCode(_ text: String, hashes: Set<String> = developerCodeHashes) -> Bool {
+        guard let normalized = normalize(text), normalized.count == developerCodeLength else { return false }
+        return hashes.contains(developerHash(of: normalized))
+    }
+
     /// HMAC-SHA256（RFC 2104）。IrohaCore は Foundation だけに依存するので、自前の `SHA256` の上に組む
     static func hmacSHA256(key: [UInt8], message: [UInt8]) -> [UInt8] {
         let blockSize = 64

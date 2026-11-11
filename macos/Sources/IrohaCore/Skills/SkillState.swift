@@ -6,6 +6,7 @@ import Foundation
 /// - コード 1 つで、好きなスキルを 1 つ解除できる
 /// - 数えるのは別々の作品のコードだけ（同じ作品のコードは 1 つ）
 /// - コードが `requiredForAll`（7）つ揃うと、すべてのスキルが解除される
+/// - 開発者用コード（`SkillCode.isDeveloperCode`）は、1 つですべてのスキルが解除される
 ///
 /// スキルは名前（文字列）で持つ。どんなスキルがあるかはアプリの側（`Skill`）が決める
 public struct SkillState: Codable, Equatable, Sendable {
@@ -44,11 +45,16 @@ public struct SkillState: Codable, Equatable, Sendable {
     public var id: String?
     public var idCreatedAt: Date?
     public var entries: [Entry]
+    /// 開発者用コードを入れた日時（入れていなければ nil）。コードそのものは残さない
+    public var developerUnlockedAt: Date?
 
-    public init(id: String? = nil, idCreatedAt: Date? = nil, entries: [Entry] = []) {
+    public init(
+        id: String? = nil, idCreatedAt: Date? = nil, entries: [Entry] = [], developerUnlockedAt: Date? = nil
+    ) {
         self.id = id
         self.idCreatedAt = idCreatedAt
         self.entries = entries
+        self.developerUnlockedAt = developerUnlockedAt
     }
 
     public static let empty = SkillState()
@@ -58,7 +64,10 @@ public struct SkillState: Codable, Equatable, Sendable {
     /// 集めたコードの数
     public var codeCount: Int { entries.count }
 
-    public var isAllUnlocked: Bool { codeCount >= Self.requiredForAll }
+    /// 開発者用コードで解除している
+    public var isDeveloperUnlocked: Bool { developerUnlockedAt != nil }
+
+    public var isAllUnlocked: Bool { isDeveloperUnlocked || codeCount >= Self.requiredForAll }
 
     /// まだスキルを選んでいないコードの数（すべて解除されたあとは 0）
     public var unusedCodeCount: Int {
@@ -76,6 +85,8 @@ public struct SkillState: Codable, Equatable, Sendable {
 
     public enum AddResult: Equatable, Sendable {
         case added(work: String)
+        /// 開発者用コードだった（すべてのスキルを解除した）
+        case developer
         /// 形が違うか、この ID のコードではない
         case invalid
         /// この作品のコードはもう入れてある
@@ -84,7 +95,15 @@ public struct SkillState: Codable, Equatable, Sendable {
         case noID
     }
 
-    public mutating func add(code text: String, date: Date = Date()) -> AddResult {
+    /// - Parameter developerHashes: 開発者用コードのハッシュ値（テストで差し替える）
+    public mutating func add(
+        code text: String, date: Date = Date(), developerHashes: Set<String> = SkillCode.developerCodeHashes
+    ) -> AddResult {
+        // 開発者用コードは ID に結びつかないので、ID を作る前でも受け取る
+        if SkillCode.isDeveloperCode(text, hashes: developerHashes) {
+            if developerUnlockedAt == nil { developerUnlockedAt = date }
+            return .developer
+        }
         guard let id else { return .noID }
         guard let work = SkillCode.work(ofCode: text, id: id),
               let code = SkillCode.code(id: id, work: work) else { return .invalid }
@@ -131,6 +150,7 @@ public struct SkillState: Codable, Equatable, Sendable {
             byWork[entry.work] = kept
         }
         result.entries = byWork.values.sorted { ($0.date, $0.work) < ($1.date, $1.work) }
+        result.developerUnlockedAt = [developerUnlockedAt, other.developerUnlockedAt].compactMap { $0 }.min()
         return result.normalized()
     }
 

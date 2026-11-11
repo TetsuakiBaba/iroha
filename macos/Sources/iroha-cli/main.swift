@@ -28,6 +28,8 @@ import IrohaMLX
 //                                                   冒頭に使い方）
 //   iroha-cli skill id | code <ID> <作品の番号>… | verify <ID> <コード>
 //                                                 : スキルのコード（青空写経が出すコードと同じ計算）を作る・確かめる
+//   iroha-cli skill developer new | hash <コード> | verify <コード>
+//                                                 : 開発者用コード（1 つで全スキルを解除）を作る・確かめる
 //   iroha-cli repl                                : 対話モード（1行ずつ変換、レイテンシ表示）
 //   iroha-cli lattice <読み>                       : 辞書ラティス（azooKey）の生の候補を表示（調査用）
 //   iroha-cli symbols [読み...]                    : 記号・顔文字・絵文字の表（Mozc のデータ）から引いた候補を表示。
@@ -1644,9 +1646,40 @@ case "skill":
             print("合っていません")
             exit(1)
         }
+    case "developer":
+        // 開発者用コード（1 つで全スキルを解除するコード。`SkillCode.developerCodeHashes`）
+        //   iroha-cli skill developer new            新しいコードと、ソースに書くハッシュ値を出す
+        //   iroha-cli skill developer hash <コード>   そのコードのハッシュ値を出す
+        //   iroha-cli skill developer verify <コード> そのコードがこの版で通るか確かめる
+        let action = arguments.count > 3 ? arguments[3] : ""
+        switch action {
+        case "new":
+            let code = SkillCode.newDeveloperCode()
+            print("コード: \(SkillCode.formatDeveloperCode(code))")
+            print("ハッシュ値（SkillCode.developerCodeHashes に書く）: \(SkillCode.developerHash(of: code))")
+        case "hash" where arguments.count > 4, "verify" where arguments.count > 4:
+            guard let code = SkillCode.normalize(arguments[4]), code.count == SkillCode.developerCodeLength else {
+                FileHandle.standardError.write(
+                    "コードの形が違います（\(SkillCode.developerCodeLength) 文字。例: XXXX-XXXX-XXXX-XXXX）\n".data(using: .utf8)!)
+                exit(1)
+            }
+            if action == "hash" {
+                print(SkillCode.developerHash(of: code))
+            } else if SkillCode.isDeveloperCode(code) {
+                print("通ります")
+            } else {
+                print("通りません")
+                exit(1)
+            }
+        default:
+            FileHandle.standardError.write(
+                "使い方: iroha-cli skill developer new | hash <コード> | verify <コード>\n".data(using: .utf8)!)
+            exit(1)
+        }
     default:
         FileHandle.standardError.write(
-            "使い方: iroha-cli skill id | code <ID> <作品の番号>… | verify <ID> <コード>\n".data(using: .utf8)!)
+            "使い方: iroha-cli skill id | code <ID> <作品の番号>… | verify <ID> <コード> | developer new|hash|verify\n"
+                .data(using: .utf8)!)
         exit(1)
     }
 

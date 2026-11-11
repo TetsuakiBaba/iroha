@@ -144,6 +144,12 @@ cd macos && swift build --build-system native && swift test --build-system nativ
     `skillStateMirror` にも写す。**試すために状態を消すときは、iroha を終了してから、ファイルと `skillStateMirror` の両方を消す**。
     画面の確認は `iroha --settings skills -dataDirectory <試験用のフォルダ>` で本物のデータに触れずにできる
     （`.build/debug/iroha` なら UserDefaults の領域も別になる）
+  ・開発者用コード（2026-11-11。作者が身近なメンバーに渡す用）は、どの ID の iroha でも 1 つで全スキルを解除する
+    16 文字のコード。入れる欄はふつうのコードと同じ。**コードそのものはソース・リポジトリ・記憶のどこにも書かない**
+    （`SkillCode.developerCodeHashes` にハッシュ値だけを置く。テストは別のコードとハッシュ値で行う）。
+    替えるときは `iroha-cli skill developer new` でコードとハッシュ値を作って差し替える（前のコードも通すなら足す）。
+    解除の記録はコードではなく日時（`SkillState.developerUnlockedAt`）なので、替えても解除済みの人はそのまま。
+    確認は `iroha-cli skill developer verify <コード>`
   ・ID は設定 > スキルを初めて開いたときに作る（起動のたびに作ると、同期が届く前の別の Mac が別の ID を作りやすい）
   ・タブが 6 つになったので設定ウィンドウの幅は 760（660 では macOS 26 のタイトルバーのタブが折り畳まれた）。
     選択テキストのタブは、中身のスキル 2 つのどちらも解除していなければ出さない
