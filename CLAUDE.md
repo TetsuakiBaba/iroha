@@ -123,12 +123,30 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   `HelpButton` / `HelpLabel` / `HelpToggle` / `HelpSectionHeader`）に入れ、押したときにポップオーバーで出す
   （2026-09-30）。状態・警告・エラーの表示は「?」に入れず画面に出す。無効にするのは操作部品だけにして、
   機能が OFF でも説明は読めるようにする
-- 設定画面には一般ユーザ向けと開発者モード向けの 2 段がある（2026-10-03。`DeveloperModeSettings`、
-  設定 > 情報 > 開発者モード、既定 OFF・同期しない）。細かな調整・開発者向けの項目は `if developerMode` の中に置き、
-  一般ユーザの画面には出さない。隠すのは表示だけで値はそのまま効く（例外はデバッグ表示で、開発者モードが OFF なら止める）。
-  **新しい設定項目を足すときは、どちらに置くかを決めてから足す**。開発者モードの項目一覧は情報タブの「?」の文面にもあるので合わせる。
-  開発者モードの項目には紫色の「開発者」の印を付ける（`DeveloperBadge`。項目は `HelpLabel` / `HelpToggle` の `developer: true`、
-  節ごとなら `HelpSectionHeader` の `developer: true`。2026-11-07）。**`if developerMode` の中に項目を足したら印も付ける**
+- 設定項目は「基本」と「スキル」の 2 つに分ける（2026-11-11、v1.0.0 から。それまでの「開発者モード」と紫色の「開発者」の印は無くした）。
+  基本はインストールした直後から設定画面に出る。スキルは、青空写経（別リポジトリ `../AozoraShakyo` の Web ページ）で
+  1 作品を書き上げるたびに出るコード 1 つで、ユーザが選んだ 1 つを解除する。別々の作品のコードが 7 つ揃うとすべて解除する
+  （`Skill`・`SkillObserver`・`SkillSettingsTab`、IrohaCore の `SkillCode`・`SkillState`・`SkillStore`、設定 > スキル）。
+  目的はユーザが進み具合を楽しむことで、厳密に制限することではない（ユーザの判断。照合はアプリの中だけ・サーバなし）。守ること:
+  ・**新しい設定項目を足すときは、基本かスキルかを決めてから足す**。スキルにするなら `Skill` に case を足し
+    （rawValue は skills.json に残るので後から変えない）、設定画面では `skills.has(.x)` の中に置き、
+    **機能の側でも `Skill.x.isUnlocked` を確かめる**（各設定の `isEnabled` / `isActive` に入れてある。設定画面で隠すだけでは、
+    既定のショートカットや別の Mac から同期された設定で動く）。入力メニューの項目も同じ判定で出す
+  ・スキルは 13 個: 予測変換・変換ルール・AI変換・選択テキストのAI編集・選択した文字数の表示・区切り記号で英字を入力・
+    タップ入力・AIで直す・自分の原稿に合わせる・自分の入力で追加学習（変換記録を含む）・打ち間違いの訂正の調整・
+    推論エンジンとモデルの指定・推論の時間の表示。7 つ揃ったときだけ出す項目が 2 つ（アプリの文章を文脈に使う・
+    記号・顔文字・絵文字を候補に出す。`skills.allUnlocked`）。打ち間違いの訂正・専門辞書・「こえ」モード・iroha の再起動は基本
+  ・コードの形は `SkillCode` のコメントが正（ID 8 文字、コード = 作品の番号 2 文字 + HMAC-SHA256 の先頭 30 ビットの 6 文字）。
+    青空写経の JavaScript と同じ計算にする。**変えるときは両方を合わせ、`SkillCodeTests` の検算値も更新する**。
+    コードに作品の番号が入っているので、iroha は作品の一覧を持たない。確認は `iroha-cli skill id | code <ID> <作品の番号>… | verify <ID> <コード>`
+  ・状態は `<データフォルダ>/skills.json`（同期する）。ファイルを読むときは置き換えずに覚えている状態と合わせる
+    （`SkillState.merged`。2 台で別々にコードを入れても消えない）。この Mac が覚えている状態は UserDefaults の
+    `skillStateMirror` にも写す。**試すために状態を消すときは、iroha を終了してから、ファイルと `skillStateMirror` の両方を消す**。
+    画面の確認は `iroha --settings skills -dataDirectory <試験用のフォルダ>` で本物のデータに触れずにできる
+    （`.build/debug/iroha` なら UserDefaults の領域も別になる）
+  ・ID は設定 > スキルを初めて開いたときに作る（起動のたびに作ると、同期が届く前の別の Mac が別の ID を作りやすい）
+  ・タブが 6 つになったので設定ウィンドウの幅は 760（660 では macOS 26 のタイトルバーのタブが折り畳まれた）。
+    選択テキストのタブは、中身のスキル 2 つのどちらも解除していなければ出さない
 - FoundationModelsはmacOS 26+のため `#if canImport` + `@available(macOS 26.0, *)` ガード必須
   （パッケージのフロアはmacOS 14）
 - llama.cppの静的ライブラリは `./macos/scripts/build-llama.sh` で `vendor/dist` に生成（未コミット）
@@ -227,7 +245,7 @@ cd macos && swift build --build-system native && swift test --build-system nativ
     「attribution 方法」に合わせる。訂正モデルの行（入力タブ）には学習元を出さない
   ・訂正率 79%（θなし）は合成 typo 分布の数字で、実使用の数字ではない。UI で約束しない
 - 記号・顔文字・絵文字の候補（`SymbolCandidateTable` / `SymbolCandidateMerger`、`macos/Sources/IrohaCore/SymbolCandidates/`、
-  既定ON・切り替えは開発者モード・同期する。2026-10-16）は Mozc（BSD 3-Clause）の `src/data/` の 4 ファイルを
+  既定ON・切り替えはスキルのコードが 7 つ揃ったときだけ出す・同期する。2026-10-16）は Mozc（BSD 3-Clause）の `src/data/` の 4 ファイルを
   `fetch-symbols.sh` がコミット固定で `vendor/mozc-data/` に取り、`make-bundle.sh` が `Contents/Resources/Symbols` へ
   LICENSE と一緒にコピーする（`dictionary_oss/` は第三者のデータなので使わない）。エンジンのデコレータ鎖には入れず、
   変換ルールと同じく文節の候補ウィンドウを開くときに合流させる: 絵文字は上から 7 番目（Mozc の `kDefaultInsertPos = 6`。
@@ -264,8 +282,8 @@ cd macos && swift build --build-system native && swift test --build-system nativ
     `build-term-dictionaries.py` の `SOURCE_*` にまとめてある（2026-11-08 に条文を読み直して合わせた）
   ・iroha-cli は `IROHA_TERM_DICTIONARIES=installed`（入れた辞書）か `=a.tsv,b.tsv` で候補に加える（既定は使わない）。
     `iroha-cli terms list | install <ID> | remove <ID>` でアプリと同じ経路の取得を確かめる
-- 自分の原稿に合わせる（`DocumentNotationSettings` / `DocumentNotationStore`、設定 > 辞書・学習の開発者モードの節、既定OFF・同期する。
-  表記・用語の 2 つの重みは開発者モード・既定 2。2026-11-07）は、`<データフォルダ>/documents/` の文書（PDF・Word・テキスト。HTML は main thread
+- 自分の原稿に合わせる（`DocumentNotationSettings` / `DocumentNotationStore`、設定 > 辞書・学習、スキル「自分の原稿に合わせる」、既定OFF・同期する。
+  表記・用語の 2 つの重みは既定 2。2026-11-07）は、`<データフォルダ>/documents/` の文書（PDF・Word・テキスト。HTML は main thread
   でしか読めないので対象外）から読みごとの表記の回数（IrohaCore の `NotationPreference`）を数え、モデルの採点に
   「重み × Σ log((その表記の回数 + 1) / (表記の違いで最も多い表記の回数 + 1))」を足す（`NotationPreferenceEngine`。
   `LatticeRescoringEngine` の下、モデルの直上に置くので、第一候補は表記を替えた文と合わせて採点し直し、候補ウィンドウは
@@ -298,7 +316,7 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   候補生成源として合流させる（第一候補の直後に挿入。ライブ変換には影響しない）。
   出力は `{{date:…}}` 等のテンプレートで毎回展開されるため、ルール由来の候補を確定しても
   学習には記録しない（`BunsetsuSegment.unlearnableCandidates` で識別）
-- 区切り記号で囲んだ英字入力（`DelimitedAlphabetSettings`、開発者モードの項目・既定OFF・同期しない。2026-10-04）は、
+- 区切り記号で囲んだ英字入力（`DelimitedAlphabetSettings`、スキル「区切り記号で英字を入力」・既定OFF・同期しない。2026-10-04）は、
   かな入力のまま開始の記号（既定「_」）から終わりの記号（既定「_」）までを打ったとおりの英字にする（「kyouha_iPhone_wo」）。
   記号はどちらも設定で変えられる（英字・数字以外の ASCII 記号 1 文字。使えない値なら既定）。中身は Shift+英字の
   `alphabetRun` と同じで、`alphabetRunDelimited` が真の間は Shift を離しても続く（表示は英字の前に開始の記号）。
@@ -319,15 +337,16 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   入力ソースのアイコン（あ / A）は Info.plist の入力モードに固定で実行中に差し替えられず、鍵付きの入力モードを足す方法は
   入力メニューから iroha が消える問題に触れるので採らない。メニューバーに別のアイコンを出す方法は分かりにくいので
   取り下げた（2026-10-16）
-- 加速度センサ（`KeystrokeAccelerometer`・`AccelerometerSettings`、設定 > 情報 > 開発者向け「加速度センサを利用する」、
-  開発者モード・既定OFF・同期しない・試験的。2026-10-24）は、MacBook（M2 以降）の非公開の加速度センサ（AppleSPUHIDDevice、
+- 加速度センサ（`KeystrokeAccelerometer`・`AccelerometerSettings`、同期しない・試験的。2026-10-24）は、MacBook（M2 以降）の非公開の加速度センサ（AppleSPUHIDDevice、
   用途ページ 0xFF00・用途 3）を読む。**管理者権限は要らない**（元にしたライブラリの説明と違う。MacBook で実測）。
   センサの値は専用スレッドで受ける（約 800 件/秒）。センサのない Mac では「（利用不可）」でトグルを操作できない。
-  使い道は 2 つ: デバッグ表示（ON のとき）の下に直近 2 秒の揺れとキーの時刻を文字なしで描くグラフと、タップ入力。
-  キーの名前 `developerOverlayAccelerometer` はグラフだけの設定だったときのもの。外すときの消す場所はファイル冒頭のコメント。
+  使い道は 2 つ: デバッグ表示（ON のとき）の下に直近 2 秒の揺れとキーの時刻を文字なしで描くグラフ
+  （スキル「推論の時間の表示」。設定 > 情報 >「加速度センサの揺れをグラフで出す」、キー `developerOverlayAccelerometer`）と、
+  タップ入力（スキル「タップ入力」）。センサは、どちらかの設定が ON のときに動かす（2026-11-11 までは
+  「加速度センサを利用する」という 1 つの設定が両方の前提だった）。外すときの消す場所はファイル冒頭のコメント。
   計測ツールと実験の記録は `experiments/keystroke-force/`（README.md に経緯と数字）
 - タップ入力（`TapInput` / `TapInputSettings`、判定は IrohaCore の `TapGestureDetector`、設定 > 入力 > タップ入力。
-  加速度センサを利用するときだけ出す・既定OFF・同期しない。2026-10-24）は、⌘ を押したまま本体を指で 2 回叩いて ⌘ を離すと、
+  スキル「タップ入力」・加速度センサのある Mac だけ・既定OFF・同期しない。2026-10-24）は、⌘ を押したまま本体を指で 2 回叩いて ⌘ を離すと、
   設定したキーショートカット（`GlobalShortcut` の文字列形式）を合成したキーイベントで送る（アクセシビリティの許可が要る）。
   今はダブルタップの 1 種類だけ。数えたら（2 回以上のとき）カーソルの近くに「⌘ + ダブルタップ → Ctrl+Space」などを
   1.2 秒出す（`TapInputFeedback`。`CaretPanel` とは別の窓。カーソル位置は有効なコントローラが `attach` で渡し、
@@ -410,7 +429,7 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   それを消して状態を戻す。ほかのキー・クリック・フォーカス移動で取り消せなくする（`closeCommitUndo`）。
   **確定に伴う記録（学習・変換記録・入力履歴）は `deferCommitEffect` で包み、取り消せなくなったときに書く**
   （取り消した確定は本当の確定ではないので残さない）。確定の流れに記録を足すときもこれで包む
-- AIで直す（`AIFixSettings` / `AIFixBadge`、判定は IrohaCore の `AIFixRule`、設定 > 入力、開発者モード・既定OFF・同期する。
+- AIで直す（`AIFixSettings` / `AIFixBadge`、判定は IrohaCore の `AIFixRule`、設定 > 入力、スキル「AIで直す」・既定OFF・同期する。
   2026-11-07）は、入力の休止（打ち間違いの訂正と同じ待ち時間）でモデル単体の `ZenzEngine.convertWithConfidence` をもう一度呼び、
   その結果が表示中のライブ変換と一致し、文字ごとのマージンの最小値が閾値（既定 1.0）より小さければ、未確定文字列の右上に
   「AIで直す」を出す。クリックかショートカット（既定 Ctrl+Option+A。2026-11-08 から窓が出ていなくても入力中ならいつでも送る）で、前の文脈・読み（カタカナ）・

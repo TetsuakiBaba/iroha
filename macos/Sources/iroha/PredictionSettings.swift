@@ -17,7 +17,7 @@ enum PredictionSettings {
 
     /// いま予測を出し、入力履歴を記録するか。設定がONでも、プライベートモードの間は止める（`PrivateModeSettings`）
     static var isActive: Bool {
-        isPredictiveEnabled && !PrivateModeSettings.isEnabled
+        isPredictiveEnabled && !PrivateModeSettings.isEnabled && Skill.prediction.isUnlocked
     }
 
     /// 候補を出し始める読みの文字数。1文字では候補が多すぎて当たらない

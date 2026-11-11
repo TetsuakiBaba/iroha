@@ -4,7 +4,7 @@ import Cocoa
 import IrohaCore
 import IrohaVoice
 
-/// 「こえ」モードの設定（設定 > 入力 > こえ。開発者モードの項目・既定OFF・他のMacと同期しない
+/// 「こえ」モードの設定（設定 > 入力 > こえ。基本の項目・既定OFF・他のMacと同期しない
 /// （マイクの許可もキーボードの形も機械ごとのため）。試作。2026-11-10）
 enum VoiceInputSettings {
     static let enabledKey = "voiceInputEnabled"

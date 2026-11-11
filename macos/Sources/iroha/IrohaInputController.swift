@@ -535,7 +535,7 @@ final class IrohaInputController: IMKInputController {
         lastKeyEventTime = .now
         // 「こえ」モードのキーを押している間に他のキーが来たら、ショートカットに使ったとみなして録音を捨てる
         VoiceInput.shared.noteKeyDown()
-        // 加速度センサのグラフ（開発者モード）。設定が OFF になっていればここでセンサを止める
+        // 加速度センサ（タップ入力・デバッグ表示のグラフ）。使う設定がどちらも OFF になっていればここでセンサを止める
         KeystrokeAccelerometer.shared.noteKeyDown(event)
         // 句読点スタイルの知らせは次のキーで閉じる（この後の Control+. なら出し直す）
         hideNotice()
@@ -607,7 +607,7 @@ final class IrohaInputController: IMKInputController {
 
         // AI変換のショートカット（プリセットごとに設定で自由に決める）: 未確定文字列をAIで変換する。
         // ユーザが決めたキーなので、下の Control+. や Control+U 等の組み込みより先に見る
-        if isComposing || mode == .segmenting,
+        if Skill.aiConversion.isUnlocked, isComposing || mode == .segmenting,
            let preset = AICommitSettings.preset(
             matchingKeyCode: event.keyCode, modifierFlags: event.modifierFlags) {
             return handleAICommit(preset, client: client)
@@ -732,13 +732,16 @@ final class IrohaInputController: IMKInputController {
         dictionaryItem.target = self
         menu.addItem(dictionaryItem)
 
-        let rewriteRulesItem = NSMenuItem(
-            title: "変換ルール...",
-            action: #selector(openRewriteRules(_:)),
-            keyEquivalent: ""
-        )
-        rewriteRulesItem.target = self
-        menu.addItem(rewriteRulesItem)
+        // 解除していないスキルの項目は入力メニューにも出さない
+        if Skill.rewriteRules.isUnlocked {
+            let rewriteRulesItem = NSMenuItem(
+                title: "変換ルール...",
+                action: #selector(openRewriteRules(_:)),
+                keyEquivalent: ""
+            )
+            rewriteRulesItem.target = self
+            menu.addItem(rewriteRulesItem)
+        }
 
         menu.addItem(NSMenuItem.separator())
 
@@ -788,14 +791,16 @@ final class IrohaInputController: IMKInputController {
         liveItem.state = liveConversionEnabled ? .on : .off
         menu.addItem(liveItem)
 
-        let predictiveItem = NSMenuItem(
-            title: "予測変換",
-            action: #selector(togglePredictiveConversion(_:)),
-            keyEquivalent: ""
-        )
-        predictiveItem.target = self
-        predictiveItem.state = PredictionSettings.isPredictiveEnabled ? .on : .off
-        menu.addItem(predictiveItem)
+        if Skill.prediction.isUnlocked {
+            let predictiveItem = NSMenuItem(
+                title: "予測変換",
+                action: #selector(togglePredictiveConversion(_:)),
+                keyEquivalent: ""
+            )
+            predictiveItem.target = self
+            predictiveItem.state = PredictionSettings.isPredictiveEnabled ? .on : .off
+            menu.addItem(predictiveItem)
+        }
 
         let styleItem = NSMenuItem(
             title: "句読点スタイル: \(Self.punctuationStyle)",
@@ -2298,7 +2303,8 @@ final class IrohaInputController: IMKInputController {
                 // ユーザ定義の変換ルール（User Rewriter）の出力を合流させる。
                 // エンジンとは独立した候補生成源で、第一候補（今の表示）はそのままにして
                 // その直後に置く（「きょう」→ スペース2回で日付が選べる）
-                let rewrites = UserRewriteRuleStore.shared.current.candidates(forReading: reading)
+                let rewrites = (Skill.rewriteRules.isUnlocked
+                    ? UserRewriteRuleStore.shared.current.candidates(forReading: reading) : [])
                     .filter { !candidates.contains($0) }
                 candidates.insert(contentsOf: rewrites, at: min(1, candidates.count))
                 // 打ち間違いの訂正も同じやり方で合流させる（スペース押下時に始めた 1 回ぶんを待つ）。
@@ -3692,7 +3698,7 @@ final class IrohaInputController: IMKInputController {
 
     // MARK: - デバッグ表示（推論時間）
 
-    /// かな漢字変換の要求 1 回を測り、デバッグ表示に出す（設定 > 情報 > 開発者向け。OFF なら測らない）。
+    /// かな漢字変換の要求 1 回を測り、デバッグ表示に出す（設定 > 情報 > 推論の時間の表示。OFF なら測らない）。
     ///
     /// 「全体」は要求してから結果が返るまで。「NN」はそのうち `ZenzEngine` が計算していた時間の合計で、
     /// 差は辞書ラティス・学習・ユーザ辞書などの処理と、先に走っている推論（actor）の待ち時間になる。

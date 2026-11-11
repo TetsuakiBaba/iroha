@@ -74,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 開発用: 設定ウィンドウだけを開く（IMEとしては接続しない）。UIの確認に使う
         //   "~/Library/Input Methods/iroha.app/Contents/MacOS/iroha" --settings [タブ名]
-        //   タブ名: input / dictionary / selection / model / about、log（変換記録の編集）、learning（学習の編集）
+        //   タブ名: input / dictionary / selection / model / skills / about、log（変換記録の編集）、learning（学習の編集）
         if let index = CommandLine.arguments.firstIndex(of: "--settings") {
             switch CommandLine.arguments.count > index + 1 ? CommandLine.arguments[index + 1] : "" {
             case "dictionary": SettingsUIState.shared.selectedTab = .dictionary
@@ -87,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 SettingsUIState.shared.showingLearning = true
             case "selection": SettingsUIState.shared.selectedTab = .selection
             case "model": SettingsUIState.shared.selectedTab = .model
+            case "skills": SettingsUIState.shared.selectedTab = .skills
             case "about": SettingsUIState.shared.selectedTab = .about
             default: SettingsUIState.shared.selectedTab = .input
             }
@@ -153,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 設定でOFF（既定）の間はホットキー登録も監視もしない
         SelectionActionCoordinator.shared.start()
 
-        // タップ入力（加速度センサを利用する設定とタップ入力が ON のときだけセンサを動かす。開発者モード・試験的）
+        // タップ入力（スキル「タップ入力」。設定が ON のときだけセンサを動かす。試験的）
         TapInput.shared.start()
     }
 

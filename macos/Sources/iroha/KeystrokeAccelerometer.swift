@@ -2,7 +2,7 @@ import Cocoa
 import IOKit
 import IOKit.hid
 
-/// 本体の加速度センサの揺れを、デバッグ表示（`DeveloperOverlay`）にグラフで出す（開発者モード・試験的。2026-10-24）。
+/// 本体の加速度センサの揺れを読む。デバッグ表示（`DeveloperOverlay`）のグラフとタップ入力が使う（試験的。2026-10-24）。
 ///
 /// 自分の打鍵の強さを見るためのもの。MacBook（M2 以降）の非公開のセンサ（AppleSPUHIDDevice、
 /// 用途ページ 0xFF00・用途 3）を読む。手順は https://github.com/olvvier/apple-silicon-accelerometer に合わせたが、
@@ -17,15 +17,22 @@ import IOKit.hid
 /// センサの値は専用のスレッドの実行ループで受ける（約 800 件/秒。IME のメインスレッドを起こさないため）。
 /// 起こす設定（`wakeProperties`）はこのセンサの下のドライバにだけ書く。止めるときは報告間隔だけ元に戻す
 /// （ほかの 2 つは元の値を読めないので戻さない）
-/// 加速度センサを利用するか（設定 > 情報 > 開発者向け。試験的・既定OFF・同期しない）。
-/// 使うのはデバッグ表示のグラフとタップ入力。開発者モードが OFF のとき・センサのない Mac では、設定が ON で残っていても使わない
+/// 加速度センサの設定（試験的・同期しない）。センサを使うのはタップ入力（スキル「タップ入力」）と、
+/// デバッグ表示のグラフ（スキル「推論の時間の表示」）。2026-11-11 までは「加速度センサを利用する」という 1 つの設定が
+/// 両方の前提だったが、スキルごとに解除する形にしたので、それぞれの設定が ON のときにセンサを動かす
 enum AccelerometerSettings {
-    /// 2026-10-24 まではデバッグ表示のグラフだけの設定だったので、キーの名前はそのときのもの
+    /// デバッグ表示に揺れのグラフを出す設定（設定 > 情報 > 推論の時間の表示。既定OFF）。
+    /// キーの名前は、この設定だけだった 2026-10-24 までのもの
     static let enabledKey = "developerOverlayAccelerometer"
 
+    /// グラフを出す設定が ON か（センサのない Mac では、設定が ON で残っていても偽）
+    static var showsGraph: Bool {
+        KeystrokeAccelerometer.isSensorPresent && UserDefaults.standard.bool(forKey: enabledKey)
+    }
+
+    /// センサを動かすか: タップ入力が ON のときと、デバッグ表示にグラフを出すとき
     static var isEnabled: Bool {
-        DeveloperModeSettings.isEnabled && KeystrokeAccelerometer.isSensorPresent
-            && UserDefaults.standard.bool(forKey: enabledKey)
+        TapInputSettings.isEnabled || DeveloperOverlaySettings.showsAccelerometer
     }
 }
 

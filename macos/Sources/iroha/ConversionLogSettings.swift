@@ -29,7 +29,8 @@ enum ConversionLogSettings {
     }
 
     static var isEnabled: Bool {
-        UserDefaults.standard.bool(forKey: enabledKey)
+        // 変換記録は「自分の入力で追加学習」のスキルと一緒に解除する（使い道が追加学習だけなので）
+        Skill.training.isUnlocked && UserDefaults.standard.bool(forKey: enabledKey)
     }
 
     /// いま記録するか。設定がONでも、プライベートモードの間は記録しない（`PrivateModeSettings`）

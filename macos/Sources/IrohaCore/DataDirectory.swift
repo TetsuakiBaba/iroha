@@ -63,6 +63,8 @@ public enum DataDirectory {
     public static var userDictionaryURL: URL { url.appendingPathComponent("user-dictionary.json") }
     public static var learningURL: URL { url.appendingPathComponent("learning.json") }
     public static var userRewriteRulesURL: URL { url.appendingPathComponent("user-rewrite-rules.json") }
+    /// スキルの解除の状態（`SkillStore`）
+    public static var skillsURL: URL { url.appendingPathComponent("skills.json") }
     /// 入力履歴（予測変換の候補）。Macごとのファイルを入れるフォルダ（`InputHistoryStore`）
     public static var inputHistoryURL: URL { url.appendingPathComponent("input-history", isDirectory: true) }
     /// UserDefaultsの設定を他のMacと共有するためのスナップショット
@@ -73,7 +75,7 @@ public enum DataDirectory {
     /// 保存場所を移すときにコピーする対象（フォルダ直下の相対パス）
     public static let portableItems = [
         "models", "user-dictionary.json", "learning.json", "user-rewrite-rules.json", "settings.json",
-        "input-history",
+        "input-history", "skills.json",
     ]
 
     /// `from` の内容を `to` へコピーする。移行先に同名の項目が既にあればそれを優先して触らない

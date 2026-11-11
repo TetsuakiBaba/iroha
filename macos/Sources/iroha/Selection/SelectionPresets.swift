@@ -60,12 +60,12 @@ enum SelectionSettings {
     static let characterCountKey = "selectionCharacterCount"       // 選択した文字数の表示（既定OFF）
 
     static var isEnabled: Bool {
-        UserDefaults.standard.bool(forKey: enabledKey)
+        Skill.selectionEdit.isUnlocked && UserDefaults.standard.bool(forKey: enabledKey)
     }
 
     /// マウスで選択したときに文字数を出す。AI編集のON/OFFとは独立（アクセシビリティ権限は同じく必要）
     static var isCharacterCountEnabled: Bool {
-        UserDefaults.standard.bool(forKey: characterCountKey)
+        Skill.characterCount.isUnlocked && UserDefaults.standard.bool(forKey: characterCountKey)
     }
 
     static var triggerMode: SelectionTriggerMode {

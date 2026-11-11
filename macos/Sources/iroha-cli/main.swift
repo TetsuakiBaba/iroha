@@ -26,6 +26,8 @@ import IrohaMLX
 //                                                   変換が直る余地の計測（DocumentsCommand.swift の冒頭に使い方）
 //   iroha-cli voice <音声ファイル>... | --text <表記> : 「こえ」モードの確認（音声認識 → 読み → 変換。VoiceCommand.swift の
 //                                                   冒頭に使い方）
+//   iroha-cli skill id | code <ID> <作品の番号>… | verify <ID> <コード>
+//                                                 : スキルのコード（青空写経が出すコードと同じ計算）を作る・確かめる
 //   iroha-cli repl                                : 対話モード（1行ずつ変換、レイテンシ表示）
 //   iroha-cli lattice <読み>                       : 辞書ラティス（azooKey）の生の候補を表示（調査用）
 //   iroha-cli symbols [読み...]                    : 記号・顔文字・絵文字の表（Mozc のデータ）から引いた候補を表示。
@@ -1607,6 +1609,44 @@ case "terms":
         }
     } catch {
         FileHandle.standardError.write("\(error.localizedDescription)\n".data(using: .utf8)!)
+        exit(1)
+    }
+
+case "skill":
+    // スキルのコード（`SkillCode`。青空写経が出すコードと同じ計算）を作る・確かめる。開発と動作確認用
+    //   iroha-cli skill id                       新しい ID を 1 つ作って出す
+    //   iroha-cli skill code <ID> <作品の番号>…    その ID・作品のコードを出す（作品の番号は 2 文字。例: 01 02 03）
+    //   iroha-cli skill verify <ID> <コード>       コードがその ID のものか確かめる
+    let sub = arguments.count > 2 ? arguments[2] : ""
+    switch sub {
+    case "id":
+        print(SkillCode.formatID(SkillCode.newID()))
+    case "code" where arguments.count > 4:
+        guard let id = SkillCode.normalize(arguments[3]), SkillCode.isValidID(id) else {
+            FileHandle.standardError.write("ID の形が違います（8 文字。例: 7QF2-MX8K）\n".data(using: .utf8)!)
+            exit(1)
+        }
+        for raw in arguments[4...] {
+            guard let work = SkillCode.normalize(raw), let code = SkillCode.code(id: id, work: work) else {
+                FileHandle.standardError.write("作品の番号の形が違います（2 文字。例: 01）: \(raw)\n".data(using: .utf8)!)
+                exit(1)
+            }
+            print(SkillCode.format(code))
+        }
+    case "verify" where arguments.count > 4:
+        guard let id = SkillCode.normalize(arguments[3]), SkillCode.isValidID(id) else {
+            FileHandle.standardError.write("ID の形が違います（8 文字。例: 7QF2-MX8K）\n".data(using: .utf8)!)
+            exit(1)
+        }
+        if let work = SkillCode.work(ofCode: arguments[4], id: id) {
+            print("合っています（作品 \(work)）")
+        } else {
+            print("合っていません")
+            exit(1)
+        }
+    default:
+        FileHandle.standardError.write(
+            "使い方: iroha-cli skill id | code <ID> <作品の番号>… | verify <ID> <コード>\n".data(using: .utf8)!)
         exit(1)
     }
 
