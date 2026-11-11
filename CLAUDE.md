@@ -340,8 +340,8 @@ cd macos && swift build --build-system native && swift test --build-system nativ
     一致は `TapGestureDetectorTests.matchesRecordedTrials`（実験の指示つきの記録で 75/80・73/80。記録がなければ何もしない）で確かめる。
     規則を変えたら、先に実験の道具の `analyze` で記録を数え直して比べる
 - 「こえ」モード（`VoiceInput` / `VoiceInputSettings`、録音と認識は macOS 専用の `IrohaVoice`、認識結果を読みに分ける規則は
-  IrohaCore の `VoiceTranscript`、設定 > 入力 > 「こえ」モード、開発者モード・既定OFF・同期しない・試作。2026-11-10、
-  v0.17.0）は、決めた修飾キー（既定は右 ⌘）を押している間だけ録音し、離したら認識結果を未確定文字列に入れる
+  IrohaCore の `VoiceTranscript`、設定 > 入力 > 「こえ」モード、一般ユーザ向け・既定OFF・同期しない・試作。2026-11-10、
+  v0.17.0。2026-11-11 にユーザの判断で開発者モードから出した）は、決めた修飾キー（既定は右 ⌘）を押している間だけ録音し、離したら認識結果を未確定文字列に入れる
   （`IrohaInputController.insertVoiceTranscript`。確定はしない）。認識は macOS 26 の SpeechAnalyzer（端末内。
   `SpeechTranscriber` か `DictationTranscriber` を設定で選ぶ）。認識結果（漢字かな交じり）は `SystemReadingTokenizer` で
   読みに戻して合成中の読みの末尾に足し、ライブ変換に任せる。読みが付かない語（英字・数字）は `.alphabet` の固定部分にし、
