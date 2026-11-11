@@ -380,38 +380,18 @@
         <p>iroha-kkc は zenz-v2.5-dataset で学習しており、変換の候補を作るしくみには AzooKeyKanaKanjiConverter と azooKey の辞書データを使っています。これらの公開がなければ、iroha をこの形で作ることはできませんでした。Keita Miwa 氏に、心より感謝いたします。</p>
       </div>
       <div class="people-item">
-        <h3>協力者<small>研究室内の利用フィードバック</small></h3>
-        <p>研究室内で iroha を日々使い、フィードバックを寄せてくださった方々です。感謝いたします。</p>
-        <p><a href="https://github.com/shiratsumu">shiratsumu</a>、<a href="https://github.com/onoryu">onoryu</a>、Taisei Kato、Ryusei Akaike</p>
+        <h3>協力者<small>研究室の学生たち</small></h3>
+        <p>研究室内で iroha を日々使い、フィードバックを寄せてくださった方々です（研究室内の利用フィードバック協力者）: <a href="https://github.com/shiratsumu">shiratsumu</a>、<a href="https://github.com/onoryu">onoryu</a>、Taisei Kato、Ryusei Akaike。感謝いたします。</p>
+        <p>研究室の学生たちからは、次の気づきをもらいました。</p>
+        <ul>
+          <li>多くの若い人は、どの日本語入力を使っているかに関心がない。</li>
+          <li>キーボードを見ずに打つことは、思っていたほど誰もができているわけではない。</li>
+          <li>ライブ変換を日常的に使っているのは、それが Mac の標準だからというだけである。</li>
+          <li>ライブ変換は、変換の出来がもっと良くなれば、十分に使える。</li>
+        </ul>
+        <p>これらの気づきを与えてくれたことに、感謝いたします。</p>
       </div>
     </div>
-  </div>
-</section>
-
-<!-- ===== 打つことへの取り組み ===== -->
-<!-- iroha の名前の下に、キーを打つことへの取り組みをまとめる（2026-11-11、ユーザの考え）。
-     「タイプのいろは」はブラインドタッチの基本を学ぶページで、これから作る（できたらここにリンクを入れる）。
-     「青空写経」は公開済みの別のサイト。プログラミングの「写経」は載せない（2026-11-11、ユーザの判断）。
-     このサイトの見た目は「写経」「青空写経」に合わせてある -->
-<section id="typing" class="section" aria-labelledby="typing-title">
-  <div class="wrap">
-    <p class="eyebrow"><span>打つことの、いろは</span><span class="eyebrow-en">TYPING</span></p>
-    <h2 id="typing-title">打つことへの取り組み</h2>
-    <p class="section-lead">文字入力は、キーを打つことから始まります。iroha のほかに、打つことそのものに取り組む場所を用意しています。</p>
-    <ol class="works works-2">
-      <li>
-        <span class="mark" aria-hidden="true">一</span>
-        <h3>タイプのいろは</h3>
-        <p>キーボードを見ずに打つ、ブラインドタッチの基本を学ぶページです。</p>
-        <span class="soon">準備中</span>
-      </li>
-      <li>
-        <span class="mark" aria-hidden="true">二</span>
-        <h3>青空写経</h3>
-        <p>青空文庫の名作を、原稿用紙に一字ずつ書き写します。</p>
-        <a class="btn btn-ghost" href="https://tetsuakibaba.github.io/AozoraShakyo/">青空写経を開く</a>
-      </li>
-    </ol>
   </div>
 </section>
 
@@ -431,6 +411,10 @@
 </section>
 
 <!-- ===== ダウンロード ===== -->
+<!-- 4・5 は、入れたあとに打つことへ取り組む場所（2026-11-11、ユーザの考え）。「タイプのいろは」はブラインドタッチの基本を学ぶページで、
+     これから作る（できたら「準備中」をリンクに替える）。「青空写経」は公開済みの別のサイト。プログラミングの「写経」は載せない。
+     青空写経で 1 作品を書き上げると iroha のスキルを 1 つ解除できる仕組みは、アプリに入れてあるがまだリリースしていない
+     （v1.0.0 から。CLAUDE.md の「基本」と「スキル」の項）。リリースするまでは、そのことをここに書かない -->
 <section id="download" class="section" aria-labelledby="download-title">
   <div class="wrap split">
     <div>
@@ -440,6 +424,8 @@
         <li><b>ダウンロードして開く。</b>「最新版をダウンロード」のボタンから <code>iroha-x.y.z.zip</code> を入手し、展開した <b>iroha.app</b> をダブルクリックします。自動でインストールされます。</li>
         <li><b>入力ソースに追加する。</b>「システム設定」→「キーボード」→「入力ソース」の「編集」→「＋」→「日本語」→「iroha」を選びます。一覧に出ないときは、一度ログアウトしてから試してください。</li>
         <li><b>メニューバーで iroha を選ぶ。</b>初めて使うときに、変換に使うデータを 1 回だけダウンロードします。</li>
+        <li><b>タイプのいろはで、打ち方を身につける。</b>キーボードを見ずに打つ、ブラインドタッチの基本を学ぶページです（準備中）。</li>
+        <li><b>青空写経で、書き写す。</b>青空文庫の名作を、原稿用紙に一字ずつ書き写します。<a href="https://tetsuakibaba.github.io/AozoraShakyo/">青空写経を開く</a></li>
       </ol>
       <dl class="req">
         <dt>動作環境</dt><dd>macOS 14 以降、Apple シリコン（M1 以降）の Mac</dd>

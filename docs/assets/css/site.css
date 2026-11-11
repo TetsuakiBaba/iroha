@@ -288,20 +288,11 @@ section { scroll-margin-top: 72px; }
 /* 「機能」「人」の大きな見出し */
 h2.big-title { font-family: var(--font-brush); font-weight: 400; font-size: clamp(34px, 4.6vw, 52px); letter-spacing: .2em; line-height: 1.4; }
 .group-head .section-lead { margin-bottom: 0; }
-/* 取り組みの一覧（タイプのいろは・青空写経）。上に墨の線、漢数字、題、説明（青空写経の「進め方」と同じ形） */
-.works { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; margin: 0; padding: 0; list-style: none; }
-.works.works-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 760px; }
-@media (max-width: 760px) { .works, .works.works-2 { grid-template-columns: 1fr; } }
-.works li { padding-top: 18px; border-top: 1px solid var(--ink); display: flex; flex-direction: column; }
-.works .mark { font-family: var(--font-brush); font-size: 30px; line-height: 1; }
-.works h3 { margin: 16px 0 8px; font-size: 19px; letter-spacing: .14em; }
-.works p { margin: 0 0 18px; font-size: 13px; line-height: 2; color: var(--ink-soft); }
-.works .btn, .works .soon { margin-top: auto; align-self: flex-start; }
-.works .soon { font-size: 12px; letter-spacing: .2em; color: var(--ink-faint); border: 1px dashed var(--line); padding: 10px 20px; }
 /* 人をつなげる */
 .people-item { border-top: 1px solid var(--line); padding: 44px 0 24px; }
 .people-item h3 { font-family: var(--font-mincho); font-weight: 500; font-size: 19px; margin: 0 0 14px; letter-spacing: .14em; }
 .people-item p { margin: 0 0 14px; color: var(--ink-soft); line-height: 2; }
+.people-item ul { margin: 0 0 14px; padding-left: 1.5em; color: var(--ink-soft); line-height: 2; }
 /* 名前の横の、役割の小さな字 */
 .people-item h3 small { margin-left: 16px; font-family: var(--font-body); font-size: 11px; font-weight: 400; letter-spacing: .2em; color: var(--ink-faint); }
 h2 { font-family: var(--font-mincho); font-weight: 500; font-size: clamp(22px, 2.8vw, 28px); line-height: 1.7; margin: 0 0 22px; letter-spacing: .14em; }
