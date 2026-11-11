@@ -207,6 +207,28 @@ final class TypoNormalizerTests: XCTestCase {
         XCTAssertEqual(date?.corrected, "2がつ3にちにかくにんします")
     }
 
+    /// q6 に落として戻すと、各値が区切りの倍率の半分以内に収まり、絶対値が最大の値はそのまま戻る
+    func testQ6RoundTrip() {
+        var values: [Float] = []
+        for i in 0..<(32 * 3) { values.append(Float(i % 17) * 0.013 - 0.1 + (i == 40 ? -0.9 : 0)) }
+        let bytes = TypoWeightConversion.quantizeQ6(values[...])
+        XCTAssertEqual(bytes.count, TypoWeightConversion.q6Bytes(count: values.count))
+        XCTAssertEqual(bytes.count, 3 * 26)
+        let restored = TypoWeightConversion.dequantizeQ6(bytes, count: values.count)
+        for block in 0..<3 {
+            let slice = values[(block * 32)..<(block * 32 + 32)]
+            let peak = slice.max { abs($0) < abs($1) }!
+            let scale = abs(peak) / 32
+            for i in slice.indices {
+                XCTAssertEqual(restored[i], values[i], accuracy: scale * 0.5 + 1e-3, "区切り \(block) の \(i)")
+            }
+        }
+        XCTAssertEqual(restored[40], -0.9 + Float(40 % 17) * 0.013 - 0.1, accuracy: 1e-3)
+        XCTAssertTrue(TypoWeightConversion.isQ6Target(name: "enc.0.attn.q.weight", shape: [640, 640]))
+        XCTAssertFalse(TypoWeightConversion.isQ6Target(name: "emb.weight", shape: [137, 640]))
+        XCTAssertFalse(TypoWeightConversion.isQ6Target(name: "enc.0.attn.q.bias", shape: [640]))
+    }
+
     /// float16 の展開が 65,536 通り全部で `Float16` と一致する（`iroha-cli typo shrink` で配るので、
     /// 非正規化数（|x| < 2^-14）の指数を 1 つ間違えるといった取りこぼしが実際の重みに乗る）
     func testHalfToFloatMatchesFloat16() throws {

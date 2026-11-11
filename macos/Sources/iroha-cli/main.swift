@@ -41,7 +41,8 @@ import IrohaMLX
 //   iroha-cli typo prefix <test.jsonl> [--n 件数]  : 入力途中の読み（文字数で機械的に切る）に訂正を出す割合
 //   iroha-cli typo pause <test.jsonl> [--n 件数]   : 文節の境目（人が入力を止めそうな場所）で切ったときの誤検出率
 //   iroha-cli typo segments <test.jsonl> [--n 件数]: 採用した訂正が1文節に収まる割合（実際の変換・文節分割で測る）
-//   iroha-cli typo shrink <出力先>                 : 重みを float16 に落として半分にする（落としたら parity を再実行）
+//   iroha-cli typo shrink <出力先> [--q6]          : 重みを float16 に落として半分にする（落としたら parity を再実行）。
+//                                                  --q6 は線形層の重みを 6 ビットに落とす（約 1/5。iroha-typo-v3 から）
 //   iroha-cli typo <読み> [--threshold θ]          : 同モデルを1件試す（生成・margin・採否）
 //   環境変数 IROHA_TYPO_MODEL で打ち間違い訂正モデルの置き場所を、IROHA_TYPO_CATALOG で
 //   配布カタログのURLを上書きできる（既定は <データフォルダ>/models/typo-normalizer と GitHub）
@@ -1068,24 +1069,58 @@ case "typo":
                 FileHandle.standardError.write(message.data(using: .utf8)!)
                 exit(1)
             }
-            var halves = [UInt16](repeating: 0, count: totalFloats)
-            source.withUnsafeBytes { raw in
-                let floats = raw.bindMemory(to: Float.self)
+            let floats: [Float] = source.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+            var outputBytes = Data()
+            if typoPositional.contains("--q6") {
+                // テンソルごとに q6（線形層の重み）か float16（それ以外）で書き、manifest に形式とバイト位置を足す
+                guard var tensors = manifestObject["tensors"] as? [[String: Any]] else {
+                    FileHandle.standardError.write("manifest に tensors がありません\n".data(using: .utf8)!)
+                    exit(1)
+                }
+                for i in tensors.indices {
+                    guard let name = tensors[i]["name"] as? String, let shape = tensors[i]["shape"] as? [Int],
+                          let offset = tensors[i]["offset"] as? Int, let count = tensors[i]["count"] as? Int
+                    else { continue }
+                    let slice = floats[offset..<(offset + count)]
+                    let encoded: [UInt8]
+                    if TypoWeightConversion.isQ6Target(name: name, shape: shape) {
+                        encoded = TypoWeightConversion.quantizeQ6(slice)
+                        tensors[i]["format"] = "q6"
+                    } else {
+                        var bytes: [UInt8] = []
+                        bytes.reserveCapacity(count * 2)
+                        for x in slice {
+                            let half = TypoWeightConversion.floatToHalf(x)
+                            bytes.append(UInt8(half & 0xFF))
+                            bytes.append(UInt8(half >> 8))
+                        }
+                        encoded = bytes
+                        tensors[i]["format"] = "float16"
+                    }
+                    tensors[i]["byte_offset"] = outputBytes.count
+                    tensors[i]["bytes"] = encoded.count
+                    outputBytes.append(contentsOf: encoded)
+                }
+                manifestObject["tensors"] = tensors
+                manifestObject["dtype"] = "mixed"
+            } else {
+                var halves = [UInt16](repeating: 0, count: totalFloats)
                 for i in 0..<totalFloats { halves[i] = TypoWeightConversion.floatToHalf(floats[i]) }
+                outputBytes = halves.withUnsafeBufferPointer { Data(buffer: $0) }
+                manifestObject["dtype"] = "float16-le"
             }
-            manifestObject["dtype"] = "float16-le"
             try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
             try JSONSerialization.data(withJSONObject: manifestObject, options: [.prettyPrinted, .sortedKeys])
                 .write(to: destination.appendingPathComponent("manifest.json"))
-            try halves.withUnsafeBufferPointer { Data(buffer: $0) }
-                .write(to: destination.appendingPathComponent("weights.bin"))
+            try outputBytes.write(to: destination.appendingPathComponent("weights.bin"))
             // parity.json はそのまま（float32 で作った期待値と比べるのが目的）
             let parity = typoDirectory.appendingPathComponent("parity.json")
             if FileManager.default.fileExists(atPath: parity.path) {
                 try? FileManager.default.removeItem(at: destination.appendingPathComponent("parity.json"))
                 try FileManager.default.copyItem(at: parity, to: destination.appendingPathComponent("parity.json"))
             }
-            print("float16 で書き出しました: \(destination.path)  (\(totalFloats * 2 / 1_000_000)MB)")
+            print("\(manifestObject["dtype"] ?? "") で書き出しました: \(destination.path)  "
+                + String(format: "(%.1fMB)", Double(outputBytes.count) / 1_000_000))
             print("次に: iroha-cli typo parity --dir \(destination.path)")
         } catch {
             FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)

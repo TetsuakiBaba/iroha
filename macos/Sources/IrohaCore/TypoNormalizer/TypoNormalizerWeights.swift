@@ -31,8 +31,18 @@ struct TypoNormalizerManifest: Decodable {
     struct TensorInfo: Decodable {
         let name: String
         let shape: [Int]
+        /// 展開した後（float32）の位置と要素数
         let offset: Int
         let count: Int
+        /// dtype が "mixed" のときだけ: このテンソルの形式（"float16" か "q6"）と weights.bin の中のバイト位置・バイト数
+        let format: String?
+        let byteOffset: Int?
+        let bytes: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case name, shape, offset, count, format, bytes
+            case byteOffset = "byte_offset"
+        }
     }
 
     let config: Config
@@ -41,7 +51,8 @@ struct TypoNormalizerManifest: Decodable {
     let outputSize: Int
     /// id → 文字。先頭4つは特殊トークン（`<pad> <s> </s> <unk>`）
     let vocab: [String]
-    /// "float32-le"（書き出しの既定）または "float16-le"（`convert-typo-weights.swift` で縮めたもの）
+    /// "float32-le"（書き出しの既定）・"float16-le"（`iroha-cli typo shrink` で縮めたもの）・
+    /// "mixed"（`iroha-cli typo shrink --q6`。テンソルごとに q6 か float16。2026-11-11、iroha-typo-v3 から）
     let dtype: String
     let totalFloats: Int
     let tensors: [TensorInfo]
@@ -59,7 +70,8 @@ struct TypoNormalizerManifest: Decodable {
 /// weights.bin をメモリに展開して、テンソル名から先頭ポインタを引けるようにしたもの。
 ///
 /// float16 で書かれていれば読み込み時に float32 へ戻す（計算は常に float32。
-/// iroha-typo-v2 は 11.6M パラメータで展開しても 46.6MB なので、推論中の変換コストを持ち込む意味がない）。
+/// float16・q6 で書かれていても読み込み時に float32 へ戻す（計算は常に float32。iroha-typo-v3 は 46.2M パラメータで
+/// 展開すると 185MB。配布の大きさを減らすのが目的で、推論中に変換するコストは持ち込まない）。
 final class TypoNormalizerWeights {
 
     enum LoadError: Error, CustomStringConvertible {
@@ -101,6 +113,8 @@ final class TypoNormalizerWeights {
                 throw LoadError.sizeMismatch(expected: manifest.totalFloats * 2, actual: data.count)
             }
             floats = Self.decodeFloat16LE(data, count: manifest.totalFloats)
+        case "mixed":
+            floats = try Self.decodeMixed(data, manifest: manifest)
         default:
             throw LoadError.unsupportedDType(manifest.dtype)
         }
@@ -137,6 +151,35 @@ final class TypoNormalizerWeights {
         // x86_64 / arm64 はどちらもリトルエンディアンなのでバイト順の入れ替えは要らない。
         // 将来ビッグエンディアンへ移すことがあれば、ここで UInt32 として読んで littleEndian を通すこと
         assert(1.littleEndian == 1, "ビッグエンディアン環境では weights.bin のバイト順変換が要る")
+        return result
+    }
+
+    /// テンソルごとに形式の違う weights.bin を float32 に展開する（`TypoWeightConversion` の q6 と float16）
+    private static func decodeMixed(_ data: Data, manifest: TypoNormalizerManifest) throws -> [Float] {
+        var result = [Float](repeating: 0, count: manifest.totalFloats)
+        for info in manifest.tensors {
+            guard let format = info.format, let byteOffset = info.byteOffset, let bytes = info.bytes,
+                  byteOffset >= 0, bytes >= 0, byteOffset + bytes <= data.count,
+                  info.offset >= 0, info.count >= 0, info.offset + info.count <= result.count
+            else { throw LoadError.outOfRange(name: info.name, offset: info.offset, count: info.count) }
+            let chunk = data.subdata(in: byteOffset..<(byteOffset + bytes))
+            let values: [Float]
+            switch format {
+            case "float16":
+                guard bytes == info.count * 2 else {
+                    throw LoadError.sizeMismatch(expected: info.count * 2, actual: bytes)
+                }
+                values = decodeFloat16LE(chunk, count: info.count)
+            case "q6":
+                guard bytes == TypoWeightConversion.q6Bytes(count: info.count) else {
+                    throw LoadError.sizeMismatch(expected: TypoWeightConversion.q6Bytes(count: info.count), actual: bytes)
+                }
+                values = TypoWeightConversion.dequantizeQ6([UInt8](chunk), count: info.count)
+            default:
+                throw LoadError.unsupportedDType(format)
+            }
+            result.replaceSubrange(info.offset..<(info.offset + info.count), with: values)
+        }
         return result
     }
 
@@ -204,4 +247,70 @@ final class TypoNormalizerWeights {
 public enum TypoWeightConversion {
     public static func floatToHalf(_ value: Float) -> UInt16 { TypoNormalizerWeights.floatToHalf(value) }
     public static func halfToFloat(_ half: UInt16) -> Float { TypoNormalizerWeights.halfToFloat(half) }
+
+    // MARK: - q6（2026-11-11）
+    //
+    // 32 個ずつの区切りに float16 の倍率 d を 1 つ持ち、各値を -32〜31 の整数 q にする（x ≈ q × d）。
+    // d は区切りの中で絶対値が最大の値（符号つき）を -32 で割ったもの（llama.cpp の q4_0 / q5_0 と同じ決め方）。
+    // 1 区切り = 倍率 2 バイト + 6 ビット × 32 = 24 バイト（q + 32 を 4 つずつ 3 バイトに詰める）= 26 バイト。
+    // training/typo-normalizer/quant_sim.py の "q6" と同じ計算（丸めは最近接偶数）で、精度はそちらで測ってある
+    // （xxlarge 20 epoch で float32 と test の完全一致に差なし。MLX-HANDOFF.md 15 節）
+
+    public static let q6Block = 32
+
+    /// 量子化するテンソルか（線形層の重み。埋め込み・位置埋め込み・出力層・1 次元のものは float16 のまま）
+    public static func isQ6Target(name: String, shape: [Int]) -> Bool {
+        shape.count == 2 && shape[1] % q6Block == 0
+            && !["emb.", "pos_src.", "pos_tgt.", "head."].contains { name.hasPrefix($0) }
+    }
+
+    public static func q6Bytes(count: Int) -> Int { count / q6Block * 26 }
+
+    public static func quantizeQ6(_ values: ArraySlice<Float>) -> [UInt8] {
+        precondition(values.count % q6Block == 0)
+        var out: [UInt8] = []
+        out.reserveCapacity(q6Bytes(count: values.count))
+        var index = values.startIndex
+        while index < values.endIndex {
+            let block = values[index..<(index + q6Block)]
+            var peak: Float = 0
+            for x in block where abs(x) > abs(peak) { peak = x }
+            let scaleHalf = floatToHalf(peak / -32)
+            let scale = halfToFloat(scaleHalf)
+            let divisor = scale == 0 ? 1 : scale
+            out.append(UInt8(scaleHalf & 0xFF))
+            out.append(UInt8(scaleHalf >> 8))
+            var packed: [UInt32] = []
+            for x in block {
+                let q = min(31, max(-32, (x / divisor).rounded(.toNearestOrEven)))
+                packed.append(UInt32(Int(q) + 32))
+            }
+            for i in stride(from: 0, to: q6Block, by: 4) {
+                let word = packed[i] | packed[i + 1] << 6 | packed[i + 2] << 12 | packed[i + 3] << 18
+                out.append(UInt8(word & 0xFF))
+                out.append(UInt8((word >> 8) & 0xFF))
+                out.append(UInt8((word >> 16) & 0xFF))
+            }
+            index += q6Block
+        }
+        return out
+    }
+
+    public static func dequantizeQ6(_ bytes: [UInt8], count: Int) -> [Float] {
+        var result = [Float](repeating: 0, count: count)
+        var position = 0
+        for block in 0..<(count / q6Block) {
+            let scale = halfToFloat(UInt16(bytes[position]) | UInt16(bytes[position + 1]) << 8)
+            position += 2
+            for group in 0..<(q6Block / 4) {
+                let word = UInt32(bytes[position]) | UInt32(bytes[position + 1]) << 8 | UInt32(bytes[position + 2]) << 16
+                position += 3
+                for k in 0..<4 {
+                    let q = Int((word >> (6 * UInt32(k))) & 0x3F) - 32
+                    result[block * q6Block + group * 4 + k] = Float(q) * scale
+                }
+            }
+        }
+        return result
+    }
 }

@@ -2,8 +2,13 @@
 # 打ち間違い訂正モデル（training/typo-normalizer の export_model.py の書き出し）を
 # 配布用に整えて、GitHub Releases の専用タグへ公開する。
 #
-#   ./macos/scripts/publish-typo-normalizer.sh <書き出しディレクトリ> <モデルID> [--float32]
+#   ./macos/scripts/publish-typo-normalizer.sh <書き出しディレクトリ> <モデルID> [--float32 | --q6]
 #   例: ./macos/scripts/publish-typo-normalizer.sh export-scale-16x small-v1
+#
+#   --q6（2026-11-11、iroha-typo-v3 から）: 線形層の重みを 6 ビットに落とす（float16 の約 4 割）。量子化した重みは
+#   float32 の期待値とは数件ずれるので、照合には Q6_PARITY=<parity.json> で「同じ規則で量子化して戻した PyTorch の
+#   モデル」の期待値を渡す（training/typo-normalizer の quant_sim.py → export_model.py が作る）。完全に一致するはず。
+#   q6 の重みはアプリの v0.14.5 以降でないと読めないので、カタログは models/typo-normalizer-format2.json に載せる
 #
 #   LICENSE の「学習元」段落は既定で zenz-v2.5-dataset（small-v1 の学習元）。学習元の違うモデルは
 #   TRAINED_ON=<段落を書いたテキストファイル> で差し替える（ライセンスはモデルごとに変わりうる）
@@ -12,7 +17,7 @@
 #   1. 重みを float16 に落とす（既定。12.8MB → 6.4MB）
 #   2. 移植の照合（parity 200件）を回して、配るものが正しいことを確かめる
 #   3. LICENSE / README を添えて dist/typo-normalizer/<ID>/ に置く
-#   4. models/typo-normalizer.json（カタログ）の該当エントリを更新する
+#   4. カタログ（models/typo-normalizer-format2.json。q6 でなければ形式 1 の models/typo-normalizer.json にも載せられる）に入れる内容を表示する
 #   5. アップロードのコマンドを表示する（**実行はしない**）
 #
 # 配布の考えかた:
@@ -50,7 +55,14 @@ fi
 rm -rf "$DEST"
 mkdir -p "$DEST"
 SOURCE_DTYPE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dtype"])'   "$SOURCE/manifest.json")
-if [ "$PRECISION" = "--float32" ]; then
+if [ "$PRECISION" = "--q6" ]; then
+  if [ -z "${Q6_PARITY:-}" ] || [ ! -f "$Q6_PARITY" ]; then
+    echo "error: --q6 には Q6_PARITY=<量子化して戻したモデルの parity.json> が要ります" >&2
+    exit 1
+  fi
+  echo "==> 線形層を q6 に落とす"
+  IROHA_TYPO_MODEL="$SOURCE" "$CLI" typo shrink "$DEST" --q6 >/dev/null
+elif [ "$PRECISION" = "--float32" ]; then
   echo "==> float32 のまま用意"
   cp "$SOURCE/manifest.json" "$SOURCE/weights.bin" "$DEST/"
 elif [ "$SOURCE_DTYPE" = "float16-le" ]; then
@@ -62,7 +74,11 @@ else
 fi
 
 echo "==> 移植の照合（PyTorch実装と同じ数を出すか）"
-if [ -f "$SOURCE/parity.json" ]; then
+if [ "$PRECISION" = "--q6" ]; then
+  cp "$Q6_PARITY" "$DEST/parity.json"
+  "$CLI" typo parity --dir "$DEST"
+  rm "$DEST/parity.json"
+elif [ -f "$SOURCE/parity.json" ]; then
   cp "$SOURCE/parity.json" "$DEST/parity.json"
   "$CLI" typo parity --dir "$DEST"
   rm "$DEST/parity.json"   # 照合用なので配らない
@@ -116,7 +132,7 @@ WEIGHTS_SHA=$(shasum -a 256 "$DEST/weights.bin" | cut -d' ' -f1)
 BASE="https://github.com/$REPO/releases/download/$TAG"
 
 echo
-echo "models/typo-normalizer.json に入れる内容:"
+echo "models/typo-normalizer-format2.json に入れる内容:"
 cat <<JSON_EOF
     {
       "id": "$MODEL_ID",
@@ -150,5 +166,5 @@ echo "    --title 'Typo normalizer models' \\"
 echo "    --notes 'iroha の打ち間違い訂正モデル。CC BY-SA 4.0。アプリが設定からダウンロードします' || true"
 echo "  gh release upload $TAG --repo $REPO --clobber $DEST/upload/*"
 echo
-echo "そのあと models/typo-normalizer.json を更新して push すると、アプリから見えるようになります。"
+echo "そのあと models/typo-normalizer-format2.json を更新して push すると、アプリから見えるようになります。"
 echo "※ --prerelease を外さないこと（外すと releases/latest がこれを指し、更新通知が壊れます）"
