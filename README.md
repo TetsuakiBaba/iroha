@@ -323,7 +323,7 @@ Wikidata のかなの読みは固有名詞（人名・駅・神社と寺院・�
 
 **設定 > 入力 > 打ち間違いの訂正** をONにすると、**入力の手が止まったとき（既定500ms）に
 読みの打ち間違いを直してから変換する**。かな漢字変換の**手前**で「読み → 読み」を直す専用の
-小さなモデル（11.6Mパラメータの文字単位Transformer）を使う。
+モデル（46.2Mパラメータの文字単位Transformer、iroha-typo-v3）を使う。
 
 ```
 をわぇてけいやくする  →  候補ウィンドウに「分けて」（訂正後の読み「をわけて」の変換結果）
@@ -348,11 +348,11 @@ fとんはあらったほうが →  「布団は」（ローマ字がかなに�
   確信の強さは大きいほど訂正が減り、正しく打った読みを壊すことも減る
 - 入力中は「読みの末尾に文字を足すだけ」の訂正はしない。打ちかけの読みは常に終わりが
   足りなく見えるので、モデルが句読点で文を締めようとする（`こえて` → `こえて、`）のを防ぐ
-- 未確定のローマ字が残っている間（`k` と打った状態など）は走らない。CPU 1スレッドで平均5ms前後
+- 未確定のローマ字が残っている間（`k` と打った状態など）は走らない。CPU 1スレッドで平均23ms前後（入力の休止のあとに動くので、打鍵は待たせない）
 - 読みが48文字を超えるとき・かな以外の文字が混じるときは何もしない。数字（`11じにあいましょう`）は
   書き換えずに残し、前後の読みだけを直す
 - 「し」を `si` と打つ訓令式の打ち方の打ち間違い（`onegaismasu` → `おねがいsます`）も直せる（iroha-typo-v2 から）
-- モデルはアプリに含まれず、有効にすると約23MBを1回だけダウンロードする（下記「打ち間違い訂正モデルの配布」）
+- モデルはアプリに含まれず、有効にすると約38MBを1回だけダウンロードする（読み込むと約185MBのメモリを使う）（下記「打ち間違い訂正モデルの配布」）
 
 ### 「こえ」モード（試作、設定でON、既定OFF）
 
@@ -434,8 +434,10 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
 打ち間違いの訂正（上記）のモデルは**アプリに同梱していない**。設定でONにしたときに
 アプリが取りにいく（重みは本体コード(MIT)と別ライセンス CC BY-SA 4.0 なので、配布物を分けてある）。
 
-- 一覧: [models/typo-normalizer.json](models/typo-normalizer.json)（このリポジトリのファイル）。
-  アプリが焼き込んでいるのは**このURLだけ**なので、モデルの追加・差し替えはカタログの更新だけで済む
+- 一覧: [models/typo-normalizer-format2.json](models/typo-normalizer-format2.json)（このリポジトリのファイル）。
+  アプリが焼き込んでいるのは**このURLだけ**なので、モデルの追加・差し替えはカタログの更新だけで済む。
+  v0.17 までのアプリは形式 1 の [models/typo-normalizer.json](models/typo-normalizer.json)（iroha-typo-v2）を読む。
+  形式 2 は線形層を 6 ビットに落とした重み（`--q6`、iroha-typo-v3 から）を含むので、古いアプリが読まないよう別のファイルにした
 - 重み本体: GitHub Releases の専用タグ `typo-normalizer-v1`（アプリのリリース `vX.Y.Z` とは別系列）
 - 取得したものは `<データフォルダ>/models/typo-normalizer/` に入る。保存場所を共有フォルダに
   していれば、1回落とすだけで全部のMacで使える
@@ -445,10 +447,11 @@ log stream --predicate 'process == "iroha"' --style compact  # IMEのログ
 新しいモデルを公開する手順:
 
 ```sh
-# 1. 書き出しを配布用に整える（float16化 + 移植の照合 + LICENSE/README 添付）
-./macos/scripts/publish-typo-normalizer.sh <書き出しディレクトリ> <モデルID>
+# 1. 書き出しを配布用に整える（float16化 + 移植の照合 + LICENSE/README 添付）。
+#    --q6 で線形層を 6 ビットに落とす（Q6_PARITY に量子化して戻したモデルの parity.json を渡す。スクリプトの先頭を参照）
+./macos/scripts/publish-typo-normalizer.sh <書き出しディレクトリ> <モデルID> [--q6]
 # 2. 表示された gh コマンドで Release へアップロード（**必ず --prerelease**）
-# 3. 表示された JSON を models/typo-normalizer.json に入れて push
+# 3. 表示された JSON を models/typo-normalizer-format2.json に入れて push
 # 4. 確認
 .build/release/iroha-cli typo catalog          # 一覧が見えるか
 .build/release/iroha-cli typo catalog install  # 実際に取得・照合・設置できるか

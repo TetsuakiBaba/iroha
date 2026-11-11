@@ -53,7 +53,7 @@ mkdir -p "$APP/Contents/Resources/Symbols"
 cp "$SYMBOLS"/{symbol.tsv,emoticon.tsv,categorized.tsv,emoji_data.tsv,LICENSE} "$APP/Contents/Resources/Symbols/"
 
 # 打ち間違い訂正モデルは**同梱しない**。設定でONにしたときに
-# TypoNormalizerDownloader が models/typo-normalizer.json 経由で取得する
+# TypoNormalizerDownloader が models/typo-normalizer-format2.json 経由で取得する
 # （重みは本体コード(MIT)と別ライセンス(CC BY-SA 4.0)なので配布物を分けてある）。
 # 公開の手順は ./macos/scripts/publish-typo-normalizer.sh
 # SwiftPM依存パッケージのリソースバンドル（Bundle.module の解決先。存在するものだけ）

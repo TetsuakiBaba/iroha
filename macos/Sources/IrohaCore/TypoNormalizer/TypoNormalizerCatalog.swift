@@ -1,6 +1,9 @@
 import Foundation
 
-/// 配布している打ち間違い訂正モデルの一覧（`models/typo-normalizer.json`）。
+/// 配布している打ち間違い訂正モデルの一覧（`models/typo-normalizer-format2.json`）。
+///
+/// 形式 2（2026-11-11）は量子化した重み（manifest の dtype が "mixed"）を含みうる。それを読めない v0.17 までの
+/// アプリは形式 1 の `models/typo-normalizer.json`（iroha-typo-v2、float16）を読み続けるので、別のファイルにした
 ///
 /// アプリに焼き込むのは**カタログのURLだけ**で、モデルの追加・差し替え・URL変更は
 /// カタログを更新するだけで済ませる（アプリの更新を待たせない）。重み本体は
@@ -66,7 +69,7 @@ public struct TypoNormalizerCatalog: Decodable, Sendable {
     public func license(for model: Model) -> String? { model.license ?? license }
     public func attribution(for model: Model) -> String? { model.attribution ?? attribution }
 
-    public static let supportedFormatVersion = 1
+    public static let supportedFormatVersion = 2
 
     /// カタログの場所。`IROHA_TYPO_CATALOG` で差し替えられる（開発・検証用）
     public static var defaultURL: URL {
@@ -75,7 +78,7 @@ public struct TypoNormalizerCatalog: Decodable, Sendable {
             return url
         }
         return URL(string:
-            "https://raw.githubusercontent.com/TetsuakiBaba/iroha/main/models/typo-normalizer.json")!
+            "https://raw.githubusercontent.com/TetsuakiBaba/iroha/main/models/typo-normalizer-format2.json")!
     }
 
     public func model(id: String) -> Model? { models.first { $0.id == id } }

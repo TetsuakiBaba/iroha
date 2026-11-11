@@ -238,7 +238,8 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   ・**モデルは .app に同梱しない。**設定でONにした時点でダウンロードする
     （`TypoNormalizerFetcher`（IrohaCore、取得・照合・設置）＋ `TypoNormalizerDownloader`（表示だけ））。
     重みは本体コード(MIT)と別ライセンス CC BY-SA 4.0 なので、配布物を分けてある。
-    一覧は `models/typo-normalizer.json`（アプリが焼き込むのはこのURLだけ。モデルの追加・差し替えは
+    一覧は `models/typo-normalizer-format2.json`（v0.17 までのアプリは形式 1 の `models/typo-normalizer.json`。q6 の重みを
+    読めないため、2026-11-11 に分けた。アプリが焼き込むのはこのURLだけ。モデルの追加・差し替えは
     カタログ更新だけで済む）、重み本体は Release タグ `typo-normalizer-v1`。
     公開は `./macos/scripts/publish-typo-normalizer.sh <書き出しdir> <ID>`。
     **必ず `--prerelease` で作ること**（通常リリースにすると `releases/latest` がこれを指し、
