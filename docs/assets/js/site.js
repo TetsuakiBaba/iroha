@@ -990,25 +990,12 @@
     targets.forEach((t) => io.observe(t));
   }
 
-  // ---------- 開発者モードの説明（切り替えで出す。ページを開き直すと閉じた状態に戻る） ----------
-  function setupDevmode() {
-    const toggle = document.getElementById("devmode-toggle");
-    const body = document.getElementById("devmode-body");
-    if (!toggle || !body) return;
-    toggle.addEventListener("click", () => {
-      const on = toggle.getAttribute("aria-checked") !== "true";
-      toggle.setAttribute("aria-checked", String(on));
-      body.hidden = !on;
-    });
-  }
-
   runHero();
   runSpeed();
   runTypo();
   runTerms();
   runRetype();
   runKoe();
-  setupDevmode();
   setupReveal();
   setupCitations();
 })();
