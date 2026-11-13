@@ -260,6 +260,8 @@ struct Capture {
     std::optional<std::u32string> text;
     // 文章は読めないが、入力欄・文書の上で選んだ（メニューで選んだ時点で Ctrl+C で取る）
     bool textControl = false;
+    // ショートカットで呼んだプリセット（kOnDemandHotkeyId ならその場で指示）。マウスで選んだときは -1
+    int action = -1;
 };
 
 // 前面の窓のフォーカスのある部品から、選んでいる文章を読む（UI Automation。呼び出し側で COM を初期化しておく）
@@ -541,7 +543,18 @@ void SelectionAssistant::Impl::OnHotkey(int id) {
         std::find(active.excludedApps.begin(), active.excludedApps.end(), process) != active.excludedApps.end()) {
         return;
     }
-    RunAction(id, window, CaptureSelection(window));
+    // 選んでいる文章は、マウスのときと同じく先に UI Automation で読む（読めなければ OnCaptured で Ctrl+C で取る）
+    Capture capture;
+    capture.serial = ++captureSerial;
+    capture.window = window;
+    GetCursorPos(&capture.point);
+    capture.action = id;
+    KillTimer(hidden.load(), kTimerCapture);
+    {
+        std::lock_guard<std::mutex> lock(automationMutex);
+        automationJob = capture;
+    }
+    automationCondition.notify_one();
 }
 
 void SelectionAssistant::Impl::RunAction(int id, HWND window, const std::optional<std::u32string>& selected) {
@@ -879,6 +892,19 @@ void SelectionAssistant::Impl::OnGesture(POINT point, bool alt) {
 
 void SelectionAssistant::Impl::OnCaptured(const Capture& capture) {
     if (capture.serial != captureSerial || phase != Phase::Hidden) return;
+    if (capture.action >= 0) {
+        // ショートカット: 読めた文章にそのまま使う。読めなければクリップボード経由で取る
+        if (!capture.window || !IsWindow(capture.window) || (panel && IsWindowVisible(panel))) return;
+        std::optional<std::u32string> selected;
+        if (capture.text && !TrimWhitespace(*capture.text).empty()) {
+            selected = capture.text;
+        } else {
+            selected = CaptureSelection(capture.window);
+            if (!selected) log("selection: no selected text was found (UI Automation and Ctrl+C)");
+        }
+        RunAction(capture.action, capture.window, selected);
+        return;
+    }
     if (composing && composing()) return;
     const std::wstring process = ProcessName(capture.window);
     if (process.empty() || process.rfind(L"iroha", 0) == 0 ||
