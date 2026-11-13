@@ -78,7 +78,7 @@ cd macos && swift build --build-system native && swift test --build-system nativ
 
 | 役割 | ディレクトリ | Git |
 |---|---|---|
-| アプリ | `macos/`（Swift パッケージ）・`windows/`（TSF） | 追跡 |
+| アプリ | `macos/`（Swift パッケージ）・`windows/`（TSF）・`linux/`（IBus。作成中） | 追跡 |
 | 配布・評価 | `models/`（アプリが取得するモデルの一覧）・`testdata/`（評価セット。`ajimee/` は追跡外） | 追跡 |
 | 学習データを作る | `dataset/iroha-typo-normalizer/`（コードは `dataset/iroha-typo-normalizer/src/iroha/`、`python -m iroha …`。作ったデータは `dataset/iroha-typo-normalizer/data/` で追跡外） | コードだけ追跡 |
 | 学習 | `training/`（直下がかな漢字変換モデル、`typo-normalizer/` が打ち間違いの訂正） | 追跡外 |
@@ -569,6 +569,33 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   プラットフォーム非依存でそのまま使う。`training/` は学習作業中のことがあるので
   **明示的な指示なしに変更しない**
 - リリースは上記「両プラットフォームのリリース方針」に従う（単一タグ・単一Release）
+
+## Linux版の開発（linux/、2026-11-13 開始）
+
+- **ソースは Windows版と別に持つ**（ユーザの判断）。`linux/iroha-core`・`linux/iroha-cli`・`linux/shared` は
+  Windows版の同名のものをコミット 2de5ee1 で写したもので、以後は Linux版として別に保つ。`linux/` から `windows/` を
+  参照しない（ビルドも include も）。macOS版の仕様の変更は、Windows版と Linux版にそれぞれ写す。辞書ラティスは
+  macOS版でもほぼ直さず、直すときは大工事になるので、そのときにそれぞれ直す（ユーザの判断）
+- フロントエンドは **IBus を先に作る**（GNOME の標準。Wayland の GNOME では IBus しか正式に動かない）。fcitx5 は後。
+  IBus のエンジンは ibus-daemon が起動する別のプロセスなので、Windows版の変換サーバと TIP の分け方は採らず、
+  エンジンのプロセスに変換エンジン・`SessionManager` を直接置く。設定からエンジン一式を組み立てる部分は
+  `iroha/engine_host.h`（Windows版の iroha-server の `ServerState` / `ServerBackend` を移したもの。iroha-cli の `session` も使う）
+- データフォルダは `IROHA_DATA_DIR` > `$XDG_DATA_HOME/iroha` > `~/.local/share/iroha`（`iroha/platform.h`）。
+  中のファイルの形式は macOS版・Windows版と同じ。パスは UTF-8 のまま扱う（`PathFromUtf8` / `PathToUtf8`。
+  Windows版の `Utf32ToUtf16` でパスを作る書き方を持ち込まない）
+- ビルド（要るパッケージ: `cmake ninja-build libibus-1.0-dev libglib2.0-dev`。GPU マシンには 2026-11-14 に入れた）:
+  ```sh
+  ./linux/scripts/build-llama.sh      # vendor/dist-linux へ（中間ファイルは ~/.cache/iroha/llama-build-linux）
+  cmake -S linux -B linux/build -G Ninja && cmake --build linux/build
+  ./linux/build/iroha-core/iroha-core-tests
+  ./linux/scripts/fetch-model.sh      # 既定のモデルをデータフォルダへ
+  ```
+  `vendor/llama.cpp/build` は macOS版のビルド先なので使わない。`linux/build` は Dropbox の同期から外す
+  （`python3 -c "import os; os.setxattr('linux/build','user.com.dropbox.ignored',b'1')"`。マシンごとに要る）
+- 移植の確かめ方は Windows版と同じ: `iroha-cli lattice-parity`（macOS版の候補の並び。
+  `git show v0.12.0:experiments/jev/ajimee-candidates.jsonl`）と、AJIMEE の 2 条件（`IROHA_LATTICE=off` / `always`）。
+  インストールせずに入力の動きを見るのは `iroha-cli session <キー列>`（このプロセスの中でセッションを動かす）
+- 進み具合と未対応のものは `linux/README.md`
 
 ## 自作変換モデル（文字単位T5）の学習（training/t5/、2026-09-11設計）
 

@@ -13,8 +13,10 @@ vendor/term-dictionary-sources/
 /export-scale-16x/
 vendor/dist-windows/
 vendor/dist-windows-vulkan/
+vendor/dist-linux/
 windows/**/build/
 windows/build-vulkan/
+linux/build/
 *.gguf
 .venv/
 # 配布用にまとめたモデル（publish-typo-normalizer.sh の出力。Releaseへ上げるだけで追跡しない）
