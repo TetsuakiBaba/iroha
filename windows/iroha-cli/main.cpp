@@ -18,6 +18,12 @@
 //   iroha-cli model-selfcheck <同じ形式.jsonl> [--limit N]
 //                                                 : モデルの採点が生成と辻褄が合うかを確かめる（macOS版の出力は使わない）
 //   iroha-cli remote <読み>                        : 変換サーバ経由の変換（IPC検証用）
+//   iroha-cli session [--context 文脈] [--interval ミリ秒] <キー列>
+//                                                 : 変換サーバのセッションにキーを順に送り、TIP が画面に出す内容を見る。
+//                                                   キー列は打つ文字をそのまま並べ、特別なキーは <space> <enter> <esc>
+//                                                   <bs> <left> <right> <up> <down>（Shift は <S-left> のように）と書く。
+//                                                   既定ではキーごとにライブ変換の到着を待つ。--interval を付けると
+//                                                   待たずにその間隔で送る（変換が打鍵に追いつかないときの表示を見る）
 //   iroha-cli repl                                : 対話モード
 //   環境変数 IROHA_MODEL でモデルパス、IROHA_LORA で追加学習した LoRA アダプタ（GGUF）、
 //   IROHA_USER_DICT でユーザ辞書、IROHA_LEARNING で学習結果のファイルを上書き可能。
@@ -805,6 +811,136 @@ int RunModelSelfCheck(const std::wstring& referencePath, int limit) {
     return maxBatchDifference < 0.01 && generateBelow == 0 ? 0 : 2;
 }
 
+// ---- session: 変換サーバのセッションにキーを送る ----
+
+struct SessionKeyStroke {
+    iroha::SessionKey key = iroha::SessionKey::Character;
+    char32_t character = 0;
+    bool shift = false;
+    std::u32string label;
+};
+
+// キー列を読む。<...> は特別なキー、それ以外は1文字ずつ
+bool ParseKeyStrokes(const std::u32string& text, std::vector<SessionKeyStroke>* strokes) {
+    static const std::pair<const char32_t*, iroha::SessionKey> kNames[] = {
+        {U"space", iroha::SessionKey::Space}, {U"enter", iroha::SessionKey::Enter},
+        {U"esc", iroha::SessionKey::Escape},  {U"bs", iroha::SessionKey::Backspace},
+        {U"left", iroha::SessionKey::Left},   {U"right", iroha::SessionKey::Right},
+        {U"up", iroha::SessionKey::Up},       {U"down", iroha::SessionKey::Down},
+        {U"commit", iroha::SessionKey::CommitNow}, {U"reset", iroha::SessionKey::Reset},
+    };
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] != U'<') {
+            strokes->push_back({iroha::SessionKey::Character, text[i], false, std::u32string(1, text[i])});
+            continue;
+        }
+        const size_t close = text.find(U'>', i);
+        if (close == std::u32string::npos) return false;
+        std::u32string name = text.substr(i + 1, close - i - 1);
+        SessionKeyStroke stroke;
+        stroke.label = U"<" + name + U">";
+        if (name.rfind(U"S-", 0) == 0) {
+            stroke.shift = true;
+            name = name.substr(2);
+        }
+        bool found = false;
+        for (const auto& entry : kNames) {
+            if (name == entry.first) {
+                stroke.key = entry.second;
+                found = true;
+            }
+        }
+        if (!found) return false;
+        strokes->push_back(stroke);
+        i = close;
+    }
+    return true;
+}
+
+// TIP が画面に出す内容を1行にする: 確定した文字列、未確定文字列（選んでいる文節は [ ] で囲む）、候補
+void PrintSessionOutput(const std::u32string& label, const iroha::SessionOutput& output, double ms) {
+    std::string line = Utf32ToUtf8(label);
+    while (line.size() < 9) line += ' ';
+    line += "| ";
+    if (!output.commit.empty()) line += "確定「" + Utf32ToUtf8(output.commit) + "」 ";
+    for (const auto& span : output.preedit) {
+        const bool selected = span.style == iroha::SessionOutput::kSelectedSegment;
+        line += (selected ? "[" : "") + Utf32ToUtf8(span.text) + (selected ? "]" : "");
+        if (output.segmenting && !selected) line += " ";
+    }
+    if (output.livePending) line += " …";
+    if (output.candidatesVisible) {
+        line += "  候補:";
+        for (size_t i = 0; i < output.candidates.size(); ++i) {
+            line += i == output.candidateIndex ? " *" : " ";
+            line += Utf32ToUtf8(output.candidates[i]);
+        }
+    }
+    char timing[32];
+    std::snprintf(timing, sizeof(timing), "  [%.1fms]", ms);
+    PrintUtf8(line + timing + "\n");
+}
+
+int RunSession(const std::vector<SessionKeyStroke>& strokes, const std::u32string* context,
+               int intervalMs) {
+    // TIP と同じく、起動ごとに違う番号を使う
+    const uint64_t sessionId =
+        (static_cast<uint64_t>(GetCurrentProcessId()) << 32) | GetTickCount();
+    const auto call = [](const std::vector<char>& request, iroha::ipc::SessionResponse* response) {
+        std::vector<char> bytes;
+        if (!iroha::ipc::Call(request, &bytes, 15000)) {
+            std::fprintf(stderr, "サーバに接続できません（iroha-server.exe を起動してください）\n");
+            return false;
+        }
+        *response = iroha::ipc::ParseSessionResponse(bytes);
+        if (!response->ok) {
+            std::fprintf(stderr, "サーバエラー: %s\n", response->error.c_str());
+            return false;
+        }
+        return true;
+    };
+    // ライブ変換が届くまで問い合わせる（TIP のタイマーにあたる）。届くたびに表示する
+    const auto settle = [&](iroha::SessionOutput* output) {
+        const auto start = std::chrono::steady_clock::now();
+        while (output->livePending && MillisecondsSince(start) < 10000) {
+            Sleep(5);
+            iroha::ipc::SessionResponse response;
+            if (!call(iroha::ipc::BuildSessionPollRequest(sessionId, output->revision), &response)) {
+                return false;
+            }
+            if (!response.changed) continue;
+            *output = response.output;
+            PrintSessionOutput(U"  (届く)", *output, MillisecondsSince(start));
+        }
+        return true;
+    };
+
+    iroha::SessionOutput output;
+    bool composing = false;
+    for (const SessionKeyStroke& stroke : strokes) {
+        const auto start = std::chrono::steady_clock::now();
+        iroha::ipc::SessionResponse response;
+        // 左文脈は、合成していないときのキーにだけ付ける（TIP と同じ）
+        if (!call(iroha::ipc::BuildSessionKeyRequest(sessionId, stroke.key, stroke.character,
+                                                     stroke.shift, composing ? nullptr : context),
+                  &response)) {
+            return 1;
+        }
+        output = response.output;
+        composing = output.Composing();
+        PrintSessionOutput(stroke.label, output, MillisecondsSince(start));
+        if (intervalMs < 0) {
+            if (!settle(&output)) return 1;
+        } else {
+            Sleep(static_cast<DWORD>(intervalMs));
+        }
+    }
+    if (!settle(&output)) return 1;
+    std::vector<char> ignored;
+    iroha::ipc::Call(iroha::ipc::BuildSessionEndRequest(sessionId), &ignored, 2000);
+    return 0;
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -845,6 +981,31 @@ int wmain(int argc, wchar_t** argv) {
         }
         std::printf("  [%.1fms]\n", ms);
         return 0;
+    }
+
+    if (command == U"session" && args.size() >= 3) {
+        std::u32string context;
+        bool hasContext = false;
+        int intervalMs = -1;
+        size_t index = 2;
+        while (index + 2 < args.size() && args[index].rfind(U"--", 0) == 0) {
+            if (args[index] == U"--context") {
+                context = args[index + 1];
+                hasContext = true;
+            } else if (args[index] == U"--interval") {
+                intervalMs = std::atoi(Utf32ToUtf8(args[index + 1]).c_str());
+            } else {
+                std::fprintf(stderr, "不明な引数: %s\n", Utf32ToUtf8(args[index]).c_str());
+                return 1;
+            }
+            index += 2;
+        }
+        std::vector<SessionKeyStroke> strokes;
+        if (!ParseKeyStrokes(args[index], &strokes)) {
+            std::fprintf(stderr, "キー列を読めません\n");
+            return 1;
+        }
+        return RunSession(strokes, hasContext ? &context : nullptr, intervalMs);
     }
 
     if (command == U"lattice" && args.size() >= 3) {

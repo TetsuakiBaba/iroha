@@ -307,6 +307,12 @@ bool ZenzEngine::EnsureLoaded(std::string* error) {
     return true;
 }
 
+bool ZenzEngine::Cancelled(std::string* error) const {
+    if (!cancelCheck_ || !cancelCheck_()) return false;
+    if (error) *error = kCancelledError;
+    return true;
+}
+
 void ZenzEngine::ResetMemory() {
     llama_memory_clear(llama_get_memory(runtime_->context), true);
     runtime_->cached.clear();
@@ -571,6 +577,7 @@ bool ZenzEngine::Generate(const std::vector<int32_t>& promptTokens,
     const int maxNewTokens = std::max(
         0, std::min(static_cast<int>(GraphemeCount(reading)) * 3 + 8, remainingContext));
     for (int step = 0; step < maxNewTokens; ++step) {
+        if (Cancelled(error)) return false;
         const auto picked = SelectToken(logits, vocabSize, rt.tokenTexts,
                                         rt.tokenIsTerminator, constraint, mask);
         if (!picked) break;
@@ -731,6 +738,7 @@ bool ZenzEngine::Score(const std::vector<std::u32string>& candidates,
     const size_t capacity = llama_n_ctx(ctx);
     scores->assign(candidates.size(), kNegativeInfinity);
     for (size_t index = 0; index < candidates.size(); ++index) {
+        if (Cancelled(error)) return false;
         std::vector<llama_token> tokens;
         if (!Tokenize(rt.vocab, candidates[index], /*addSpecial=*/false, &tokens, error)) {
             return false;

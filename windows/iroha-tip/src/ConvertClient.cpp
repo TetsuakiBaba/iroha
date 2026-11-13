@@ -1,8 +1,9 @@
 #include "ConvertClient.h"
 
+#include <vector>
+
 #include "Globals.h"
 #include "ipc_protocol.h"
-#include "iroha/unicode.h"
 
 namespace ConvertClient {
 
@@ -38,51 +39,64 @@ void SpawnServer() {
     }
 }
 
+bool ParseOutput(const std::vector<char>& bytes, bool* changed, iroha::SessionOutput* output) {
+    iroha::ipc::SessionResponse response = iroha::ipc::ParseSessionResponse(bytes);
+    if (!response.ok) {
+        IrohaLog(L"session: server error");
+        return false;
+    }
+    if (changed) *changed = response.changed;
+    if (response.changed && output) *output = std::move(response.output);
+    return true;
+}
+
 } // namespace
 
 void EnsureServer() {
     if (!Ping(500)) SpawnServer();
 }
 
-bool Convert(const std::u32string& reading, const std::u32string& context,
-             int candidateCount, std::vector<std::u32string>* candidates) {
-    candidates->clear();
-    const std::vector<char> request = iroha::ipc::BuildConvertRequest(
-        iroha::Utf32ToUtf8(reading), iroha::Utf32ToUtf8(context),
-        static_cast<uint32_t>(candidateCount));
-
+bool SendKey(uint64_t sessionId, iroha::SessionKey key, char32_t character, bool shift,
+             const std::u32string* leftContext, iroha::SessionOutput* output) {
+    const std::vector<char> request =
+        iroha::ipc::BuildSessionKeyRequest(sessionId, key, character, shift, leftContext);
     std::vector<char> responseBytes;
-    // 変換自体に時間がかかる（CPUで数百ms、コールドスタート時はモデルロード込み）
+    // Space での変換・候補の取得はこの呼び出しの中で待つ（CPUで数百ms）
     if (!iroha::ipc::Call(request, &responseBytes, 15000)) {
         // サーバが落ちている可能性が高い。起動して少し待ってから1回だけ再試行
         SpawnServer();
         for (int i = 0; i < 20 && !Ping(500); ++i) Sleep(250);
         if (!iroha::ipc::Call(request, &responseBytes, 15000)) {
-            IrohaLog(L"convert: server unreachable");
+            IrohaLog(L"session: server unreachable");
             return false;
         }
     }
-
-    const iroha::ipc::ConvertResponse response =
-        iroha::ipc::ParseConvertResponse(responseBytes);
-    if (!response.ok) {
-        IrohaLog(L"convert: server error");
-        return false;
-    }
-    for (const auto& candidate : response.candidates) {
-        candidates->push_back(iroha::Utf8ToUtf32(candidate));
-    }
-    return true;
+    bool changed = false;
+    if (!ParseOutput(responseBytes, &changed, output)) return false;
+    return changed; // キーへの返事には必ず表示が入っている
 }
 
-void NotifyCommit(const std::u32string& reading, const std::u32string& committed,
-                  const std::u32string& baseline) {
+void ResetSession(uint64_t sessionId) {
     std::vector<char> response;
-    iroha::ipc::Call(
-        iroha::ipc::BuildRecordRequest(iroha::Utf32ToUtf8(reading),
-                                       iroha::Utf32ToUtf8(committed),
-                                       iroha::Utf32ToUtf8(baseline)),
-        &response, 2000);
+    iroha::ipc::Call(iroha::ipc::BuildSessionKeyRequest(sessionId, iroha::SessionKey::Reset, 0,
+                                                        false, nullptr),
+                     &response, 500, /*attempts=*/1);
+}
+
+bool Poll(uint64_t sessionId, uint64_t revision, bool* changed, iroha::SessionOutput* output) {
+    *changed = false;
+    std::vector<char> responseBytes;
+    if (!iroha::ipc::Call(iroha::ipc::BuildSessionPollRequest(sessionId, revision),
+                          &responseBytes, 200, /*attempts=*/1)) {
+        return false;
+    }
+    return ParseOutput(responseBytes, changed, output);
+}
+
+void EndSession(uint64_t sessionId) {
+    std::vector<char> response;
+    iroha::ipc::Call(iroha::ipc::BuildSessionEndRequest(sessionId), &response, 500,
+                     /*attempts=*/1);
 }
 
 } // namespace ConvertClient

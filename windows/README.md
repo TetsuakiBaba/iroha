@@ -12,13 +12,14 @@ WindowsのIME（TSF: Text Services Framework）実装。方針（2026-09決定�
 ## 構成
 
 ```
-iroha-tip/      TSFテキストサービスDLL（C++/COM。変換ロジックを持たない）
-iroha-server/   変換サーバ常駐プロセス（llama.cpp + ZenzEngineをホスト）
+iroha-tip/      TSFテキストサービスDLL（C++/COM。変換ロジックも入力の状態も持たない）
+iroha-server/   変換サーバ常駐プロセス（llama.cpp + ZenzEngineをホスト。入力の状態もここに持つ）
 iroha-core/     変換エンジンのC++移植
                 （iroha-core=純粋ロジック / iroha-engine=ZenzEngine+llama.cpp）
                 src/lattice/ は辞書ラティス（下の「辞書ラティス」節）
+                input_session / session_manager は入力の状態（下の「入力の状態とライブ変換」節）
 iroha-cli/      検証用CLI（kana / convert / segment / bench / ajimee / lattice /
-                lattice-dump / lattice-parity / remote / repl）
+                lattice-dump / lattice-parity / remote / session / repl）
 shared/         TIP⇔サーバの名前付きパイプIPCプロトコル（ipc_protocol.h）
 scripts/        ビルド・インストールスクリプト
 ```
@@ -138,6 +139,53 @@ $env:IROHA_LATTICE = "always"; windows\build\iroha-cli\iroha-cli.exe ajimee test
 インストール後、設定 > 時刻と言語 > 言語と地域 > 日本語 > キーボード に
 「iroha」が現れ、Win+Space で切り替えられる（出ない場合はサインアウト）。
 
+## 入力の状態とライブ変換
+
+入力の状態（読み・ライブ変換の結果・文節・候補）は **変換サーバ側** に持つ（2026-11-13）。
+TIP はアプリのプロセスの中で動くので、判断と状態を置かない。
+
+- `iroha-core` の `InputSession` が状態機械（キーごとに、確定する文字列・未確定文字列・候補を決める）。
+  OS にも通信にも依存しないので、偽の変換を渡して単体テストできる（`tests/test_session.h`）。
+  ライブ変換の表示と確定の規則は macOS版 `IrohaInputController` の `compositionDisplay` / `resolveCommitText` と同じ:
+  変換が届くまでは「前の変換結果 + 増えたかな」を出し、文字を消したら次の文字までかな表示、
+  1 回目の Esc でかな・2 回目で取り消し。文節変換は、これまで TIP にあった動きを移したもの
+- `SessionManager` がセッションの表（TIP ごとに 1 つ。番号は TIP が有効化のたびに作る）と、ライブ変換を行う
+  裏のスレッドを持つ。キーの処理はすぐ戻り、ライブ変換は裏で進める。エンジンは同時に 1 つの変換しか行えないので、
+  キーの処理が変換を必要としたとき（Space・候補・文節の区切り）は、進行中のライブ変換をやめさせて先に行う
+  （`ZenzEngine::SetCancelCheck`。生成の 1 トークンごとに確かめる）
+- 新しいライブ変換の依頼では、進行中の変換をやめさせない。その結果は、読みが伸びたあとでも頭の部分の変換として
+  表示に使う（macOS版は新しい入力のたびに前の変換を捨てる。CPU で動かす Windows 版では、変換が打鍵に
+  追いつかないときに表示が進まなくなるので変えた）。始めていない古い依頼は捨て、最新の読みだけを変換する
+- TIP（`TextService`）が行うのは 3 つ: キーコードを意味に読み替えて受けるかどうかを決める・キーを送って返ってきた
+  表示（`SessionOutput`）を文書に反映する・ライブ変換の結果待ちの間、15ms のタイマーで変換サーバに問い合わせる
+  （`Polling.cpp`。届いたら非同期のエディットセッションで反映する）。
+  受けるかどうかは OnTestKeyDown ですぐ答える必要があるので、直近に受け取った表示で決める:
+  文字は常に、数字と Enter / Esc / Backspace / Space は合成中だけ、矢印は文節変換中だけ
+- 左文脈は、合成を始めるキーを送るときに TIP がカーソルより前の 64 文字を読んで付ける。変換サーバが
+  カーソルのある行だけ・末尾 40 文字に整える（macOS版の `LeftContext.normalize`）。読めないアプリでは、
+  直前に確定した文字列を使う
+- 通信（`shared/ipc_protocol.h`）は、メッセージの種類を足すだけにして版を変えていない。アプリに読み込まれたままの
+  古い TIP は、新しい変換サーバとも Convert / Record で動く
+- ライブ変換は `config.json` の `"liveConversion": false` で止められる（設定画面にはまだ無い）
+
+```powershell
+# 変換サーバのセッションにキーを順に送り、TIP が画面に出す内容を見る（インストールせずに確かめられる）。
+# IROHA_PIPE_SUFFIX を付けると、インストール済みの変換サーバとは別の名前で動く
+$env:IROHA_PIPE_SUFFIX = "dev"
+Start-Process windows\build\iroha-server\iroha-server.exe
+windows\build\iroha-cli\iroha-cli.exe session "kyouhaiitenkidesune<space><right><space><enter>"
+# 待たずに 120ms おきに送る（変換が打鍵に追いつかないときの表示）
+windows\build\iroha-cli\iroha-cli.exe session --interval 120 "kyouhaiitenkidesune<enter>"
+```
+
+確認（2026-11-13、このWindows機のCPU・iroha-kkc-v1）: ライブ変換は読み 10 文字前後で 30〜60ms で届き、
+キーへの返事は 1ms 未満。120ms おきの打鍵でも表示は 1〜2 文字遅れで付いてくる。
+**TIP の側（文書への反映・タイマー）は、インストールして実際のアプリで確かめる必要がある**
+
+未対応（macOS版にあるもの）: Space 1 回で候補ウィンドウまで開く・文節の打ち直し・確定の取り消し・
+表示形の切替（F6〜F10）・Shift+英字の英字入力・予測変換・打ち間違いの訂正。
+変換サーバが止まっている間は、かな入力もできない（キーを受けても表示を決められない）
+
 ## 開発メモ
 
 - ビルド環境: VS 2022の「C++によるデスクトップ開発」+ cmake/ninja。
@@ -181,10 +229,11 @@ $env:IROHA_LATTICE = "always"; windows\build\iroha-cli\iroha-cli.exe ajimee test
 - [x] M7c: 長い読みの分割（ChunkedConversionEngine）と異体字（VariantKanjiEngine）
 - [x] M7d: 学習・ユーザ辞書を macOS版の今の仕様に合わせる（直す前の結果つきの学習、ユーザ辞書の語の境目、
       候補ウィンドウ専用の語）
+- [x] M7f: ライブ変換。入力の状態を変換サーバ側に移した（`InputSession` / `SessionManager`。
+      TIP はキーを送って表示を反映するだけ）
 - [ ] M7e: 記号・絵文字の候補、専門辞書
 - [ ] M5b: UIlessモード（ITfCandidateListUIElement。タスクバー検索ボックス等）
-- [ ] M6b: 製品化の残り（インストーラ/署名、release.ymlの両OS対応、UIA対応、
-      ライブ変換［エンジン準備済み・TIP非同期化が未実装］）
+- [ ] M6b: 製品化の残り（インストーラ/署名、release.ymlの両OS対応、UIA対応）
 
 参考実装: CorvusSKK（構成の手本）、Microsoft textservice step01-06（チュートリアル）、
 SampleIME（登録・UIlessの正解集）、mozc `src/win32/tip/`（完成形）。

@@ -3,7 +3,9 @@
 // ZenzEngine（llama.cpp + GGUFモデル）で変換して返す。
 //
 // - 単一インスタンス（セッション別の名前付きミューテックスでガード）
-// - 単一スレッドで1接続ずつ処理する（エンジンの直列化を兼ねる）
+// - パイプは1つのスレッドで1接続ずつ処理する
+// - 入力の状態（読み・ライブ変換・文節・候補）は TIP ごとのセッションとしてここに持つ
+//   （iroha::SessionManager）。ライブ変換だけは裏のスレッドで行い、TIP が結果を問い合わせる
 // - モデルは起動時にプリロードする（初回変換のもたつき防止）
 
 #include "ipc_protocol.h"
@@ -25,6 +27,7 @@
 #include "iroha/learning_engine.h"
 #include "iroha/learning_store.h"
 #include "iroha/reading_aligner.h"
+#include "iroha/session_manager.h"
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_engine.h"
 #include "iroha/user_dictionary_store.h"
@@ -123,8 +126,11 @@ struct ServerState {
     std::unique_ptr<iroha::LearningStore> learning;
     std::unique_ptr<iroha::UserDictionaryEngine> dictionaryEngine;
     std::unique_ptr<iroha::LearningEngine> engine;
+    bool liveConversion = true;
 
     void Build() {
+        liveConversion =
+            iroha::LoadConfig(std::filesystem::path(DataDir() + L"\\config.json")).liveConversion;
         const std::string newModelPath = ResolveModelPath();
         if (!zenz || newModelPath != modelPath) {
             zenz = std::make_unique<iroha::ZenzEngine>(newModelPath);
@@ -169,9 +175,60 @@ struct ServerState {
     }
 };
 
+// 文節変換の結果が表示していた変換（baseline）と違っていたら、ユーザによる修正として学習する
+// （macOS版 IrohaInputController.learnIfCorrected と同じ規則）。
+// 覚えるのは入力の読み全体 → 確定文字列と、直す前にエンジンが出していた結果。
+// 学習が差し替えた結果を、ユーザがエンジンの結果に戻して確定したら、その学習を消す
+void RecordCorrection(ServerState& state, const std::u32string& reading,
+                      const std::u32string& baseline, const std::u32string& committed) {
+    if (committed == baseline || committed.empty() || !state.engine) return;
+    const std::u32string engineResult =
+        state.engine->EngineResult(reading, baseline).value_or(baseline);
+    if (committed == engineResult) {
+        state.learning->Forget(reading, engineResult, baseline);
+        Log("learning forgotten");
+    } else {
+        state.learning->Record(reading, engineResult, committed);
+        Log("learned");
+    }
+}
+
+// セッション（iroha::SessionManager）から見た変換エンジンと学習
+class ServerBackend : public iroha::SessionManager::Backend {
+public:
+    explicit ServerBackend(ServerState* state) : state_(state) {}
+
+    bool Convert(const std::u32string& reading, const std::u32string& context, int candidateCount,
+                 std::vector<std::u32string>* results, std::string* error) override {
+        std::string localError;
+        if (!error) error = &localError;
+        if (!state_->engine) {
+            *error = "エンジン未初期化";
+            return false;
+        }
+        const bool ok = state_->engine->Convert(reading, context, candidateCount, results, error);
+        if (!ok && *error != iroha::ZenzEngine::kCancelledError) {
+            Log(("convert failed: " + *error).c_str());
+        }
+        return ok;
+    }
+
+    void SetCancelCheck(std::function<bool()> check) override {
+        if (state_->zenz) state_->zenz->SetCancelCheck(std::move(check));
+    }
+
+    void RecordCommit(const std::u32string& reading, const std::u32string& baseline,
+                      const std::u32string& committed) override {
+        RecordCorrection(*state_, reading, baseline, committed);
+    }
+
+private:
+    ServerState* state_;
+};
+
 // 1リクエストを処理してレスポンスのバイト列を返す。shutdownならfalseを返す
-bool HandleRequest(ServerState& state, const std::vector<char>& request,
-                   std::vector<char>* response) {
+bool HandleRequest(ServerState& state, iroha::SessionManager& sessions,
+                   const std::vector<char>& request, std::vector<char>* response) {
     iroha::ipc::Reader reader{request.data(), request.size()};
     uint32_t version = 0;
     uint32_t type = 0;
@@ -204,10 +261,14 @@ bool HandleRequest(ServerState& state, const std::vector<char>& request,
                 *response = iroha::ipc::BuildErrorResponse("エンジン未初期化");
                 return true;
             }
-            if (!state.engine->Convert(iroha::Utf8ToUtf32(readingUtf8),
-                                       iroha::Utf8ToUtf32(contextUtf8),
-                                       static_cast<int>(candidateCount), &candidates,
-                                       &error)) {
+            bool converted = false;
+            sessions.WithEngine([&] {
+                converted = state.engine->Convert(iroha::Utf8ToUtf32(readingUtf8),
+                                                  iroha::Utf8ToUtf32(contextUtf8),
+                                                  static_cast<int>(candidateCount), &candidates,
+                                                  &error);
+            });
+            if (!converted) {
                 Log(("convert failed: " + error).c_str());
                 *response = iroha::ipc::BuildErrorResponse(error);
                 return true;
@@ -222,7 +283,54 @@ bool HandleRequest(ServerState& state, const std::vector<char>& request,
         }
         case iroha::ipc::MessageType::Reload: {
             Log("reload requested");
-            state.Build();
+            sessions.WithEngine([&] { state.Build(); });
+            sessions.SetLiveConversionEnabled(state.liveConversion);
+            *response = iroha::ipc::BuildOkResponse({});
+            return true;
+        }
+        case iroha::ipc::MessageType::SessionKey: {
+            uint64_t sessionId = 0;
+            uint32_t key = 0;
+            uint32_t character = 0;
+            uint32_t flags = 0;
+            std::string leftContextUtf8;
+            if (!reader.U64(&sessionId) || !reader.U32(&key) || !reader.U32(&character) ||
+                !reader.U32(&flags) || !reader.String(&leftContextUtf8)) {
+                *response = iroha::ipc::BuildErrorResponse("プロトコルが不正です");
+                return true;
+            }
+            if (key < static_cast<uint32_t>(iroha::SessionKey::Character) ||
+                key > static_cast<uint32_t>(iroha::SessionKey::Reset)) {
+                *response = iroha::ipc::BuildErrorResponse("未知のキーです");
+                return true;
+            }
+            const std::u32string leftContext = iroha::Utf8ToUtf32(leftContextUtf8);
+            const iroha::SessionOutput output = sessions.HandleKey(
+                sessionId, static_cast<iroha::SessionKey>(key), static_cast<char32_t>(character),
+                (flags & iroha::ipc::kKeyFlagShift) != 0,
+                (flags & iroha::ipc::kKeyFlagHasLeftContext) != 0 ? &leftContext : nullptr);
+            *response = iroha::ipc::BuildSessionResponse(&output);
+            return true;
+        }
+        case iroha::ipc::MessageType::SessionPoll: {
+            uint64_t sessionId = 0;
+            uint64_t revision = 0;
+            if (!reader.U64(&sessionId) || !reader.U64(&revision)) {
+                *response = iroha::ipc::BuildErrorResponse("プロトコルが不正です");
+                return true;
+            }
+            iroha::SessionOutput output;
+            const bool changed = sessions.Poll(sessionId, revision, &output);
+            *response = iroha::ipc::BuildSessionResponse(changed ? &output : nullptr);
+            return true;
+        }
+        case iroha::ipc::MessageType::SessionEnd: {
+            uint64_t sessionId = 0;
+            if (!reader.U64(&sessionId)) {
+                *response = iroha::ipc::BuildErrorResponse("プロトコルが不正です");
+                return true;
+            }
+            sessions.End(sessionId);
             *response = iroha::ipc::BuildOkResponse({});
             return true;
         }
@@ -235,24 +343,11 @@ bool HandleRequest(ServerState& state, const std::vector<char>& request,
                 *response = iroha::ipc::BuildErrorResponse("プロトコルが不正です");
                 return true;
             }
-            // 文節変換の結果が表示していた変換（baseline）と違っていたら、ユーザによる修正として学習する
-            // （macOS版 IrohaInputController.learnIfCorrected と同じ規則）。
-            // 覚えるのは入力の読み全体 → 確定文字列と、直す前にエンジンが出していた結果。
-            // 学習が差し替えた結果を、ユーザがエンジンの結果に戻して確定したら、その学習を消す
-            if (committedUtf8 != baselineUtf8 && !committedUtf8.empty() && state.engine) {
-                const std::u32string reading = iroha::Utf8ToUtf32(readingUtf8);
-                const std::u32string committed = iroha::Utf8ToUtf32(committedUtf8);
-                const std::u32string baseline = iroha::Utf8ToUtf32(baselineUtf8);
-                const std::u32string engineResult =
-                    state.engine->EngineResult(reading, baseline).value_or(baseline);
-                if (committed == engineResult) {
-                    state.learning->Forget(reading, engineResult, baseline);
-                    Log("learning forgotten");
-                } else {
-                    state.learning->Record(reading, engineResult, committed);
-                    Log("learned");
-                }
-            }
+            sessions.WithEngine([&] {
+                RecordCorrection(state, iroha::Utf8ToUtf32(readingUtf8),
+                                 iroha::Utf8ToUtf32(baselineUtf8),
+                                 iroha::Utf8ToUtf32(committedUtf8));
+            });
             *response = iroha::ipc::BuildOkResponse({});
             return true;
         }
@@ -268,9 +363,7 @@ int wmain() {
     SetConsoleOutputCP(CP_UTF8);
 
     // 単一インスタンスガード（セッション別）
-    DWORD sessionId = 0;
-    ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
-    const std::wstring mutexName = L"Local\\iroha-server-" + std::to_wstring(sessionId);
+    const std::wstring mutexName = L"Local\\iroha-server-" + iroha::ipc::InstanceSuffix();
     HANDLE mutex = CreateMutexW(nullptr, TRUE, mutexName.c_str());
     if (!mutex || GetLastError() == ERROR_ALREADY_EXISTS) {
         Log("already running");
@@ -281,6 +374,10 @@ int wmain() {
     // （macOS版 iroha-cli の makeEngine と同じ。環境変数・config.jsonで差し替え可能）
     ServerState state;
     state.Build();
+    // セッションの表とライブ変換のスレッド（state より先に片付ける）
+    ServerBackend backend(&state);
+    iroha::SessionManager sessions(&backend);
+    sessions.SetLiveConversionEnabled(state.liveConversion);
 
     const std::wstring pipeName = iroha::ipc::PipeName();
     PSECURITY_DESCRIPTOR pipeSecurity = CreatePipeSecurityDescriptor();
@@ -290,14 +387,17 @@ int wmain() {
     securityAttributes.lpSecurityDescriptor = pipeSecurity;
     Log("serving");
 
+    const auto createPipe = [&] {
+        return CreateNamedPipeW(pipeName.c_str(), PIPE_ACCESS_DUPLEX,
+                                PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+                                PIPE_UNLIMITED_INSTANCES, iroha::ipc::kMaxMessageBytes,
+                                iroha::ipc::kMaxMessageBytes, 0,
+                                pipeSecurity ? &securityAttributes : nullptr);
+    };
+
     bool running = true;
+    HANDLE pipe = createPipe();
     while (running) {
-        HANDLE pipe = CreateNamedPipeW(
-            pipeName.c_str(), PIPE_ACCESS_DUPLEX,
-            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-            PIPE_UNLIMITED_INSTANCES, iroha::ipc::kMaxMessageBytes,
-            iroha::ipc::kMaxMessageBytes, 0,
-            pipeSecurity ? &securityAttributes : nullptr);
         if (pipe == INVALID_HANDLE_VALUE) {
             Log("CreateNamedPipe failed");
             return 1;
@@ -312,15 +412,19 @@ int wmain() {
                          &bytesRead, nullptr)) {
                 request.resize(bytesRead);
                 std::vector<char> response;
-                running = HandleRequest(state, request, &response);
+                running = HandleRequest(state, sessions, request, &response);
                 DWORD written = 0;
                 WriteFile(pipe, response.data(), static_cast<DWORD>(response.size()),
                           &written, nullptr);
                 FlushFileBuffers(pipe);
             }
-            DisconnectNamedPipe(pipe);
         }
+        // 次の接続を受けるパイプを先に作ってから今のものを閉じる（パイプの名前が無くなる隙間を作らない。
+        // 隙間に当たったクライアントは「サーバがいない」と見て待ち直すことになる）
+        const HANDLE next = running ? createPipe() : INVALID_HANDLE_VALUE;
+        if (connected) DisconnectNamedPipe(pipe);
         CloseHandle(pipe);
+        pipe = next;
     }
     if (pipeSecurity) LocalFree(pipeSecurity);
     Log("shutdown");

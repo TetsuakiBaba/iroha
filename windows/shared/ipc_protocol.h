@@ -3,15 +3,31 @@
 //
 // - パイプ名はセッション別（マルチユーザ環境での衝突を避ける）
 // - メッセージモードのパイプで1リクエスト=1接続（CallNamedPipe）。
-//   サーバは単一スレッドで順に処理するため、エンジンの直列化を兼ねる
-// - ワイヤ形式はリトルエンディアンのu32と長さ付きUTF-8文字列のみ
+//   サーバはパイプを1つのスレッドで順に処理する（ライブ変換だけは裏のスレッドで行う）
+// - ワイヤ形式はリトルエンディアンのu32・u64と長さ付きUTF-8文字列のみ
 //   （JSONパーサ等の依存を持ち込まない）
 //
 //   リクエスト:  u32 version, u32 type,
 //                type==Convert のとき u32 n, string reading, string context
 //                type==Record  のとき string reading, string committed, string baseline
+//                type==SessionKey  のとき u64 session, u32 key, u32 character, u32 flags,
+//                                         string leftContext
+//                type==SessionPoll のとき u64 session, u64 revision
+//                type==SessionEnd  のとき u64 session
 //   レスポンス:  u32 version, u32 status(0=ok),
 //                ok: u32 count, string×count / エラー: string message
+//   SessionKey / SessionPoll のレスポンス:
+//                u32 version, u32 status(0=ok),
+//                ok: u32 changed（0 なら以降なし）, u64 revision, string commit, u32 flags,
+//                    u32 spanCount, (u32 style, string text)×spanCount,
+//                    u32 candidateIndex, u32 candidateCount, string×candidateCount
+//                エラー: string message
+//
+// セッションのメッセージは、入力の状態（読み・ライブ変換・文節・候補）をサーバ側に持つためのもの
+// （iroha/input_session.h）。TIP はキーを送り、返ってきた表示を画面に反映する。
+//
+// メッセージの種類は足すだけにして version は変えない（アプリに読み込まれたままの古い TIP が、
+// 新しいサーバとも Convert / Record で話せるように）
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -19,8 +35,12 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <vector>
+
+#include "iroha/input_session.h"
+#include "iroha/unicode.h"
 
 namespace iroha::ipc {
 
@@ -33,12 +53,25 @@ enum class MessageType : uint32_t {
     Shutdown = 3,
     Record = 4, // 確定の通知（学習用）
     Reload = 5, // 設定・辞書・モデルの再読み込み（設定GUIから）
+    SessionKey = 6,  // キー 1 つをセッションに渡し、表示を受け取る
+    SessionPoll = 7, // ライブ変換が届いたか（表示が変わったか）を確かめる
+    SessionEnd = 8,  // セッションを捨てる（TIP が無効になった）
 };
 
-inline std::wstring PipeName() {
+// 環境変数 IROHA_PIPE_SUFFIX があれば名前の末尾に足す（開発用。インストール済みの変換サーバを
+// 止めずに、ビルドしたばかりの変換サーバを別の名前で動かして確かめるのに使う）
+inline std::wstring InstanceSuffix() {
     DWORD sessionId = 0;
     ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
-    return L"\\\\.\\pipe\\iroha-server-" + std::to_wstring(sessionId);
+    std::wstring suffix = std::to_wstring(sessionId);
+    wchar_t extra[64];
+    const DWORD length = GetEnvironmentVariableW(L"IROHA_PIPE_SUFFIX", extra, ARRAYSIZE(extra));
+    if (length > 0 && length < ARRAYSIZE(extra)) suffix += L"-" + std::wstring(extra, length);
+    return suffix;
+}
+
+inline std::wstring PipeName() {
+    return L"\\\\.\\pipe\\iroha-server-" + InstanceSuffix();
 }
 
 // ---- シリアライズ ----
@@ -48,6 +81,11 @@ inline void PutU32(std::vector<char>* buf, uint32_t value) {
     buf->push_back(static_cast<char>((value >> 8) & 0xFF));
     buf->push_back(static_cast<char>((value >> 16) & 0xFF));
     buf->push_back(static_cast<char>((value >> 24) & 0xFF));
+}
+
+inline void PutU64(std::vector<char>* buf, uint64_t value) {
+    PutU32(buf, static_cast<uint32_t>(value & 0xFFFFFFFFu));
+    PutU32(buf, static_cast<uint32_t>(value >> 32));
 }
 
 inline void PutString(std::vector<char>* buf, const std::string& s) {
@@ -70,10 +108,18 @@ struct Reader {
         return true;
     }
 
+    bool U64(uint64_t* value) {
+        uint32_t low = 0;
+        uint32_t high = 0;
+        if (!U32(&low) || !U32(&high)) return false;
+        *value = (static_cast<uint64_t>(high) << 32) | low;
+        return true;
+    }
+
     bool String(std::string* s) {
         uint32_t length = 0;
         if (!U32(&length)) return false;
-        if (pos + length > size) return false;
+        if (length > size - pos) return false;
         s->assign(data + pos, length);
         pos += length;
         return true;
@@ -143,15 +189,163 @@ inline std::vector<char> BuildErrorResponse(const std::string& message) {
     return buf;
 }
 
+// ---- セッション ----
+
+// SessionKey の flags
+constexpr uint32_t kKeyFlagShift = 1;
+// leftContext を読めた（空文字列でも、読めて空だったことを表す）
+constexpr uint32_t kKeyFlagHasLeftContext = 2;
+
+// セッションのレスポンスの flags
+constexpr uint32_t kOutputFlagSegmenting = 1;
+constexpr uint32_t kOutputFlagLivePending = 2;
+constexpr uint32_t kOutputFlagCandidatesVisible = 4;
+
+// leftContext は、合成していないときにカーソルより前から読んだ文書のテキスト（読めなければ nullptr）
+inline std::vector<char> BuildSessionKeyRequest(uint64_t sessionId, SessionKey key,
+                                                char32_t character, bool shift,
+                                                const std::u32string* leftContext) {
+    std::vector<char> buf;
+    PutU32(&buf, kProtocolVersion);
+    PutU32(&buf, static_cast<uint32_t>(MessageType::SessionKey));
+    PutU64(&buf, sessionId);
+    PutU32(&buf, static_cast<uint32_t>(key));
+    PutU32(&buf, static_cast<uint32_t>(character));
+    PutU32(&buf, (shift ? kKeyFlagShift : 0) | (leftContext ? kKeyFlagHasLeftContext : 0));
+    PutString(&buf, leftContext ? Utf32ToUtf8(*leftContext) : std::string());
+    return buf;
+}
+
+inline std::vector<char> BuildSessionPollRequest(uint64_t sessionId, uint64_t revision) {
+    std::vector<char> buf;
+    PutU32(&buf, kProtocolVersion);
+    PutU32(&buf, static_cast<uint32_t>(MessageType::SessionPoll));
+    PutU64(&buf, sessionId);
+    PutU64(&buf, revision);
+    return buf;
+}
+
+inline std::vector<char> BuildSessionEndRequest(uint64_t sessionId) {
+    std::vector<char> buf;
+    PutU32(&buf, kProtocolVersion);
+    PutU32(&buf, static_cast<uint32_t>(MessageType::SessionEnd));
+    PutU64(&buf, sessionId);
+    return buf;
+}
+
+// output が nullptr なら「変わっていない」（SessionPoll への返事）
+inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
+    std::vector<char> buf;
+    PutU32(&buf, kProtocolVersion);
+    PutU32(&buf, 0);
+    PutU32(&buf, output ? 1 : 0);
+    if (!output) return buf;
+    PutU64(&buf, output->revision);
+    PutString(&buf, Utf32ToUtf8(output->commit));
+    PutU32(&buf, (output->segmenting ? kOutputFlagSegmenting : 0) |
+                     (output->livePending ? kOutputFlagLivePending : 0) |
+                     (output->candidatesVisible ? kOutputFlagCandidatesVisible : 0));
+    PutU32(&buf, static_cast<uint32_t>(output->preedit.size()));
+    for (const SessionOutput::Span& span : output->preedit) {
+        PutU32(&buf, span.style);
+        PutString(&buf, Utf32ToUtf8(span.text));
+    }
+    PutU32(&buf, output->candidateIndex);
+    // 候補は1メッセージに収まる数だけ入れる（選んでいる候補より前で切れることは実際には無い）
+    std::vector<std::string> candidates;
+    size_t bytes = buf.size() + 4;
+    for (const std::u32string& candidate : output->candidates) {
+        std::string utf8 = Utf32ToUtf8(candidate);
+        if (bytes + 4 + utf8.size() > kMaxMessageBytes) break;
+        bytes += 4 + utf8.size();
+        candidates.push_back(std::move(utf8));
+    }
+    PutU32(&buf, static_cast<uint32_t>(candidates.size()));
+    for (const std::string& candidate : candidates) PutString(&buf, candidate);
+    return buf;
+}
+
+struct SessionResponse {
+    bool ok = false;
+    std::string error;
+    // 偽なら表示は変わっていない（output は空）
+    bool changed = false;
+    SessionOutput output;
+};
+
+inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
+    SessionResponse result;
+    Reader reader{bytes.data(), bytes.size()};
+    uint32_t version = 0;
+    uint32_t status = 0;
+    if (!reader.U32(&version) || version != kProtocolVersion || !reader.U32(&status)) {
+        result.error = "protocol error";
+        return result;
+    }
+    if (status != 0) {
+        reader.String(&result.error);
+        return result;
+    }
+    uint32_t changed = 0;
+    if (!reader.U32(&changed)) {
+        result.error = "protocol error";
+        return result;
+    }
+    if (changed == 0) {
+        result.ok = true;
+        return result;
+    }
+    SessionOutput& output = result.output;
+    std::string commit;
+    uint32_t flags = 0;
+    uint32_t spanCount = 0;
+    if (!reader.U64(&output.revision) || !reader.String(&commit) || !reader.U32(&flags) ||
+        !reader.U32(&spanCount)) {
+        result.error = "protocol error";
+        return result;
+    }
+    output.commit = Utf8ToUtf32(commit);
+    output.segmenting = (flags & kOutputFlagSegmenting) != 0;
+    output.livePending = (flags & kOutputFlagLivePending) != 0;
+    output.candidatesVisible = (flags & kOutputFlagCandidatesVisible) != 0;
+    for (uint32_t i = 0; i < spanCount; ++i) {
+        uint32_t style = 0;
+        std::string text;
+        if (!reader.U32(&style) || !reader.String(&text)) {
+            result.error = "protocol error";
+            return result;
+        }
+        output.preedit.push_back({Utf8ToUtf32(text), style});
+    }
+    uint32_t candidateCount = 0;
+    if (!reader.U32(&output.candidateIndex) || !reader.U32(&candidateCount)) {
+        result.error = "protocol error";
+        return result;
+    }
+    for (uint32_t i = 0; i < candidateCount; ++i) {
+        std::string candidate;
+        if (!reader.String(&candidate)) {
+            result.error = "protocol error";
+            return result;
+        }
+        output.candidates.push_back(Utf8ToUtf32(candidate));
+    }
+    if (output.candidateIndex >= output.candidates.size()) output.candidateIndex = 0;
+    result.changed = true;
+    result.ok = true;
+    return result;
+}
+
 // ---- クライアント ----
 
 // 1リクエストを送って応答を受け取る。サーバが別クライアントを処理中の場合は
-// CallNamedPipeが内部で待つ。パイプ再作成の隙間はリトライで吸収する。
+// CallNamedPipeが内部で待つ（timeoutMs まで）。パイプが無いとき（サーバが起動の途中）は
+// 少し待って試し直す（attempts 回まで。待たせたくない呼び出しは 1 にする）
 inline bool Call(const std::vector<char>& request, std::vector<char>* response,
-                 DWORD timeoutMs) {
+                 DWORD timeoutMs, int attempts = 3) {
     const std::wstring name = PipeName();
     response->assign(kMaxMessageBytes, 0);
-    for (int attempt = 0; attempt < 3; ++attempt) {
+    for (int attempt = 0; attempt < attempts; ++attempt) {
         DWORD bytesRead = 0;
         if (CallNamedPipeW(name.c_str(), const_cast<char*>(request.data()),
                            static_cast<DWORD>(request.size()), response->data(),
@@ -160,8 +354,8 @@ inline bool Call(const std::vector<char>& request, std::vector<char>* response,
             response->resize(bytesRead);
             return true;
         }
-        if (GetLastError() == ERROR_FILE_NOT_FOUND && attempt + 1 < 3) {
-            Sleep(200); // サーバのパイプ再作成待ち
+        if (GetLastError() == ERROR_FILE_NOT_FOUND && attempt + 1 < attempts) {
+            Sleep(30);
             continue;
         }
         break;

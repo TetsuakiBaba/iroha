@@ -1,21 +1,20 @@
 #include "TextService.h"
 
+#include <cstring>
+#include <memory>
 #include <new>
 
 #include "ConvertClient.h"
 #include "DisplayAttribute.h"
 #include "EditSession.h"
 #include "LangBarButton.h"
-#include "iroha/reading_aligner.h"
 #include "iroha/unicode.h"
 
 TextService::TextService() : refCount_(1) { DllAddRef(); }
 
 TextService::~TextService() {
-    if (composition_) {
-        composition_->Release();
-        composition_ = nullptr;
-    }
+    DestroyPollWindow();
+    ReleaseComposition();
     if (threadMgr_) {
         threadMgr_->Release();
         threadMgr_ = nullptr;
@@ -108,6 +107,15 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* threadMgr, TfClientId clientI
     // 入力モードのコンパートメント（タスクバーの「あ/A」表示の実体）
     InitCompartments();
     ApplyModeToCompartments();
+
+    // 変換サーバのセッションの番号。ほかの TIP（別のアプリ・スレッド）と重ならない値にする
+    GUID guid = {};
+    if (SUCCEEDED(CoCreateGuid(&guid))) {
+        memcpy(&sessionId_, &guid, sizeof(sessionId_));
+    } else {
+        sessionId_ = (static_cast<uint64_t>(GetCurrentProcessId()) << 32) ^
+                     (static_cast<uint64_t>(GetCurrentThreadId()) << 16) ^ GetTickCount64();
+    }
 
     // 変換サーバを先に起こしてモデルのプリロードを走らせておく
     ConvertClient::EnsureServer();
@@ -243,11 +251,13 @@ STDMETHODIMP TextService::Deactivate() {
         threadMgr_ = nullptr;
     }
     // コンポジションはエディットセッションなしでは閉じられないため参照だけ手放す
-    if (composition_) {
-        composition_->Release();
-        composition_ = nullptr;
+    ReleaseComposition();
+    ClearShown();
+    DestroyPollWindow();
+    if (sessionId_ != 0) {
+        ConvertClient::EndSession(sessionId_);
+        sessionId_ = 0;
     }
-    ResetState();
     clientId_ = TF_CLIENTID_NULL;
     return S_OK;
 }
@@ -275,9 +285,13 @@ bool IsComposerSymbol(wchar_t c) {
 
 } // namespace
 
-TextService::KeyAction TextService::DecideKeyAction(WPARAM wParam, LPARAM lParam,
-                                                    wchar_t* outChar) const {
-    *outChar = 0;
+// キーコードを意味に読み替え、受けるかどうかを決める。
+// そのキーで何をするかは変換サーバのセッションが決めるが、受けるかどうかは
+// OnTestKeyDown ですぐ答える必要があるので、直近に受け取った表示（合成中か・文節変換中か）で決める:
+//   文字（英字・ローマ字かなの記号）は常に、数字と Enter / Esc / Backspace / Space は合成中だけ、
+//   矢印は文節変換中だけ受ける
+TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) const {
+    KeyDecision decision;
     const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
     // 入力モードの切替キーは英数モード中でも受ける。
     //   半角/全角（VK_KANJI / VK_DBE_SBCSCHAR / VK_DBE_DBCSCHAR、US配列は Alt+`）
@@ -286,337 +300,224 @@ TextService::KeyAction TextService::DecideKeyAction(WPARAM wParam, LPARAM lParam
         case VK_KANJI: // 0x19
         case 0xF3:     // VK_DBE_SBCSCHAR（半角/全角）
         case 0xF4:     // VK_DBE_DBCSCHAR
-            return KeyAction::ToggleDirectMode;
+            decision.kind = KeyDecision::Kind::ToggleDirectMode;
+            return decision;
         case 0xF2: // VK_DBE_HIRAGANA
         case 0xF1: // VK_DBE_KATAKANA
-            return KeyAction::SetKanaMode;
+            decision.kind = KeyDecision::Kind::SetKanaMode;
+            return decision;
         case 0xF0: // VK_DBE_ALPHANUMERIC（英数）
-            return KeyAction::SetDirectMode;
+            decision.kind = KeyDecision::Kind::SetDirectMode;
+            return decision;
         case VK_OEM_3: // US配列の Alt+`
-            if (alt) return KeyAction::ToggleDirectMode;
+            if (alt) {
+                decision.kind = KeyDecision::Kind::ToggleDirectMode;
+                return decision;
+            }
             break;
         default:
             break;
     }
     // 英数モード中はキーを一切食わない
-    if (directMode_) return KeyAction::None;
+    if (directMode_) return decision;
     // Ctrl/Altショートカットには介入しない
-    if ((GetKeyState(VK_CONTROL) & 0x8000) || alt) {
-        return KeyAction::None;
-    }
+    if ((GetKeyState(VK_CONTROL) & 0x8000) || alt) return decision;
+
     const bool composing = composition_ != nullptr;
-    const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    const bool segmenting = composing && shown_.segmenting;
+    decision.shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    const auto session = [&decision](iroha::SessionKey key) {
+        decision.kind = KeyDecision::Kind::Session;
+        decision.key = key;
+        return decision;
+    };
     switch (wParam) {
         case VK_RETURN:
-            return composing ? KeyAction::Commit : KeyAction::None;
+            return composing ? session(iroha::SessionKey::Enter) : decision;
         case VK_ESCAPE:
-            if (segmented_) return KeyAction::BackToComposing;
-            return composing ? KeyAction::Cancel : KeyAction::None;
+            return composing ? session(iroha::SessionKey::Escape) : decision;
         case VK_BACK:
-            if (segmented_) return KeyAction::BackToComposing;
-            return composing ? KeyAction::Backspace : KeyAction::None;
+            return composing ? session(iroha::SessionKey::Backspace) : decision;
         case VK_SPACE:
-            if (segmented_) {
-                return shift ? KeyAction::PrevCandidate : KeyAction::NextCandidate;
-            }
-            return composing ? KeyAction::Convert : KeyAction::None;
+            return composing ? session(iroha::SessionKey::Space) : decision;
         case VK_DOWN:
-            return segmented_ ? KeyAction::NextCandidate : KeyAction::None;
+            return segmenting ? session(iroha::SessionKey::Down) : decision;
         case VK_UP:
-            return segmented_ ? KeyAction::PrevCandidate : KeyAction::None;
+            return segmenting ? session(iroha::SessionKey::Up) : decision;
         case VK_LEFT:
-            if (!segmented_) return KeyAction::None;
-            return shift ? KeyAction::ShrinkSegment : KeyAction::MoveSegmentLeft;
+            return segmenting ? session(iroha::SessionKey::Left) : decision;
         case VK_RIGHT:
-            if (!segmented_) return KeyAction::None;
-            return shift ? KeyAction::ExtendSegment : KeyAction::MoveSegmentRight;
+            return segmenting ? session(iroha::SessionKey::Right) : decision;
         default:
             break;
     }
     const wchar_t c = CharFromKey(wParam, lParam);
-    if (c == 0) return KeyAction::None;
-    if (segmented_ && candidateListOpen_ && c >= L'1' && c <= L'9') {
-        *outChar = c;
-        return KeyAction::SelectCandidate;
-    }
+    if (c == 0) return decision;
     const bool isLetter = (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z');
     const bool isDigit = (c >= L'0' && c <= L'9');
-    if (isLetter || IsComposerSymbol(c) || (composing && !segmented_ && isDigit)) {
-        *outChar = c;
-        return segmented_ ? KeyAction::CommitThenInput : KeyAction::Input;
+    if (isLetter || IsComposerSymbol(c) || (composing && isDigit)) {
+        decision.character = static_cast<char32_t>(c);
+        return session(iroha::SessionKey::Character);
     }
-    return KeyAction::None;
+    return decision;
 }
 
-HRESULT TextService::HandleKey(ITfContext* context, KeyAction action,
-                               wchar_t character) {
-    switch (action) {
-        case KeyAction::Input:
-            composer_.Input(static_cast<char32_t>(character));
-            return UpdateComposition(context);
-        case KeyAction::Backspace:
-            composer_.DeleteBackward();
-            if (composer_.Empty()) return CancelComposition(context);
-            return UpdateComposition(context);
-        case KeyAction::Commit:
-            return CommitCurrent(context);
-        case KeyAction::Cancel:
-            return CancelComposition(context);
-        case KeyAction::Convert:
-            return StartConversion(context);
-        case KeyAction::NextCandidate:
-            return CycleCandidate(context, +1);
-        case KeyAction::PrevCandidate:
-            return CycleCandidate(context, -1);
-        case KeyAction::SelectCandidate:
-            return SelectCandidateIndex(context,
-                                        static_cast<size_t>(character - L'1'));
-        case KeyAction::MoveSegmentLeft:
-            return MoveSegment(context, -1);
-        case KeyAction::MoveSegmentRight:
-            return MoveSegment(context, +1);
-        case KeyAction::ShrinkSegment:
-            return ResizeSegment(context, -1);
-        case KeyAction::ExtendSegment:
-            return ResizeSegment(context, +1);
-        case KeyAction::BackToComposing:
-            segmented_ = false;
-            segments_.clear();
-            currentSegment_ = 0;
-            candidateListOpen_ = false;
-            candidateWindow_.Hide();
-            return UpdateComposition(context);
-        case KeyAction::CommitThenInput: {
-            const HRESULT hr = CommitCurrent(context);
-            if (FAILED(hr)) return hr;
-            composer_.Input(static_cast<char32_t>(character));
-            return UpdateComposition(context);
-        }
-        case KeyAction::ToggleDirectMode:
-        case KeyAction::SetKanaMode:
-        case KeyAction::SetDirectMode: {
+HRESULT TextService::HandleKey(ITfContext* context, const KeyDecision& decision) {
+    switch (decision.kind) {
+        case KeyDecision::Kind::Session:
+            return SendSessionKey(context, decision.key, decision.character, decision.shift);
+        case KeyDecision::Kind::ToggleDirectMode:
+        case KeyDecision::Kind::SetKanaMode:
+        case KeyDecision::Kind::SetDirectMode: {
             bool newDirect = directMode_;
-            if (action == KeyAction::ToggleDirectMode) newDirect = !directMode_;
-            if (action == KeyAction::SetKanaMode) newDirect = false;
-            if (action == KeyAction::SetDirectMode) newDirect = true;
+            if (decision.kind == KeyDecision::Kind::ToggleDirectMode) newDirect = !directMode_;
+            if (decision.kind == KeyDecision::Kind::SetKanaMode) newDirect = false;
+            if (decision.kind == KeyDecision::Kind::SetDirectMode) newDirect = true;
             if (newDirect == directMode_) return S_OK;
             // 未確定文字列が残っていたら現状のまま確定してから切り替える
             HRESULT hr = S_OK;
-            if (composition_) hr = CommitCurrent(context);
+            if (composition_) {
+                hr = SendSessionKey(context, iroha::SessionKey::CommitNow, 0, false);
+            }
             SetDirectModeInternal(newDirect);
             return hr;
         }
-        case KeyAction::None:
+        case KeyDecision::Kind::None:
             break;
     }
     return S_OK;
 }
 
-HRESULT TextService::StartConversion(ITfContext* context) {
-    composer_.Flush();
-    const std::u32string reading = composer_.Display(); // Flush後は確定かなのみ
-    if (reading.empty()) return CancelComposition(context);
+HRESULT TextService::SendSessionKey(ITfContext* context, iroha::SessionKey key,
+                                    char32_t character, bool shift) {
+    // 合成を始めるキーには、カーソルより前の文書のテキスト（左文脈）を付ける。
+    // 合成の途中では読み直さない（変換サーバは合成を始めたときの左文脈を使い続ける）
+    std::u32string leftContext;
+    const bool hasLeftContext = !composition_ && ReadLeftContext(context, &leftContext);
 
-    // コンポジション直前の文書テキストを左文脈として渡す
-    // （macOS版の「直前に確定した文字列」に相当。zenz側で末尾40文字に切り詰められる）
-    const std::u32string leftContext = ReadLeftContext(context);
-    // 全体の変換は候補1つ（モデルの生成）で求める。macOS版のライブ変換・文節分割と同じ経路で、
-    // 学習の「直す前にエンジンが出していた結果」もこの変換から記録される。
-    // 文節ごとの候補（辞書ラティス + 再採点）は、候補ウィンドウを開くときに取る
-    std::vector<std::u32string> candidates;
-    if (!ConvertClient::Convert(reading, leftContext, 1, &candidates) ||
-        candidates.empty()) {
-        // サーバ不調時は読みのまま表示を続ける（Enterでかな確定できる）
-        IrohaLog(L"StartConversion: server unavailable");
-        return UpdateComposition(context);
-    }
-    // 確定時の学習通知用に、読みとエンジンの第一候補を控えておく
-    conversionReading_ = reading;
-    conversionBaseline_ = candidates.front();
-    // 第一候補を文節に分割して文節モードへ
-    segments_.clear();
-    for (const auto& segment :
-         iroha::ReadingAligner::SegmentReading(reading, candidates.front())) {
-        segments_.push_back({segment.reading, segment.conversion, {}, 0});
-    }
-    currentSegment_ = 0;
-    segmented_ = true;
-    candidateListOpen_ = false;
-    candidateWindow_.Hide();
-    return RefreshSegmentDisplay(context);
-}
-
-HRESULT TextService::CommitCurrent(ITfContext* context) {
-    const bool wasSegmented = segmented_;
-    std::u32string committed;
-    if (wasSegmented) {
-        committed = JoinedResults();
-    } else {
-        composer_.Flush();
-        committed = composer_.Display();
-    }
-    // CommitTextで状態が消えるため先に退避する
-    const std::u32string reading = conversionReading_;
-    const std::u32string baseline = conversionBaseline_;
-    const HRESULT hr = CommitText(context, iroha::Utf32ToUtf16(committed));
-    if (SUCCEEDED(hr) && wasSegmented && !reading.empty()) {
-        // エンジンの第一候補と違う確定だけがサーバ側で学習される
-        ConvertClient::NotifyCommit(reading, committed, baseline);
-    }
-    return hr;
-}
-
-std::u32string TextService::JoinedResults() const {
-    std::u32string joined;
-    for (const ConversionSegment& segment : segments_) joined += segment.result;
-    return joined;
-}
-
-std::u32string TextService::LeftResults(size_t segmentIndex) const {
-    std::u32string left;
-    for (size_t i = 0; i < segmentIndex && i < segments_.size(); ++i) {
-        left += segments_[i].result;
-    }
-    return left;
-}
-
-HRESULT TextService::EnsureSegmentCandidates(ITfContext* context,
-                                             size_t segmentIndex) {
-    if (segmentIndex >= segments_.size()) return E_FAIL;
-    ConversionSegment& segment = segments_[segmentIndex];
-    if (!segment.candidates.empty()) return S_OK;
-
-    // 文節の候補は「選択中の文節の読み + 左側の確定済み文字列を文脈」で生成する
-    const std::u32string contextText =
-        ReadLeftContext(context) + LeftResults(segmentIndex);
-    std::vector<std::u32string> candidates;
-    if (!ConvertClient::Convert(segment.reading, contextText, 9, &candidates) ||
-        candidates.empty()) {
-        IrohaLog(L"EnsureSegmentCandidates: server unavailable");
+    iroha::SessionOutput output;
+    if (!ConvertClient::SendKey(sessionId_, key, character, shift,
+                                hasLeftContext ? &leftContext : nullptr, &output)) {
         return E_FAIL;
     }
-    // 現在の結果（全体変換由来）が一覧に無ければ先頭に足す
-    auto it = std::find(candidates.begin(), candidates.end(), segment.result);
-    if (it == candidates.end()) {
-        candidates.insert(candidates.begin(), segment.result);
-        it = candidates.begin();
+    return ApplyOutput(context, output, /*synchronous=*/true);
+}
+
+HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput& output,
+                                 bool synchronous) {
+    shown_ = output;
+    shown_.commit.clear();
+
+    HRESULT hr = S_OK;
+    if (synchronous) {
+        hr = RequestSyncEditSession(
+            context, clientId_, [this, context, &output](TfEditCookie ec) -> HRESULT {
+                return ApplyOutputInSession(ec, context, output);
+            });
+    } else {
+        // キーの処理の外では同期のエディットセッションを取れないことがあるので、非同期で頼む。
+        // 実行されるまでに新しい表示を受け取っていたら、古いほうは反映しない
+        // （その間、このオブジェクトと文書を生かしておく）
+        struct Keep {
+            Keep(TextService* service, ITfContext* context) : service(service), context(context) {
+                service->AddRef();
+                context->AddRef();
+            }
+            ~Keep() {
+                context->Release();
+                service->Release();
+            }
+            TextService* service;
+            ITfContext* context;
+        };
+        const auto keep = std::make_shared<Keep>(this, context);
+        const HRESULT requested = RequestEditSession(
+            context, clientId_,
+            [this, keep, output](TfEditCookie ec) -> HRESULT {
+                if (!composition_ || output.revision != shown_.revision) return S_OK;
+                return ApplyOutputInSession(ec, keep->context, output);
+            },
+            TF_ES_ASYNCDONTCARE | TF_ES_READWRITE);
+        // 反映できなくても合成は捨てない（次のキーで、変換サーバが今の表示を丸ごと返す）
+        if (FAILED(requested)) IrohaLog(L"ApplyOutput(async) failed hr=0x%08X", requested);
     }
-    segment.candidateIndex = static_cast<size_t>(it - candidates.begin());
-    segment.candidates = std::move(candidates);
+    if (FAILED(hr)) {
+        // アプリが書き込みを受け付けなかった: 変換サーバの状態と画面がずれるので、合成を捨ててそろえる
+        IrohaLog(L"ApplyOutput failed hr=0x%08X", hr);
+        ConvertClient::ResetSession(sessionId_);
+        ClearShown();
+        return hr;
+    }
+
+    if (!composition_) {
+        ClearShown();
+        return S_OK;
+    }
+    if (shown_.candidatesVisible && synchronous) {
+        UpdateCandidateWindow(context);
+    } else {
+        candidateWindow_.Hide();
+    }
+    if (shown_.livePending) {
+        StartPolling();
+    } else {
+        StopPolling();
+    }
     return S_OK;
 }
 
-HRESULT TextService::CycleCandidate(ITfContext* context, int delta) {
-    if (!segmented_ || segments_.empty()) return S_OK;
-    if (FAILED(EnsureSegmentCandidates(context, currentSegment_))) return S_OK;
-    ConversionSegment& segment = segments_[currentSegment_];
-    const size_t count = segment.candidates.size();
-    segment.candidateIndex = (segment.candidateIndex + count + delta) % count;
-    segment.result = segment.candidates[segment.candidateIndex];
-    candidateListOpen_ = true;
-    const HRESULT hr = RefreshSegmentDisplay(context);
+// 確定する文字列を文書に入れ、未確定文字列を表示する（無ければ合成を終える）
+HRESULT TextService::ApplyOutputInSession(TfEditCookie ec, ITfContext* context,
+                                          const iroha::SessionOutput& output) {
+    if (!output.commit.empty()) {
+        const HRESULT hr = EnsureComposition(ec, context);
+        if (FAILED(hr)) return hr;
+        EndCompositionInternal(ec, context, iroha::Utf32ToUtf16(output.commit));
+    }
+    if (output.preedit.empty()) {
+        if (composition_) EndCompositionInternal(ec, context, L"");
+        return S_OK;
+    }
+    const HRESULT hr = EnsureComposition(ec, context);
     if (FAILED(hr)) return hr;
-    return UpdateCandidateWindow(context);
+    return SetPreedit(ec, context, output);
 }
 
-HRESULT TextService::SelectCandidateIndex(ITfContext* context, size_t index) {
-    if (!segmented_ || segments_.empty() || !candidateListOpen_) return S_OK;
-    ConversionSegment& segment = segments_[currentSegment_];
-    // 数字キーの番号は、表示中のページの中の位置
-    index += segment.candidateIndex / CandidateWindow::kPageSize * CandidateWindow::kPageSize;
-    if (index >= segment.candidates.size()) return S_OK;
-    segment.candidateIndex = index;
-    segment.result = segment.candidates[index];
-    const HRESULT hr = RefreshSegmentDisplay(context);
-    if (FAILED(hr)) return hr;
-    return UpdateCandidateWindow(context);
-}
-
-HRESULT TextService::MoveSegment(ITfContext* context, int delta) {
-    if (!segmented_ || segments_.empty()) return S_OK;
-    const size_t last = segments_.size() - 1;
-    size_t next = currentSegment_;
-    if (delta < 0 && next > 0) --next;
-    if (delta > 0 && next < last) ++next;
-    if (next == currentSegment_) return S_OK;
-    currentSegment_ = next;
-    candidateListOpen_ = false;
+void TextService::ClearShown() {
+    shown_ = iroha::SessionOutput();
     candidateWindow_.Hide();
-    return RefreshSegmentDisplay(context);
+    StopPolling();
 }
 
-HRESULT TextService::ResizeSegment(ITfContext* context, int delta) {
-    if (!segmented_ || segments_.empty()) return S_OK;
-    // 選択文節以降の読みを結合してから境界を動かす
-    std::u32string currentReading = segments_[currentSegment_].reading;
-    std::u32string remainder;
-    for (size_t i = currentSegment_ + 1; i < segments_.size(); ++i) {
-        remainder += segments_[i].reading;
-    }
-    if (delta > 0) { // 伸ばす: 次の読みの先頭1文字を取り込む
-        if (remainder.empty()) return S_OK;
-        currentReading.push_back(remainder.front());
-        remainder.erase(0, 1);
-    } else { // 縮める: 末尾1文字を残りへ返す
-        if (currentReading.size() <= 1) return S_OK;
-        remainder.insert(remainder.begin(), currentReading.back());
-        currentReading.pop_back();
-    }
-
-    const std::u32string docContext = ReadLeftContext(context);
-    const std::u32string left = LeftResults(currentSegment_);
-    std::vector<std::u32string> converted;
-    if (!ConvertClient::Convert(currentReading, docContext + left, 1, &converted) ||
-        converted.empty()) {
-        return S_OK; // サーバ不調時は何もしない
-    }
-
-    std::vector<ConversionSegment> rebuilt(segments_.begin(),
-                                           segments_.begin() + currentSegment_);
-    rebuilt.push_back({currentReading, converted.front(), {}, 0});
-    if (!remainder.empty()) {
-        // 残りを変換し直して文節分割もやり直す
-        std::vector<std::u32string> rest;
-        if (ConvertClient::Convert(remainder, docContext + left + converted.front(), 1,
-                                   &rest) &&
-            !rest.empty()) {
-            for (const auto& segment :
-                 iroha::ReadingAligner::SegmentReading(remainder, rest.front())) {
-                rebuilt.push_back({segment.reading, segment.conversion, {}, 0});
-            }
-        } else {
-            rebuilt.push_back({remainder, remainder, {}, 0});
-        }
-    }
-    segments_ = std::move(rebuilt);
-    candidateListOpen_ = false;
-    candidateWindow_.Hide();
-    return RefreshSegmentDisplay(context);
-}
-
+// 選んでいる文節の位置に候補ウィンドウを出す。
+// 書き込んだ直後のエディットセッションでは位置が取れないことがあるので、読み取りのセッションを別に取る
 HRESULT TextService::UpdateCandidateWindow(ITfContext* context) {
-    if (!composition_ || !segmented_ || segments_.empty()) return S_OK;
-    const ConversionSegment& segment = segments_[currentSegment_];
-    if (segment.candidates.empty()) return S_OK;
+    if (!composition_ || !shown_.candidatesVisible || shown_.candidates.empty()) return S_OK;
     return RequestSyncEditSession(
         context, clientId_,
-        [this, context, &segment](TfEditCookie ec) -> HRESULT {
+        [this, context](TfEditCookie ec) -> HRESULT {
             ITfContextView* view = nullptr;
             if (FAILED(context->GetActiveView(&view)) || !view) return S_OK;
             HWND owner = nullptr;
             view->GetWnd(&owner);
             if (!owner) owner = GetFocus();
-            // 選択中の文節のレンジを切り出してその位置に出す
             ITfRange* range = nullptr;
             if (composition_ && SUCCEEDED(composition_->GetRange(&range))) {
+                // 選んでいる文節（無ければ全体）の範囲
                 LONG start = 0;
                 LONG end = 0;
-                for (size_t i = 0; i < segments_.size(); ++i) {
-                    const LONG length = static_cast<LONG>(
-                        iroha::Utf32ToUtf16(segments_[i].result).size());
-                    if (i < currentSegment_) start += length;
-                    if (i <= currentSegment_) end += length;
+                LONG offset = 0;
+                bool found = false;
+                for (const iroha::SessionOutput::Span& span : shown_.preedit) {
+                    const LONG length = static_cast<LONG>(iroha::Utf32ToUtf16(span.text).size());
+                    if (span.style == iroha::SessionOutput::kSelectedSegment && !found) {
+                        start = offset;
+                        end = offset + length;
+                        found = true;
+                    }
+                    offset += length;
                 }
+                if (!found) end = offset;
                 ITfRange* segmentRange = nullptr;
                 if (SUCCEEDED(range->Clone(&segmentRange))) {
                     segmentRange->Collapse(ec, TF_ANCHOR_START);
@@ -626,8 +527,8 @@ HRESULT TextService::UpdateCandidateWindow(ITfContext* context) {
                     RECT rect = {};
                     BOOL clipped = FALSE;
                     if (SUCCEEDED(view->GetTextExt(ec, segmentRange, &rect, &clipped))) {
-                        candidateWindow_.Show(owner, rect, segment.candidates,
-                                              segment.candidateIndex);
+                        candidateWindow_.Show(owner, rect, shown_.candidates,
+                                              shown_.candidateIndex);
                     }
                     segmentRange->Release();
                 }
@@ -639,31 +540,37 @@ HRESULT TextService::UpdateCandidateWindow(ITfContext* context) {
         TF_ES_SYNC | TF_ES_READ);
 }
 
-std::u32string TextService::ReadLeftContext(ITfContext* context) {
-    std::u32string leftContext;
-    if (!composition_) return leftContext;
+// カーソルより前の文書のテキストを読む。変換サーバが、カーソルのある行だけ・末尾40文字に整える
+bool TextService::ReadLeftContext(ITfContext* context, std::u32string* text) {
+    static constexpr LONG kLength = 64;
+    bool succeeded = false;
     RequestSyncEditSession(
         context, clientId_,
-        [this, &leftContext](TfEditCookie ec) -> HRESULT {
-            ITfRange* range = nullptr;
-            if (!composition_ || FAILED(composition_->GetRange(&range))) return S_OK;
+        [context, text, &succeeded](TfEditCookie ec) -> HRESULT {
+            TF_SELECTION selection = {};
+            ULONG fetched = 0;
+            if (FAILED(context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched)) ||
+                fetched != 1 || !selection.range) {
+                return S_OK;
+            }
             ITfRange* left = nullptr;
-            if (SUCCEEDED(range->Clone(&left))) {
+            if (SUCCEEDED(selection.range->Clone(&left)) && left) {
                 left->Collapse(ec, TF_ANCHOR_START);
                 LONG shifted = 0;
-                left->ShiftStart(ec, -40, &shifted, nullptr);
-                WCHAR buffer[64];
+                WCHAR buffer[kLength + 1];
                 ULONG got = 0;
-                if (SUCCEEDED(left->GetText(ec, 0, buffer, ARRAYSIZE(buffer), &got))) {
-                    leftContext = iroha::Utf16ToUtf32(std::wstring(buffer, got));
+                if (SUCCEEDED(left->ShiftStart(ec, -kLength, &shifted, nullptr)) &&
+                    SUCCEEDED(left->GetText(ec, 0, buffer, kLength, &got))) {
+                    *text = iroha::Utf16ToUtf32(std::wstring(buffer, got));
+                    succeeded = true;
                 }
                 left->Release();
             }
-            range->Release();
+            selection.range->Release();
             return S_OK;
         },
         TF_ES_SYNC | TF_ES_READ);
-    return leftContext;
+    return succeeded;
 }
 
 STDMETHODIMP TextService::OnSetFocus(BOOL) {
@@ -673,9 +580,8 @@ STDMETHODIMP TextService::OnSetFocus(BOOL) {
 STDMETHODIMP TextService::OnTestKeyDown(ITfContext* context, WPARAM wParam,
                                         LPARAM lParam, BOOL* eaten) {
     if (!eaten) return E_INVALIDARG;
-    wchar_t c = 0;
     *eaten = (context != nullptr &&
-              DecideKeyAction(wParam, lParam, &c) != KeyAction::None);
+              DecideKey(wParam, lParam).kind != KeyDecision::Kind::None);
     return S_OK;
 }
 
@@ -684,12 +590,14 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* context, WPARAM wParam, LPARAM l
     if (!eaten) return E_INVALIDARG;
     *eaten = FALSE;
     if (!context) return S_OK;
-    wchar_t c = 0;
-    const KeyAction action = DecideKeyAction(wParam, lParam, &c);
-    if (action == KeyAction::None) return S_OK;
+    const KeyDecision decision = DecideKey(wParam, lParam);
+    if (decision.kind == KeyDecision::Kind::None) return S_OK;
     *eaten = TRUE;
-    const HRESULT hr = HandleKey(context, action, c);
-    if (FAILED(hr)) IrohaLog(L"HandleKey failed action=%d hr=0x%08X", action, hr);
+    const HRESULT hr = HandleKey(context, decision);
+    if (FAILED(hr)) {
+        IrohaLog(L"HandleKey failed kind=%d key=%u hr=0x%08X", static_cast<int>(decision.kind),
+                 static_cast<unsigned>(decision.key), hr);
+    }
     return S_OK;
 }
 
@@ -721,13 +629,13 @@ void TextService::OnModeButtonClicked() {
 STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie,
                                                   ITfComposition* composition) {
     // アプリ側都合（フォーカス移動等）で強制終了された。
-    // 表示中の文字列はそのままドキュメントに残るので、内部状態だけ捨てる。
+    // 表示中の文字列はそのままドキュメントに残るので、変換サーバの合成と手元の控えだけ捨てる。
     IrohaLog(L"OnCompositionTerminated");
     if (composition_ == composition && composition_) {
-        composition_->Release();
-        composition_ = nullptr;
+        ReleaseComposition();
+        ConvertClient::ResetSession(sessionId_);
+        ClearShown();
     }
-    ResetState();
     return S_OK;
 }
 

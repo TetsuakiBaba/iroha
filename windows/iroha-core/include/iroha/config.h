@@ -21,6 +21,8 @@ struct Config {
     // 使用するモデル。空なら既定（DefaultModelPath）。
     // ファイル名なら models ディレクトリ相対、絶対パスならそのまま使う
     std::u32string model;
+    // ライブ変換（入力中に自動で変換して見せる）を使うか。偽なら Space を押すまでかなのまま
+    bool liveConversion = true;
 };
 
 Config LoadConfig(const std::filesystem::path& path);

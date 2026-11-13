@@ -59,6 +59,8 @@ public:
         liveRequests.push_back({generation, reading, context});
     }
 
+    void CancelLiveConversion() override { ++liveCancels; }
+
     void RecordCommit(const std::u32string& reading, const std::u32string& baseline,
                       const std::u32string& committed) override {
         commits.push_back({reading, baseline, committed});
@@ -69,6 +71,7 @@ public:
     std::map<std::u32string, std::vector<std::u32string>> candidateTable;
     bool shouldFail = false;
     std::vector<LiveRequest> liveRequests;
+    int liveCancels = 0;
     std::vector<ConvertCall> convertCalls;
     std::vector<Commit> commits;
 };
@@ -125,17 +128,70 @@ void TestSessionKeepsPreviousConversionAsPrefix() {
     EXPECT_EQ(session.Current().PreeditText(), U"今日は");
 }
 
-// 古い依頼の結果は捨てる
-void TestSessionIgnoresStaleLiveResult() {
+// 読みが伸びたあとに届いた前の依頼の結果は、頭の部分の変換として使う（最新の結果はまだ待つ）
+void TestSessionUsesEarlierLiveResultAsPrefix() {
     FakeSessionHost host;
     iroha::InputSession session(&host);
     Type(session, U"kyou");
-    const auto stale = host.liveRequests.back();
+    const auto earlier = host.liveRequests.back();
     Type(session, U"ha");
     const std::u32string converted = U"今日";
-    EXPECT_TRUE(!session.CompleteLiveConversion(stale.generation, stale.reading, &converted));
-    EXPECT_EQ(session.Current().PreeditText(), U"きょうは");
+    EXPECT_TRUE(session.CompleteLiveConversion(earlier.generation, earlier.reading, &converted));
+    EXPECT_EQ(session.Current().PreeditText(), U"今日は");
     EXPECT_TRUE(session.Current().livePending);
+    // 確定も表示のとおり
+    EXPECT_EQ(Press(session, Key::Enter).commit, U"今日は");
+}
+
+// 要らなくなった依頼（文字を消す前・確定の前のもの）の結果は捨てる
+void TestSessionIgnoresCancelledLiveResult() {
+    FakeSessionHost host;
+    iroha::InputSession session(&host);
+    Type(session, U"kyou");
+    const auto cancelled = host.liveRequests.back();
+    EXPECT_TRUE(host.liveCancels == 0);
+    Press(session, Key::Backspace);
+    EXPECT_TRUE(host.liveCancels == 1);
+    const std::u32string converted = U"今日";
+    EXPECT_TRUE(
+        !session.CompleteLiveConversion(cancelled.generation, cancelled.reading, &converted));
+    EXPECT_EQ(session.Current().PreeditText(), U"きょ");
+
+    // 確定したあとに届いた結果が、次の合成に混ざらない
+    Type(session, U"u");
+    const auto beforeCommit = host.liveRequests.back();
+    Press(session, Key::Enter);
+    Type(session, U"kyou");
+    EXPECT_TRUE(!session.CompleteLiveConversion(beforeCommit.generation, beforeCommit.reading,
+                                                &converted));
+    EXPECT_EQ(session.Current().PreeditText(), U"きょう");
+    EXPECT_TRUE(session.Current().livePending);
+}
+
+// 未解決のローマ字が増えただけなら、頼んである変換をそのまま待つ
+void TestSessionKeepsPendingRequestForSameReading() {
+    FakeSessionHost host;
+    iroha::InputSession session(&host);
+    Type(session, U"kyou");
+    const size_t requests = host.liveRequests.size();
+    const auto output = Type(session, U"h");
+    EXPECT_TRUE(host.liveRequests.size() == requests && host.liveCancels == 0);
+    EXPECT_TRUE(output.livePending);
+    EXPECT_TRUE(CompleteLatest(session, host, U"今日"));
+    EXPECT_EQ(session.Current().PreeditText(), U"今日h");
+}
+
+// アプリのテキストを読めなかったときは、直前に確定した文字列を左文脈に使う
+void TestSessionFallsBackToCommittedContext() {
+    FakeSessionHost host;
+    iroha::InputSession session(&host);
+    const std::u32string context = U"前の文。";
+    session.Handle(Key::Character, U'k', false, &context);
+    Type(session, U"you");
+    CompleteLatest(session, host, U"今日");
+    Press(session, Key::Enter);
+    Type(session, U"ha"); // 左文脈なし
+    EXPECT_EQ(host.liveRequests.back().context, U"前の文。今日");
 }
 
 // 変換済みの読みに戻ったときは変換し直さない
@@ -458,7 +514,10 @@ void TestSessionLiveConversionDisabled() {
 void RunSessionTests() {
     TestSessionLiveConversionReplacesKana();
     TestSessionKeepsPreviousConversionAsPrefix();
-    TestSessionIgnoresStaleLiveResult();
+    TestSessionUsesEarlierLiveResultAsPrefix();
+    TestSessionIgnoresCancelledLiveResult();
+    TestSessionKeepsPendingRequestForSameReading();
+    TestSessionFallsBackToCommittedContext();
     TestSessionSkipsConversionForSameReading();
     TestSessionEnterCommitsLiveResult();
     TestSessionEnterBeforeConversionCatchesUp();

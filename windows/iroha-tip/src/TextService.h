@@ -1,17 +1,22 @@
 #pragma once
+#include <cstdint>
 #include <string>
 #include <vector>
 
 #include "CandidateWindow.h"
 #include "Globals.h"
-#include "iroha/romaji_composer.h"
+#include "iroha/input_session.h"
 
 class LangBarButton;
 
 // TSFテキストサービス本体。
-// M1: 登録・有効化。M2/M3: キー入力→ローマ字かな合成のコンポジション表示・確定。
-// M4: Spaceで変換して文節モードへ。←→で文節移動、Shift+←→で区切り調整、
-//     Space/↑↓で選択中の文節の候補送り（候補ウィンドウ）、Enterで一括確定。
+//
+// 入力の状態（読み・ライブ変換の結果・文節・候補）は変換サーバのセッションが持つ
+// （iroha::InputSession）。ここで行うのは次の3つだけ:
+//   1. キーコードを意味（文字・Enter・Space・矢印…）に読み替えて、受けるかどうかを決める
+//   2. キーを変換サーバに送り、返ってきた表示（確定する文字列・未確定文字列・候補）を文書に反映する
+//   3. ライブ変換の結果待ちの間、タイマーで変換サーバに問い合わせ、届いたら表示を更新する
+// TIPはアプリのプロセスの中で動くので、判断と状態をここに置かない
 class TextService : public ITfTextInputProcessorEx,
                     public ITfKeyEventSink,
                     public ITfCompositionSink,
@@ -66,56 +71,50 @@ private:
     void ReleaseCompartments();
     ~TextService();
 
-    // このキーで行う操作。OnTestKeyDownとOnKeyDownで同じ判定を使う
-    enum class KeyAction {
-        None,             // 食わない（ホストに渡す）
-        Input,            // 文字としてコンポーザへ
-        Commit,           // 確定（文節モードなら全文節、入力中はかな）
-        Cancel,           // 破棄
-        Backspace,        // 表示上の1文字削除
-        Convert,          // 変換サーバに問い合わせて文節モードへ
-        NextCandidate,    // 選択中の文節の次候補（候補ウィンドウを開く）
-        PrevCandidate,    // 前候補
-        SelectCandidate,  // 数字キーで候補を直接選択
-        BackToComposing,  // 変換をやめて読みに戻る
-        CommitThenInput,  // 全文節を確定して新しい入力を始める
-        MoveSegmentLeft,  // 選択文節を左へ
-        MoveSegmentRight, // 選択文節を右へ
-        ShrinkSegment,    // 選択文節の読みを1文字縮める（Shift+←）
-        ExtendSegment,    // 選択文節の読みを1文字伸ばす（Shift+→）
-        ToggleDirectMode, // かな⇔英数の切替（半角/全角キー等）
-        SetKanaMode,      // ひらがなキー
-        SetDirectMode,    // 無変換/英数キー
+    // このキーをどうするか。OnTestKeyDownとOnKeyDownで同じ判定を使う
+    struct KeyDecision {
+        enum class Kind {
+            None,             // 受けない（アプリに渡す）
+            Session,          // 変換サーバのセッションに送る
+            ToggleDirectMode, // かな⇔英数の切替（半角/全角キー等）
+            SetKanaMode,      // ひらがなキー
+            SetDirectMode,    // 無変換/英数キー
+        };
+        Kind kind = Kind::None;
+        iroha::SessionKey key = iroha::SessionKey::Character;
+        char32_t character = 0;
+        bool shift = false;
     };
-    KeyAction DecideKeyAction(WPARAM wParam, LPARAM lParam, wchar_t* outChar) const;
-    HRESULT HandleKey(ITfContext* context, KeyAction action, wchar_t character);
-    HRESULT StartConversion(ITfContext* context);
-    // 現在の内容（文節モードなら全文節の結合、入力中ならかな）を確定し、
-    // 変換確定ならサーバに学習用の通知を送る
-    HRESULT CommitCurrent(ITfContext* context);
-    HRESULT CycleCandidate(ITfContext* context, int delta);
-    HRESULT SelectCandidateIndex(ITfContext* context, size_t index);
-    HRESULT EnsureSegmentCandidates(ITfContext* context, size_t segmentIndex);
-    HRESULT MoveSegment(ITfContext* context, int delta);
-    HRESULT ResizeSegment(ITfContext* context, int delta);
+    KeyDecision DecideKey(WPARAM wParam, LPARAM lParam) const;
+    HRESULT HandleKey(ITfContext* context, const KeyDecision& decision);
+
+    // キーを変換サーバに送り、返ってきた表示を反映する
+    HRESULT SendSessionKey(ITfContext* context, iroha::SessionKey key, char32_t character,
+                           bool shift);
+    // 変換サーバから受け取った表示を文書に反映する。
+    // synchronous が偽なら（キーの処理の外。ライブ変換が届いたとき）非同期のエディットセッションで行う
+    HRESULT ApplyOutput(ITfContext* context, const iroha::SessionOutput& output, bool synchronous);
+    HRESULT ApplyOutputInSession(TfEditCookie ec, ITfContext* context,
+                                 const iroha::SessionOutput& output);
     HRESULT UpdateCandidateWindow(ITfContext* context);
-    std::u32string ReadLeftContext(ITfContext* context); // コンポジション直前の文書テキスト
-    std::u32string JoinedResults() const;
-    std::u32string LeftResults(size_t segmentIndex) const; // 選択文節より左の結果の結合
+    // カーソルより前の文書のテキストを読む（左文脈。読めなければ偽）
+    bool ReadLeftContext(ITfContext* context, std::u32string* text);
+    // 手元の表示の控えを捨てる（合成が終わった）
+    void ClearShown();
+
+    // ライブ変換の結果待ちの間の問い合わせ（Polling.cpp）
+    void StartPolling();
+    void StopPolling();
+    void OnPollTimer();
+    void DestroyPollWindow();
+    static void CALLBACK PollTimerProc(HWND hwnd, UINT message, UINT_PTR id, DWORD time);
 
     // コンポジション操作（Composition.cpp）
-    HRESULT ShowText(ITfContext* context, const std::wstring& text);
-    HRESULT UpdateComposition(ITfContext* context); // コンポーザの表示文字列を出す
-    HRESULT RefreshSegmentDisplay(ITfContext* context); // 文節列の表示（選択文節は太下線）
-    HRESULT CommitText(ITfContext* context, const std::wstring& text);
-    HRESULT CancelComposition(ITfContext* context);
     HRESULT EnsureComposition(TfEditCookie ec, ITfContext* context);
-    HRESULT SetCompositionText(TfEditCookie ec, ITfContext* context,
-                               const std::wstring& text, bool underline);
-    HRESULT SetSegmentedText(TfEditCookie ec, ITfContext* context);
+    HRESULT SetPreedit(TfEditCookie ec, ITfContext* context, const iroha::SessionOutput& output);
     void EndCompositionInternal(TfEditCookie ec, ITfContext* context,
                                 const std::wstring& finalText);
-    void ResetState();
+    void ReleaseComposition();
 
     LONG refCount_;
     ITfThreadMgr* threadMgr_ = nullptr;
@@ -123,9 +122,23 @@ private:
     DWORD activateFlags_ = 0;
 
     ITfComposition* composition_ = nullptr;
-    iroha::RomajiComposer composer_;
+    // 合成中の文書（ライブ変換が届いたときの反映先）
+    ITfContext* compositionContext_ = nullptr;
     TfGuidAtom displayAttributeAtom_ = TF_INVALID_GUIDATOM;
     TfGuidAtom displayAttributeCurrentAtom_ = TF_INVALID_GUIDATOM;
+
+    // 変換サーバのセッションの番号（有効化のたびに作る）
+    uint64_t sessionId_ = 0;
+    // 直近に変換サーバから受け取った表示。キーを受けるかの判断（文節変換中か）と、
+    // 候補ウィンドウの位置合わせ、ライブ変換の問い合わせ（revision）に使う
+    iroha::SessionOutput shown_;
+    CandidateWindow candidateWindow_;
+
+    // ライブ変換の結果待ちの間だけ動かすタイマー（メッセージ専用ウィンドウに付ける）
+    HWND pollWindow_ = nullptr;
+    bool polling_ = false;
+    DWORD pollStartedTick_ = 0;
+    int pollFailures_ = 0;
 
     // 英数モード（trueの間はキーを一切食わない）。半角/全角キー等で切り替える
     bool directMode_ = false;
@@ -137,21 +150,4 @@ private:
     DWORD openCloseCookie_ = TF_INVALID_COOKIE;
     DWORD conversionModeCookie_ = TF_INVALID_COOKIE;
     bool updatingCompartments_ = false; // 自分の書き込みによるOnChangeを無視する
-
-    // 変換後の文節（Spaceで変換すると入力全体がこの列になる）
-    struct ConversionSegment {
-        std::u32string reading; // ひらがな
-        std::u32string result;  // 現在選ばれている変換結果
-        std::vector<std::u32string> candidates; // 未取得なら空
-        size_t candidateIndex = 0;
-    };
-    // segmented_の間、コンポジションにはsegments_の結果を表示する
-    bool segmented_ = false;
-    std::vector<ConversionSegment> segments_;
-    size_t currentSegment_ = 0;
-    bool candidateListOpen_ = false; // 候補ウィンドウを開いているか
-    CandidateWindow candidateWindow_;
-    // 学習用: 変換した読み全体とエンジンの第一候補（確定時にサーバへ通知する）
-    std::u32string conversionReading_;
-    std::u32string conversionBaseline_;
 };

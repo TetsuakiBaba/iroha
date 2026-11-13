@@ -29,11 +29,15 @@ Config LoadConfig(const std::filesystem::path& path) {
     if (const json::Value* model = root.Find("model")) {
         config.model = Utf8ToUtf32(model->AsString());
     }
+    if (const json::Value* live = root.Find("liveConversion")) {
+        if (live->type == json::Value::Type::Bool) config.liveConversion = live->boolean;
+    }
     return config;
 }
 
 bool SaveConfig(const std::filesystem::path& path, const Config& config) {
     std::string out = "{\"model\":" + json::QuoteString(Utf32ToUtf8(config.model)) +
+                      ",\"liveConversion\":" + (config.liveConversion ? "true" : "false") +
                       ",\"version\":1}";
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);

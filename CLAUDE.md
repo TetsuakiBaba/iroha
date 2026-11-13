@@ -536,10 +536,16 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   採点の規則を変えたら Windows側も合わせ、`iroha-cli model-parity`（macOS版の ajimee-dump の出力との照合）と
   `iroha-cli model-selfcheck`（生成と採点の辻褄）を回す。**採点は macOS版と違い候補を1つずつ行う**
   （llama.cppのCPU版は1バッチに載せるトークン数で値が動くため。理由と実測は `windows/README.md` の「変換モデル」節）。
-  変換サーバのエンジンの重ね方・未移植のもの（学習とユーザ辞書の新仕様・長い読みの分割・異体字など）も同じ節にある
-- 変換エンジンは選択肢が2つ: `macos/Sources/IrohaCore/` をSwift for Windowsで共有
-  （Foundation + llama.cppのみ依存で移植可能な設計）、または別言語で再実装。
-  **方針は未決定。実装前にユーザーに確認する**
+  変換サーバのエンジンの重ね方・未移植のものも同じ節にある
+- Windows版では、入力の状態（読み・ライブ変換の結果・文節・候補）を TIP ではなく変換サーバに持つ（2026-11-13）:
+  `windows/iroha-core` の `InputSession`（キーごとに表示を決める状態機械。macOS版 `IrohaInputController` のうち
+  OS に依存しない部分にあたる）と `SessionManager`（セッションの表とライブ変換のスレッド）。TIP はキーを送り、
+  返ってきた表示を文書に反映するだけにする。**入力の動き（キーの意味・表示・確定の規則）を足す・変えるときは
+  TIP ではなく `InputSession` に書き、`tests/test_session.h` にテストを足す**。インストールせずに確かめるには
+  `iroha-cli session <キー列>`（`windows/README.md` の「入力の状態とライブ変換」節）。
+  ライブ変換の表示と確定の規則は macOS版の `compositionDisplay` / `resolveCommitText` と同じにしてある。
+  違うのは、新しい入力で進行中のライブ変換を捨てず、頭の部分の変換として使うこと（CPU では変換が打鍵に追いつかないため）
+- 変換エンジンは C++ で再実装する（2026-09 決定。`windows/README.md` の冒頭）。正は `macos/Sources/IrohaCore/`
 - llama.cppのソースはルートの `vendor/llama.cpp` を共有（zenz対応パッチ
   `patches/llama-cpp-zenz-pretokenizer.patch` の適用が必要）。ただし
   `vendor/dist` はmacOS用（Metal依存）なので**Windows用は別ディレクトリ

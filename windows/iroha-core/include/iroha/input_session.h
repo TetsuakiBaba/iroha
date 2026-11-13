@@ -81,9 +81,12 @@ public:
                              int candidateCount, std::vector<std::u32string>* results,
                              std::string* error) = 0;
         // ライブ変換（第一候補）を頼む。すぐ戻ること。結果は CompleteLiveConversion に渡す。
-        // 新しい依頼が来たら、前の依頼の結果は要らない
+        // 新しい依頼が来ても、前の依頼の結果は（読みが伸びただけなら）表示に使うので、
+        // 始めた変換は最後まで行ってよい。まだ始めていない古い依頼は捨ててよい
         virtual void RequestLiveConversion(uint64_t generation, const std::u32string& reading,
                                            const std::u32string& context) = 0;
+        // 頼んであるライブ変換がどれも要らなくなった（確定・取り消し・文字の削除・文節変換）
+        virtual void CancelLiveConversion() {}
         // 文節変換で確定した（学習に使う）。baseline は文節変換に入ったときの全体の変換結果
         virtual void RecordCommit(const std::u32string& reading, const std::u32string& baseline,
                                   const std::u32string& committed) = 0;
@@ -97,7 +100,10 @@ public:
     SessionOutput Handle(SessionKey key, char32_t character, bool shift,
                          const std::u32string* leftContext);
 
-    // ライブ変換の結果を受け取る。最新の依頼の結果でなければ捨てる（偽を返す）。
+    // ライブ変換の結果を受け取る。表示が変わったら真を返す。
+    // 最新の依頼の結果でなくても、その読みが今の読みの頭の部分なら使う
+    // （「その変換結果 + 増えたかな」を出せる。変換が打鍵に追いつかないときも表示が進む）。
+    // 要らなくなった依頼（CancelLiveConversion より前のもの）の結果は捨てる。
     // converted が nullptr なら変換できなかった（待ちだけを解く）
     bool CompleteLiveConversion(uint64_t generation, const std::u32string& reading,
                                 const std::u32string* converted);
@@ -115,7 +121,9 @@ public:
     static constexpr int kSegmentCandidateCount = 9;
     // 候補ウィンドウの1ページの候補数（数字キー 1〜9 はページの中の番号。TIP の表示と同じにする）
     static constexpr size_t kCandidatePageSize = 9;
-    // 左文脈として持つ最大文字数（モデルの学習設定に合わせる。macOS版の LeftContext.maxLength）
+    // 左文脈として持つ最大文字数（モデルの学習設定に合わせる。macOS版の LeftContext.maxLength）。
+    // 確定した文字列は左文脈の末尾に足しておき、次の合成でアプリのテキストを読めなかったときに使う
+    // （macOS版の recentCommitted にあたる）
     static constexpr size_t kMaxContextLength = 40;
 
     // アプリから読んだテキストを左文脈の形にする: 最後の改行より後ろ（カーソルのある行）だけを残し、
@@ -161,8 +169,12 @@ private:
     std::optional<std::pair<std::u32string, std::u32string>> lastConversion_;
     // 文字を消したあと、次の文字を打つまで変換結果を見せずかなで出す
     bool showsKanaOnly_ = false;
+    // ライブ変換の依頼の番号（頼むたびに増やす）と、この番号以下の依頼の結果は受け取らないという線
     uint64_t liveGeneration_ = 0;
+    uint64_t liveValidAfter_ = 0;
+    // 最新の依頼の結果を待っているか、その依頼の読み
     bool livePending_ = false;
+    std::u32string liveRequestedReading_;
 
     // 文節変換
     bool segmenting_ = false;

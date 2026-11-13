@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -76,6 +77,13 @@ public:
                const std::u32string& leftContext, std::vector<float>* scores,
                std::string* error) override;
 
+    // 変換・採点を途中でやめるかの問い合わせ口（空の関数で外す）。渡されている間、生成の1トークンごと・
+    // 採点の1候補ごとに呼び、真なら失敗（error は kCancelledError）として戻る。
+    // KVキャッシュは評価したところまで正しい状態で残るので、次の変換はそのまま行える。
+    // ライブ変換を裏で進めている間に、キーの処理が変換を必要としたときに使う
+    void SetCancelCheck(std::function<bool()> check) { cancelCheck_ = std::move(check); }
+    static constexpr char kCancelledError[] = "変換を途中でやめました";
+
     // n-best候補を残す対数確率の幅（最良候補との差、nat単位）
     static constexpr float kNbestLogProbWindow = 8;
 
@@ -106,12 +114,15 @@ private:
     bool Generate(const std::vector<int32_t>& promptTokens, const FirstToken* forcedFirstToken,
                   const std::u32string& reading, Generated* out, std::string* error);
     void ResetMemory();
+    // 途中でやめるよう言われていれば error を入れて真を返す
+    bool Cancelled(std::string* error) const;
 
     // 左文脈として与える最大文字数（zenz-v3の学習設定に合わせる）
     static constexpr size_t kMaxContextLength = 40;
 
     std::string modelPath_;
     Options options_;
+    std::function<bool()> cancelCheck_;
     std::unique_ptr<Runtime> runtime_;
 };
 

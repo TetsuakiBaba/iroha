@@ -49,6 +49,7 @@ std::u32string InputSession::NormalizeLeftContext(const std::u32string& text) {
 SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shift,
                                    const std::u32string* leftContext) {
     if (leftContext && !IsComposing()) context_ = NormalizeLeftContext(*leftContext);
+    const std::u32string contextBefore = context_;
 
     std::u32string commit;
     switch (key) {
@@ -71,6 +72,8 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
         }
         break;
     }
+    // 次の合成でアプリのテキストを読めなかったときのために、確定した文字列を左文脈に足しておく
+    if (!commit.empty() && !IsComposing()) context_ = NormalizeLeftContext(contextBefore + commit);
     ++revision_;
     SessionOutput output = Current();
     output.commit = std::move(commit);
@@ -136,24 +139,38 @@ void InputSession::ComposerDidChange() {
         CancelLiveConversion();
         return;
     }
+    // 同じ読みの変換を頼んであれば、その結果を待つ（未解決のローマ字が増えただけ）
+    if (livePending_ && liveRequestedReading_ == reading) return;
     ++liveGeneration_;
     livePending_ = true;
+    liveRequestedReading_ = reading;
     host_->RequestLiveConversion(liveGeneration_, reading, context_);
 }
 
 void InputSession::CancelLiveConversion() {
-    // 版を進めて、頼んである変換の結果を受け取らないようにする
-    ++liveGeneration_;
+    // ここまでに頼んだ変換の結果を受け取らないようにする
+    liveValidAfter_ = liveGeneration_;
+    if (livePending_) host_->CancelLiveConversion();
     livePending_ = false;
+    liveRequestedReading_.clear();
 }
 
 bool InputSession::CompleteLiveConversion(uint64_t generation, const std::u32string& reading,
                                           const std::u32string* converted) {
-    if (generation != liveGeneration_ || !livePending_) return false;
-    livePending_ = false;
-    if (converted && !converted->empty()) lastConversion_.emplace(reading, *converted);
-    ++revision_;
-    return true;
+    if (generation <= liveValidAfter_ || generation > liveGeneration_) return false;
+    bool changed = false;
+    if (generation == liveGeneration_ && livePending_) {
+        livePending_ = false;
+        liveRequestedReading_.clear();
+        changed = true;
+    }
+    // 読みが伸びたあとに届いた結果も、頭の部分の変換として使う
+    if (converted && !converted->empty() && !segmenting_ && StartsWith(composer_.Text(), reading)) {
+        lastConversion_.emplace(reading, *converted);
+        changed = true;
+    }
+    if (changed) ++revision_;
+    return changed;
 }
 
 // 現在表示すべき未確定文字列（変換結果があればそれ、なければかな）+ 未解決ローマ字。
