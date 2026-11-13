@@ -7,6 +7,7 @@
 // 候補を複数求められたとき（候補ウィンドウ）は辞書ラティスで候補を作ってモデルで並べ、
 // 1つだけのとき（全体の変換）はモデルの生成に任せる。辞書が無ければモデル単体で動く。
 // Reload で設定・辞書を読み直す（モデルは変わったときだけ読み込む）
+#include <array>
 #include <atomic>
 #include <filesystem>
 #include <functional>
@@ -16,6 +17,8 @@
 #include <string>
 #include <vector>
 
+#include "ai_client.h"
+#include "iroha/ai_conversion.h"
 #include "iroha/chunked_conversion_engine.h"
 #include "iroha/config.h"
 #include "iroha/conversion_log.h"
@@ -45,6 +48,9 @@ public:
         Logger log;
         // 描けない絵文字を記号の表から除く判定（nullptr なら除かない）
         SymbolCandidateTable::RenderablePredicate isRenderableEmoji;
+        // 辞書ラティスの辞書（Dictionary）・記号のデータ（Symbols）を探すフォルダ。空なら実行ファイルのフォルダ
+        // （fcitx5 のエンジンは fcitx5 本体のプロセスの中で動くので、インストール先を渡す）
+        std::filesystem::path resourceDirectory;
     };
 
     explicit EngineHost(Options options = {});
@@ -79,10 +85,29 @@ public:
     bool TypoCorrectionAvailable() override;
     std::optional<TypoCorrection> CorrectTypo(const std::u32string& reading, double threshold,
                                               size_t minimumLength) override;
+    ScoredText ScoreConversion(const std::u32string& reading, const std::u32string& context) override;
+    AIOutcome RunAIRequest(const AIRequest& request, int stallSeconds, CancelToken* cancel) override;
+    std::optional<std::u32string> RunAI(size_t preset, const std::u32string& text,
+                                        const std::function<void(const std::u32string&)>& onPartial,
+                                        CancelToken* cancel) override;
+
+    // ---- 選択テキストのAI編集が使う（どのスレッドからでも呼べる） ----
+    // AI に依頼する（接続先は設定のもの。API キーはここで読む）
+    AIResult RunAIWith(const AIRequest& request, const std::function<void(const std::u32string&)>& onPartial,
+                       CancelToken* cancel, int stallSeconds = 30);
+    // AI の接続先が決まっているか（Claude は API キーを読まずに真とする。無ければ依頼のときに失敗の理由を出す）
+    bool AIConfigured();
+    // 今の設定（Build で読んだもの）
+    Config CurrentConfig();
 
 private:
+    // AI の接続先とプリセットを読む（API キーは読まない。main thread で呼ぶので）
+    void LoadAI(const Config& config);
+    // 依頼に使う接続先（API キーが要る接続先なら保管庫から読む。裏のスレッドで呼ぶ）
+    AIConnection ConnectionForRequest();
     void Log(const std::string& message) const;
     std::filesystem::path ConfigPath() const;
+    std::filesystem::path ResourceDirectory() const;
     void LoadTypoNormalizer(bool enabled);
     std::shared_ptr<TypoNormalizer> Typo();
     void LoadTermDictionaries();
@@ -125,6 +150,12 @@ private:
     bool termsLoaded_ = false;
     std::shared_ptr<const TermLatticeIndex> termIndex_;
     std::shared_ptr<const TermDictionaryLookup> termLookup_;
+    // AI変換の接続先とプリセット（裏のスレッドから読むので鍵で守る）。API キーは使うときに読み、読めたら覚える
+    std::mutex aiMutex_;
+    AIConnection aiConnection_;
+    std::array<AICommitPreset, AICommitSettings::kCount> aiPresets_;
+    bool aiKeyLoaded_ = false;
+    Config config_;
 };
 
 } // namespace iroha

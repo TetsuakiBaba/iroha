@@ -2,6 +2,7 @@
 #include <cstdio>
 
 #include "key_decision.h"
+#include "key_shortcut.h"
 
 namespace {
 
@@ -124,6 +125,37 @@ void TestTabAndUndo() {
     EXPECT_TRUE(DecideKey(0xff08, m::kControl, Idle()).kind == Kind::Pass);
 }
 
+void TestAIKeys() {
+    // 既定の AIで直す（Ctrl+Alt+A）と英訳（Alt+Enter）
+    KeyContext c = Composing();
+    c.aiFixShortcut = iroha::KeyShortcut::Parse("Ctrl+Alt+A")->Encode();
+    c.aiShortcuts = {iroha::KeyShortcut::Parse("Alt+Enter")->Encode(), 0, iroha::KeyShortcut::Parse("Ctrl+Shift+F2")->Encode()};
+    EXPECT_TRUE(IsSession(DecideKey('a', m::kControl | m::kAlt, c), SessionKey::AIFix));
+    EXPECT_TRUE(!IsSession(DecideKey('A', m::kControl | m::kAlt | m::kShift, c), SessionKey::AIFix));  // Shift が違う
+    const auto english = DecideKey(0xff0d, m::kAlt, c);
+    EXPECT_TRUE(IsSession(english, SessionKey::AICommit) && english.character == 0);
+    const auto third = DecideKey(0xffbf, m::kControl | m::kShift, c);  // F2
+    EXPECT_TRUE(IsSession(third, SessionKey::AICommit) && third.character == 2);
+    // 入力していなければアプリに渡す。文節変換中の AIで直すは扱わない
+    KeyContext idle = Idle();
+    idle.aiShortcuts = c.aiShortcuts;
+    EXPECT_TRUE(DecideKey(0xff0d, m::kAlt, idle).kind == Kind::Pass);
+    KeyContext segmenting = c;
+    segmenting.segmenting = true;
+    EXPECT_TRUE(DecideKey('a', m::kControl | m::kAlt, segmenting).kind == Kind::CommitThenPass);
+    // AI変換の結果待ち: Esc は取り消し、ほかのキーは飲み込む（修飾キーだけは渡す）
+    KeyContext waiting = Composing();
+    waiting.aiPending = true;
+    EXPECT_TRUE(IsSession(DecideKey(0xff1b, 0, waiting), SessionKey::Escape));
+    const auto swallowed = DecideKey('k', 0, waiting);
+    EXPECT_TRUE(IsSession(swallowed, SessionKey::Character) && swallowed.character == 0);
+    EXPECT_TRUE(DecideKey(0xffe1, 0, waiting).kind == Kind::Pass);
+    // 候補ウィンドウが出ていれば Tab で表に広げる
+    KeyContext candidates = Segmenting();
+    candidates.candidatesVisible = true;
+    EXPECT_TRUE(IsSession(DecideKey(0xff09, 0, candidates), SessionKey::Tab));
+}
+
 void TestInputModes() {
     EXPECT_TRUE(DecideKey(0xff2a, 0, Idle()).kind == Kind::ToggleDirectMode);  // Zenkaku_Hankaku
     EXPECT_TRUE(DecideKey(0xff21, 0, Idle()).kind == Kind::ToggleDirectMode);  // Kanji
@@ -148,6 +180,7 @@ int main() {
     TestShortcuts();
     TestTabAndUndo();
     TestInputModes();
+    TestAIKeys();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

@@ -1,12 +1,14 @@
 #include "engine.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <memory>
 #include <string>
 
-#include "iroha/engine_host.h"
+#include "engine_host.h"
+#include "iroha/platform.h"
 #include "iroha/session_manager.h"
 #include "iroha/unicode.h"
 #include "key_decision.h"
@@ -22,6 +24,10 @@ uint64_t nextSessionId = 1;
 constexpr size_t kPageSize = 9;
 // ライブ変換・打ち間違いの訂正の結果待ちの間、問い合わせる間隔（Windows版の TIP と同じ）
 constexpr guint kPollIntervalMs = 15;
+// 結果が届かないまま問い合わせ続ける上限（エンジンの裏の処理が止まったときに回り続けないように）。
+// AI変換は、30 秒応答の無い依頼を打ち切るので、それより長く待つ（Windows版の TIP と同じ）
+constexpr auto kPollLimit = std::chrono::seconds(10);
+constexpr auto kAIPollLimit = std::chrono::seconds(120);
 // 句読点・プライベートモードの切り替えの知らせを出しておく時間
 constexpr guint kNoticeMs = 2000;
 // 左文脈として読むカーソルより前の文字数（変換側がカーソルのある行・末尾 40 文字に整える）
@@ -52,11 +58,13 @@ struct State {
     // 確定の取り消しで、カーソルの手前から消す文字数
     guint replaceBeforeLength = 0;
     guint pollTimer = 0;
+    std::chrono::steady_clock::time_point pollStarted;
     guint noticeTimer = 0;
     std::u32string notice;
     IBusPropList* properties = nullptr;
     IBusProperty* modeProperty = nullptr;
     IBusProperty* privateProperty = nullptr;
+    IBusProperty* setupProperty = nullptr;
 };
 
 } // namespace
@@ -79,6 +87,15 @@ namespace {
 State& StateOf(IBusEngine* engine) { return *IROHA_ENGINE(engine)->state; }
 
 bool Composing(const State& state) { return state.shown.Composing(); }
+
+// 結果待ち（問い合わせが要る）か
+bool Pending(const iroha::SessionOutput& output) {
+    return output.livePending || output.typoPending || output.aiPending || output.aiFixPending;
+}
+
+std::string FeedbackLine(const iroha::TypoCorrectionFeedback& feedback) {
+    return U8(feedback.Original()) + " → " + U8(feedback.Corrected()) + "（BackSpace で戻す）";
+}
 
 // ---- 表示 ----
 
@@ -145,7 +162,8 @@ void UpdateLookupTable(IBusEngine* engine) {
     ibus_engine_update_lookup_table(engine, table, TRUE);
 }
 
-// 補助テキスト（候補ウィンドウの上の 1 行）: 知らせ > 打ち間違いの訂正 > 予測変換 > 候補の位置
+// 補助テキスト（候補ウィンドウの上の 1 行）: 知らせ > 打ち間違いの訂正 > AI の案 > AIで直すの窓・知らせ >
+// AI変換の結果待ち > 予測変換 > 候補の位置（表に広げているときは列）
 void UpdateAuxiliary(IBusEngine* engine) {
     const State& state = StateOf(engine);
     const iroha::SessionOutput& shown = state.shown;
@@ -153,8 +171,18 @@ void UpdateAuxiliary(IBusEngine* engine) {
     if (!state.notice.empty()) {
         line = U8(state.notice);
     } else if (Composing(state) && shown.typoFeedback) {
-        line = "訂正: " + U8(shown.typoFeedback->Original()) + " → " + U8(shown.typoFeedback->Corrected()) +
-               "（BackSpace で戻す）";
+        line = "訂正: " + FeedbackLine(*shown.typoFeedback);
+    } else if (Composing(state) && shown.aiFixFeedback) {
+        line = "AI の案: " + FeedbackLine(*shown.aiFixFeedback);
+    } else if (Composing(state) && !shown.aiFixNotice.empty()) {
+        line = U8(shown.aiFixNotice);
+    } else if (Composing(state) && shown.aiPending) {
+        line = "AI に依頼中…（Esc で取り消す）";
+    } else if (Composing(state) && shown.candidatesVisible && shown.candidatesExpanded) {
+        // IBus の候補ウィンドウは 1 列しか描けないので、表は今の列だけを見せ、列の位置を出す
+        const size_t columns = (shown.candidates.size() + kPageSize - 1) / kPageSize;
+        line = "列 " + std::to_string(shown.candidateIndex / kPageSize + 1) + "/" + std::to_string(columns) +
+               "（←→ で隣の列・Tab で 1 列に戻す）";
     } else if (Composing(state) && !shown.segmenting && !shown.predictions.empty()) {
         line = "予測:";
         for (size_t i = 0; i < shown.predictions.size(); ++i) {
@@ -163,7 +191,8 @@ void UpdateAuxiliary(IBusEngine* engine) {
         }
         line += "（Tab で選ぶ）";
     } else if (Composing(state) && shown.candidatesVisible && shown.candidates.size() > kPageSize) {
-        line = std::to_string(shown.candidateIndex + 1) + "/" + std::to_string(shown.candidates.size());
+        line = std::to_string(shown.candidateIndex + 1) + "/" + std::to_string(shown.candidates.size()) +
+               "（Tab で表に広げる）";
     }
     if (line.empty()) {
         ibus_engine_hide_auxiliary_text(engine);
@@ -200,6 +229,15 @@ void ShowNotice(IBusEngine* engine, const std::u32string& notice) {
     state.noticeTimer = g_timeout_add(kNoticeMs, ClearNotice, engine);
 }
 
+// 入力中かの目印（選択テキストのAI編集が読む）。変わったときだけ書く
+void UpdateComposingFlag() {
+    static int last = -1;
+    const int now = sharedSessions && sharedSessions->AnyComposing() ? 1 : 0;
+    if (now == last) return;
+    last = now;
+    iroha::platform::SetComposingFlag(now == 1);
+}
+
 // 返ってきた表示を IBus に反映する。結果待ち（問い合わせが要る）なら真を返す
 bool ApplyOutput(IBusEngine* engine, const iroha::SessionOutput& output, bool fromKey) {
     State& state = StateOf(engine);
@@ -222,7 +260,8 @@ bool ApplyOutput(IBusEngine* engine, const iroha::SessionOutput& output, bool fr
     if (fromKey && !output.notice.empty()) ShowNotice(engine, output.notice);
     UpdateLookupTable(engine);
     UpdateAuxiliary(engine);
-    return Composing(state) && (output.livePending || output.typoPending);
+    UpdateComposingFlag();
+    return Composing(state) && Pending(output);
 }
 
 // ---- 問い合わせ（ライブ変換・打ち間違いの訂正の到着） ----
@@ -232,11 +271,12 @@ gboolean PollTick(gpointer data) {
     State& state = StateOf(engine);
     try {
         iroha::SessionOutput output;
-        bool pending = Composing(state) && (state.shown.livePending || state.shown.typoPending);
+        bool pending = Composing(state) && Pending(state.shown);
         if (sharedSessions->Poll(state.sessionId, state.shown.revision, &output)) {
             pending = ApplyOutput(engine, output, /*fromKey=*/false);
         }
-        if (pending) return G_SOURCE_CONTINUE;
+        const auto limit = state.shown.aiPending ? kAIPollLimit : kPollLimit;
+        if (pending && std::chrono::steady_clock::now() - state.pollStarted < limit) return G_SOURCE_CONTINUE;
     } catch (const std::exception& error) {
         Log(std::string("poll failed: ") + error.what());
     }
@@ -246,6 +286,7 @@ gboolean PollTick(gpointer data) {
 
 void SetPolling(IBusEngine* engine, bool pending) {
     State& state = StateOf(engine);
+    if (pending) state.pollStarted = std::chrono::steady_clock::now();
     if (pending && state.pollTimer == 0) {
         state.pollTimer = g_timeout_add(kPollIntervalMs, PollTick, engine);
     } else if (!pending && state.pollTimer != 0) {
@@ -310,6 +351,7 @@ void ResetComposition(IBusEngine* engine) {
     }
     state.shown = iroha::SessionOutput();
     HideAll(engine);
+    UpdateComposingFlag();
 }
 
 // 今の表示のまま確定する（入力モードの切り替え・エンジンの無効化の前）
@@ -340,6 +382,10 @@ gboolean ProcessKeyEvent(IBusEngine* engine, guint keyval, guint keycode, guint 
         context.hasPredictions = !state.shown.predictions.empty();
         context.idleFullWidthSpace = state.idleFullWidthSpace;
         context.idleUndoable = !state.idleUndoable.empty();
+        context.candidatesVisible = state.shown.candidatesVisible;
+        context.aiPending = state.shown.aiPending;
+        context.aiFixShortcut = state.shown.aiFixShortcut;
+        context.aiShortcuts = state.shown.aiShortcuts;
         const iroha::ibus::KeyDecision decision = iroha::ibus::DecideKey(keyval, modifiers, context);
         using Kind = iroha::ibus::KeyDecision::Kind;
         switch (decision.kind) {
@@ -432,6 +478,15 @@ void PropertyActivate(IBusEngine* engine, const gchar* name, guint propertyState
             SetDirectMode(engine, !StateOf(engine).directMode);
         } else if (property == "PrivateMode") {
             SendKey(engine, iroha::SessionKey::TogglePrivateMode, 0, false);
+        } else if (property == "Setup") {
+            // 設定画面（エンジンと同じフォルダの iroha-settings）を開く
+            const std::string settings = iroha::PathToUtf8(iroha::platform::ExecutableDirectory() / "iroha-settings");
+            gchar* argv[] = {const_cast<gchar*>(settings.c_str()), nullptr};
+            GError* error = nullptr;
+            if (!g_spawn_async(nullptr, argv, nullptr, G_SPAWN_DEFAULT, nullptr, nullptr, nullptr, &error)) {
+                Log(std::string("cannot open settings: ") + (error ? error->message : ""));
+                if (error) g_error_free(error);
+            }
         }
     } catch (const std::exception& error) {
         Log(std::string("property failed: ") + error.what());
@@ -480,6 +535,8 @@ void Destroy(IBusObject* object) {
         if (state->properties) g_object_unref(state->properties);
         if (state->modeProperty) g_object_unref(state->modeProperty);
         if (state->privateProperty) g_object_unref(state->privateProperty);
+        if (state->setupProperty) g_object_unref(state->setupProperty);
+        state->setupProperty = nullptr;
         state->properties = nullptr;
         state->modeProperty = nullptr;
         state->privateProperty = nullptr;
@@ -530,8 +587,13 @@ static void iroha_engine_init(IrohaEngine* engine) {
     g_object_ref_sink(state->privateProperty);
     state->properties = ibus_prop_list_new();
     g_object_ref_sink(state->properties);
+    state->setupProperty = ibus_property_new("Setup", PROP_TYPE_NORMAL, ibus_text_new_from_static_string("設定…"),
+                                             "preferences-system", ibus_text_new_from_static_string("iroha の設定画面を開く"),
+                                             TRUE, TRUE, PROP_STATE_UNCHECKED, nullptr);
+    g_object_ref_sink(state->setupProperty);
     ibus_prop_list_append(state->properties, state->modeProperty);
     ibus_prop_list_append(state->properties, state->privateProperty);
+    ibus_prop_list_append(state->properties, state->setupProperty);
     if (sharedHost) state->privateMode = sharedHost->Settings().privateMode;
     if (state->privateMode) ibus_property_set_state(state->privateProperty, PROP_STATE_CHECKED);
 }

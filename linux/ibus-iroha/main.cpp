@@ -5,11 +5,16 @@
 //                              IROHA_DATA_DIR で別のデータフォルダを指し、IROHA_MODEL でモデルを渡す）
 //
 // 変換エンジン一式（EngineHost）とセッションの表（SessionManager）はプロセスで 1 つ。モデル・辞書は
-// IBus につなぐ前に読み込む（最初のキーでもたつかないように）
+// IBus につなぐ前に読み込む（最初のキーでもたつかないように）。
+// 設定画面が <データフォルダ>/reload-request を書き換えたら読み直す（Windows版の IPC の Reload にあたる）。
+// 起動・終了は <データフォルダ>/logs/launch-<ホスト名>.log に残す（LaunchLog）
+#include <glib-unix.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include <chrono>
 #include <cstdio>
+#include <functional>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -19,8 +24,10 @@
 
 #include <ibus.h>
 
+#include "emoji_renderability.h"
 #include "engine.h"
-#include "iroha/engine_host.h"
+#include "engine_host.h"
+#include "launch_log.h"
 #include "iroha/platform.h"
 #include "iroha/session_manager.h"
 #include "iroha/unicode.h"
@@ -71,7 +78,42 @@ private:
     std::mutex mutex_;
 };
 
+// 終わった理由（起動の記録に書く）
+std::string g_exitReason = "disconnected";
+
 void OnDisconnected(IBusBus*, gpointer) { ibus_quit(); }
+
+gboolean OnSignal(gpointer data) {
+    g_exitReason = static_cast<const char*>(data);
+    ibus_quit();
+    return G_SOURCE_REMOVE;
+}
+
+// 設定の読み直し（設定画面が reload-request を書き換えたら。続けて書かれても 1 回にまとめる）
+struct Reloader {
+    iroha::EngineHost* host = nullptr;
+    iroha::SessionManager* sessions = nullptr;
+    std::function<void(const std::string&)> log;
+    guint timer = 0;
+};
+
+gboolean Reload(gpointer data) {
+    Reloader& reloader = *static_cast<Reloader*>(data);
+    reloader.timer = 0;
+    reloader.log("reload requested");
+    reloader.sessions->WithEngine([&reloader] { reloader.host->Build(); });
+    reloader.host->ApplyTo(*reloader.sessions);
+    return G_SOURCE_REMOVE;
+}
+
+void OnReloadRequest(GFileMonitor*, GFile*, GFile*, GFileMonitorEvent event, gpointer data) {
+    if (event != G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT && event != G_FILE_MONITOR_EVENT_CREATED &&
+        event != G_FILE_MONITOR_EVENT_CHANGED) {
+        return;
+    }
+    Reloader& reloader = *static_cast<Reloader*>(data);
+    if (reloader.timer == 0) reloader.timer = g_timeout_add(300, Reload, &reloader);
+}
 
 // 開発用のコンポーネント（インストールしたものと名前を分ける）
 IBusComponent* MakeDevelopmentComponent(const std::string& executable) {
@@ -105,10 +147,18 @@ int main(int argc, char** argv) {
     FileLog fileLog;
     const auto log = [&fileLog](const std::string& message) { fileLog.Write(message); };
     log(std::string("start ") + IROHA_VERSION + (launchedByIbus ? " (ibus)" : " (standalone)"));
+    // 起動の記録（インストールしたものだけ。開発用は残さない）
+    iroha::LaunchLog launchLog(iroha::platform::DataDirectory() / "logs", iroha::platform::HostName(), "ibus-engine-iroha");
+    if (launchedByIbus) {
+        for (const std::string& line : launchLog.RecordLaunch(IROHA_VERSION)) log("launch log: " + line);
+    }
 
     const auto started = std::chrono::steady_clock::now();
     iroha::EngineHost::Options options;
     options.log = log;
+    // 描けない絵文字（フォントが古い・国旗など）は記号の表に入れない
+    options.isRenderableEmoji = iroha::EmojiRenderability::MakePredicate();
+    if (!options.isRenderableEmoji) log("emoji font not found (all emoji are kept)");
     iroha::EngineHost host(options);
     host.Build();
     iroha::SessionManager sessions(&host);
@@ -141,8 +191,22 @@ int main(int argc, char** argv) {
         }
         log("registered as iroha-dev (data: " + iroha::PathToUtf8(iroha::platform::DataDirectory()) + ")");
     }
+    // 設定の読み直しの依頼を見張る
+    Reloader reloader{&host, &sessions, log, 0};
+    GFile* reloadFile = g_file_new_for_path(iroha::PathToUtf8(iroha::platform::ReloadRequestPath()).c_str());
+    GFileMonitor* reloadMonitor = g_file_monitor_file(reloadFile, G_FILE_MONITOR_NONE, nullptr, nullptr);
+    if (reloadMonitor) g_signal_connect(reloadMonitor, "changed", G_CALLBACK(OnReloadRequest), &reloader);
+    g_unix_signal_add(SIGTERM, OnSignal, const_cast<char*>("SIGTERM"));
+    g_unix_signal_add(SIGINT, OnSignal, const_cast<char*>("SIGINT"));
+    g_unix_signal_add(SIGHUP, OnSignal, const_cast<char*>("SIGHUP"));
+
     ibus_main();
-    log("stop");
+    log("stop (" + g_exitReason + ")");
+    if (reloader.timer) g_source_remove(reloader.timer);
+    if (reloadMonitor) g_object_unref(reloadMonitor);
+    g_object_unref(reloadFile);
+    iroha::platform::SetComposingFlag(false);
+    if (launchedByIbus) launchLog.RecordExit(g_exitReason);
     iroha::ibus::SetShared(nullptr, nullptr, nullptr);
     return 0;
 }

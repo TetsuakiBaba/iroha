@@ -1,11 +1,9 @@
 #include "term_dictionary_fetcher.h"
 
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
+#include <curl/curl.h>
 
-#include <cerrno>
 #include <cstdio>
+#include <mutex>
 #include <ctime>
 #include <fstream>
 #include <sstream>
@@ -19,41 +17,52 @@ namespace iroha {
 
 namespace {
 
-extern "C" char** environ;
-
-// コマンドを引数の配列のまま起動して終わるのを待つ（シェルを通さない）。終了コードを返す（起動できなければ -1）
-int Run(const std::vector<std::string>& arguments) {
-    std::vector<char*> argv;
-    for (const std::string& argument : arguments) argv.push_back(const_cast<char*>(argument.c_str()));
-    argv.push_back(nullptr);
-    pid_t pid = 0;
-    if (posix_spawnp(&pid, argv[0], nullptr, nullptr, argv.data(), environ) != 0) return -1;
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0) {
-        if (errno != EINTR) return -1;
-    }
-    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-}
-
 std::string FileName(const std::string& url) {
     const size_t slash = url.find_last_of('/');
     return slash == std::string::npos ? url : url.substr(slash + 1);
 }
 
+size_t WriteToFile(char* data, size_t size, size_t count, void* user) {
+    return std::fwrite(data, size, count, static_cast<std::FILE*>(user)) * size;
+}
+
 } // namespace
 
-// url を path に落とす（curl、無ければ wget。キャッシュは持たない）
+// url を path に落とす（libcurl。https と file:// を扱う。キャッシュは持たない）
 bool TermDictionaryFetcher::Download(const std::string& url, const std::filesystem::path& path, std::string* error) {
-    const std::string output = PathToUtf8(path);
-    int status = Run({"curl", "--fail", "--silent", "--show-error", "--location", "--proto", "=https,http,file",
-                      "--output", output, "--", url});
-    if (status == -1) status = Run({"wget", "--quiet", "--output-document", output, "--", url});
-    if (status != 0) {
+    static std::once_flag once;
+    std::call_once(once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+    std::FILE* file = std::fopen(PathToUtf8(path).c_str(), "wb");
+    if (!file) {
+        if (error) *error = "書き込めません: " + PathToUtf8(path);
+        return false;
+    }
+    CURL* curl = curl_easy_init();
+    CURLcode code = CURLE_FAILED_INIT;
+    long status = 0;
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "iroha");
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
+        // 30 秒の間なにも届かなければ打ち切る
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 30L);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteToFile);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, file);
+        code = curl_easy_perform(curl);
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+        curl_easy_cleanup(curl);
+    }
+    const bool closed = std::fclose(file) == 0;
+    if (code != CURLE_OK || !closed) {
         std::error_code ignored;
         std::filesystem::remove(path, ignored);
         if (error) {
-            *error = status == -1 ? "curl も wget も見つかりません"
-                                  : "取得できませんでした（終了コード " + std::to_string(status) + "）: " + FileName(url);
+            *error = "取得できませんでした（" + std::string(curl_easy_strerror(code)) +
+                     (status ? "、HTTP " + std::to_string(status) : std::string()) + "）: " + FileName(url);
         }
         return false;
     }

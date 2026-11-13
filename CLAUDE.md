@@ -78,7 +78,7 @@ cd macos && swift build --build-system native && swift test --build-system nativ
 
 | 役割 | ディレクトリ | Git |
 |---|---|---|
-| アプリ | `macos/`（Swift パッケージ）・`windows/`（TSF）・`linux/`（IBus。作成中） | 追跡 |
+| アプリ | `macos/`（Swift パッケージ）・`windows/`（TSF）・`linux/`（IBus・fcitx5） | 追跡 |
 | 配布・評価 | `models/`（アプリが取得するモデルの一覧）・`testdata/`（評価セット。`ajimee/` は追跡外） | 追跡 |
 | 学習データを作る | `dataset/iroha-typo-normalizer/`（コードは `dataset/iroha-typo-normalizer/src/iroha/`、`python -m iroha …`。作ったデータは `dataset/iroha-typo-normalizer/data/` で追跡外） | コードだけ追跡 |
 | 学習 | `training/`（直下がかな漢字変換モデル、`typo-normalizer/` が打ち間違いの訂正） | 追跡外 |
@@ -572,22 +572,30 @@ cd macos && swift build --build-system native && swift test --build-system nativ
 
 ## Linux版の開発（linux/、2026-11-13 開始）
 
-- **ソースは Windows版と別に持つ**（ユーザの判断）。`linux/iroha-core`・`linux/iroha-cli`・`linux/shared` は
-  Windows版の同名のものをコミット 2de5ee1 で写したもので、以後は Linux版として別に保つ。`linux/` から `windows/` を
-  参照しない（ビルドも include も）。macOS版の仕様の変更は、Windows版と Linux版にそれぞれ写す。辞書ラティスは
-  macOS版でもほぼ直さず、直すときは大工事になるので、そのときにそれぞれ直す（ユーザの判断）
-- フロントエンドは **IBus を先に作る**（GNOME の標準。Wayland の GNOME では IBus しか正式に動かない）。fcitx5 は後。
-  IBus のエンジンは ibus-daemon が起動する別のプロセスなので、Windows版の変換サーバと TIP の分け方は採らず、
-  エンジンのプロセスに変換エンジン・`SessionManager` を直接置く。設定からエンジン一式を組み立てる部分は
-  `iroha/engine_host.h`（Windows版の iroha-server の `ServerState` / `ServerBackend` を移したもの。iroha-cli の `session` も使う）
+- **ソースは Windows版と別に持つ**（ユーザの判断）。`linux/iroha-core`・`linux/iroha-cli` などは Windows版の同名のものを
+  コミット 2de5ee1 で写したもので、以後は Linux版として別に保つ。`linux/` から `windows/` を参照しない（ビルドも include も）。
+  macOS版の仕様の変更は、Windows版と Linux版にそれぞれ写す。Windows版がコアに足した変更は、`git diff <前> <後> -- windows/iroha-core`
+  のパスを `linux/iroha-core` に読み替えて `git apply --3way` で取り込める（2026-11-14 に c12af85 までをこれで取り込んだ。
+  **当てたあとは `git reset` で索引を戻す**。3 方向のマージは索引に書く）。辞書ラティスは macOS版でもほぼ直さず、
+  直すときは大工事になるので、そのときにそれぞれ直す（ユーザの判断）
+- フロントエンドは IBus（`linux/ibus-iroha/`）と fcitx5（`linux/fcitx5-iroha/`）。どちらも Windows版の TIP と同じく、
+  キーを送って返ってきた表示を反映するだけ。**入力の動きは `InputSession` に書く**。キーの読み替えは共有の `key_decision`
+  （IBus に依存しない。単体テストあり。fcitx5 の KeyState のビットは IBus の修飾キーと同じ並び）。
+  IBus のエンジンは ibus-daemon が起動する別のプロセスなので変換サーバを分けず、エンジンのプロセスに変換エンジン・
+  `SessionManager` を直接置く。設定からエンジン一式を組み立てるのは `linux/shared/engine_host.h`（Windows版の iroha-server の
+  `ServerState` / `ServerBackend` を移したもの。AI の依頼もここ）
+- 設定画面 `linux/iroha-settings/`（GTK4）と選択テキストのAI編集 `linux/iroha-selection/`（GTK4・X11、別のプロセスで常駐）。
+  設定画面は保存したら `platform::RequestReload()`（`<データフォルダ>/reload-request` を書き換え、エンジンが見張って読み直す）。
+  **API キー（libsecret）は main thread で読まない**（`linux/shared/secret_store.h`。macOS版のキーチェーンと同じ理由）
 - データフォルダは `IROHA_DATA_DIR` > `$XDG_DATA_HOME/iroha` > `~/.local/share/iroha`（`iroha/platform.h`）。
   中のファイルの形式は macOS版・Windows版と同じ。パスは UTF-8 のまま扱う（`PathFromUtf8` / `PathToUtf8`。
-  Windows版の `Utf32ToUtf16` でパスを作る書き方を持ち込まない）
-- ビルド（要るパッケージ: `cmake ninja-build libibus-1.0-dev libglib2.0-dev`。GPU マシンには 2026-11-14 に入れた）:
+  Windows版の `Utf32ToUtf16` でパスを作る書き方を持ち込まない）。インストール先は `/usr/local/lib/iroha`
+  （fcitx5 のアドオンだけは fcitx5 本体と同じ `/usr` の下。辞書は `/usr/local/lib/iroha` から読む）
+- ビルド（要るパッケージは `linux/README.md`。GPU マシンには 2026-11-14 に入れた。fcitx5 の開発用ファイルは入っていない）:
   ```sh
   ./linux/scripts/build-llama.sh      # vendor/dist-linux へ（中間ファイルは ~/.cache/iroha/llama-build-linux）
   cmake -S linux -B linux/build -G Ninja && cmake --build linux/build
-  ./linux/build/iroha-core/iroha-core-tests
+  ctest --test-dir linux/build --output-on-failure
   ./linux/scripts/fetch-model.sh      # 既定のモデルをデータフォルダへ
   ```
   `vendor/llama.cpp/build` は macOS版のビルド先なので使わない。`linux/build` は Dropbox の同期から外す
@@ -595,14 +603,17 @@ cd macos && swift build --build-system native && swift test --build-system nativ
 - 移植の確かめ方は Windows版と同じ: `iroha-cli lattice-parity`（macOS版の候補の並び。
   `git show v0.12.0:experiments/jev/ajimee-candidates.jsonl`）と、AJIMEE の 2 条件（`IROHA_LATTICE=off` / `always`）。
   インストールせずに入力の動きを見るのは `iroha-cli session <キー列>`（このプロセスの中でセッションを動かす）
-- IBus のエンジン（`linux/ibus-iroha/`）は Windows版の TIP と同じく、キーを送って返ってきた表示を反映するだけ。
-  **入力の動きは `InputSession` に書く**。キーの読み替えは `key_decision`（IBus に依存しない。単体テストあり）。
-  IBus を通した確認は `linux/ibus-iroha/tests/ibus_e2e.py`（開発用のエンジン `ibus-engine-iroha` を引数なしで起動すると
+- IBus を通した確認は `linux/ibus-iroha/tests/ibus_e2e.py`（開発用のエンジン `ibus-engine-iroha` を引数なしで起動すると
   「iroha-dev」として登録される。**確定は学習に残るので `IROHA_DATA_DIR` で別のデータフォルダを指して起動する**。
   IBus 1.5 はエンジンを全体で共有するので、**ユーザがデスクトップで入力しているときは走らせない**）。
-  インストールは `./linux/scripts/install.sh`（sudo）。**`ibus restart` は使わない**（GNOME が起動した ibus-daemon が
-  止まったまま戻らず、デスクトップで入力できなくなった。2026-11-14。install.sh は同じ引数・環境変数で `--replace` して起動し直す）
-- 進み具合と未対応のものは `linux/README.md`
+  **GUI（設定画面・選択テキストの窓）を DISPLAY=:0 に出さない**（GPU マシンの :0 はユーザが使っているデスクトップ。
+  GTK4 用の broadway も Xvfb も無い）。インストールは `./linux/scripts/install.sh`（sudo）。
+  **`ibus restart` は使わない**（GNOME が起動した ibus-daemon が止まったまま戻らず、デスクトップで入力できなくなった。
+  2026-11-14。`linux/scripts/restart-ibus.sh` が同じ引数・環境変数で `--replace` して起動し直す）
+- 配布物は `./linux/scripts/make-bundle.sh` の `dist/iroha-<版>-linux-x86_64.tar.gz`。リリースは release.yml の `linux` ジョブが
+  macOS版のジョブのあとに Release へ添付する。**アセット名を `.zip` にしない**（macOS版の UpdateChecker が
+  「iroha- で始まり .zip で終わる」最初のアセットを取る）
+- 「こえ」モードは Linux版では未実装（計画は `linux/README.md`）。進み具合と未対応のものも `linux/README.md`
 
 ## 自作変換モデル（文字単位T5）の学習（training/t5/、2026-09-11設計）
 

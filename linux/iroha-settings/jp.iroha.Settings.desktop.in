@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=iroha の設定
+Comment=iroha（かな漢字変換）の設定を変える
+Exec=@IROHA_SETTINGS_PATH@
+Icon=input-keyboard
+Terminal=false
+Categories=Settings;GTK;
+Keywords=iroha;IME;日本語;かな漢字変換;
+StartupNotify=true

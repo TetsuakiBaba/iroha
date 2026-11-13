@@ -140,7 +140,68 @@ struct ZenzEngine::Generated {
     std::u32string text;
     // 先頭トークン・各トークン・終端まで含めた系列の対数確率
     float logProb = 0;
+    // text の文字ごとの自信度
+    std::vector<CharacterConfidence> confidences;
 };
+
+namespace {
+
+// トークン列（バイト断片）を出力文字列の文字ごとの自信度に対応づける（macOS版 ConfidenceAligner）。
+// バイト単位のトークンが多バイト文字の途中で切れていても、その文字が完成した時点で、関わったトークン全てをまとめて割り当てる
+class ConfidenceAligner {
+public:
+    using Confidence = ZenzEngine::CharacterConfidence;
+
+    void Append(const std::string& piece, const Confidence& confidence) {
+        bytes_ += piece;
+        pending_ = pending_ ? Merged(*pending_, confidence) : confidence;
+        const auto text = Utf8ToUtf32Strict(bytes_);
+        if (!text) return;
+        const size_t count = GraphemeCount(*text);
+        if (count <= assigned_ || !pending_) return;
+        confidences_.insert(confidences_.end(), count - assigned_, *pending_);
+        assigned_ = count;
+        pending_.reset();
+    }
+
+    // 最終的な出力文字列（不正バイトの除去・前後の空白除去を経たもの）に長さをそろえて返す
+    std::vector<Confidence> Aligned(const std::u32string& untrimmed, const std::u32string& trimmed) const {
+        std::vector<Confidence> result = confidences_;
+        const size_t untrimmedCount = GraphemeCount(untrimmed);
+        if (result.size() < untrimmedCount) {
+            // 途中に不正バイトがあって割り当てが止まった: 残りを保留中の値（無ければ末尾の値）で埋める
+            const Confidence filler = pending_ ? *pending_
+                                      : !result.empty()
+                                          ? result.back()
+                                          : Confidence{0, std::numeric_limits<float>::infinity(), false};
+            result.insert(result.end(), untrimmedCount - result.size(), filler);
+        }
+        size_t leading = 0;
+        for (const std::u32string& grapheme : SplitGraphemes(untrimmed)) {
+            if (TrimWhitespace(grapheme).empty()) {
+                ++leading;
+            } else {
+                break;
+            }
+        }
+        const size_t take = GraphemeCount(trimmed);
+        if (leading >= result.size()) return {};
+        return std::vector<Confidence>(result.begin() + static_cast<std::ptrdiff_t>(leading),
+                                       result.begin() + static_cast<std::ptrdiff_t>(std::min(result.size(), leading + take)));
+    }
+
+private:
+    static Confidence Merged(const Confidence& a, const Confidence& b) {
+        return Confidence{std::min(a.logProb, b.logProb), std::min(a.margin, b.margin), a.relaxed || b.relaxed};
+    }
+
+    std::string bytes_;
+    std::optional<Confidence> pending_;
+    size_t assigned_ = 0;
+    std::vector<Confidence> confidences_;
+};
+
+} // namespace
 
 ZenzEngine::ZenzEngine(std::string modelPath) : ZenzEngine(std::move(modelPath), Options()) {}
 ZenzEngine::ZenzEngine(std::string modelPath, Options options)
@@ -531,11 +592,15 @@ bool ZenzEngine::Generate(const std::vector<int32_t>& promptTokens,
 
     std::string outputBytes;
     std::vector<char> pieceBuffer(128);
+    ConfidenceAligner aligner;
+    // トークンの文字列断片を出力に足す。戻り値はその断片（自信度の対応づけ用）
     auto appendPiece = [&](llama_token token) {
         const int written = llama_token_to_piece(
             rt.vocab, token, pieceBuffer.data(),
             static_cast<int32_t>(pieceBuffer.size()), 0, true);
-        if (written > 0) outputBytes.append(pieceBuffer.data(), written);
+        if (written <= 0) return std::string();
+        outputBytes.append(pieceBuffer.data(), written);
+        return std::string(pieceBuffer.data(), written);
     };
     // 1トークンをKVキャッシュに足し、次トークンのlogitsを読める状態にする
     auto feed = [&](llama_token token) {
@@ -560,7 +625,9 @@ bool ZenzEngine::Generate(const std::vector<int32_t>& promptTokens,
     if (forcedFirstToken) {
         if (!feed(forcedFirstToken->token)) return false;
         logProb += forcedFirstToken->logProb;
-        appendPiece(forcedFirstToken->token);
+        // 先頭を固定した候補では、先頭トークンのマージンは +inf
+        aligner.Append(appendPiece(forcedFirstToken->token),
+                       CharacterConfidence{forcedFirstToken->logProb, std::numeric_limits<float>::infinity(), false});
         if (constraint) {
             const auto& text = rt.tokenTexts[forcedFirstToken->token];
             mask = constraint->Advance(mask, text ? *text : std::u32string());
@@ -584,17 +651,20 @@ bool ZenzEngine::Generate(const std::vector<int32_t>& promptTokens,
         logProb += picked->logProb;
         if (llama_vocab_is_eog(rt.vocab, picked->token)) break;
 
-        appendPiece(picked->token);
+        const std::string piece = appendPiece(picked->token);
         // zenzの特殊トークン（私用領域 U+EE00-U+EE0F）が出たら終了
         if (EndsWithZenzSpecial(outputBytes)) {
             outputBytes.resize(outputBytes.size() - 3);
             break;
         }
+        aligner.Append(piece, CharacterConfidence{picked->logProb, picked->margin, picked->relaxed});
         if (!feed(picked->token)) return false;
     }
 
-    out->text = TrimWhitespace(DecodeUtf8DroppingFragments(outputBytes));
+    const std::u32string untrimmed = DecodeUtf8DroppingFragments(outputBytes);
+    out->text = TrimWhitespace(untrimmed);
     out->logProb = logProb;
+    out->confidences = aligner.Aligned(untrimmed, out->text);
     return true;
 }
 
@@ -711,10 +781,12 @@ bool ZenzEngine::ConvertScored(const std::u32string& reading,
         // 何も生成できなかった: 読みをそのまま返す（自信は無いものとして扱う）
         result->text = reading;
         result->logProb = kNegativeInfinity;
+        result->confidences.assign(GraphemeCount(reading), CharacterConfidence{kNegativeInfinity, 0, true});
         return true;
     }
     result->text = std::move(generated.text);
     result->logProb = generated.logProb;
+    result->confidences = std::move(generated.confidences);
     return true;
 }
 

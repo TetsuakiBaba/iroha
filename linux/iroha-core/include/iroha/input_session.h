@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "iroha/ai_conversion.h"
+#include "iroha/ai_fix.h"
 #include "iroha/conversion_log.h"
 #include "iroha/input_history.h"
 #include "iroha/romaji_composer.h"
@@ -50,8 +52,12 @@ enum class SessionKey : uint32_t {
     Tab = 19,
     // プライベートモードの切り替え（Ctrl+Alt+P）
     TogglePrivateMode = 20,
+    // AI変換（character にプリセットの番号。TIP は SessionOutput::aiShortcuts のキーで送る）
+    AICommit = 21,
+    // AIで直す（今の変換を AI に確かめさせる。TIP は SessionOutput::aiFixShortcut のキーで送る）
+    AIFix = 22,
 };
-constexpr uint32_t kMaxSessionKey = static_cast<uint32_t>(SessionKey::TogglePrivateMode);
+constexpr uint32_t kMaxSessionKey = static_cast<uint32_t>(SessionKey::AIFix);
 
 // キー 1 つを処理したあと（またはライブ変換が届いたあと）に TIP が画面へ反映する内容
 struct SessionOutput {
@@ -83,6 +89,8 @@ struct SessionOutput {
     uint32_t candidateIndex = 0;
     // 候補の右に小さく出す印（専門辞書の名前。候補と同じ数か空。印の無い候補は空文字列）
     std::vector<std::u32string> candidateAnnotations;
+    // 候補ウィンドウを、9 件ずつの列を横に並べた表に広げているか（Tab。macOS版の CandidateGrid）
+    bool candidatesExpanded = false;
     // 直前の確定で、まだ取り消せるもの（無ければ空）。TIP は Ctrl+Backspace のとき、カーソルの手前が
     // この文字列のままなら UndoCommit を送る
     std::u32string undoableCommit;
@@ -101,6 +109,17 @@ struct SessionOutput {
     bool typoPending = false;
     // 打ち間違いを直したときの「打った読み → 直した読み」（小窓に出す。出ている間は Backspace で戻せる）
     std::optional<TypoCorrectionFeedback> typoFeedback;
+    // AI変換の結果待ちか（TIP は結果が届くまで問い合わせ、Esc 以外のキーを飲み込む）
+    bool aiPending = false;
+    // AI変換のプリセットのキー（プリセットの番号の順。値は KeyShortcut::Encode、0 なら割り当てなし）
+    std::vector<uint32_t> aiShortcuts;
+    // AIで直す: 判定・依頼の結果待ちか（TIP は届くまで問い合わせる）・キー（KeyShortcut::Encode。0 なら使わない）・
+    // カーソルの近くに出す文（「AIで直す（Ctrl+Alt+A）」・「AIで確認中…」など。無ければ空）・
+    // AI の案に差し替えたときの「今の変換 → AI の案」（出ている間は Backspace で戻せる）
+    bool aiFixPending = false;
+    uint32_t aiFixShortcut = 0;
+    std::u32string aiFixNotice;
+    std::optional<TypoCorrectionFeedback> aiFixFeedback;
 
     bool Composing() const { return !preedit.empty(); }
     // 未確定文字列をつなげたもの
@@ -130,6 +149,20 @@ struct SessionSettings {
     double typoThreshold = TypoNormalizer::kDefaultThreshold;
     int typoDelayMs = 500;
     int typoMinimumLength = 4;
+    // AI変換: 使えるか（接続先が決まっているか）・プリセットの名前（結果待ちの表示）・キー（TIP に渡す）
+    bool aiAvailable = false;
+    std::vector<std::u32string> aiPresetNames;
+    std::vector<uint32_t> aiShortcuts;
+    // 区切り記号で囲んだ英字入力（macOS版の DelimitedAlphabetSettings。既定 OFF）: かな入力のまま、開始の記号から
+    // 終わりの記号までを打ったとおりの英字にする（「kyouha_iPhone_wo」→「今日はiPhoneを」）
+    bool delimitedAlphabet = false;
+    char32_t delimitedStart = U'_';
+    char32_t delimitedEnd = U'_';
+    // AIで直す（macOS版の AIFixSettings。既定 OFF）: 疑いの閾値・キー（TIP に渡す）・窓に出すキーの名前
+    bool aiFix = false;
+    double aiFixThreshold = AIFixRule::kDefaultThreshold;
+    uint32_t aiFixShortcut = 0;
+    std::u32string aiFixShortcutLabel;
 };
 
 // 入力の状態（読み・ライブ変換の結果・固定部分・英字入力・文節・候補）を持ち、キーごとに表示を決める。
@@ -212,6 +245,30 @@ public:
         }
         // 頼んである訂正が要らなくなった
         virtual void CancelTypoCorrection() {}
+        // AI変換を裏で頼む（preset 番目のプリセットのプロンプトで text を）。すぐ戻ること。
+        // 途中経過は UpdateAIPartial、結果は CompleteAI に渡す
+        virtual void RequestAI(uint64_t generation, size_t preset, const std::u32string& text) {
+            (void)generation;
+            (void)preset;
+            (void)text;
+        }
+        // 頼んである AI変換・AIで直すの依頼が要らなくなった
+        virtual void CancelAI() {}
+        // AIで直す: 入力の休止（delayMs）を待って、モデル単体の変換と文字ごとのマージンを裏で求める。
+        // 結果は CompleteAIFixCheck に渡す。同じセッションの前の依頼は捨ててよい
+        virtual void RequestAIFixCheck(uint64_t generation, const std::u32string& reading, const std::u32string& context,
+                                       int delayMs) {
+            (void)generation;
+            (void)reading;
+            (void)context;
+            (void)delayMs;
+        }
+        virtual void CancelAIFixCheck() {}
+        // AIで直す: AI に依頼する。結果は CompleteAIFix に渡す
+        virtual void RequestAIFix(uint64_t generation, const AIRequest& request) {
+            (void)generation;
+            (void)request;
+        }
         // その場で訂正する（Space で文節の候補を開くとき。戻るまで待ってよい）
         virtual std::optional<TypoCorrection> CorrectTypo(const std::u32string& reading, double threshold,
                                                           size_t minimumLength) {
@@ -242,6 +299,20 @@ public:
     // 読みが変わっていれば（入力が進んでいれば）使わない
     bool CompleteTypoCorrection(uint64_t generation, const std::u32string& reading,
                                 const std::optional<TypoCorrection>& correction);
+
+    // AI変換の途中経過（累積の出力）・結果（失敗なら無し）を受け取る。表示が変わったら真。
+    // 結果が日本語なら文節に区切った未確定文字列にし、そうでなければ（英訳など・失敗）確定する
+    bool UpdateAIPartial(uint64_t generation, const std::u32string& partial);
+    bool CompleteAI(uint64_t generation, const std::optional<std::u32string>& output);
+
+    // AIで直す: 休止で求めたモデル単体の変換と文字ごとのマージン（求められなければ text は空）・AI の答えを受け取る。
+    // 表示が変わったら真
+    bool CompleteAIFixCheck(uint64_t generation, const std::u32string& reading, const std::u32string& text,
+                            const std::vector<float>& margins);
+    bool CompleteAIFix(uint64_t generation, const AIOutcome& outcome);
+
+    // 問い合わせへの返事（今の表示と、キーの外で確定した文字列。確定した文字列は 1 回だけ渡す）
+    SessionOutput TakePolledOutput();
 
     // 今の表示（commit は空）
     SessionOutput Current() const;
@@ -308,6 +379,8 @@ private:
         std::optional<RejectedLearning> rejectedLearning;
         // Prediction で、候補を入れる前に打っていた読み（Backspace・Esc でこの読みに戻す）
         std::u32string typedReading;
+        // Alphabet で、区切り記号で入れた英字か（Backspace で開き直すとき、区切り記号の英字入力に戻す）
+        bool delimited = false;
     };
 
     // 予測変換: 出している入力履歴の候補（reading は候補を引いたときの読み）と、Tab で選んでいる候補
@@ -356,6 +429,8 @@ private:
         RomajiComposer composer;
         std::vector<FixedChunk> fixedChunks;
         std::optional<std::u32string> alphabetRun;
+        // 今の英字入力が区切り記号で始めたものか（真の間は Shift を離しても英字が続く）
+        bool alphabetRunDelimited = false;
         std::optional<std::u32string> displayOverride;
         std::optional<RejectedLearning> displayOverrideRejected;
         // 直近のライブ変換（読み, 変換結果）
@@ -365,6 +440,8 @@ private:
         std::vector<Segment> segments;
         size_t currentSegment = 0;
         bool candidateListOpen = false;
+        // 候補ウィンドウを表に広げているか（閉じたら 1 列に戻す）
+        bool candidatesExpanded = false;
         // 文節変換に入ったときの全体の変換結果と、そのうち学習が差し替える前のエンジンの結果
         std::optional<std::u32string> segmentBaseline;
         std::optional<std::u32string> segmentEngineBaseline;
@@ -372,6 +449,8 @@ private:
         size_t segmentFixedCount = 0;
         // 打ち直した文節があるか（学習しない）
         bool segmentsRetyped = false;
+        // 文節列が AI変換の結果から作ったものか（学習にも変換記録にも入力履歴にも残さない。読みと対応しないため）
+        bool segmentsFromAI = false;
         std::optional<SegmentEdit> segmentEdit;
         // 合成を始めたときの左文脈と、それをアプリの文書から読んだか（変換記録の contextSource）
         std::u32string context;
@@ -422,7 +501,7 @@ private:
     std::u32string FixedText() const;
     std::u32string CompositionDisplay() const;
     std::u32string KanaDisplay() const;
-    std::optional<std::u32string> ResolveCommitText();
+    std::optional<std::u32string> ResolveCommitText(bool logging = true);
     void ApplyDisplayConversion(SessionKey key);
     std::optional<RejectedLearning> RejectedLearningFor(const std::u32string& reading,
                                                         const std::u32string& text);
@@ -438,6 +517,11 @@ private:
     void FinishAlphabetRun();
     void DeleteAlphabetBackward();
     void EndAlphabetRun();
+    // 区切り記号で囲んだ英字入力（macOS版 startDelimitedAlphabet・finishDelimitedAlphabet）
+    void StartDelimitedAlphabet();
+    void FinishDelimitedAlphabet();
+    // 英字入力中の表示（区切り記号の英字入力なら開始の記号を前に付ける）
+    std::u32string AlphabetDisplay() const;
 
     // 文節変換
     void EnterSegmentMode();
@@ -497,6 +581,25 @@ private:
     // 候補ウィンドウを閉じる（文全体を訂正した候補を選んでいれば、文節を置き換える）
     void CloseCandidateList();
 
+    // AI変換（macOS版 handleAICommit・presentAIResultAsSegments・cancelTranslation）
+    void StartAICommit(size_t preset, std::u32string* commit);
+    // AIで直す（macOS版 scheduleAIFixCheck・handleAIFixKey・requestAIFix・finishAIFix・undoAIFix）
+    struct AIFixOffer {
+        std::u32string reading;
+        std::u32string context;
+        std::u32string shown;
+    };
+    void ScheduleAIFixCheck();
+    void CancelAIFixCheck();
+    std::u32string AIFixBlocker(const std::u32string& reading) const;
+    bool HandleAIFixKey(SessionKey key, bool shift);
+    void RequestAIFixNow();
+    bool UndoAIFix(const std::pair<std::u32string, std::u32string>& undo);
+    void CancelAIFix();
+    void EndAIFix();
+    void PresentAIResultAsSegments(const std::u32string& output, const std::u32string& reading);
+    void CancelTranslation();
+
     // 確定と取り消し
     void LearnIfCorrected(const std::u32string& committed);
     // 変換記録（macOS版 logSegmentsCommit / logConversion）
@@ -547,6 +650,31 @@ private:
     std::optional<std::u32string> typoRejectedReading_;
     std::optional<TypoCorrectionFeedback> typoFeedback_;
     std::optional<std::pair<std::u32string, std::optional<TypoCorrection>>> typoChecked_;
+
+    // AI変換の結果待ち（確定する日本語・プリセットの名前・途中経過・結果を文節に区切るための読み）
+    struct Translation {
+        uint64_t generation = 0;
+        std::u32string japanese;
+        std::u32string label;
+        std::u32string partial;
+        std::u32string reading;
+    };
+    std::optional<Translation> translation_;
+    uint64_t aiGeneration_ = 0;
+    // キーの外（AI変換の結果）で確定した文字列。次の返事で TIP に渡す
+    std::u32string pendingCommit_;
+
+    // AIで直す: 依頼の番号・休止の判定を待っているか・AI の答えを待っているか・出している窓・送った変換・
+    // 差し替えの取り消し（読み, 元の変換）・取り消した読み（再び疑わない）・窓に出す知らせ・「今 → 案」
+    uint64_t aiFixGeneration_ = 0;
+    bool aiFixCheckPending_ = false;
+    bool aiFixRequestPending_ = false;
+    std::optional<AIFixOffer> aiFixOffer_;
+    std::optional<AIFixOffer> aiFixRequested_;
+    std::optional<std::pair<std::u32string, std::u32string>> aiFixUndo_;
+    std::optional<std::u32string> aiFixRejectedReading_;
+    std::u32string aiFixMessage_;
+    std::optional<TypoCorrectionFeedback> aiFixFeedback_;
 };
 
 } // namespace iroha

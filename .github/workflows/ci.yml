@@ -95,3 +95,40 @@ jobs:
             ($out | Select-Object -Last 25) | ForEach-Object { Write-Host "::error::$_" }
             exit 1
           }
+
+  build-and-test-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # IBus のエンジン・設定画面（GTK4）・選択テキストのAI編集（X11）・fcitx5 のエンジンを作るのに要るもの。
+      # fonts-noto-color-emoji は描けない絵文字の判定の単体テスト用
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libibus-1.0-dev libglib2.0-dev libgtk-4-dev \
+            libcurl4-openssl-dev libsecret-1-dev libfontconfig-dev libfreetype-dev libharfbuzz-dev \
+            libx11-dev libxtst-dev libfcitx5core-dev libfcitx5config-dev libfcitx5utils-dev fonts-noto-color-emoji
+
+      - name: Cache llama.cpp static libs
+        id: llama-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/dist-linux
+          key: llama-${{ runner.os }}-${{ runner.arch }}-b10689-${{ hashFiles('patches/llama-cpp-zenz-pretokenizer.patch', 'linux/scripts/build-llama.sh') }}
+
+      - name: Build llama.cpp
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        run: ./linux/scripts/build-llama.sh
+
+      # 辞書ラティスの辞書と記号のデータ（macOS版と同じスクリプト・同じコミット）。単体テストの実データの部分が読む
+      - name: Fetch dictionary and symbol data
+        run: |
+          ./macos/scripts/fetch-dictionary.sh
+          ./macos/scripts/fetch-symbols.sh
+
+      - name: Build and test
+        run: |
+          cmake -S linux -B linux/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build linux/build
+          ctest --test-dir linux/build --output-on-failure

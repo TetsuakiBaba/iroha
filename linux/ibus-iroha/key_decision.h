@@ -7,6 +7,7 @@
 //   F6〜F10・Ctrl+U/I/O/P/T は入力中（文節変換中でない）だけ、Ctrl+. は常に受ける。
 //   合成中に IME が扱わないキー（Ctrl+S・Alt・Super の組み合わせなど）は、確定してからアプリに渡す
 #include <cstdint>
+#include <vector>
 
 #include "iroha/input_session.h"
 
@@ -30,6 +31,10 @@ struct KeyContext {
     bool hasPredictions = false;  // 予測変換の候補が出ている
     bool idleFullWidthSpace = true;  // 入力していないときの Space を全角にする（設定）
     bool idleUndoable = false;    // 直前の確定を取り消せる（Ctrl+Backspace）
+    bool candidatesVisible = false;  // 候補ウィンドウが出ている
+    bool aiPending = false;          // AI変換の結果待ち（Esc 以外のキーを飲み込む）
+    uint32_t aiFixShortcut = 0;              // AIで直すのキー（KeyShortcut::Encode。0 なら使わない）
+    std::vector<uint32_t> aiShortcuts;       // AI変換のプリセットのキー（同じ形。0 なら割り当てなし）
 };
 
 struct KeyDecision {

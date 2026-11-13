@@ -6,10 +6,12 @@
 cmake_minimum_required(VERSION 3.21)
 project(iroha-core LANGUAGES CXX)
 
-set(IROHA_WARNINGS -Wall -Wextra)
+set(IROHA_WARNINGS -Wall -Wextra -Wno-missing-field-initializers)
 
 add_library(iroha-core STATIC
     src/chunked_conversion_engine.cpp
+    src/ai_conversion.cpp
+    src/ai_fix.cpp
     src/config.cpp
     src/input_history.cpp
     src/conversion_log.cpp
@@ -62,7 +64,6 @@ if(NOT EXISTS "${IROHA_DIST}/lib/libllama.a")
 endif()
 
 add_library(iroha-engine STATIC
-    src/engine_host.cpp
     src/zenz_engine.cpp
 )
 target_link_libraries(iroha-engine PUBLIC iroha-core)
@@ -82,7 +83,7 @@ target_link_libraries(iroha-engine PUBLIC
 add_executable(iroha-core-tests tests/test_main.cpp)
 target_link_libraries(iroha-core-tests PRIVATE iroha-core)
 # 辞書ラティスの部品（src/lattice/ の内部ヘッダ）を直接テストする
-target_include_directories(iroha-core-tests PRIVATE src)
+target_include_directories(iroha-core-tests PRIVATE src ../shared)
 target_compile_options(iroha-core-tests PRIVATE ${IROHA_WARNINGS})
 
 add_test(NAME iroha-core-tests COMMAND iroha-core-tests)

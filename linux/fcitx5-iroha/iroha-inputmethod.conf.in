@@ -1,0 +1,7 @@
+[InputMethod]
+Name=iroha
+Icon=
+Label=あ
+LangCode=ja
+Addon=iroha
+Configurable=False

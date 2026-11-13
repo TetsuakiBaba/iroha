@@ -3,8 +3,7 @@
 // 移植元: macos/Sources/IrohaCore/TermDictionary/TermDictionaryFetcher.swift
 //
 // 壊れた辞書を置かないため、同じフォルダの一時ファイルへ落として大きさと SHA-256 を照合してから
-// 設置先へ移す。取得は curl（無ければ wget）のコマンドを引数の配列で起動して行う
-// （https と file:// の両方を扱える。libcurl の開発用ファイルが入っていない環境でもビルドできるように）
+// 設置先へ移す。取得は libcurl（https と file:// の両方を扱える）
 
 #include <filesystem>
 #include <functional>

@@ -20,6 +20,7 @@
             <description>iroha（ニューラルかな漢字変換）</description>
             <rank>0</rank>
             <symbol>あ</symbol>
+            <setup>@IROHA_ENGINE_DIR@/iroha-settings</setup>
         </engine>
     </engines>
 </component>

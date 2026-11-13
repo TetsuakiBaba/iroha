@@ -15,25 +15,29 @@ if(NOT IROHA_VERSION)
 endif()
 string(REGEX REPLACE "^v" "" IROHA_VERSION "${IROHA_VERSION}")
 
-# キーの読み替え（IBus に依存しない。単体テストする）
-add_library(ibus-iroha-keys STATIC key_decision.cpp)
-target_link_libraries(ibus-iroha-keys PUBLIC iroha-core)
-target_include_directories(ibus-iroha-keys PUBLIC .)
-target_compile_options(ibus-iroha-keys PRIVATE -Wall -Wextra)
+# キーの読み替え（IBus に依存しない。fcitx5 のエンジンも使う。単体テストする）
+add_library(iroha-keys STATIC key_decision.cpp)
+target_link_libraries(iroha-keys PUBLIC iroha-core)
+target_include_directories(iroha-keys PUBLIC . ../shared)
+target_compile_options(iroha-keys PRIVATE -Wall -Wextra)
+# fcitx5 のエンジン（共有ライブラリ）にも入れる
+set_target_properties(iroha-keys PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_executable(ibus-engine-iroha main.cpp engine.cpp)
-target_link_libraries(ibus-engine-iroha PRIVATE ibus-iroha-keys iroha-engine PkgConfig::IBUS)
+target_link_libraries(ibus-engine-iroha PRIVATE iroha-keys iroha-shared PkgConfig::IBUS)
 target_compile_definitions(ibus-engine-iroha PRIVATE IROHA_VERSION="${IROHA_VERSION}")
 target_compile_options(ibus-engine-iroha PRIVATE -Wall -Wextra)
 
 add_executable(ibus-iroha-tests tests/test_key_decision.cpp)
-target_link_libraries(ibus-iroha-tests PRIVATE ibus-iroha-keys)
+target_link_libraries(ibus-iroha-tests PRIVATE iroha-keys)
 target_compile_options(ibus-iroha-tests PRIVATE -Wall -Wextra)
 add_test(NAME ibus-iroha-tests COMMAND ibus-iroha-tests)
 
 # ---- インストール ----
-# 実行ファイルの隣に辞書ラティスの辞書（Dictionary）と記号のデータ（Symbols）を置く（ExecutableDirectory から探す）
-set(IROHA_ENGINE_DIR "${CMAKE_INSTALL_PREFIX}/lib/ibus-iroha")
+# 実行ファイルの隣に辞書ラティスの辞書（Dictionary）と記号のデータ（Symbols）を置く（ExecutableDirectory から探す。
+# fcitx5 のエンジンはこのフォルダを IROHA_RESOURCE_DIR として埋め込んで探す）
+# IBus・fcitx5 のエンジン・設定画面・選択テキストのAI編集で共有する（fcitx5 のエンジンはここから辞書を読む）
+set(IROHA_ENGINE_DIR "${CMAKE_INSTALL_PREFIX}/lib/iroha")
 set(IROHA_ENGINE_PATH "${IROHA_ENGINE_DIR}/ibus-engine-iroha")
 # コンポーネントの定義は ibus-daemon が読む場所に置く（既定は IBus 自身のデータの場所。/usr/share/ibus/component）
 pkg_get_variable(IBUS_PKGDATADIR ibus-1.0 pkgdatadir)

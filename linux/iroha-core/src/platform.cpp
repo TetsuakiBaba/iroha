@@ -5,6 +5,8 @@
 #include <climits>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <fstream>
 
 #include "iroha/config.h"
 #include "iroha/unicode.h"
@@ -68,6 +70,34 @@ std::string ResolveModelPath() {
         return PathToUtf8(data / "models" / path);
     }
     return PathToUtf8(DefaultModelPath(data / "models"));
+}
+
+std::filesystem::path ReloadRequestPath() { return DataDirectory() / "reload-request"; }
+
+void RequestReload() {
+    std::error_code error;
+    std::filesystem::create_directories(DataDirectory(), error);
+    std::ofstream file(ReloadRequestPath(), std::ios::binary | std::ios::trunc);
+    file << std::time(nullptr) << '\n';
+}
+
+std::filesystem::path ComposingFlagPath() {
+    if (const auto runtime = GetEnv("XDG_RUNTIME_DIR")) return PathFromUtf8(*runtime) / "iroha" / "composing";
+    return std::filesystem::path("/tmp") / ("iroha-" + std::to_string(getuid())) / "composing";
+}
+
+void SetComposingFlag(bool composing) {
+    const auto path = ComposingFlagPath();
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file << (composing ? "1" : "0");
+}
+
+bool IsComposing() {
+    std::ifstream file(ComposingFlagPath(), std::ios::binary);
+    char c = '0';
+    return file.get(c) && c == '1';
 }
 
 } // namespace iroha::platform

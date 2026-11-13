@@ -33,7 +33,7 @@
 //                                                 : 入力のセッションにキーを順に送り、IME が画面に出す内容を見る。
 //                                                   キー列は打つ文字をそのまま並べ、特別なキーは <space> <enter> <esc>
 //                                                   <bs> <left> <right> <up> <down> <f6>〜<f10> <punct>（Ctrl+.）
-//                                                   <undo>（確定の取り消し）（Shift は <S-left> のように）と書く。
+//                                                   <undo>（確定の取り消し）<tab>（Shift は <S-left> のように）と書く。
 //                                                   <wait> は、キーを送らずに変換・打ち間違いの訂正が届くまで待つ。
 //                                                   既定ではキーごとにライブ変換の到着を待つ。--interval を付けると
 //                                                   待たずにその間隔で送る（変換が打鍵に追いつかないときの表示を見る）
@@ -70,8 +70,9 @@
 #include <vector>
 
 #include "iroha/chunked_conversion_engine.h"
+#include "emoji_renderability.h"
 #include "iroha/config.h"
-#include "iroha/engine_host.h"
+#include "engine_host.h"
 #include "iroha/json.h"
 #include "iroha/lattice_converter.h"
 #include "iroha/lattice_rescoring_engine.h"
@@ -1141,9 +1142,16 @@ int RunSymbols(const std::vector<std::u32string>& readings) {
         std::fprintf(stderr, "記号のデータが見つかりません（macos/scripts/fetch-symbols.sh で取得できます）\n");
         return 1;
     }
-    // 描けない絵文字を除く判定は Linux版にはまだ無い（fontconfig で作る予定）。表はすべての絵文字を含む
-    const auto table = iroha::SymbolCandidateTable::Load(*directory);
-    if (!table) {
+    // 描けない絵文字を除いた表と、除かない表の両方を作って、除いた数を出す（判定は絵文字のフォントの字形で行う）
+    std::vector<std::u32string> excluded;
+    const auto checker = iroha::EmojiRenderability::Create();
+    const auto all = iroha::SymbolCandidateTable::Load(*directory);
+    const auto table = iroha::SymbolCandidateTable::Load(*directory, [&](const std::u32string& emoji) {
+        const bool renderable = !checker || checker->IsRenderable(emoji);
+        if (!renderable) excluded.push_back(emoji);
+        return renderable;
+    });
+    if (!all || !table) {
         std::fprintf(stderr, "記号のデータを読めません\n");
         return 1;
     }
@@ -1152,6 +1160,16 @@ int RunSymbols(const std::vector<std::u32string>& readings) {
     std::snprintf(line, sizeof(line), "%s  絵文字 %zu・顔文字 %zu・記号 %zu\n",
                   PathToUtf8(*directory).c_str(), counts.emoji, counts.emoticons, counts.symbols);
     PrintUtf8(line);
+    if (!checker) {
+        PrintUtf8("（絵文字のフォントが見つからないため、描けない絵文字を除いていない）\n");
+    } else {
+        std::snprintf(line, sizeof(line), "描けないとして除いた絵文字 %zu 個（全 %zu 個。フォント %s）\n", excluded.size(),
+                      all->GetCounts().emoji, checker->FontPath().c_str());
+        PrintUtf8(line);
+        const size_t shown = std::min<size_t>(excluded.size(), 40);
+        PrintUtf8("  " + JoinUtf8(std::vector<std::u32string>(excluded.begin(), excluded.begin() + shown), " ") +
+                  (shown < excluded.size() ? " …" : "") + "\n");
+    }
     for (const std::u32string& argument : readings) {
         const std::u32string reading = RomajiToKana(argument);
         const iroha::SymbolCandidates found = table->Candidates(reading);
@@ -1190,6 +1208,7 @@ bool ParseKeyStrokes(const std::u32string& text, std::vector<SessionKeyStroke>* 
         {U"f9", iroha::SessionKey::DisplayFullAlphanumeric},
         {U"f10", iroha::SessionKey::DisplayHalfAlphanumeric},
         {U"punct", iroha::SessionKey::TogglePunctuation}, {U"undo", iroha::SessionKey::UndoCommit},
+        {U"tab", iroha::SessionKey::Tab},
     };
     for (size_t i = 0; i < text.size(); ++i) {
         if (text[i] != U'<') {

@@ -404,7 +404,7 @@ v0.17.0 では開発者モードの項目だった）。
 |---|---|---|---|
 | アプリ | `macos/` | 追跡 | macOS 版（Swift パッケージ。IME 本体・変換エンジン・CLI・追加学習・「こえ」モードの音声認識） |
 | | `windows/` | 追跡 | Windows 版（TSF） |
-| | `linux/` | 追跡 | Linux 版（IBus。作成中。変換エンジンは Windows 版の C++ 実装を写して別に保つ） |
+| | `linux/` | 追跡 | Linux 版（IBus・fcitx5。変換エンジンは Windows 版の C++ 実装を写して別に保つ） |
 | 配布・評価 | `models/` | 追跡 | アプリがダウンロードするモデル・辞書の一覧（`typo-normalizer.json`・`term-dictionaries.json`） |
 | | `testdata/` | 追跡 | 評価セット（`eval.tsv`、`iroha/typo/`。`ajimee/` は取得して置く） |
 | 学習データを作る | `dataset/iroha-typo-normalizer/` | コードだけ追跡 | 公開データから学習データを作る Python パッケージ。作ったデータは `dataset/iroha-typo-normalizer/data/`（追跡しない） |

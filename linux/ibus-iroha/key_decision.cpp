@@ -1,5 +1,7 @@
 #include "key_decision.h"
 
+#include "key_shortcut.h"
+
 namespace iroha::ibus {
 
 namespace {
@@ -116,8 +118,30 @@ KeyDecision DecideKey(uint32_t keyval, uint32_t modifiers, const KeyContext& con
         return decision;
     };
     const char32_t printable = PrintableAscii(keyval);
+    // AI変換の結果待ち: Esc は取り消し、それ以外のキーはセッションに送って飲み込んでもらう
+    if (composing && context.aiPending) {
+        if (IsModifierKey(keyval)) return decision;
+        if (keyval == key::Escape) return session(SessionKey::Escape);
+        decision.character = 0;
+        return session(SessionKey::Character);
+    }
     // プライベートモードの切り替え（Ctrl+Alt+P。入力中かどうかによらず効く。macOS版の Ctrl+Option+P）
     if (control && alt && Lower(printable) == U'p') return session(SessionKey::TogglePrivateMode);
+    // AIで直すのキー（設定 aiFixShortcut。既定 Ctrl+Alt+A）。入力中だけ
+    if (composing && !segmenting && context.aiFixShortcut != 0 &&
+        KeyShortcut::Decode(context.aiFixShortcut).Matches(keyval, modifiers)) {
+        return session(SessionKey::AIFix);
+    }
+    // AI変換のキー（プリセットごとに設定で決める。既定は英訳の Alt+Enter）。入力中だけ
+    if (composing) {
+        for (size_t i = 0; i < context.aiShortcuts.size(); ++i) {
+            if (context.aiShortcuts[i] == 0) continue;
+            if (KeyShortcut::Decode(context.aiShortcuts[i]).Matches(keyval, modifiers)) {
+                decision.character = static_cast<char32_t>(i);
+                return session(SessionKey::AICommit);
+            }
+        }
+    }
     if (alt || super) return commitThenPass();
     if (control) {
         if (keyval == U'.') return session(SessionKey::TogglePunctuation);
@@ -149,7 +173,9 @@ KeyDecision DecideKey(uint32_t keyval, uint32_t modifiers, const KeyContext& con
         case key::Tab:
         case key::KP_Tab:
         case key::ISO_Left_Tab:
-            // 予測変換の候補が出ていれば Tab で選ぶ（Shift+Tab は前の候補）
+            // 予測変換の候補が出ていれば Tab で選ぶ（Shift+Tab は前の候補）。
+            // 候補ウィンドウが出ていれば、表に広げる・1 列に戻す（タブ文字はアプリに渡さない）
+            if (segmenting && context.candidatesVisible) return session(SessionKey::Tab);
             if (composing && !segmenting && context.hasPredictions) return session(SessionKey::Tab);
             return commitThenPass();
         case key::Return:

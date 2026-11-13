@@ -11,7 +11,7 @@ permissions:
 # 下書きの Release を作る → 各 OS のジョブが成果物を載せる → 全部そろったら公開する。
 # 公開の前に片方の OS の分しか無い状態を作らない（アップデータが自分の OS の配布物を見つけられなくなるため）。
 # 配布物の名前: macOS は iroha-<版>.zip（配布済みの UpdateChecker が「iroha- で始まり .zip で終わる」ものを取るので変えない）、
-# Windows は iroha-<版>-windows-x64-setup.exe（.zip にしない）
+# Windows は iroha-<版>-windows-x64-setup.exe、Linux は iroha-<版>-linux-x86_64.tar.gz（どちらも .zip にしない）
 jobs:
   draft:
     runs-on: ubuntu-latest
@@ -182,9 +182,53 @@ jobs:
           gh release upload "$env:GITHUB_REF_NAME" "windows/build/installer/iroha-$env:VERSION-windows-x64-setup.exe" --clobber
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+  # Linux版（iroha-<版>-linux-x86_64.tar.gz）。
+  # アセット名は .tar.gz（macOS版の UpdateChecker が取る「iroha- で始まり .zip で終わる」ものと重ならない）
+  linux:
+    needs: draft
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # git describe でタグから版を取る
+
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libibus-1.0-dev libglib2.0-dev libgtk-4-dev \
+            libcurl4-openssl-dev libsecret-1-dev libfontconfig-dev libfreetype-dev libharfbuzz-dev \
+            libx11-dev libxtst-dev libfcitx5core-dev libfcitx5config-dev libfcitx5utils-dev fonts-noto-color-emoji
+
+      - name: Cache llama.cpp static libs
+        id: llama-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/dist-linux
+          key: llama-${{ runner.os }}-${{ runner.arch }}-b10689-${{ hashFiles('patches/llama-cpp-zenz-pretokenizer.patch', 'linux/scripts/build-llama.sh') }}
+
+      - name: Build llama.cpp
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        run: ./linux/scripts/build-llama.sh
+
+      - name: Fetch dictionary and symbol data
+        run: |
+          ./macos/scripts/fetch-dictionary.sh
+          ./macos/scripts/fetch-symbols.sh
+
+      - name: Build bundle
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          ./linux/scripts/make-bundle.sh "$VERSION"
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "dist/iroha-$VERSION-linux-x86_64.tar.gz" --clobber
+
   # 全部の OS の成果物がそろったら公開する（どれかが失敗したら下書きのまま残る。直してから再実行するか、手で公開する）
   publish:
-    needs: [release, windows]
+    needs: [release, windows, linux]
     runs-on: ubuntu-latest
     steps:
       - name: Publish release

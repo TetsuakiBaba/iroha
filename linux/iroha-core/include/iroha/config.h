@@ -1,5 +1,7 @@
 #pragma once
+#include <array>
 #include <filesystem>
+#include <optional>
 #include <string>
 
 namespace iroha {
@@ -46,6 +48,45 @@ struct Config {
     double typoThreshold = 2.5;
     int typoDelayMs = 500;
     int typoMinimumLength = 4;
+    // AI変換（キーの名前は macOS版の設定と同じ）: 接続先（"ollama" / "lmstudio" / "openai" / "claude"。空なら使わない）と、
+    // 接続先ごとの URL（空なら既定）・モデル。API キーは config.json に書かず、秘密の保管庫（libsecret）に置く
+    std::string aiService;
+    std::string ollamaEndpoint;
+    std::string ollamaModel;
+    std::string lmStudioEndpoint;
+    std::string lmStudioModel;
+    std::string openAIEndpoint;
+    std::string openAIModel;
+    std::string claudeModel;
+    // プリセット 3 つ（名前・プロンプト・ショートカット）。書いていなければ既定（AICommitSettings::Defaults）
+    struct AIPreset {
+        std::optional<std::u32string> name;
+        std::optional<std::u32string> prompt;
+        std::optional<std::string> hotkey;
+    };
+    std::array<AIPreset, 3> aiPresets;
+    // 区切り記号で囲んだ英字入力（macOS版では開発者モードの項目。既定 OFF）と、開始・終わりの記号
+    // （英字・数字以外の ASCII の記号 1 文字。使えない値なら「_」）
+    bool delimitedAlphabet = false;
+    std::string delimitedAlphabetStart = "_";
+    std::string delimitedAlphabetEnd = "_";
+    // AIで直す（macOS版では開発者モードの項目。既定 OFF）: 誤変換の疑いの閾値（文字ごとのマージンの最小値）と
+    // ショートカット（窓が出ていなくても、入力中なら AI に送る）
+    bool aiFix = false;
+    double aiFixThreshold = 1.0;
+    std::string aiFixShortcut = "Ctrl+Alt+A";
+    // 選択テキストのAI編集（既定 OFF）: プリセット 5 つ（書いていなければ既定）・その場で指示するキー・
+    // 使わないアプリ（実行ファイルの名前。カンマか改行で区切る）。キーの名前は macOS版の設定と同じ
+    bool selectionEnabled = false;
+    struct SelectionPreset {
+        std::optional<std::u32string> name;
+        std::optional<std::u32string> prompt;
+        std::optional<std::string> hotkey;
+        std::optional<bool> enabled;
+    };
+    std::array<SelectionPreset, 5> selectionPresets;
+    std::optional<std::string> selectionOnDemandHotkey;
+    std::string selectionExcludedApps;
 };
 
 Config LoadConfig(const std::filesystem::path& path);

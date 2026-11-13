@@ -1,9 +1,11 @@
-#include "iroha/engine_host.h"
+#include "engine_host.h"
 
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 
 #include "iroha/platform.h"
+#include "key_shortcut.h"
 #include "iroha/typo_normalizer_catalog.h"
 #include "iroha/unicode.h"
 
@@ -31,6 +33,10 @@ void EngineHost::Log(const std::string& message) const {
 }
 
 std::filesystem::path EngineHost::ConfigPath() const { return platform::DataDirectory() / "config.json"; }
+
+std::filesystem::path EngineHost::ResourceDirectory() const {
+    return options_.resourceDirectory.empty() ? platform::ExecutableDirectory() : options_.resourceDirectory;
+}
 
 std::shared_ptr<TypoNormalizer> EngineHost::Typo() {
     std::lock_guard<std::mutex> lock(typoMutex_);
@@ -91,8 +97,111 @@ void EngineHost::LoadTermDictionaries() {
         std::to_string(MillisecondsSince(start)) + "ms)");
 }
 
+void EngineHost::LoadAI(const Config& config) {
+    AIConnection connection = AIClient::FromConfig(config, /*withKey=*/false);
+    std::array<AICommitPreset, AICommitSettings::kCount> presets;
+    sessionSettings_.aiPresetNames.clear();
+    sessionSettings_.aiShortcuts.clear();
+    for (size_t i = 0; i < presets.size(); ++i) {
+        const auto& stored = config.aiPresets[i];
+        const auto& fallback = AICommitSettings::Defaults()[i];
+        presets[i].name = stored.name.value_or(fallback.name);
+        presets[i].prompt = stored.prompt.value_or(fallback.prompt);
+        presets[i].shortcut = stored.hotkey.value_or(fallback.shortcut);
+        sessionSettings_.aiPresetNames.push_back(presets[i].DisplayName(i));
+        const auto shortcut = KeyShortcut::Parse(presets[i].shortcut);
+        sessionSettings_.aiShortcuts.push_back(shortcut ? shortcut->Encode() : 0);
+    }
+    std::lock_guard<std::mutex> lock(aiMutex_);
+    aiConnection_ = std::move(connection);
+    aiPresets_ = std::move(presets);
+    aiKeyLoaded_ = false;
+    sessionSettings_.aiAvailable = aiConnection_.service == AIService::Claude ||
+                                   AIClient::IsConfigured(aiConnection_);
+}
+
+AIConnection EngineHost::ConnectionForRequest() {
+    std::lock_guard<std::mutex> lock(aiMutex_);
+    if (!aiKeyLoaded_) {
+        aiKeyLoaded_ = true;
+        AIClient::LoadKey(&aiConnection_);
+    }
+    return aiConnection_;
+}
+
+bool EngineHost::AIConfigured() {
+    std::lock_guard<std::mutex> lock(aiMutex_);
+    return aiConnection_.service == AIService::Claude || AIClient::IsConfigured(aiConnection_);
+}
+
+Config EngineHost::CurrentConfig() {
+    std::lock_guard<std::mutex> lock(aiMutex_);
+    return config_;
+}
+
+AIResult EngineHost::RunAIWith(const AIRequest& request, const std::function<void(const std::u32string&)>& onPartial,
+                               CancelToken* cancel, int stallSeconds) {
+    const AIConnection connection = ConnectionForRequest();
+    if (connection.service == AIService::Claude && connection.apiKey.empty()) {
+        return AIResult{std::nullopt, "Claude の API キーがありません（設定画面で入れてください）"};
+    }
+    const auto start = std::chrono::steady_clock::now();
+    AIResult result = AIClient::Run(connection, request, onPartial, cancel, stallSeconds);
+    Log(std::string("ai ") + AIServiceKey(connection.service) + " (" + std::to_string(MillisecondsSince(start)) +
+        "ms)" + (result.text ? "" : ": " + result.error));
+    return result;
+}
+
+EngineHost::ScoredText EngineHost::ScoreConversion(const std::u32string& reading, const std::u32string& context) {
+    // AIで直す: 学習・ユーザ辞書・辞書ラティスを通さない、モデル単体の貪欲変換（macOS版と同じ）
+    ScoredText scored;
+    if (!zenz_) return scored;
+    ZenzEngine::ScoredConversion result;
+    std::string error;
+    if (!zenz_->ConvertScored(reading, context, &result, &error)) return scored;
+    scored.text = result.text;
+    for (const auto& confidence : result.confidences) scored.margins.push_back(confidence.margin);
+    return scored;
+}
+
+AIOutcome EngineHost::RunAIRequest(const AIRequest& request, int stallSeconds, CancelToken* cancel) {
+    const AIResult result = RunAIWith(request, nullptr, cancel, stallSeconds);
+    return AIOutcome{result.text, result.error};
+}
+
+std::optional<std::u32string> EngineHost::RunAI(size_t preset, const std::u32string& text,
+                                                const std::function<void(const std::u32string&)>& onPartial,
+                                                CancelToken* cancel) {
+    AICommitPreset settings;
+    {
+        std::lock_guard<std::mutex> lock(aiMutex_);
+        if (preset >= aiPresets_.size()) return std::nullopt;
+        settings = aiPresets_[preset];
+    }
+    return RunAIWith(settings.Request(preset, text), onPartial, cancel).text;
+}
+
 void EngineHost::Build() {
     const Config config = LoadConfig(ConfigPath());
+    {
+        std::lock_guard<std::mutex> lock(aiMutex_);
+        config_ = config;
+    }
+    LoadAI(config);
+    // 区切り記号の英字入力。記号は英字・数字以外の ASCII の記号 1 文字（使えない値なら「_」。macOS版と同じ）
+    const auto symbol = [](const std::string& text) -> char32_t {
+        const bool valid = text.size() == 1 && text[0] >= 0x21 && text[0] <= 0x7E &&
+                           !std::isalnum(static_cast<unsigned char>(text[0]));
+        return valid ? static_cast<char32_t>(text[0]) : U'_';
+    };
+    sessionSettings_.aiFix = config.aiFix;
+    sessionSettings_.aiFixThreshold = config.aiFixThreshold;
+    const auto fixShortcut = KeyShortcut::Parse(config.aiFixShortcut);
+    sessionSettings_.aiFixShortcut = fixShortcut ? fixShortcut->Encode() : 0;
+    sessionSettings_.aiFixShortcutLabel = fixShortcut ? Utf8ToUtf32(config.aiFixShortcut) : U"";
+    sessionSettings_.delimitedAlphabet = config.delimitedAlphabet;
+    sessionSettings_.delimitedStart = symbol(config.delimitedAlphabetStart);
+    sessionSettings_.delimitedEnd = symbol(config.delimitedAlphabetEnd);
     sessionSettings_.liveConversion = config.liveConversion;
     sessionSettings_.punctuation = config.punctuation;
     sessionSettings_.fullWidthSpace = config.fullWidthSpace;
@@ -121,7 +230,7 @@ void EngineHost::Build() {
     }
     if (config.symbolCandidates && !symbolsLoaded_) {
         symbolsLoaded_ = true;
-        if (const auto directory = SymbolCandidateTable::DefaultDirectory(platform::ExecutableDirectory())) {
+        if (const auto directory = SymbolCandidateTable::DefaultDirectory(ResourceDirectory())) {
             const auto start = std::chrono::steady_clock::now();
             if (auto table = SymbolCandidateTable::Load(*directory, options_.isRenderableEmoji)) {
                 loadedSymbols_ = std::make_shared<SymbolCandidateTable>(std::move(*table));
@@ -148,7 +257,7 @@ void EngineHost::Build() {
         }
     }
     if (!lattice_) {
-        if (const auto dictionary = LatticeConverter::DefaultDictionaryPath(platform::ExecutableDirectory())) {
+        if (const auto dictionary = LatticeConverter::DefaultDictionaryPath(ResourceDirectory())) {
             dictionaryPath_ = *dictionary;
             lattice_ = std::make_unique<LatticeConverter>(*dictionary);
             // 辞書の読み込みを済ませておく（最初の候補ウィンドウのもたつき防止）

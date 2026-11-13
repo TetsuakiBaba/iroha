@@ -23,4 +23,16 @@ std::string HostName();
 // 使うモデルのパス: IROHA_MODEL > config.json の "model"（models/ からの相対か絶対パス）> 既定のモデル
 std::string ResolveModelPath();
 
+// 設定の読み直しの依頼（Windows版の IPC の Reload にあたる）。設定画面がこのファイルを書き換え、
+// IBus・fcitx5 のエンジンが見張って読み直す
+std::filesystem::path ReloadRequestPath();
+void RequestReload();
+
+// 入力中（どれかの入力コンテキストに未確定文字列がある）かの目印。IBus・fcitx5 のエンジンが書き、
+// 選択テキストのAI編集（iroha-selection、別のプロセス）が読む（入力中はショートカットを使わない。macOS版と同じ）。
+// 置き場所は $XDG_RUNTIME_DIR/iroha/composing（無ければ /tmp/iroha-<uid>/composing）。中身は "1" か "0"
+std::filesystem::path ComposingFlagPath();
+void SetComposingFlag(bool composing);
+bool IsComposing();
+
 } // namespace iroha::platform

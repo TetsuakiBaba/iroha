@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=iroha 選択テキストのAI編集
+Comment=ほかのアプリで選んだ文章を、ショートカットで AI に渡して置き換える（設定で ON にしたときだけ動く）
+Exec=@IROHA_SELECTION_PATH@
+Icon=input-keyboard
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

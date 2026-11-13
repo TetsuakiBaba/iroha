@@ -111,6 +111,18 @@ public:
         typoRequests.push_back({generation, reading, delayMs, minimumLength});
     }
     void CancelTypoCorrection() override { ++typoCancels; }
+    void RequestAI(uint64_t generation, size_t preset, const std::u32string& text) override {
+        aiRequests.push_back({generation, preset, text});
+    }
+    void CancelAI() override { ++aiCancels; }
+    void RequestAIFixCheck(uint64_t generation, const std::u32string& reading, const std::u32string& context,
+                           int delayMs) override {
+        (void)delayMs;
+        aiFixChecks.push_back({generation, reading, context});
+    }
+    void RequestAIFix(uint64_t generation, const iroha::AIRequest& request) override {
+        aiFixRequests.push_back({generation, request});
+    }
     std::optional<iroha::TypoCorrection> CorrectTypo(const std::u32string& reading, double threshold,
                                                      size_t minimumLength) override {
         (void)threshold;
@@ -151,6 +163,26 @@ public:
     int typoCancels = 0;
     int correctTypoCalls = 0;
     std::map<std::u32string, std::u32string> typoTable;
+    // AI変換: 頼まれた依頼と取り消し
+    struct AIRequest {
+        uint64_t generation;
+        size_t preset;
+        std::u32string text;
+    };
+    std::vector<AIRequest> aiRequests;
+    int aiCancels = 0;
+    // AIで直す: 頼まれた休止の判定・AI への依頼
+    struct AIFixCheck {
+        uint64_t generation;
+        std::u32string reading;
+        std::u32string context;
+    };
+    struct AIFixRequest {
+        uint64_t generation;
+        iroha::AIRequest request;
+    };
+    std::vector<AIFixCheck> aiFixChecks;
+    std::vector<AIFixRequest> aiFixRequests;
 };
 
 using Key = iroha::SessionKey;
@@ -1232,6 +1264,227 @@ void TestSessionTypoWholeSentence() {
     EXPECT_TRUE(host.commits.empty());
 }
 
+iroha::SessionSettings AISettings() {
+    iroha::SessionSettings settings;
+    settings.aiAvailable = true;
+    settings.aiPresetNames = {U"英訳", U"敬語", U"要約"};
+    settings.aiShortcuts = {0x2000D, 0, 0};
+    return settings;
+}
+
+// AI変換: 結果待ちの間は「日本語 ⇢ 名前 …」を出し、Esc 以外のキーは飲み込む。
+// 英訳（日本語でない結果）はそのまま確定し、問い合わせの返事で 1 回だけ渡す（macOS版 handleAICommit）
+void TestSessionAICommitTranslation() {
+    FakeSessionHost host;
+    iroha::InputSession session(&host);
+    session.SetSettings(AISettings());
+    Type(session, U"kyouha");
+    CompleteLatest(session, host, U"今日は");
+    auto output = session.Handle(Key::AICommit, 0, false, nullptr);
+    EXPECT_TRUE(output.aiPending && host.aiRequests.size() == 1);
+    EXPECT_TRUE(output.aiShortcuts == std::vector<uint32_t>({0x2000D, 0, 0}));
+    EXPECT_EQ(output.PreeditText(), U"今日は ⇢ 英訳 …");
+    EXPECT_EQ(host.aiRequests.back().text, U"今日は");
+    output = Type(session, U"a"); // 飲み込む
+    EXPECT_EQ(output.PreeditText(), U"今日は ⇢ 英訳 …");
+    EXPECT_TRUE(session.UpdateAIPartial(host.aiRequests.back().generation, U"Today "));
+    EXPECT_EQ(session.Current().PreeditText(), U"今日は ⇢ Today …");
+    EXPECT_TRUE(session.CompleteAI(host.aiRequests.back().generation, std::u32string(U"Today is")));
+    output = session.TakePolledOutput();
+    EXPECT_EQ(output.commit, U"Today is");
+    EXPECT_TRUE(!output.aiPending && !output.Composing());
+    EXPECT_TRUE(session.TakePolledOutput().commit.empty()); // 1 回だけ
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.commits.empty() && host.conversions.empty());
+
+    // Esc で取り消すと元の未確定文字列に戻る。古い結果は使わない
+    Type(session, U"kyouha");
+    CompleteLatest(session, host, U"今日は");
+    session.Handle(Key::AICommit, 0, false, nullptr);
+    output = Press(session, Key::Escape);
+    EXPECT_TRUE(!output.aiPending && host.aiCancels >= 1);
+    EXPECT_EQ(output.PreeditText(), U"今日は");
+    EXPECT_TRUE(!session.CompleteAI(host.aiRequests.back().generation, std::u32string(U"Today")));
+    // 失敗したら日本語のまま確定する。フォーカスが移る（CommitNow）ときも日本語のまま
+    session.Handle(Key::AICommit, 0, false, nullptr);
+    session.CompleteAI(host.aiRequests.back().generation, std::nullopt);
+    EXPECT_EQ(session.TakePolledOutput().commit, U"今日は");
+    Type(session, U"kyouha");
+    CompleteLatest(session, host, U"今日は");
+    session.Handle(Key::AICommit, 0, false, nullptr);
+    EXPECT_EQ(Press(session, Key::CommitNow).commit, U"今日は");
+
+    // AI が使えなければ普通に確定する
+    iroha::SessionSettings off = AISettings();
+    off.aiAvailable = false;
+    session.SetSettings(off);
+    Type(session, U"kyouha");
+    CompleteLatest(session, host, U"今日は");
+    EXPECT_EQ(session.Handle(Key::AICommit, 0, false, nullptr).commit, U"今日は");
+}
+
+// 日本語の結果（敬語・要約など）は確定せず、文節に区切った未確定文字列にする。学習・変換記録・入力履歴に残さない
+void TestSessionAICommitJapanese() {
+    FakeSessionHost host;
+    iroha::InputSession session(&host);
+    iroha::SessionSettings settings = AISettings();
+    settings.conversionLog = true;
+    settings.predictive = true;
+    session.SetSettings(settings);
+    const std::u32string context = U"明日の";
+    session.Handle(Key::Character, U'k', false, &context);
+    Type(session, U"aigi");
+    CompleteLatest(session, host, U"会議");
+    session.Handle(Key::AICommit, 1, false, nullptr);
+    EXPECT_TRUE(host.aiRequests.back().preset == 1);
+    session.CompleteAI(host.aiRequests.back().generation, std::u32string(U"打ち合わせ"));
+    auto output = session.TakePolledOutput();
+    EXPECT_TRUE(output.segmenting && output.commit.empty());
+    EXPECT_EQ(output.PreeditText(), U"打ち合わせ");
+    EXPECT_EQ(Press(session, Key::Enter).commit, U"打ち合わせ");
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.commits.empty() && host.conversions.empty() && host.recordedHistory.empty());
+}
+
+// 候補ウィンドウを Tab で表に広げる。広げている間の ←→ は隣の列の候補へ移り、閉じると 1 列に戻る
+void TestSessionCandidateGrid() {
+    FakeSessionHost host;
+    std::vector<std::u32string> many;
+    for (int i = 0; i < 20; ++i) many.push_back(U"候補" + iroha::Utf8ToUtf32(std::to_string(i)));
+    host.candidateTable[U"きしゃ"] = many;
+    iroha::InputSession session(&host);
+    Type(session, U"kisha");
+    CompleteLatest(session, host, U"候補0");
+    auto output = Press(session, Key::Space);
+    EXPECT_TRUE(output.candidatesVisible && !output.candidatesExpanded);
+    output = Press(session, Key::Tab);
+    EXPECT_TRUE(output.candidatesVisible && output.candidatesExpanded);
+    output = Press(session, Key::Right);
+    EXPECT_TRUE(output.candidateIndex == 9 && output.candidatesVisible);
+    EXPECT_EQ(output.PreeditText(), output.candidates[9]);
+    output = Press(session, Key::Tab); // 1 列に戻すと ←→ は文節の移動に戻る
+    EXPECT_TRUE(!output.candidatesExpanded && output.candidateIndex == 9);
+    Press(session, Key::Tab);
+    output = Press(session, Key::Escape); // 閉じると 1 列に戻る
+    EXPECT_TRUE(!output.candidatesVisible && !output.candidatesExpanded);
+    output = Press(session, Key::Space);
+    EXPECT_TRUE(output.candidatesVisible && !output.candidatesExpanded);
+}
+
+// 区切り記号で囲んだ英字入力: 「_」から「_」までを打ったとおりの英字にし、1 回の確定で入れる。
+// Shift+Space で英字の中にスペース、「__」で記号そのもの、Backspace で開き直す（macOS版と同じ）
+void TestSessionDelimitedAlphabet() {
+    FakeSessionHost host;
+    iroha::InputSession session(&host);
+    iroha::SessionSettings settings;
+    settings.delimitedAlphabet = true;
+    session.SetSettings(settings);
+    Type(session, U"kyouha");
+    CompleteLatest(session, host, U"今日は");
+    auto output = Type(session, U"_iphone");
+    EXPECT_EQ(output.PreeditText(), U"今日は_iphone");
+    output = Press(session, Key::Space, true);
+    output = Type(session, U"15_");
+    EXPECT_EQ(output.PreeditText(), U"今日はiphone 15");
+    Type(session, U"wo");
+    CompleteLatest(session, host, U"を");
+    EXPECT_EQ(Press(session, Key::Enter).commit, U"今日はiphone 15を");
+    Press(session, Key::Reset);
+
+    // 何も打たずに終わりの記号（「__」）は、記号そのものをかな入力に入れる
+    output = Type(session, U"a__");
+    iroha::RomajiComposer composer;
+    composer.Input(U"a_");
+    EXPECT_EQ(output.PreeditText(), composer.Display());
+    Press(session, Key::Escape);
+    Press(session, Key::Escape);
+
+    // Backspace: 英字を消し、開始の記号だけになったらもう一度でやめる。固定した英字は開き直す
+    Type(session, U"a_b");
+    output = Press(session, Key::Backspace);
+    EXPECT_EQ(output.PreeditText(), U"あ_");
+    output = Press(session, Key::Backspace);
+    EXPECT_EQ(output.PreeditText(), U"あ");
+    Type(session, U"_cd_");
+    output = Press(session, Key::Backspace);
+    EXPECT_EQ(output.PreeditText(), U"あ_c");
+    // 設定が OFF なら「_」は普通の文字
+    settings.delimitedAlphabet = false;
+    session.SetSettings(settings);
+    Press(session, Key::Reset);
+    output = Type(session, U"a_");
+    EXPECT_EQ(output.PreeditText(), composer.Display());
+}
+
+iroha::SessionSettings AIFixSettings() {
+    iroha::SessionSettings settings;
+    settings.aiFix = true;
+    settings.aiAvailable = true;
+    settings.aiFixShortcut = 0x30041;
+    settings.aiFixShortcutLabel = U"Ctrl+Alt+A";
+    return settings;
+}
+
+// AIで直す: 休止の判定で疑いがあれば窓を出し、キーで AI に送る。案は文節にして差し替え、直後の Backspace で戻す
+void TestSessionAIFix() {
+    FakeSessionHost host;
+    iroha::InputSession session(&host);
+    session.SetSettings(AIFixSettings());
+    Type(session, U"kisha");
+    CompleteLatest(session, host, U"記者");
+    EXPECT_TRUE(!host.aiFixChecks.empty() && host.aiFixChecks.back().reading == U"きしゃ");
+    auto output = session.Current();
+    EXPECT_TRUE(output.aiFixPending && output.aiFixShortcut == 0x30041);
+    // 疑いが無ければ窓を出さない
+    const auto check = host.aiFixChecks.back();
+    EXPECT_TRUE(session.CompleteAIFixCheck(check.generation, check.reading, U"記者", {1.5f}));
+    EXPECT_TRUE(session.Current().aiFixNotice.empty() && !session.Current().aiFixPending);
+
+    Type(session, U"ga");
+    CompleteLatest(session, host, U"記者が");
+    const auto second = host.aiFixChecks.back();
+    EXPECT_TRUE(session.CompleteAIFixCheck(second.generation, second.reading, U"記者が", {0.3f, 4.0f, 4.0f}));
+    EXPECT_EQ(session.Current().aiFixNotice, U"AIで直す（Ctrl+Alt+A）");
+    output = Press(session, Key::AIFix);
+    EXPECT_TRUE(output.aiFixPending && output.aiFixNotice == U"AIで確認中…" && host.aiFixRequests.size() == 1);
+    EXPECT_TRUE(host.aiFixRequests.back().request.userMessage.find(U"読み: キシャガ") != std::u32string::npos);
+    iroha::AIOutcome answer;
+    answer.text = U"汽車が";
+    EXPECT_TRUE(session.CompleteAIFix(host.aiFixRequests.back().generation, answer));
+    output = session.Current();
+    EXPECT_TRUE(output.segmenting && output.aiFixFeedback.has_value());
+    EXPECT_EQ(output.PreeditText(), U"汽車が");
+    if (output.aiFixFeedback) EXPECT_EQ(output.aiFixFeedback->Corrected(), U"汽車が");
+    // 直後の Backspace で元の変換に戻す。取り消した読みは再び疑わない
+    const size_t checks = host.aiFixChecks.size();
+    output = Press(session, Key::Backspace);
+    EXPECT_TRUE(!output.segmenting && !output.aiFixFeedback);
+    EXPECT_EQ(output.PreeditText(), U"記者が");
+    EXPECT_TRUE(host.aiFixChecks.size() == checks);
+
+    // 窓が出ていなくても、キーで今の変換を送れる。答えが同じなら知らせだけ
+    Press(session, Key::Reset);
+    Type(session, U"kisha");
+    CompleteLatest(session, host, U"記者");
+    Press(session, Key::AIFix);
+    iroha::AIOutcome same;
+    same.text = U"説明\n記者";
+    session.CompleteAIFix(host.aiFixRequests.back().generation, same);
+    EXPECT_EQ(session.Current().aiFixNotice, U"AI: このままでよいようです");
+    // 送れないとき（変換が届く前）は理由を出す。失敗したら理由を出す
+    Press(session, Key::Reset);
+    Type(session, U"kisha");
+    EXPECT_EQ(Press(session, Key::AIFix).aiFixNotice, U"変換が終わってから押してください");
+    CompleteLatest(session, host, U"記者");
+    Press(session, Key::AIFix);
+    iroha::AIOutcome failed;
+    failed.error = "HTTP 401";
+    session.CompleteAIFix(host.aiFixRequests.back().generation, failed);
+    EXPECT_EQ(session.Current().aiFixNotice, U"AIに頼めませんでした（HTTP 401）");
+    // ほかのキーで窓・知らせを閉じる
+    EXPECT_TRUE(Type(session, U"a").aiFixNotice.empty());
+}
+
 void RunSessionTests() {
     TestSessionLiveConversionReplacesKana();
     TestSessionKeepsPreviousConversionAsPrefix();
@@ -1274,6 +1527,11 @@ void RunSessionTests() {
     TestSessionTypoIgnoresStaleAndTrailing();
     TestSessionTypoSegmentCandidates();
     TestSessionTypoWholeSentence();
+    TestSessionAICommitTranslation();
+    TestSessionAICommitJapanese();
+    TestSessionCandidateGrid();
+    TestSessionDelimitedAlphabet();
+    TestSessionAIFix();
 }
 
 } // namespace
