@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- IBus のコンポーネントの定義（CMake が @…@ を埋めて <IBus のデータ>/component/iroha.xml に置く） -->
+<component>
+    <name>org.freedesktop.IBus.Iroha</name>
+    <description>iroha（ニューラルかな漢字変換）</description>
+    <exec>@IROHA_ENGINE_PATH@ --ibus</exec>
+    <version>@IROHA_VERSION@</version>
+    <author>Tetsuaki Baba</author>
+    <license>MIT</license>
+    <homepage>https://github.com/TetsuakiBaba/iroha</homepage>
+    <textdomain>iroha</textdomain>
+    <engines>
+        <engine>
+            <name>iroha</name>
+            <language>ja</language>
+            <license>MIT</license>
+            <author>Tetsuaki Baba</author>
+            <layout>default</layout>
+            <longname>iroha</longname>
+            <description>iroha（ニューラルかな漢字変換）</description>
+            <rank>0</rank>
+            <symbol>あ</symbol>
+        </engine>
+    </engines>
+</component>

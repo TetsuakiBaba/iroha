@@ -595,6 +595,10 @@ cd macos && swift build --build-system native && swift test --build-system nativ
 - 移植の確かめ方は Windows版と同じ: `iroha-cli lattice-parity`（macOS版の候補の並び。
   `git show v0.12.0:experiments/jev/ajimee-candidates.jsonl`）と、AJIMEE の 2 条件（`IROHA_LATTICE=off` / `always`）。
   インストールせずに入力の動きを見るのは `iroha-cli session <キー列>`（このプロセスの中でセッションを動かす）
+- IBus のエンジン（`linux/ibus-iroha/`）は Windows版の TIP と同じく、キーを送って返ってきた表示を反映するだけ。
+  **入力の動きは `InputSession` に書く**。キーの読み替えは `key_decision`（IBus に依存しない。単体テストあり）。
+  IBus を通した確認は `linux/ibus-iroha/tests/ibus_e2e.py`（開発用のエンジン `ibus-engine-iroha` を引数なしで起動しておく。
+  テスト用の入力コンテキストを使い、全体のエンジンは終わったら戻す）。インストールは `./linux/scripts/install.sh`（sudo）
 - 進み具合と未対応のものは `linux/README.md`
 
 ## 自作変換モデル（文字単位T5）の学習（training/t5/、2026-09-11設計）

@@ -11,3 +11,4 @@ enable_testing()
 
 add_subdirectory(iroha-core)
 add_subdirectory(iroha-cli)
+add_subdirectory(ibus-iroha)
