@@ -4,9 +4,12 @@
 #include <chrono>
 #include <cstdint>
 #include <exception>
+#include <glib-unix.h>
 #include <memory>
+#include <optional>
 #include <string>
 
+#include "debug_overlay_window.h"
 #include "engine_host.h"
 #include "iroha/platform.h"
 #include "iroha/session_manager.h"
@@ -67,6 +70,9 @@ struct State {
     IBusProperty* modeProperty = nullptr;
     IBusProperty* privateProperty = nullptr;
     IBusProperty* setupProperty = nullptr;
+    // デバッグ表示: フォーカスがあるか・アプリが知らせたカーソルの位置（ルートの窓の座標。知らせが無ければ無し）
+    bool focused = false;
+    std::optional<iroha::DebugOverlayWindow::Rect> cursor;
 };
 
 } // namespace
@@ -240,6 +246,35 @@ void UpdateComposingFlag() {
     iroha::platform::SetComposingFlag(now == 1);
 }
 
+// ---- デバッグ表示（開発者モード。macOS版 DeveloperOverlay） ----
+
+// 窓は 1 枚をすべての入力コンテキストで使う（フォーカスがあるのは 1 つだけ）
+iroha::DebugOverlayWindow* sharedOverlay = nullptr;
+
+gboolean OverlayReadable(gint, GIOCondition, gpointer) {
+    if (sharedOverlay) sharedOverlay->Dispatch();
+    return G_SOURCE_CONTINUE;
+}
+
+// セッションの行があり、フォーカスがあってカーソルの位置が分かれば出す。候補ウィンドウが出ていれば行の上に出す
+void UpdateOverlay(IBusEngine* engine) {
+    const State& state = StateOf(engine);
+    const bool shows = !state.shown.debugOverlay.empty() && state.focused && state.cursor;
+    if (!shows) {
+        if (sharedOverlay) sharedOverlay->Hide();
+        return;
+    }
+    if (!sharedOverlay) {
+        sharedOverlay = new iroha::DebugOverlayWindow();
+        if (sharedOverlay->Open()) {
+            g_unix_fd_add(sharedOverlay->Fd(), G_IO_IN, OverlayReadable, nullptr);
+        } else {
+            Log("debug overlay: cannot open the X display (Wayland or no DISPLAY)");
+        }
+    }
+    sharedOverlay->Show(U8(state.shown.debugOverlay), *state.cursor, state.shown.candidatesVisible);
+}
+
 // 返ってきた表示を IBus に反映する。結果待ち（問い合わせが要る）なら真を返す
 bool ApplyOutput(IBusEngine* engine, const iroha::SessionOutput& output, bool fromKey) {
     State& state = StateOf(engine);
@@ -264,6 +299,7 @@ bool ApplyOutput(IBusEngine* engine, const iroha::SessionOutput& output, bool fr
     UpdateLookupTable(engine);
     UpdateAuxiliary(engine);
     UpdateComposingFlag();
+    UpdateOverlay(engine);
     return Composing(state) && Pending(output);
 }
 
@@ -349,12 +385,14 @@ void HideAll(IBusEngine* engine) {
 void ResetComposition(IBusEngine* engine) {
     State& state = StateOf(engine);
     SetPolling(engine, false);
-    if (Composing(state)) {
+    // デバッグ表示が出ていれば、セッションの行も捨てる（クリック・フォーカスの移動で閉じる。macOS版と同じ）
+    if (Composing(state) || !state.shown.debugOverlay.empty()) {
         sharedSessions->HandleKey(state.sessionId, iroha::SessionKey::Reset, 0, false, nullptr);
     }
     state.shown = iroha::SessionOutput();
     HideAll(engine);
     UpdateComposingFlag();
+    UpdateOverlay(engine);
 }
 
 // 今の表示のまま確定する（入力モードの切り替え・エンジンの無効化の前）
@@ -429,6 +467,7 @@ gboolean ProcessKeyEvent(IBusEngine* engine, guint keyval, guint keycode, guint 
 
 void FocusIn(IBusEngine* engine) {
     State& state = StateOf(engine);
+    state.focused = true;
     ibus_engine_register_properties(engine, state.properties);
     // 周辺テキストは、エンジンが一度読むとアプリに求めるようになる
     std::u32string ignored;
@@ -437,6 +476,7 @@ void FocusIn(IBusEngine* engine) {
 }
 
 void FocusOut(IBusEngine* engine) {
+    StateOf(engine).focused = false;
     try {
         ResetComposition(engine);
     } catch (const std::exception& error) {
@@ -452,6 +492,19 @@ void Reset(IBusEngine* engine) {
         Log(std::string("reset failed: ") + error.what());
     }
     IBUS_ENGINE_CLASS(iroha_engine_parent_class)->reset(engine);
+}
+
+// アプリがカーソルの位置を知らせた（未確定文字列が変わるたび）。デバッグ表示が出ていれば追う
+void SetCursorLocation(IBusEngine* engine, gint x, gint y, gint width, gint height) {
+    State& state = StateOf(engine);
+    // 位置を知らせないアプリは 0 を送ってくる
+    if (x == 0 && y == 0 && width == 0 && height == 0) {
+        state.cursor.reset();
+    } else {
+        state.cursor = iroha::DebugOverlayWindow::Rect{x, y, width, height};
+    }
+    if (!state.shown.debugOverlay.empty()) UpdateOverlay(engine);
+    IBUS_ENGINE_CLASS(iroha_engine_parent_class)->set_cursor_location(engine, x, y, width, height);
 }
 
 void Enable(IBusEngine* engine) {
@@ -562,6 +615,7 @@ static void iroha_engine_class_init(IrohaEngineClass* klass) {
     engineClass->focus_in = FocusIn;
     engineClass->focus_out = FocusOut;
     engineClass->reset = Reset;
+    engineClass->set_cursor_location = SetCursorLocation;
     engineClass->enable = Enable;
     engineClass->disable = Disable;
     engineClass->property_activate = PropertyActivate;

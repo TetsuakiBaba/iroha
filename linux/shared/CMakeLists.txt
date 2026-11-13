@@ -6,6 +6,7 @@
 #   emoji_renderability    描けない絵文字の判定（fontconfig・FreeType・HarfBuzz）
 #   launch_log             起動・終了・異常終了の記録
 #   key_shortcut.h         ショートカットの文字列
+#   debug_overlay_window   デバッグ表示の窓（iroha-overlay。X11・Pango。IBus と fcitx5 のエンジンが使う）
 cmake_minimum_required(VERSION 3.21)
 project(iroha-shared LANGUAGES CXX)
 
@@ -28,7 +29,14 @@ target_link_libraries(iroha-shared PUBLIC iroha-engine PkgConfig::CURL PkgConfig
 target_compile_options(iroha-shared PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 set_target_properties(iroha-shared PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+pkg_check_modules(OVERLAY REQUIRED IMPORTED_TARGET x11 xext pangocairo cairo-xlib)
+add_library(iroha-overlay STATIC debug_overlay_window.cpp)
+target_include_directories(iroha-overlay PUBLIC .)
+target_link_libraries(iroha-overlay PRIVATE PkgConfig::OVERLAY)
+target_compile_options(iroha-overlay PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+set_target_properties(iroha-overlay PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_executable(iroha-shared-tests tests/test_shared.cpp)
-target_link_libraries(iroha-shared-tests PRIVATE iroha-shared)
+target_link_libraries(iroha-shared-tests PRIVATE iroha-shared iroha-overlay)
 target_compile_options(iroha-shared-tests PRIVATE -Wall -Wextra)
 add_test(NAME iroha-shared-tests COMMAND iroha-shared-tests)

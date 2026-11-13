@@ -379,6 +379,8 @@ struct App {
     GtkWidget* logReset = nullptr;
 
     // 情報
+    GtkWidget* developerModeCheck = nullptr;
+    GtkWidget* developerOverlayCheck = nullptr;
     GtkWidget* licenseBox = nullptr;
 
     std::unique_ptr<iroha::UserDictionaryStore> dictionary;
@@ -1847,9 +1849,39 @@ GtkWidget* App::BuildAboutPage() {
     gtk_label_set_xalign(GTK_LABEL(licenseTitle), 0);
     gtk_widget_set_margin_top(licenseTitle, 8);
     licenseBox = Box(GTK_ORIENTATION_VERTICAL, 8);
+
+    // 開発者向け（macOS版の 設定 > 情報 > 開発者モード・デバッグ表示。どちらも既定 OFF。変えたらすぐ保存する）
+    GtkWidget* developerTitle = gtk_label_new(nullptr);
+    gtk_label_set_markup(GTK_LABEL(developerTitle), "<b>開発者向け</b>");
+    gtk_label_set_xalign(GTK_LABEL(developerTitle), 0);
+    developerModeCheck = CheckButton("開発者モード");
+    developerOverlayCheck = CheckButton("推論にかかった時間と左文脈をカーソルの右下に表示する（デバッグ表示）");
+    gtk_widget_set_margin_start(developerOverlayCheck, 24);
+    GtkWidget* developerNote = Label("デバッグ表示は開発者モードが ON のときだけ出ます。入力を始めたときの左文脈（アプリの"
+                                     "周辺テキストから読めたか）と、かな漢字変換・打ち間違いの訂正の 1 回ごとの時間"
+                                     "（全体と、そのうちニューラルネットの計算）を出します。Enter で確定したとき・"
+                                     "ほかの場所をクリックしたときに閉じます。X11 のデスクトップだけで出ます。",
+                                     true);
+    gtk_widget_add_css_class(developerNote, "dim-label");
     Append(page, {title, version, home, gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), dataLabel, openData, dataNote,
-                  gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), licenseTitle, licenseBox});
+                  gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), developerTitle, developerModeCheck,
+                  developerOverlayCheck, developerNote, gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), licenseTitle,
+                  licenseBox});
     Connect(openData, "clicked", [] { OpenFolder(iroha::platform::DataDirectory()); });
+    const auto saveDeveloper = [this] {
+        if (updating) return;
+        iroha::Config config = iroha::LoadConfig(iroha::settings::ConfigPath());
+        config.developerMode = Checked(developerModeCheck);
+        config.developerOverlay = Checked(developerOverlayCheck);
+        gtk_widget_set_sensitive(developerOverlayCheck, config.developerMode);
+        if (!iroha::SaveConfig(iroha::settings::ConfigPath(), config)) {
+            ShowDialog("設定の保存に失敗しました");
+            return;
+        }
+        iroha::platform::RequestReload();
+    };
+    Connect(developerModeCheck, "toggled", saveDeveloper);
+    Connect(developerOverlayCheck, "toggled", saveDeveloper);
     return scrolled;
 }
 
@@ -1866,6 +1898,12 @@ GtkWidget* LinkLabel(const std::string& prefix, const std::string& url) {
 
 // ライセンスの一覧は、入れた専門辞書・打ち間違い訂正モデルで変わるので、タブを開くたびに作り直す
 void App::RefreshAboutPage() {
+    const iroha::Config config = iroha::LoadConfig(iroha::settings::ConfigPath());
+    updating = true;
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(developerModeCheck), config.developerMode);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(developerOverlayCheck), config.developerOverlay);
+    updating = false;
+    gtk_widget_set_sensitive(developerOverlayCheck, config.developerMode);
     while (GtkWidget* child = gtk_widget_get_first_child(licenseBox)) gtk_box_remove(GTK_BOX(licenseBox), child);
     for (const auto& group : iroha::settings::Licenses(iroha::platform::DataDirectory())) {
         for (const auto& entry : group.entries) {

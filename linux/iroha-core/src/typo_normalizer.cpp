@@ -1,4 +1,5 @@
 #include "iroha/typo_normalizer.h"
+#include "iroha/inference_timer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1001,8 +1002,15 @@ std::vector<TypoNormalizer::ProtectedSegment> TypoNormalizer::ProtectedSegments(
 std::optional<TypoCorrection> TypoNormalizer::Correction(const std::u32string& reading, double threshold,
                                                          size_t minimumSegmentLength, std::string* error) {
     std::lock_guard<std::mutex> lock(mutex_);
-    Runtime* runtime = LoadLocked(error);
+    Runtime* runtime = nullptr;
+    {
+        // デバッグ表示: 読み込み（最初の 1 回）と NN の時間を分けて測る
+        std::optional<inference_timer::Measure> load;
+        if (!runtime_) load.emplace(inference_timer::Measure::Kind::ModelLoad);
+        runtime = LoadLocked(error);
+    }
     if (!runtime || !runtime->Supports(reading)) return std::nullopt;
+    const inference_timer::Measure measure(inference_timer::Measure::Kind::NeuralNetwork);
     const NumberMask mask(reading);
     const std::vector<ProtectedSegment> segments =
         mask.DigitIsTypo() ? std::vector<ProtectedSegment>{{reading, false}}

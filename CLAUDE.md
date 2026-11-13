@@ -613,6 +613,10 @@ cd macos && swift build --build-system native && swift test --build-system nativ
 - 配布物は `./linux/scripts/make-bundle.sh` の `dist/iroha-<版>-linux-x86_64.tar.gz`。リリースは release.yml の `linux` ジョブが
   macOS版のジョブのあとに Release へ添付する。**アセット名を `.zip` にしない**（macOS版の UpdateChecker が
   「iroha- で始まり .zip で終わる」最初のアセットを取る）
+- デバッグ表示（開発者モード。macOS版 DeveloperOverlay）は、行をコア（`iroha/debug_overlay.h`・`SessionOutput::debugOverlay`）が作り、
+  NN の時間は `iroha/inference_timer.h`（スレッドローカル）で測り、窓は `linux/shared/debug_overlay_window`（X11・Pango）が描く。
+  **macOS版の行の文面・測り方を変えたら Linux版も合わせる**。IBus を通した確かめ方は `linux/README.md` の「デバッグ表示」節
+  （利用者の IBus に触れない別の ibus-daemon を Xvfb の上に立てる）
 - 「こえ」モードは Linux版では未実装（計画は `linux/README.md`）。進み具合と未対応のものも `linux/README.md`
 
 ## 自作変換モデル（文字単位T5）の学習（training/t5/、2026-09-11設計）

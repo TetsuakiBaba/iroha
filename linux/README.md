@@ -52,7 +52,7 @@ fcitx5 のエンジンは fcitx5 本体と同じ場所（`/usr/lib/x86_64-linux-
 ```sh
 # 要るパッケージ
 sudo apt install cmake ninja-build libibus-1.0-dev libglib2.0-dev libgtk-4-dev libcurl4-openssl-dev \
-    libsecret-1-dev libfontconfig-dev libfreetype-dev libharfbuzz-dev libx11-dev libxtst-dev libxi-dev libxfixes-dev
+    libsecret-1-dev libfontconfig-dev libfreetype-dev libharfbuzz-dev libx11-dev libxtst-dev libxi-dev libxfixes-dev libxext-dev
 # fcitx5 のエンジンも作るなら
 sudo apt install libfcitx5core-dev libfcitx5config-dev libfcitx5utils-dev
 
@@ -170,13 +170,37 @@ IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-
     D-Bus は `dbus-run-session --config-file`（サービスの起動先を書かない設定）で分け、環境変数は `env -i` で空にしてから渡す
     （VS Code の snap の端末の GTK の環境変数が混ざると GTK のアプリが起動しない。portal が起動すると GTK の起動が 5 秒以上止まる）
 
+## デバッグ表示（開発者モード）
+
+macOS版の DeveloperOverlay を移したもの。設定 > 情報 > 開発者向けで「開発者モード」と「推論にかかった時間と左文脈を
+カーソルの右下に表示する」を ON にすると（config.json の `developerMode`・`developerOverlay`。macOS版と同じキー）、
+入力中にカーソルの右下へ次の行を出す（文面は macOS版と同じ）:
+
+- 左文脈: 入力を始めたときに周辺テキストから読めたか（読めなければ代わりに使った確定文字列）
+- かな漢字変換 1 回ごと: 種類（ライブ変換・文節に分ける・文節の区切り直し・候補ウィンドウ）・全体の時間・そのうち NN の
+  時間と回数・読みの文字数・モデルの読み込み・結果を使わずに打ち切った数
+- 打ち間違いの訂正 1 回ごと: きっかけ（入力の休止・スペース）・時間・結果
+
+macOS版の「要素の文字」（アクセシビリティで要素の文字数を調べる）と加速度センサのグラフは無い。
+
+- 行はコアが作る（`iroha/debug_overlay.h`。`SessionOutput::debugOverlay`）。NN の時間は `iroha/inference_timer.h` の
+  スレッドごとの入れ物に、`ZenzEngine`・`TypoNormalizer` が計算の前後で足し込む（macOS版の InferenceTimer の
+  タスクローカル値の代わり）。ライブ変換と休止での訂正は SessionManager の裏のスレッドで測る
+- 窓は `shared/debug_overlay_window`（X11 の override-redirect の窓に Pango で描く。マウスは透過）。IBus は
+  `set_cursor_location`、fcitx5 は `InputContext::cursorRect` の位置に出す。候補ウィンドウが出ているときは行の上に出す。
+  Enter での確定・リセット（クリック・フォーカスの移動）で閉じる。Wayland では出さない
+- 確かめ方: 利用者の IBus に触れないよう、Xvfb の上に別の D-Bus（`dbus-run-session --config-file`）・別の HOME・
+  抽象ソケットのアドレス（`ibus-daemon -s -p disable -a unix:abstract=…`。ファイルのソケットは名前が 108 バイトを超えると
+  切られる）で ibus-daemon を立て、開発用のエンジンと GTK3 の文章の窓を出して xdotool で打つ。GTK4 の窓は、ウィンドウ
+  マネージャの無い Xvfb ではカーソルの位置を高さ 400 のように知らせてきたので確かめに使えなかった
+
 ## 確認したこと
 
 2026-11-13〜14、Ubuntu 22.04・g++ 11.4・Xeon E5-1650 v4（12 スレッド）、iroha-kkc-v1:
 
 | 評価 | Linux版 | Windows版の記録 |
 |---|---|---|
-| 単体テスト | コア 1174・共有の部品 16・キーの読み替え 79・設定画面 82・選択テキスト 79 件、すべて通る | — |
+| 単体テスト | コア 1191・共有の部品 20・キーの読み替え 79・設定画面 82・選択テキスト 79 件、すべて通る | — |
 | 辞書ラティスの候補の並び（macOS版の出力との照合、AJIMEE 200 件） | n=10・n=30 とも 200/200 一致 | 200/200 一致 |
 | AJIMEE モデルのみ / ラティス再採点 | 171 (85.5%) / 170 (85.0%) | 171 (85.5%) / 171 (85.5%) |
 | eval.tsv 40 件 | 37 (92.5%) | 38 (95.0%) |
@@ -187,12 +211,15 @@ IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-
   動くこと。ユーザがデスクトップのアプリで使って動いた（2026-11-14）
 - CLI のセッション: 区切り記号の英字入力（kyouha_iPhone_wo → 今日はiPhoneを）・候補の表（Tab で広げて → で隣の列）
 - 配布物（make-bundle.sh）が作れること（14MB・3,410 ファイル）
+- デバッグ表示（Xvfb・別の ibus-daemon。2026-11-14）: 打っている間に左文脈とライブ変換の行、Space で候補ウィンドウの行
+  （全体 130ms・NN 125ms（2回））、Enter で閉じる
 - 選択テキストのマウスの操作（Xvfb・ウィンドウマネージャなし。2026-11-14）: ドラッグで「✦ 18文字」のアイコン、英単語の
   ダブルクリックで「1 word (4 chars)」、アイコンを押すとメニュー、メニューのプリセットで結果の窓（選択の文章つき）、
   何も選ばないドラッグでは出ない、「すぐにメニュー」「Alt を押しながら」「文字数だけ（AI編集 OFF）」の出し分け
 
 **確かめていないこと**: AI変換・AIで直す・選択テキストのAI編集の実際の依頼と表示（接続先を設定していない）、設定画面
-（画面を出していない）、ウィンドウマネージャ（GNOME）のあるデスクトップでのアイコン・メニュー・結果の窓、libsecret での API キーの読み書き、設定画面からの読み直しが実際のエンジンに効くこと、
+（画面を出していない）、ウィンドウマネージャ（GNOME）のあるデスクトップでのアイコン・メニュー・結果の窓・デバッグ表示、
+fcitx5 でのデバッグ表示、libsecret での API キーの読み書き、設定画面からの読み直しが実際のエンジンに効くこと、
 fcitx5 で動かすこと、配布物の install.sh（sudo が要る）、Wayland、IBus の候補表に出る補助テキストの見え方。
 
 ## これからの段階

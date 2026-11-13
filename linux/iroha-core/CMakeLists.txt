@@ -14,6 +14,8 @@ add_library(iroha-core STATIC
     src/ai_conversion.cpp
     src/ai_fix.cpp
     src/config.cpp
+    src/debug_overlay.cpp
+    src/inference_timer.cpp
     src/input_history.cpp
     src/conversion_log.cpp
     src/input_session.cpp

@@ -1,4 +1,5 @@
 #include "iroha/user_dictionary_engine.h"
+#include "iroha/inference_timer.h"
 
 #include <algorithm>
 
@@ -39,6 +40,7 @@ bool UserDictionaryEngine::Convert(const std::u32string& reading,
         const std::vector<std::u32string> liveWords = dictionary.LiveWords(reading);
         if (!liveWords.empty()) {
             results->push_back(liveWords.front());
+            inference_timer::Note(InferenceStats::kUserDictionary);
             return true;
         }
         const std::optional<std::set<int>> boundaries = WordBoundaries(reading, dictionary, true);

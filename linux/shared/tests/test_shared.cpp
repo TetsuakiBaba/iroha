@@ -6,6 +6,7 @@
 #include <fstream>
 #include <string>
 
+#include "debug_overlay_window.h"
 #include "emoji_renderability.h"
 #include "key_shortcut.h"
 #include "launch_log.h"
@@ -87,12 +88,26 @@ void TestKeyShortcut() {
     EXPECT_TRUE(!iroha::KeyShortcut::Parse("A"));  // 修飾キーの無いものは受けない
 }
 
+// デバッグ表示の置き場所: カーソルの右下。下に収まらない・候補ウィンドウが出ているときは行の上。画面の右端で止める
+void TestDebugOverlayPlacement() {
+    const iroha::DebugOverlayWindow::Rect caret{100, 200, 2, 20};
+    auto frame = iroha::PlaceDebugOverlay(caret, 300, 40, 1920, 1080, false);
+    EXPECT_TRUE(frame.x == 104 && frame.y == 222);
+    frame = iroha::PlaceDebugOverlay(caret, 300, 40, 1920, 1080, true);
+    EXPECT_TRUE(frame.x == 104 && frame.y == 158);
+    frame = iroha::PlaceDebugOverlay({1800, 1050, 2, 20}, 300, 40, 1920, 1080, false);
+    EXPECT_TRUE(frame.x == 1620 && frame.y == 1008);
+    frame = iroha::PlaceDebugOverlay({10, 10, 2, 20}, 300, 40, 1920, 1080, true);  // 上に収まらなければ下
+    EXPECT_TRUE(frame.y == 32);
+}
+
 } // namespace
 
 int main() {
     TestLaunchLog();
     TestEmojiRenderability();
     TestKeyShortcut();
+    TestDebugOverlayPlacement();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

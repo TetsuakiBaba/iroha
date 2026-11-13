@@ -25,7 +25,7 @@ set(IROHA_RESOURCE_DIR "${CMAKE_INSTALL_PREFIX}/lib/iroha")
 
 add_library(iroha-fcitx5 MODULE engine.cpp)
 set_target_properties(iroha-fcitx5 PROPERTIES PREFIX "" OUTPUT_NAME iroha)
-target_link_libraries(iroha-fcitx5 PRIVATE Fcitx5::Core iroha-keys iroha-shared)
+target_link_libraries(iroha-fcitx5 PRIVATE Fcitx5::Core iroha-keys iroha-shared iroha-overlay)
 target_compile_definitions(iroha-fcitx5 PRIVATE IROHA_VERSION="${IROHA_VERSION}"
                            IROHA_RESOURCE_DIR="${IROHA_RESOURCE_DIR}")
 target_compile_options(iroha-fcitx5 PRIVATE -Wall -Wextra)

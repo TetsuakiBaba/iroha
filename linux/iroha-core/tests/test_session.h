@@ -1527,7 +1527,73 @@ void TestSessionAIFix() {
     EXPECT_TRUE(Type(session, U"a").aiFixNotice.empty());
 }
 
+// デバッグ表示の行の文面（macOS版 DeveloperOverlay と同じ）
+void TestDebugOverlayLines() {
+    namespace d = iroha::debug_overlay;
+    EXPECT_EQ(d::FormatDuration(12345), U"12.3ms");
+    EXPECT_EQ(d::FormatDuration(123456), U"123ms");
+    iroha::InferenceStats stats;
+    stats.neuralNetworkMicros = 20000;
+    stats.neuralNetworkCalls = 2;
+    EXPECT_EQ(d::ConversionLine(d::ConversionKind::Candidates, 30000, stats, 5, 2),
+              U"候補ウィンドウ  全体 30.0ms ・ NN 20.0ms（2回） ・ 読み 5文字 ・ 取り消し 2");
+    iroha::InferenceStats shortcut;
+    shortcut.shortcuts = iroha::InferenceStats::kUserDictionary;
+    shortcut.modelLoadMicros = 500000;
+    EXPECT_EQ(d::ConversionLine(d::ConversionKind::Live, 1000, shortcut, 3, 0),
+              U"ライブ変換  全体 1.0ms ・ NN なし（ユーザ辞書） ・ 読み 3文字 ・ モデル読み込み 500ms（全体に含む）");
+    EXPECT_EQ(d::TypoLine(d::TypoTrigger::Idle, 4000, stats, 6, d::TypoOutcome::TrailingInsertion),
+              U"打ち間違い（入力の休止）  全体 4.0ms ・ NN 20.0ms ・ 読み 6文字 ・ 末尾に足しただけなので捨てた");
+    EXPECT_EQ(d::ContextLine(d::ContextSource::Document, U"あいうえおかきくけこさしすせそたちつてとな", std::nullopt),
+              U"左文脈  アプリから 21文字 「…いうえおかきくけこさしすせそたちつてとな」");
+    EXPECT_EQ(d::ContextLine(d::ContextSource::Document, U"", std::nullopt), U"左文脈  アプリから 0文字（カーソルが行の頭）");
+    EXPECT_EQ(d::ContextLine(d::ContextSource::Unavailable, U"", std::u32string()),
+              U"左文脈  アプリから読めない（周辺テキストを返さない） → 代わりの確定文字列もなし（文脈なし）");
+    EXPECT_EQ(d::ContextLine(d::ContextSource::Disabled, U"", std::u32string(U"今日")),
+              U"左文脈  アプリから読む設定が OFF → 代わりに確定文字列 2文字 「今日」");
+}
+
+// デバッグ表示: ON のときだけ行を出し、入力の始めに左文脈、変換のたびに時間の行。Enter で消える
+void TestSessionDebugOverlay() {
+    FakeSessionHost host;
+    iroha::InputSession session(&host);
+    auto output = Type(session, U"kyou");
+    EXPECT_TRUE(output.debugOverlay.empty());
+    Press(session, Key::Escape);
+    Press(session, Key::Escape);
+
+    iroha::SessionSettings settings;
+    settings.developerOverlay = true;
+    session.SetSettings(settings);
+    const std::u32string context = U"会議は";
+    output = session.Handle(Key::Character, U'k', false, &context);
+    EXPECT_EQ(output.debugOverlay, U"左文脈  アプリから 3文字 「会議は」");
+    Type(session, U"you");
+    iroha::InferenceReport report;
+    report.totalMicros = 8000;
+    report.stats.neuralNetworkMicros = 6000;
+    report.stats.neuralNetworkCalls = 1;
+    session.NoteCancelledConversion();
+    const auto& request = host.liveRequests.back();
+    const std::u32string converted = U"今日";
+    EXPECT_TRUE(session.CompleteLiveConversion(request.generation, request.reading, &converted, &report));
+    EXPECT_EQ(session.Current().debugOverlay,
+              U"左文脈  アプリから 3文字 「会議は」\nライブ変換  全体 8.0ms ・ NN 6.0ms（1回） ・ 読み 3文字 ・ 取り消し 1");
+    // Space で文節に分ける（同じ読みを変換済みなので変換しない）→ 候補ウィンドウ（測る）
+    Press(session, Key::Space);
+    output = Press(session, Key::Space);
+    EXPECT_TRUE(output.debugOverlay.find(U"候補ウィンドウ  全体 ") != std::u32string::npos);
+    EXPECT_TRUE(output.debugOverlay.find(U"NN なし") != std::u32string::npos);  // 偽物のエンジンは NN を通さない
+    output = Press(session, Key::Enter);
+    EXPECT_TRUE(output.debugOverlay.empty());
+    // 次の入力の始めに、左文脈が読めなければ代わりの確定文字列を出す
+    output = Type(session, U"a");
+    EXPECT_TRUE(output.debugOverlay.rfind(U"左文脈  アプリから読めない（周辺テキストを返さない） → 代わりに確定文字列", 0) == 0);
+}
+
 void RunSessionTests() {
+    TestDebugOverlayLines();
+    TestSessionDebugOverlay();
     TestSessionLiveConversionReplacesKana();
     TestSessionKeepsPreviousConversionAsPrefix();
     TestSessionUsesEarlierLiveResultAsPrefix();

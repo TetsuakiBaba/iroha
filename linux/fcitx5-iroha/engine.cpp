@@ -26,6 +26,7 @@
 #include <fcitx/addoninstance.h>
 #include <fcitx/addonmanager.h>
 #include <fcitx/candidatelist.h>
+#include <fcitx/event.h>
 #include <fcitx/inputcontext.h>
 #include <fcitx/inputcontextmanager.h>
 #include <fcitx/inputcontextproperty.h>
@@ -36,6 +37,7 @@
 #include <fcitx/text.h>
 #include <fcitx/userinterfacemanager.h>
 
+#include "debug_overlay_window.h"
 #include "emoji_renderability.h"
 #include "engine_host.h"
 #include "iroha/platform.h"
@@ -142,9 +144,18 @@ public:
         instance_->userInterfaceManager().registerAction("iroha-private", &privateAction_);
         instance_->userInterfaceManager().registerAction("iroha-settings", &settingsAction_);
         WatchReloadRequest();
+        // デバッグ表示: カーソルの位置が変わったら追う
+        eventHandlers_.push_back(instance_->watchEvent(
+            fcitx::EventType::InputContextCursorRectChanged, fcitx::EventWatcherPhase::Default,
+            [this](fcitx::Event& event) {
+                auto& changed = static_cast<fcitx::InputContextEvent&>(event);
+                if (overlay_.Visible()) UpdateOverlay(changed.inputContext());
+            }));
     }
 
     ~IrohaEngine() override {
+        eventHandlers_.clear();
+        overlayWatch_.reset();
         reloadWatch_.reset();
         if (inotifyFd_ >= 0) close(inotifyFd_);
         platform::SetComposingFlag(false);
@@ -230,7 +241,12 @@ public:
             CommitNow(ic);
             IrohaState& state = *ic->propertyFor(&factory_);
             state.pollTimer.reset();
+            // デバッグ表示が出ていれば、セッションの行も捨てる（クリック・フォーカスの移動で閉じる。macOS版と同じ）
+            if (!state.shown.debugOverlay.empty()) {
+                sessions_->HandleKey(state.sessionId, SessionKey::Reset, 0, false, nullptr);
+            }
             state.shown = SessionOutput();
+            overlay_.Hide();
             ic->inputPanel().reset();
             ic->updatePreedit();
             ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
@@ -343,7 +359,30 @@ private:
         ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
         if (privateChanged) privateAction_.update(ic);
         UpdateComposingFlag();
+        UpdateOverlay(ic);
         SetPolling(ic, output.Composing() && Pending(output));
+    }
+
+    // デバッグ表示（開発者モード。macOS版 DeveloperOverlay）: セッションの行があり、フォーカスがあってカーソルの位置が
+    // 分かれば出す。候補ウィンドウが出ていれば行の上に出す
+    void UpdateOverlay(fcitx::InputContext* ic) {
+        const IrohaState& state = *ic->propertyFor(&factory_);
+        const fcitx::Rect& rect = ic->cursorRect();
+        const bool known = rect.width() > 0 || rect.height() > 0 || rect.left() != 0 || rect.top() != 0;
+        if (state.shown.debugOverlay.empty() || !ic->hasFocus() || !known) {
+            overlay_.Hide();
+            return;
+        }
+        if (!overlayWatch_ && overlay_.Open()) {
+            overlayWatch_ = instance_->eventLoop().addIOEvent(
+                overlay_.Fd(), fcitx::IOEventFlag::In, [this](fcitx::EventSourceIO*, int, fcitx::IOEventFlags) {
+                    overlay_.Dispatch();
+                    return true;
+                });
+        }
+        overlay_.Show(U8(state.shown.debugOverlay), DebugOverlayWindow::Rect{rect.left(), rect.top(), rect.width(),
+                                                                              rect.height()},
+                      state.shown.candidatesVisible);
     }
 
     // 補助テキスト: 知らせ > 打ち間違いの訂正 > AI の案 > AIで直すの窓 > AI変換の結果待ち > 表の列 > 予測変換 > 候補の位置
@@ -546,6 +585,10 @@ private:
     int inotifyFd_ = -1;
     std::unique_ptr<fcitx::EventSourceIO> reloadWatch_;
     int composingFlag_ = -1;
+    // デバッグ表示の窓（1 枚をすべての入力コンテキストで使う）
+    DebugOverlayWindow overlay_;
+    std::unique_ptr<fcitx::EventSourceIO> overlayWatch_;
+    std::vector<std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>>> eventHandlers_;
 };
 
 void IrohaCandidate::select(fcitx::InputContext* ic) const { engine_->SelectCandidate(ic, number_); }

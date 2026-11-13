@@ -209,6 +209,7 @@ void EngineHost::Build() {
     sessionSettings_.predictive = config.predictive;
     sessionSettings_.privateMode = config.privateMode;
     sessionSettings_.documentContext = config.documentContext;
+    sessionSettings_.developerOverlay = config.developerMode && config.developerOverlay;
     const auto privateShortcut = KeyShortcut::Parse(config.privateModeHotkey);
     sessionSettings_.privateModeShortcut = privateShortcut ? privateShortcut->Encode() : 0;
     learningEnabled_ = config.learningEnabled;
