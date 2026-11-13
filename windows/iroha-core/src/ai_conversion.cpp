@@ -109,6 +109,53 @@ AIRequest AICommitPreset::Request(size_t index, const std::u32string& text) cons
     return AIRequest::Build(EffectivePrompt(index), text);
 }
 
+namespace SelectionSettingsDefaults {
+const char32_t kGenerationInstructions[] = U"ユーザの指示に従ってテキストを作成してください。\n";
+
+const std::vector<Preset>& Presets() {
+    static const std::vector<Preset> presets = {
+        {U"日英翻訳", U"次のテキストを翻訳してください。日本語なら英語に、英語なら日本語に訳してください。", "Ctrl+Alt+1",
+         true},
+        {U"校正", U"次のテキストの誤字脱字と不自然な表現を直してください。意味と文体は変えないでください。", "Ctrl+Alt+2",
+         true},
+        {U"敬語", U"次の日本語を、意味を変えずに丁寧なビジネス文体に書き直してください。", "Ctrl+Alt+3", true},
+        {U"要約", U"次のテキストを、要点を保ったまま短く言い換えてください。", "Ctrl+Alt+4", true},
+        {U"カスタム", U"", "", false},
+    };
+    return presets;
+}
+} // namespace SelectionSettingsDefaults
+
+std::u32string CleanAIOutput(const std::u32string& text) {
+    std::u32string cleaned = TrimWhitespace(Utf8ToUtf32(StripThinking(Utf32ToUtf8(text))));
+    // 全体が 1 つのコードの囲みに包まれていたら中身だけにする
+    const std::u32string fence = U"```";
+    if (cleaned.size() > 6 && cleaned.compare(0, 3, fence) == 0 && cleaned.compare(cleaned.size() - 3, 3, fence) == 0) {
+        std::u32string inner = cleaned.substr(3, cleaned.size() - 6);
+        // 開きの直後の言語名（```text など）は最初の改行まで捨てる
+        const size_t newline = inner.find(U'\n');
+        if (newline != std::u32string::npos) {
+            const std::u32string firstLine = inner.substr(0, newline);
+            if (firstLine.find(U' ') == std::u32string::npos && firstLine.size() <= 20) inner = inner.substr(newline + 1);
+        }
+        const std::u32string candidate = TrimWhitespace(inner);
+        if (!candidate.empty()) cleaned = candidate;
+    }
+    // 全体が 1 組の引用符・括弧に包まれていたら外す
+    const std::pair<char32_t, char32_t> quotes[] = {
+        {U'「', U'」'}, {U'『', U'』'}, {U'\u201C', U'\u201D'}, {U'"', U'"'}, {U'\'', U'\''}};
+    for (const auto& [open, close] : quotes) {
+        if (cleaned.size() >= 2 && cleaned.front() == open && cleaned.back() == close) {
+            const std::u32string inner = cleaned.substr(1, cleaned.size() - 2);
+            if (inner.find(open) == std::u32string::npos && inner.find(close) == std::u32string::npos && !inner.empty()) {
+                cleaned = TrimWhitespace(inner);
+            }
+            break;
+        }
+    }
+    return cleaned;
+}
+
 bool ContainsJapanese(const std::u32string& text) {
     for (char32_t c : text) {
         if ((c >= 0x3040 && c <= 0x30FF) ||   // ひらがな・カタカナ

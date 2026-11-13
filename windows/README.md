@@ -216,7 +216,7 @@ windows\build\iroha-cli\iroha-cli.exe session --interval 120 "kyouhaiitenkidesun
   表に広げている間だけ ←→ は隣の列へ移る（macOS版の `CandidateGrid` を `iroha-core` の `candidate_grid.h` に移した。
   テストは 1 対 1）
 
-未対応（macOS版にあるもの）: 選択テキストのAI編集・「こえ」モード。
+未対応（macOS版にあるもの）: 「こえ」モード。
 変換サーバが止まっている間は、かな入力もできない（キーを受けても表示を決められない）
 
 ## 予測変換・変換ルール・プライベートモード・変換記録
@@ -266,6 +266,23 @@ windows\build\iroha-cli\iroha-cli.exe ai models
 # 変換サーバを通して（<ai0> がプリセット 1 つ目のキー）
 windows\build\iroha-cli\iroha-cli.exe session --interval 60 "kyouhatenkigaiidesune<wait><ai0><wait>"
 ```
+
+### 選択テキストのAI編集
+
+macOS版の「選択テキストのAI編集」（ほかのアプリで選んだ文章を、グローバルショートカットで AI に渡して置き換える）を移した
+（2026-11-13。設定画面の「選択テキスト」タブ。既定 OFF）。変換サーバの中の専用のスレッドと窓で動く（`iroha-server/selection_assistant.cpp`）
+
+- 選択の取り方は macOS版と違い、クリップボード経由だけにした（ユーザの判断）: クリップボードの中身を控えて Ctrl+C を送り、
+  結果は元のアプリに戻って Ctrl+V で貼り、控えた中身を戻す。書き込む一時の中身には、クリップボードの履歴（Win+V）と
+  クラウドの同期に残さない印を付ける。ビットマップなど GDI の取っ手で渡される形式は控えられない
+- プリセットは 5 つ（日英翻訳・校正・敬語・要約・カスタム。名前・プロンプト・キー・使うかを変えられる）と、その場で指示するキー。
+  キーの既定は macOS版の Ctrl+1〜4・Ctrl+0 が Windows ではブラウザのタブ切り替えなどと重なるので Ctrl+Alt+1〜4・Ctrl+Alt+0
+  にした。選択が無ければ指示から文章を作ってカーソルの位置に入れる。入力中（未確定文字列があるとき）は動かない（macOS版と同じ）
+- 結果の窓は Enter で置き換える・Esc で閉じる・コピー。出力の整形（コードの囲み・全体を包む引用符を外す）は macOS版の
+  `AIOutputCleaner` と同じ規則（`iroha-core` の `CleanAIOutput`）
+- macOS版のマウスで選んだときにアイコンを出す仕組み・文字数の表示は作っていない（選ぶたびにクリップボードを書き換えることになるため）
+- **キーを送る部分（Ctrl+C・Ctrl+V）と結果の窓は、実際のアプリでまだ確かめていない**（この機械を使っている最中に、ほかのアプリへ
+  キーを送る確認はしなかった）。変換サーバが起動してショートカット 5 つを登録できることまで確かめた
 
 ### AIで直す
 
@@ -418,6 +435,7 @@ windows\build\iroha-cli\iroha-cli.exe lattice goenseihaien
       TIP はキーを送って表示を反映するだけ）
 - [x] M7e-1: 記号・顔文字・絵文字の候補（Mozc のデータ、Windows で描けない絵文字を除く、候補ウィンドウを Direct2D で描く）
 - [x] M7e-2: 専門辞書（設定画面のタブ・辞書ラティスへの組み込み・候補の辞書名の印）
+- [x] M7k: 選択テキストのAI編集（クリップボード経由・設定画面の「選択テキスト」タブ）
 - [x] M7j: 候補ウィンドウを表に広げる（Tab）・区切り記号で囲んだ英字入力・AIで直す
 - [x] M7i: AI変換（Ollama・LM Studio・OpenAI互換・Claude、プリセット 3 つ、設定画面の「AI」タブ）
 - [x] M7h: 打ち間違いの訂正（TypoNormalizer の C++ 移植・休止での訂正と取り消し・文節の訂正候補・設定画面からの取得）

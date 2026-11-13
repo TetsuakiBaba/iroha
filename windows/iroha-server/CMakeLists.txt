@@ -4,9 +4,9 @@
 cmake_minimum_required(VERSION 3.21)
 project(iroha-server LANGUAGES CXX)
 
-add_executable(iroha-server main.cpp ../shared/emoji_renderability.cpp ../shared/ai_client.cpp
-    ../shared/secret_store.cpp)
-target_link_libraries(iroha-server PRIVATE iroha-engine dwrite winhttp advapi32)
+add_executable(iroha-server main.cpp selection_assistant.cpp ../shared/emoji_renderability.cpp
+    ../shared/ai_client.cpp ../shared/secret_store.cpp)
+target_link_libraries(iroha-server PRIVATE iroha-engine dwrite winhttp advapi32 user32)
 target_include_directories(iroha-server PRIVATE ../shared)
 if(MSVC)
     target_compile_options(iroha-server PRIVATE /utf-8 /W4 /EHsc)

@@ -115,8 +115,19 @@ void TestAIFixRule() {
     EXPECT_TRUE(!iroha::AIFixRule::Answer(U"前の文脈も含めた長い長い答えです", U"記者"));
 }
 
+// 選択テキストのAI編集の出力の整形（macOS版 AIOutputCleaner と同じ規則）
+void TestCleanAIOutput() {
+    EXPECT_EQ(iroha::CleanAIOutput(U"```text\nHello\n```"), U"Hello");
+    EXPECT_EQ(iroha::CleanAIOutput(U"```\nconst a = 1;\n```"), U"const a = 1;");
+    EXPECT_EQ(iroha::CleanAIOutput(U"「こんにちは」"), U"こんにちは");
+    EXPECT_EQ(iroha::CleanAIOutput(U"「A」と「B」"), U"「A」と「B」"); // 中に同じ記号があれば外さない
+    EXPECT_EQ(iroha::CleanAIOutput(U"<think>考え</think>\n\"Hi\""), U"Hi");
+    EXPECT_EQ(iroha::CleanAIOutput(U"  そのまま  "), U"そのまま");
+}
+
 void RunAITests() {
     TestAIFixRule();
+    TestCleanAIOutput();
     TestAIRequestBuild();
     TestAIResponseParsing();
     TestKeyShortcut();

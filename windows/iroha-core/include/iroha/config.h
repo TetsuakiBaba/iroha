@@ -75,6 +75,18 @@ struct Config {
     bool aiFix = false;
     double aiFixThreshold = 1.0;
     std::string aiFixShortcut = "Ctrl+Alt+A";
+    // 選択テキストのAI編集（既定 OFF）: プリセット 5 つ（書いていなければ既定）・その場で指示するキー・
+    // 使わないアプリ（実行ファイルの名前。カンマか改行で区切る）。キーの名前は macOS版の設定と同じ
+    bool selectionEnabled = false;
+    struct SelectionPreset {
+        std::optional<std::u32string> name;
+        std::optional<std::u32string> prompt;
+        std::optional<std::string> hotkey;
+        std::optional<bool> enabled;
+    };
+    std::array<SelectionPreset, 5> selectionPresets;
+    std::optional<std::string> selectionOnDemandHotkey;
+    std::string selectionExcludedApps;
 };
 
 Config LoadConfig(const std::filesystem::path& path);

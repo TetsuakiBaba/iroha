@@ -125,6 +125,15 @@ enum {
     kIdAIPresetHotkey0 = kIdAIPresetName0 + 3,
     kIdAIPresetPrompt0 = kIdAIPresetHotkey0 + 3,
     kIdAIEnd = kIdAIPresetPrompt0 + 3,
+    kIdSelEnabled,
+    kIdSelOnDemand,
+    kIdSelExcluded,
+    kIdSelSave,
+    kIdSelPresetEnabled0,
+    kIdSelPresetName0 = kIdSelPresetEnabled0 + 5,
+    kIdSelPresetHotkey0 = kIdSelPresetName0 + 5,
+    kIdSelPresetPrompt0 = kIdSelPresetHotkey0 + 5,
+    kIdSelEnd = kIdSelPresetPrompt0 + 5,
 };
 
 // タブの並び
@@ -135,6 +144,7 @@ enum TabIndex {
     kTabTermDictionary,
     kTabRewriteRules,
     kTabAI,
+    kTabSelection,
     kTabLearning,
     kTabCount,
 };
@@ -282,6 +292,19 @@ struct App {
     HWND aiSave = nullptr;
     HWND aiNote = nullptr;
     int aiShownService = -1; // URL・モデルの欄に出している接続先（切り替えたときに書き戻す先）
+    // 選択テキストのAI編集
+    HWND selEnabled = nullptr;
+    HWND selOnDemandLabel = nullptr;
+    HWND selOnDemand = nullptr;
+    HWND selHeader = nullptr;
+    HWND selPresetEnabled[5] = {};
+    HWND selPresetName[5] = {};
+    HWND selPresetHotkey[5] = {};
+    HWND selPresetPrompt[5] = {};
+    HWND selExcludedLabel = nullptr;
+    HWND selExcluded = nullptr;
+    HWND selSave = nullptr;
+    HWND selNote = nullptr;
     // 学習・記録
     HWND learnStatus = nullptr;
     HWND learnReset = nullptr;
@@ -344,6 +367,8 @@ struct App {
     void OnAIModelsDone(AIModelsResult* result);
     void OnAIKeyClear();
     void RefreshAIKeyStatus(iroha::AIService service);
+    void RefreshSelectionPage();
+    void OnSelectionSave();
     void RefreshRuleList();
     void OnRuleAdd();
     void OnRuleRemove();
@@ -403,8 +428,8 @@ void App::CreateControls() {
     pageBrush = CreateSolidBrush(pageColor);
     TCITEMW item = {};
     item.mask = TCIF_TEXT;
-    const wchar_t* const titles[kTabCount] = {L"モデル",     L"入力", L"ユーザ辞書", L"専門辞書",
-                                              L"変換ルール", L"AI",   L"学習・記録"};
+    const wchar_t* const titles[kTabCount] = {L"モデル", L"入力",       L"ユーザ辞書", L"専門辞書",
+                                              L"変換ルール", L"AI", L"選択テキスト", L"学習・記録"};
     for (int i = 0; i < kTabCount; ++i) {
         item.pszText = const_cast<wchar_t*>(titles[i]);
         TabCtrl_InsertItem(tab, i, &item);
@@ -569,6 +594,32 @@ void App::CreateControls() {
                        aiKeyLabel, aiKey, aiKeyClear, aiStatus, aiPresetHeader, aiSave, aiNote});
     for (int i = 0; i < 3; ++i) AddToPage(kTabAI, {aiPresetName[i], aiPresetHotkey[i], aiPresetPrompt[i]});
 
+    // ---- 選択テキスト ----
+    selEnabled = CreateChild(WC_BUTTONW, L"選択テキストのAI編集を使う（ほかのアプリで選んだ文章をショートカットで AI に渡して置き換える）",
+                             BS_AUTOCHECKBOX | WS_TABSTOP, kIdSelEnabled);
+    selOnDemandLabel = CreateChild(WC_STATICW, L"その場で指示するキー:", 0, 0);
+    selOnDemand = CreateChild(WC_EDITW, L"", WS_TABSTOP | ES_AUTOHSCROLL, kIdSelOnDemand, WS_EX_CLIENTEDGE);
+    selHeader = CreateChild(WC_STATICW, L"プリセット（使う・名前・キー・プロンプト）:", 0, 0);
+    for (int i = 0; i < 5; ++i) {
+        selPresetEnabled[i] = CreateChild(WC_BUTTONW, L"", BS_AUTOCHECKBOX | WS_TABSTOP, kIdSelPresetEnabled0 + i);
+        selPresetName[i] = CreateChild(WC_EDITW, L"", WS_TABSTOP | ES_AUTOHSCROLL, kIdSelPresetName0 + i, WS_EX_CLIENTEDGE);
+        selPresetHotkey[i] =
+            CreateChild(WC_EDITW, L"", WS_TABSTOP | ES_AUTOHSCROLL, kIdSelPresetHotkey0 + i, WS_EX_CLIENTEDGE);
+        selPresetPrompt[i] =
+            CreateChild(WC_EDITW, L"", WS_TABSTOP | ES_AUTOHSCROLL, kIdSelPresetPrompt0 + i, WS_EX_CLIENTEDGE);
+        AddToPage(kTabSelection, {selPresetEnabled[i], selPresetName[i], selPresetHotkey[i], selPresetPrompt[i]});
+    }
+    selExcludedLabel = CreateChild(WC_STATICW, L"使わないアプリ（実行ファイル名・カンマ区切り）:", 0, 0);
+    selExcluded = CreateChild(WC_EDITW, L"", WS_TABSTOP | ES_AUTOHSCROLL, kIdSelExcluded, WS_EX_CLIENTEDGE);
+    selSave = CreateChild(WC_BUTTONW, L"保存", WS_TABSTOP, kIdSelSave);
+    selNote = CreateChild(WC_STATICW,
+                          L"キーを押すと、選んでいる文章をクリップボード経由（Ctrl+C）で受け取り、AI の結果を小さな窓に出します。"
+                          L"Enter で元の文章を置き換えます（Ctrl+V。クリップボードの中身は戻します）。選択が無ければ指示から文章を作ります。"
+                          L"入力中（未確定文字列があるとき）は動きません。AI の接続先は「AI」タブの設定を使います。",
+                          0, 0);
+    AddToPage(kTabSelection, {selEnabled, selOnDemandLabel, selOnDemand, selHeader, selExcludedLabel, selExcluded, selSave,
+                              selNote});
+
     // ---- 学習・記録 ----
     learnStatus = CreateChild(WC_STATICW, L"", 0, kIdLearnStatus);
     learnReset = CreateChild(WC_BUTTONW, L"学習をリセット", WS_TABSTOP, kIdLearnReset);
@@ -695,6 +746,31 @@ void App::LayoutControls() {
         MoveWindow(aiNote, x + Scale(100), aiY, width - Scale(100), page.bottom - aiY - Scale(8), TRUE);
     }
 
+    // 選択テキスト
+    {
+        int selY = y;
+        MoveWindow(selEnabled, x, selY, width, Scale(24), TRUE);
+        selY += Scale(32);
+        MoveWindow(selOnDemandLabel, x, selY + Scale(4), Scale(170), Scale(20), TRUE);
+        MoveWindow(selOnDemand, x + Scale(172), selY, Scale(150), Scale(24), TRUE);
+        selY += Scale(34);
+        MoveWindow(selHeader, x, selY, width, Scale(20), TRUE);
+        selY += Scale(22);
+        for (int i = 0; i < 5; ++i) {
+            MoveWindow(selPresetEnabled[i], x, selY + Scale(3), Scale(20), Scale(20), TRUE);
+            MoveWindow(selPresetName[i], x + Scale(24), selY, Scale(100), Scale(24), TRUE);
+            MoveWindow(selPresetHotkey[i], x + Scale(130), selY, Scale(110), Scale(24), TRUE);
+            MoveWindow(selPresetPrompt[i], x + Scale(246), selY, width - Scale(246), Scale(24), TRUE);
+            selY += Scale(30);
+        }
+        selY += Scale(6);
+        MoveWindow(selExcludedLabel, x, selY + Scale(4), Scale(290), Scale(20), TRUE);
+        MoveWindow(selExcluded, x + Scale(292), selY, width - Scale(292), Scale(24), TRUE);
+        selY += Scale(34);
+        MoveWindow(selSave, x, selY + Scale(2), Scale(90), Scale(28), TRUE);
+        MoveWindow(selNote, x + Scale(100), selY, width - Scale(100), page.bottom - selY - Scale(8), TRUE);
+    }
+
     // 学習・記録
     MoveWindow(learnStatus, x, y, width, Scale(20), TRUE);
     MoveWindow(learnReset, x, y + Scale(26), Scale(140), Scale(28), TRUE);
@@ -719,6 +795,7 @@ void App::ShowTab(int index) {
     if (index == kTabLearning) RefreshLearningPage();
     if (index == kTabInput) RefreshInputPage();
     if (index == kTabAI) RefreshAIPage();
+    if (index == kTabSelection) RefreshSelectionPage();
     // 専門辞書の一覧は、タブを初めて開いたときに取りにいく（入れてある辞書が作り直されていれば入れ直す）
     if (term && !termCatalogRequested) {
         termCatalogRequested = true;
@@ -1200,6 +1277,63 @@ void App::OnAIModelsDone(AIModelsResult* result) {
         SetWindowTextW(aiStatus, (std::to_wstring(result->models.size()) + L" 個のモデルがあります。選んで「保存」を押します").c_str());
     }
     delete result;
+}
+
+// ---- 選択テキストのAI編集 ----
+
+void App::RefreshSelectionPage() {
+    const iroha::Config config = iroha::LoadConfig(ConfigPath());
+    SendMessageW(selEnabled, BM_SETCHECK, config.selectionEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    SetWindowTextW(selOnDemand,
+                   Wide(config.selectionOnDemandHotkey.value_or(iroha::SelectionSettingsDefaults::kOnDemandHotkey)).c_str());
+    for (size_t i = 0; i < 5; ++i) {
+        const auto& stored = config.selectionPresets[i];
+        const auto& fallback = iroha::SelectionSettingsDefaults::Presets()[i];
+        SendMessageW(selPresetEnabled[i], BM_SETCHECK, stored.enabled.value_or(fallback.enabled) ? BST_CHECKED : BST_UNCHECKED,
+                     0);
+        SetWindowTextW(selPresetName[i], iroha::Utf32ToUtf16(stored.name.value_or(fallback.name)).c_str());
+        SetWindowTextW(selPresetHotkey[i], Wide(stored.hotkey.value_or(fallback.hotkey)).c_str());
+        SetWindowTextW(selPresetPrompt[i], iroha::Utf32ToUtf16(stored.prompt.value_or(fallback.prompt)).c_str());
+    }
+    SetWindowTextW(selExcluded, Wide(config.selectionExcludedApps).c_str());
+}
+
+void App::OnSelectionSave() {
+    iroha::Config config = iroha::LoadConfig(ConfigPath());
+    const auto text = [](HWND control) {
+        wchar_t buffer[4096];
+        GetWindowTextW(control, buffer, ARRAYSIZE(buffer));
+        return iroha::TrimWhitespace(iroha::Utf16ToUtf32(buffer));
+    };
+    std::wstring invalid;
+    const auto checkHotkey = [&invalid](const std::string& hotkey) {
+        if (!hotkey.empty() && !iroha::KeyShortcut::Parse(hotkey)) invalid += L"「" + Wide(hotkey) + L"」";
+    };
+    config.selectionEnabled = SendMessageW(selEnabled, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    config.selectionOnDemandHotkey = iroha::Utf32ToUtf8(text(selOnDemand));
+    checkHotkey(*config.selectionOnDemandHotkey);
+    for (size_t i = 0; i < 5; ++i) {
+        auto& preset = config.selectionPresets[i];
+        preset.enabled = SendMessageW(selPresetEnabled[i], BM_GETCHECK, 0, 0) == BST_CHECKED;
+        preset.name = text(selPresetName[i]);
+        preset.hotkey = iroha::Utf32ToUtf8(text(selPresetHotkey[i]));
+        checkHotkey(*preset.hotkey);
+        preset.prompt = text(selPresetPrompt[i]);
+    }
+    config.selectionExcludedApps = iroha::Utf32ToUtf8(text(selExcluded));
+    if (!invalid.empty()) {
+        const std::wstring message = L"キーの書き方が読めません: " + invalid +
+                                     L"\n「Ctrl+Alt+1」のように、Ctrl・Alt・Shift のどれかと 1 つのキーを + でつないで書きます。";
+        MessageBoxW(window, message.c_str(), L"iroha", MB_ICONWARNING);
+        return;
+    }
+    if (!iroha::SaveConfig(ConfigPath(), config)) {
+        MessageBoxW(window, L"設定の保存に失敗しました", L"iroha", MB_ICONERROR);
+        return;
+    }
+    if (!RequestServerReload()) {
+        MessageBoxW(window, L"保存しました。変換サーバが動いていないため、次に起動したときから使います。", L"iroha", MB_OK);
+    }
 }
 
 // ---- 変換ルールのページ ----
@@ -1704,6 +1838,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case kIdAIKeyClear:
                     g_app.OnAIKeyClear();
                     return 0;
+                case kIdSelSave:
+                    g_app.OnSelectionSave();
+                    return 0;
                 case kIdTypoLicense:
                     g_app.OnTypoLicense();
                     return 0;
@@ -1809,7 +1946,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     // --tab <名前> で開くタブを選ぶ（model / input / dictionary / terms / rules / learning）
     const std::wstring arguments = commandLine ? commandLine : L"";
     const wchar_t* const tabNames[kTabCount] = {L"model", L"input", L"dictionary", L"terms",
-                                                L"rules", L"ai",    L"learning"};
+                                                L"rules", L"ai",    L"selection",  L"learning"};
     if (const size_t option = arguments.find(L"--tab "); option != std::wstring::npos) {
         const std::wstring name = arguments.substr(option + 6, arguments.find(L' ', option + 6) - option - 6);
         for (int i = 0; i < kTabCount; ++i) {

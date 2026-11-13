@@ -145,6 +145,8 @@ public:
     void SetRewriteRules(std::shared_ptr<const UserRewriteRuleSet> rules);
 
     size_t SessionCount();
+    // どれかのセッションが入力中（未確定文字列がある）か。選択テキストのAI編集のショートカットを、入力中は無視するのに使う
+    bool AnyComposing();
 
     // 持っておくセッションの数。超えたら、最後に使ったのがもっとも古いものから捨てる
     // （TIP が終了を知らせずに消えた分が溜まらないように）

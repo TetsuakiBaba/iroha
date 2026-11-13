@@ -230,6 +230,14 @@ void SessionManager::SetRewriteRules(std::shared_ptr<const UserRewriteRuleSet> r
     for (auto& item : sessions_) item.second->session.SetRewriteRules(rewriteRules_);
 }
 
+bool SessionManager::AnyComposing() {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    for (const auto& item : sessions_) {
+        if (item.second->session.IsComposing()) return true;
+    }
+    return false;
+}
+
 size_t SessionManager::SessionCount() {
     std::lock_guard<std::mutex> lock(stateMutex_);
     return sessions_.size();

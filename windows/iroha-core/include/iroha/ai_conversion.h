@@ -68,6 +68,27 @@ struct Default {
 const std::vector<Default>& Defaults();
 } // namespace AICommitSettings
 
+// 選択テキストのAI編集のプリセット（macOS版 SelectionSettings.defaults）。ショートカットは Windows の既定
+// （macOS版の Ctrl+1〜4 は Windows ではブラウザのタブ切り替えなどと重なるので Ctrl+Alt+1〜4）
+namespace SelectionSettingsDefaults {
+constexpr size_t kCount = 5;
+struct Preset {
+    const char32_t* name;
+    const char32_t* prompt;
+    const char* hotkey;
+    bool enabled;
+};
+const std::vector<Preset>& Presets();
+// その場でプロンプトを入れるショートカット（macOS版の Ctrl+0 にあたる）
+constexpr const char* kOnDemandHotkey = "Ctrl+Alt+0";
+// 選択が無いときの「テキストを生成」の指示
+extern const char32_t kGenerationInstructions[];
+} // namespace SelectionSettingsDefaults
+
+// 選択テキストのAI編集の出力の軽い整形（macOS版 AIOutputCleaner）: <think> を除き、全体を包むコードの囲み・
+// 1 組の引用符・括弧を外す（中に同じ記号が無いときだけ）
+std::u32string CleanAIOutput(const std::u32string& text);
+
 // ひらがな・カタカナ・漢字を 1 文字でも含むか（AI の結果を確定せずに文節で返すかの判定）
 bool ContainsJapanese(const std::u32string& text);
 

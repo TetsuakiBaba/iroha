@@ -31,6 +31,7 @@
 #include "iroha/conversion_log.h"
 #include "key_shortcut.h"
 #include "secret_store.h"
+#include "selection_assistant.h"
 #include "iroha/typo_normalizer.h"
 #include "iroha/typo_normalizer_catalog.h"
 #include "iroha/conversion_engine.h"
@@ -161,6 +162,39 @@ struct ServerState {
     std::shared_ptr<iroha::TypoNormalizer> Typo() {
         std::lock_guard<std::mutex> lock(typoMutex);
         return typo;
+    }
+
+    // 選択テキストのAI編集（main で作って、設定を読み直すたびに渡す）
+    iroha::SelectionAssistant* selection = nullptr;
+    iroha::SelectionAssistantSettings selectionSettings;
+
+    void LoadSelection(const iroha::Config& config) {
+        iroha::SelectionAssistantSettings settings;
+        settings.enabled = config.selectionEnabled;
+        for (size_t i = 0; i < config.selectionPresets.size(); ++i) {
+            const auto& stored = config.selectionPresets[i];
+            const auto& fallback = iroha::SelectionSettingsDefaults::Presets()[i];
+            settings.presets.push_back({stored.name.value_or(fallback.name), stored.prompt.value_or(fallback.prompt),
+                                        stored.hotkey.value_or(fallback.hotkey), stored.enabled.value_or(fallback.enabled)});
+        }
+        settings.onDemandHotkey = config.selectionOnDemandHotkey.value_or(iroha::SelectionSettingsDefaults::kOnDemandHotkey);
+        // 使わないアプリ: カンマか改行で区切った実行ファイルの名前（小文字で比べる）
+        std::wstring current;
+        const std::wstring apps = iroha::Utf32ToUtf16(iroha::Utf8ToUtf32(config.selectionExcludedApps)) + L",";
+        for (wchar_t c : apps) {
+            if (c == L',' || c == L'\n' || c == L'\r') {
+                const std::u32string trimmed = iroha::TrimWhitespace(iroha::Utf16ToUtf32(current));
+                std::wstring name = iroha::Utf32ToUtf16(trimmed);
+                std::transform(name.begin(), name.end(), name.begin(),
+                               [](wchar_t ch) { return static_cast<wchar_t>(towlower(ch)); });
+                if (!name.empty()) settings.excludedApps.push_back(name);
+                current.clear();
+            } else {
+                current += c;
+            }
+        }
+        selectionSettings = std::move(settings);
+        if (selection) selection->Configure(selectionSettings);
     }
 
     // AI変換の接続先とプリセット（裏のスレッドから読むので鍵で守る）
@@ -309,6 +343,7 @@ struct ServerState {
         sessionSettings.typoMinimumLength = config.typoMinimumLength;
         LoadTypoNormalizer(config.typoCorrection);
         LoadAI(config);
+        LoadSelection(config);
         // 区切り記号の英字入力。記号は英字・数字以外の ASCII の記号 1 文字（使えない値なら「_」。macOS版と同じ）
         const auto symbol = [](const std::string& text) -> char32_t {
             const bool valid = text.size() == 1 && text[0] >= 0x21 && text[0] <= 0x7E &&
@@ -743,6 +778,26 @@ int wmain() {
     sessions.SetSymbolTable(state.symbols);
     sessions.SetTermLookup(state.termLookup);
     sessions.SetRewriteRules(state.rewriteRuleSet);
+    // 選択テキストのAI編集（専用のスレッドと窓。sessions より先に片付ける）
+    iroha::SelectionAssistant selection(
+        [&state](const iroha::AIRequest& request, const std::function<void(const std::u32string&)>& onPartial,
+                 iroha::CancelToken* cancel) {
+            iroha::AIConnection connection;
+            {
+                std::lock_guard<std::mutex> lock(state.aiMutex);
+                connection = state.aiConnection;
+            }
+            const iroha::AIResult result = iroha::AIClient::Run(connection, request, onPartial, cancel);
+            if (!result.text) Log(("selection ai failed: " + result.error).c_str());
+            return result;
+        },
+        [&state] {
+            std::lock_guard<std::mutex> lock(state.aiMutex);
+            return iroha::AIClient::IsConfigured(state.aiConnection);
+        },
+        [&sessions] { return sessions.AnyComposing(); }, [](const std::string& message) { Log(message.c_str()); });
+    state.selection = &selection;
+    selection.Configure(state.selectionSettings);
 
     const std::wstring pipeName = iroha::ipc::PipeName();
     PSECURITY_DESCRIPTOR pipeSecurity = CreatePipeSecurityDescriptor();

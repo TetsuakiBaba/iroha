@@ -18,6 +18,20 @@ std::string FormatNumber(double value) {
     std::snprintf(text, sizeof(text), "%.6g", value);
     return text;
 }
+// 選択テキストのAI編集のプリセット（書いてある項目だけ）
+std::string EncodeSelectionPresets(const Config& config) {
+    std::string out;
+    for (size_t i = 0; i < config.selectionPresets.size(); ++i) {
+        const std::string prefix = ",\"selPreset" + std::to_string(i);
+        const Config::SelectionPreset& preset = config.selectionPresets[i];
+        if (preset.name) out += prefix + "Name\":" + json::QuoteString(Utf32ToUtf8(*preset.name));
+        if (preset.prompt) out += prefix + "Prompt\":" + json::QuoteString(Utf32ToUtf8(*preset.prompt));
+        if (preset.hotkey) out += prefix + "Hotkey\":" + json::QuoteString(*preset.hotkey);
+        if (preset.enabled) out += prefix + "Enabled\":" + (*preset.enabled ? "true" : "false");
+    }
+    return out;
+}
+
 // AI変換のプリセット（書いてある項目だけ）
 std::string EncodePresets(const Config& config) {
     std::string out;
@@ -135,6 +149,31 @@ Config LoadConfig(const std::filesystem::path& path) {
         config.aiFixThreshold = std::max(0.0, std::min(20.0, threshold->number));
     }
     text("aiFixShortcut", &config.aiFixShortcut);
+    if (const json::Value* selection = root.Find("selectionEnabled");
+        selection && selection->type == json::Value::Type::Bool) {
+        config.selectionEnabled = selection->boolean;
+    }
+    if (const json::Value* hotkey = root.Find("selectionOnDemandHotkey");
+        hotkey && hotkey->type == json::Value::Type::String) {
+        config.selectionOnDemandHotkey = hotkey->string;
+    }
+    text("selectionExcludedApps", &config.selectionExcludedApps);
+    for (size_t i = 0; i < config.selectionPresets.size(); ++i) {
+        const std::string prefix = "selPreset" + std::to_string(i);
+        auto& preset = config.selectionPresets[i];
+        if (const json::Value* value = root.Find(prefix + "Name"); value && value->type == json::Value::Type::String) {
+            preset.name = Utf8ToUtf32(value->string);
+        }
+        if (const json::Value* value = root.Find(prefix + "Prompt"); value && value->type == json::Value::Type::String) {
+            preset.prompt = Utf8ToUtf32(value->string);
+        }
+        if (const json::Value* value = root.Find(prefix + "Hotkey"); value && value->type == json::Value::Type::String) {
+            preset.hotkey = value->string;
+        }
+        if (const json::Value* value = root.Find(prefix + "Enabled"); value && value->type == json::Value::Type::Bool) {
+            preset.enabled = value->boolean;
+        }
+    }
     if (const json::Value* count = root.Find("candidateCount")) {
         if (count->type == json::Value::Type::Number) {
             config.candidateCount = std::max(3, std::min(16, static_cast<int>(count->number)));
@@ -172,6 +211,12 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                       ",\"aiFix\":" + (config.aiFix ? "true" : "false") +
                       ",\"aiFixThreshold\":" + FormatNumber(config.aiFixThreshold) +
                       ",\"aiFixShortcut\":" + json::QuoteString(config.aiFixShortcut) +
+                      ",\"selectionEnabled\":" + (config.selectionEnabled ? "true" : "false") +
+                      (config.selectionOnDemandHotkey
+                           ? ",\"selectionOnDemandHotkey\":" + json::QuoteString(*config.selectionOnDemandHotkey)
+                           : std::string()) +
+                      ",\"selectionExcludedApps\":" + json::QuoteString(config.selectionExcludedApps) +
+                      EncodeSelectionPresets(config) +
                       ",\"version\":1}";
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
