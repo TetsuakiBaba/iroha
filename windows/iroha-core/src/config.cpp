@@ -86,6 +86,13 @@ Config LoadConfig(const std::filesystem::path& path) {
     if (const json::Value* privateMode = root.Find("privateMode")) {
         if (privateMode->type == json::Value::Type::Bool) config.privateMode = privateMode->boolean;
     }
+    for (const auto& flag : {std::make_pair("learningEnabled", &config.learningEnabled),
+                             std::make_pair("documentContext", &config.documentContext),
+                             std::make_pair("developerMode", &config.developerMode)}) {
+        if (const json::Value* value = root.Find(flag.first); value && value->type == json::Value::Type::Bool) {
+            *flag.second = value->boolean;
+        }
+    }
     if (const json::Value* log = root.Find("conversionLogEnabled")) {
         if (log->type == json::Value::Type::Bool) config.conversionLog = log->boolean;
     }
@@ -159,6 +166,8 @@ Config LoadConfig(const std::filesystem::path& path) {
     }
     text("selectionExcludedApps", &config.selectionExcludedApps);
     text("selectionTriggerMode", &config.selectionTriggerMode);
+    text("privateModeHotkey", &config.privateModeHotkey);
+    text("modelAdapterPath", &config.modelAdapterPath);
     if (const json::Value* count = root.Find("selectionCharacterCount");
         count && count->type == json::Value::Type::Bool) {
         config.selectionCharacterCount = count->boolean;
@@ -200,6 +209,11 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                       ",\"candidateCount\":" + std::to_string(config.candidateCount) +
                       ",\"predictive\":" + (config.predictive ? "true" : "false") +
                       ",\"privateMode\":" + (config.privateMode ? "true" : "false") +
+                      ",\"privateModeHotkey\":" + json::QuoteString(config.privateModeHotkey) +
+                      ",\"learningEnabled\":" + (config.learningEnabled ? "true" : "false") +
+                      ",\"documentContext\":" + (config.documentContext ? "true" : "false") +
+                      ",\"modelAdapterPath\":" + json::QuoteString(config.modelAdapterPath) +
+                      ",\"developerMode\":" + (config.developerMode ? "true" : "false") +
                       ",\"conversionLogEnabled\":" + (config.conversionLog ? "true" : "false") +
                       ",\"conversionLogScope\":" + (config.conversionLogCorrectionsOnly ? "\"corrections\"" : "\"all\"") +
                       ",\"typoNormalizer\":" + (config.typoCorrection ? "true" : "false") +

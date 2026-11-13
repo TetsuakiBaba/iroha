@@ -170,6 +170,8 @@ private:
     // 「こえ」モード: 押している間録音するキー（仮想キーコード。0 なら使わない）・押しているか・
     // 録音を始めた文書（合成が無くても、結果が届くまで問い合わせて反映する先）
     uint32_t voiceKey_ = 0;
+    // プライベートモードを切り替えるキー（KeyShortcut::Encode。既定は Ctrl+Alt+P。0 なら割り当てなし）
+    uint32_t privateShortcut_ = 0x30050;
     bool voiceHeld_ = false;
     ITfContext* voiceContext_ = nullptr;
     // 予測変換の候補の小窓と、知らせの小窓

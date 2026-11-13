@@ -143,6 +143,7 @@ PSECURITY_DESCRIPTOR CreatePipeSecurityDescriptor() {
 // 設定GUIからのReload要求で設定・辞書を読み直す（モデルは変わったときだけロード）
 struct ServerState {
     std::string modelPath;
+    std::string adapterPath;
     std::unique_ptr<iroha::ZenzEngine> zenz;
     std::unique_ptr<iroha::LatticeConverter> lattice;
     std::unique_ptr<iroha::LatticeRescoringEngine> rescoring;
@@ -293,6 +294,8 @@ struct ServerState {
     }
     // プライベートモードの間は、学習の差し替えとユーザ辞書を止める（変換のスレッドからも読む）
     std::atomic<bool> privateMode{false};
+    // 変換の学習を使うか（設定。OFF なら記録も適用もしない）
+    std::atomic<bool> learningEnabled{true};
     // 変換ルール（設定画面が書き換えたら Reload で読み直す。初回は既定のルールを足す。macOS版と同じ）
     std::unique_ptr<iroha::UserRewriteRuleStore> rewriteRules;
     std::shared_ptr<const iroha::UserRewriteRuleSet> rewriteRuleSet;
@@ -367,6 +370,10 @@ struct ServerState {
         sessionSettings.aiFixShortcutLabel = fixShortcut ? iroha::Utf8ToUtf32(config.aiFixShortcut) : U"";
         // 「こえ」モード: 押している間録音するキー（TIP に渡す仮想キーコード。右 Ctrl か右 Shift）
         sessionSettings.voiceInput = config.voiceInput;
+        sessionSettings.documentContext = config.documentContext;
+        const auto privateShortcut = iroha::KeyShortcut::Parse(config.privateModeHotkey);
+        sessionSettings.privateModeShortcut = privateShortcut ? privateShortcut->Encode() : 0;
+        learningEnabled = config.learningEnabled;
         sessionSettings.voiceKey = config.voiceInputHoldKey == "rightShift" ? VK_RSHIFT : VK_RCONTROL;
         sessionSettings.delimitedAlphabet = config.delimitedAlphabet;
         sessionSettings.delimitedStart = symbol(config.delimitedAlphabetStart);
@@ -408,9 +415,20 @@ struct ServerState {
         }
         symbols = config.symbolCandidates ? loadedSymbols : nullptr;
         const std::string newModelPath = ResolveModelPath();
-        if (!zenz || newModelPath != modelPath) {
-            zenz = std::make_unique<iroha::ZenzEngine>(newModelPath);
+        // 追加学習した LoRA アダプタ（ファイルが無ければ使わない）
+        std::string newAdapterPath = config.modelAdapterPath;
+        if (!newAdapterPath.empty() &&
+            !std::filesystem::exists(std::filesystem::path(iroha::Utf32ToUtf16(iroha::Utf8ToUtf32(newAdapterPath))))) {
+            Log(("adapter not found: " + newAdapterPath).c_str());
+            newAdapterPath.clear();
+        }
+        if (!zenz || newModelPath != modelPath || newAdapterPath != adapterPath) {
+            iroha::ZenzEngine::Options options;
+            options.adapterPath = newAdapterPath;
+            zenz = std::make_unique<iroha::ZenzEngine>(newModelPath, options);
             modelPath = newModelPath;
+            adapterPath = newAdapterPath;
+            if (!adapterPath.empty()) Log(("adapter: " + adapterPath).c_str());
             std::string error;
             if (zenz->Prewarm(&error)) {
                 Log(("model loaded: " + newModelPath).c_str());
@@ -461,7 +479,7 @@ struct ServerState {
             lattice.get());
         engine = std::make_unique<iroha::LearningEngine>(
             dictionaryEngine.get(),
-            [this] { return privateMode ? iroha::LearningDictionary() : learning->Current(); });
+            [this] { return privateMode || !learningEnabled ? iroha::LearningDictionary() : learning->Current(); });
     }
 };
 
@@ -511,6 +529,7 @@ public:
 
     void RecordCommit(const std::u32string& reading, const std::u32string& engineBaseline,
                       const std::u32string& baseline, const std::u32string& committed) override {
+        if (!state_->learningEnabled) return;
         RecordCorrection(*state_, reading, engineBaseline, baseline, committed);
     }
 

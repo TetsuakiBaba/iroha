@@ -122,6 +122,8 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
         return output;
     }
     // 声の途中結果を見せている間は合成中と同じ扱い（TIP は左文脈を付けてこない。録音を始めたときに読んである）
+    // アプリの文章を文脈に使わない設定なら、TIP が読んだ左文脈は捨てる（直前に確定した文字列を使う）
+    if (!settings_.documentContext) leftContext = nullptr;
     if (!IsComposing() && !voicePartial_) {
         state_.contextFromDocument = leftContext != nullptr;
         if (leftContext) {
@@ -2377,6 +2379,7 @@ SessionOutput InputSession::Current() const {
     output.voicePending = voicePhase_ != VoicePhase::Idle;
     output.voiceKey = settings_.voiceInput ? settings_.voiceKey : 0;
     output.voiceNotice = voiceMessage_;
+    output.privateModeShortcut = settings_.privateModeShortcut;
     output.aiFixShortcut = settings_.aiFix ? settings_.aiFixShortcut : 0;
     output.aiFixPending = aiFixCheckPending_ || aiFixRequestPending_;
     if (aiFixOffer_ && s.mode == Mode::Composing) {

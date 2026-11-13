@@ -37,6 +37,16 @@ struct Config {
     bool predictive = false;
     // プライベートモード（学習・入力履歴・予測・ユーザ辞書を止める。Ctrl+Alt+P で切り替えると保存する）
     bool privateMode = false;
+    // プライベートモードを切り替えるキー（macOS版の privateModeHotkey。空なら割り当てなし）
+    std::string privateModeHotkey = "Ctrl+Alt+P";
+    // 変換の学習を使う（macOS版の learningEnabled。OFF なら学習を記録も適用もしない）
+    bool learningEnabled = true;
+    // アプリの文章（カーソルの手前）を変換の文脈に使う（macOS版の documentContext。OFF なら直前に確定した文字列だけ）
+    bool documentContext = true;
+    // 変換記録から追加学習した LoRA アダプタ（GGUF のパス。空なら使わない。macOS版の modelAdapterPath）
+    std::string modelAdapterPath;
+    // 設定画面の開発者モード（細かな調整・開発者向けの項目を出す。設定画面だけが使う）
+    bool developerMode = false;
     // 変換記録（確定を logs/conversions/ に残す。左文脈に文書の文章が入るので既定 OFF）と、
     // 直した確定だけを残すか（キーの名前は macOS版の設定と同じ）
     bool conversionLog = false;

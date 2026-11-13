@@ -130,6 +130,8 @@ struct SessionOutput {
     bool voicePending = false;
     uint32_t voiceKey = 0;
     std::u32string voiceNotice;
+    // プライベートモードを切り替えるキー（KeyShortcut::Encode。0 なら割り当てなし）
+    uint32_t privateModeShortcut = 0;
 
     bool Composing() const { return !preedit.empty(); }
     // 未確定文字列をつなげたもの
@@ -176,6 +178,10 @@ struct SessionSettings {
     // 「こえ」モード（macOS版の VoiceInputSettings。既定 OFF）: 押している間録音するキー（仮想キーコード。TIP に渡す）
     bool voiceInput = false;
     uint32_t voiceKey = 0;
+    // アプリの文章（TIP が送る左文脈）を使うか（OFF なら直前に確定した文字列だけを文脈にする）
+    bool documentContext = true;
+    // プライベートモードを切り替えるキー（TIP に渡す。KeyShortcut::Encode。0 なら割り当てなし）
+    uint32_t privateModeShortcut = 0;
 };
 
 // 入力の状態（読み・ライブ変換の結果・固定部分・英字入力・文節・候補）を持ち、キーごとに表示を決める。

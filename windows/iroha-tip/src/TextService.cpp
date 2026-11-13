@@ -363,8 +363,13 @@ TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) co
         decision.character = 0;
         return session(iroha::SessionKey::Character);
     }
-    // プライベートモードの切り替え（Ctrl+Alt+P。入力中かどうかによらず効く。macOS版の Ctrl+Option+P）
-    if (control && alt && wParam == 'P') return session(iroha::SessionKey::TogglePrivateMode);
+    // プライベートモードの切り替え（設定のキー。既定 Ctrl+Alt+P。入力中かどうかによらず効く。macOS版の Ctrl+Option+P）
+    if (privateShortcut_ != 0) {
+        const iroha::KeyShortcut shortcut = iroha::KeyShortcut::Decode(privateShortcut_);
+        if (shortcut.vk == wParam && shortcut.control == control && shortcut.alt == alt && shortcut.shift == decision.shift) {
+            return session(iroha::SessionKey::TogglePrivateMode);
+        }
+    }
     // AIで直すのキー（設定 aiFixShortcut。既定 Ctrl+Alt+A）。入力中だけ
     if (composing && !segmenting && shown_.aiFixShortcut != 0) {
         const iroha::KeyShortcut shortcut = iroha::KeyShortcut::Decode(shown_.aiFixShortcut);
@@ -514,6 +519,7 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
     idleUndoable_ = output.undoableCommit;
     idleFullWidthSpace_ = output.fullWidthSpace;
     voiceKey_ = output.voiceKey;
+    privateShortcut_ = output.privateModeShortcut;
     if (privateMode_ != output.privateMode) {
         privateMode_ = output.privateMode;
         if (langBarButton_) langBarButton_->NotifyUpdate();
@@ -918,6 +924,8 @@ void TextService::LoadVoiceKeyFromConfig() {
     free(localAppData);
     const iroha::Config config = iroha::LoadConfig(std::filesystem::path(path));
     voiceKey_ = !config.voiceInput ? 0 : config.voiceInputHoldKey == "rightShift" ? VK_RSHIFT : VK_RCONTROL;
+    const auto privateShortcut = iroha::KeyShortcut::Parse(config.privateModeHotkey);
+    privateShortcut_ = privateShortcut ? privateShortcut->Encode() : 0;
 }
 
 STDMETHODIMP TextService::OnTestKeyDown(ITfContext* context, WPARAM wParam,
