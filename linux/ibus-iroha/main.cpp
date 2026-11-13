@@ -1,7 +1,8 @@
 // iroha の IBus エンジンのプロセス。
 //   ibus-engine-iroha --ibus   ibus-daemon がコンポーネントの定義（iroha.xml）から起動する
-//   ibus-engine-iroha          開発用。起動したまま IBus にコンポーネントを登録する（インストールせずに試せる。
-//                              `ibus engine iroha` で切り替える）
+//   ibus-engine-iroha          開発用。起動したまま IBus に「iroha-dev」として登録する（インストールしたものと並べて
+//                              試せる。`ibus engine iroha-dev` で切り替える。確定は学習に残るので、試すときは
+//                              IROHA_DATA_DIR で別のデータフォルダを指し、IROHA_MODEL でモデルを渡す）
 //
 // 変換エンジン一式（EngineHost）とセッションの表（SessionManager）はプロセスで 1 つ。モデル・辞書は
 // IBus につなぐ前に読み込む（最初のキーでもたつかないように）
@@ -32,6 +33,8 @@ namespace {
 
 constexpr char kComponentName[] = "org.freedesktop.IBus.Iroha";
 constexpr char kEngineName[] = "iroha";
+constexpr char kDevelopmentComponentName[] = "org.freedesktop.IBus.IrohaDev";
+constexpr char kDevelopmentEngineName[] = "iroha-dev";
 // 記録のファイルがこれを超えていたら、起動のときに 1 世代だけ残して作り直す
 constexpr uintmax_t kMaxLogBytes = 1 << 20;
 
@@ -70,13 +73,14 @@ private:
 
 void OnDisconnected(IBusBus*, gpointer) { ibus_quit(); }
 
-IBusComponent* MakeComponent(const std::string& executable) {
+// 開発用のコンポーネント（インストールしたものと名前を分ける）
+IBusComponent* MakeDevelopmentComponent(const std::string& executable) {
     IBusComponent* component = ibus_component_new_varargs(
-        "name", kComponentName, "description", "iroha（ニューラルかな漢字変換）", "version", IROHA_VERSION,
+        "name", kDevelopmentComponentName, "description", "iroha（開発用）", "version", IROHA_VERSION,
         "license", "MIT", "author", "Tetsuaki Baba", "homepage", "https://github.com/TetsuakiBaba/iroha",
         "command-line", executable.c_str(), "textdomain", "iroha", nullptr);
     IBusEngineDesc* description = ibus_engine_desc_new_varargs(
-        "name", kEngineName, "longname", "iroha", "description", "iroha（ニューラルかな漢字変換）", "language", "ja",
+        "name", kDevelopmentEngineName, "longname", "iroha（開発用）", "description", "iroha（開発用）", "language", "ja",
         "license", "MIT", "author", "Tetsuaki Baba", "layout", "default", "symbol", "あ", "rank", 0, nullptr);
     ibus_component_add_engine(component, description);
     return component;
@@ -123,7 +127,7 @@ int main(int argc, char** argv) {
     }
     g_signal_connect(bus, "disconnected", G_CALLBACK(OnDisconnected), nullptr);
     IBusFactory* factory = ibus_factory_new(ibus_bus_get_connection(bus));
-    ibus_factory_add_engine(factory, kEngineName, IROHA_TYPE_ENGINE);
+    ibus_factory_add_engine(factory, launchedByIbus ? kEngineName : kDevelopmentEngineName, IROHA_TYPE_ENGINE);
     if (launchedByIbus) {
         if (ibus_bus_request_name(bus, kComponentName, 0) == 0) {
             log("cannot own the bus name");
@@ -131,11 +135,11 @@ int main(int argc, char** argv) {
         }
     } else {
         const std::string executable = iroha::PathToUtf8(iroha::platform::ExecutableDirectory() / "ibus-engine-iroha");
-        if (!ibus_bus_register_component(bus, MakeComponent(executable))) {
+        if (!ibus_bus_register_component(bus, MakeDevelopmentComponent(executable))) {
             log("cannot register the component");
             return 1;
         }
-        log("registered (switch with: ibus engine iroha)");
+        log("registered as iroha-dev (data: " + iroha::PathToUtf8(iroha::platform::DataDirectory()) + ")");
     }
     ibus_main();
     log("stop");

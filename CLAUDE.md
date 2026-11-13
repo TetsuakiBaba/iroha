@@ -597,8 +597,11 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   インストールせずに入力の動きを見るのは `iroha-cli session <キー列>`（このプロセスの中でセッションを動かす）
 - IBus のエンジン（`linux/ibus-iroha/`）は Windows版の TIP と同じく、キーを送って返ってきた表示を反映するだけ。
   **入力の動きは `InputSession` に書く**。キーの読み替えは `key_decision`（IBus に依存しない。単体テストあり）。
-  IBus を通した確認は `linux/ibus-iroha/tests/ibus_e2e.py`（開発用のエンジン `ibus-engine-iroha` を引数なしで起動しておく。
-  テスト用の入力コンテキストを使い、全体のエンジンは終わったら戻す）。インストールは `./linux/scripts/install.sh`（sudo）
+  IBus を通した確認は `linux/ibus-iroha/tests/ibus_e2e.py`（開発用のエンジン `ibus-engine-iroha` を引数なしで起動すると
+  「iroha-dev」として登録される。**確定は学習に残るので `IROHA_DATA_DIR` で別のデータフォルダを指して起動する**。
+  IBus 1.5 はエンジンを全体で共有するので、**ユーザがデスクトップで入力しているときは走らせない**）。
+  インストールは `./linux/scripts/install.sh`（sudo）。**`ibus restart` は使わない**（GNOME が起動した ibus-daemon が
+  止まったまま戻らず、デスクトップで入力できなくなった。2026-11-14。install.sh は同じ引数・環境変数で `--replace` して起動し直す）
 - 進み具合と未対応のものは `linux/README.md`
 
 ## 自作変換モデル（文字単位T5）の学習（training/t5/、2026-09-11設計）

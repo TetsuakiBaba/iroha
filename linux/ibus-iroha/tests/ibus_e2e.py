@@ -1,11 +1,14 @@
 #!/usr/bin/python3
 """IBus を通して iroha のエンジンにキーを送り、アプリが受け取るもの（確定・未確定文字列・候補）を見る。
 
-インストールせずに試すには、先に開発用のエンジンを起動しておく（コンポーネントを登録する）:
-    ./linux/build/ibus-iroha/ibus-engine-iroha &
+既定では開発用のエンジン（iroha-dev）を使う。確定は学習・入力履歴に残るので、データフォルダを分けて起動しておく:
+    mkdir -p /tmp/iroha-e2e
+    IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-kkc-v1-Q5_K_M.gguf \
+        ./linux/build/ibus-iroha/ibus-engine-iroha &
     /usr/bin/python3 linux/ibus-iroha/tests/ibus_e2e.py "kyouhaiitenkidesune<space><enter>"
+インストールしたエンジンを試すときは --engine iroha（確定はユーザのデータに残る。候補を選んで確定すると学習する）。
 
-テスト用の入力コンテキストを作って iroha を割り当てる。IBus 1.5 はエンジンをすべての入力コンテキストで共有するので、
+テスト用の入力コンテキストを作ってエンジンを割り当てる。IBus 1.5 はエンジンをすべての入力コンテキストで共有するので、
 終わったら元のエンジンに戻す。キー列の書き方は iroha-cli session と同じ（<space> <enter> <esc> <bs>
 <left> <right> <up> <down> <tab> <f6>〜<f10> <wait>。Shift は <S-left> のように。<C-x> は Ctrl+x）。
 --context で周辺テキスト（カーソルより前の文書）を渡す。
@@ -114,6 +117,7 @@ def main():
     parser.add_argument("keys")
     parser.add_argument("--context", default="")
     parser.add_argument("--settle", type=float, default=0.6, help="キーごとに待つ秒数（ライブ変換の到着）")
+    parser.add_argument("--engine", default="iroha-dev", help="使うエンジン（インストールしたものは iroha）")
     args = parser.parse_args()
 
     IBus.init()
@@ -129,11 +133,11 @@ def main():
     watcher = Watcher(context)
     try:
         context.focus_in()
-        context.set_engine("iroha")
+        context.set_engine(args.engine)
         pump(0.3)
         engine = context.get_engine()
-        if not engine or engine.get_name() != "iroha":
-            sys.exit("iroha のエンジンがありません（開発用のエンジンを起動したか確かめる）")
+        if not engine or engine.get_name() != args.engine:
+            sys.exit(f"{args.engine} のエンジンがありません（開発用なら ibus-engine-iroha を引数なしで起動しておく）")
         watcher.document = args.context
         for label, keyval, state in parse(args.keys):
             if keyval is None:
@@ -153,7 +157,7 @@ def main():
         context.focus_out()
         pump(0.2)
         context.destroy()
-        if previous_name and previous_name != "iroha":
+        if previous_name and previous_name not in ("iroha", "iroha-dev"):
             bus.set_global_engine(previous_name)
             print(f"（全体のエンジンを {previous_name} に戻した）", file=sys.stderr)
 

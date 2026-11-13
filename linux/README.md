@@ -54,20 +54,29 @@ IROHA_LATTICE=always $C ajimee testdata/ajimee/evaluation_items.json
 ### IBus のエンジン
 
 ```sh
-# インストール（sudo。/usr/local/lib/ibus-iroha と /usr/share/ibus/component/iroha.xml。ibus restart まで行う）
+# インストール（sudo。/usr/local/lib/ibus-iroha と /usr/share/ibus/component/iroha.xml。ibus-daemon の起動し直しまで行う）
 ./linux/scripts/install.sh
 # 「設定 > キーボード > 入力ソース」で「日本語 (iroha)」を足す。またはコマンドで切り替える
 ibus engine iroha
 # 外す
 ./linux/scripts/install.sh --uninstall
 
-# インストールせずに試す: 開発用のエンジンを起動すると IBus に自分で登録する（`ibus engine iroha` で切り替えられる）
-./linux/build/ibus-iroha/ibus-engine-iroha &
-# IBus を通してキーを送り、アプリが受け取るもの（確定・未確定文字列・候補）を見る（デスクトップの入力には触らない。
-# 全体のエンジンは終わったら元に戻す）
+# インストールせずに試す: 開発用のエンジンを引数なしで起動すると、IBus に「iroha-dev」として自分で登録する
+# （インストールしたものと並べられる）。確定は学習・入力履歴に残るので、データフォルダを分けて起動する
+mkdir -p /tmp/iroha-e2e
+IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-kkc-v1-Q5_K_M.gguf \
+    ./linux/build/ibus-iroha/ibus-engine-iroha &
+# IBus を通してキーを送り、アプリが受け取るもの（確定・未確定文字列・候補）を見る（テスト用の入力コンテキストを使い、
+# 終わったら全体のエンジンを元に戻す。既定は iroha-dev。インストールしたものは --engine iroha）
 /usr/bin/python3 linux/ibus-iroha/tests/ibus_e2e.py "kyouhaiitenkidesune<space><right><space><down><enter>"
 ```
 
+- **ibus_e2e.py はデスクトップで入力しているときに走らせない**。IBus 1.5 はエンジンをすべての入力コンテキストで共有するので、
+  テストが入力中のアプリのエンジンを切り替え、終わったときに元のエンジンへ戻す（入力中に iroha へ切り替えていると外れる）。
+  逆に、デスクトップでエンジンを切り替えるとテストの途中で合成が消える（2026-11-14 に起きた）
+- **`ibus restart` を使わない**。GNOME（Ubuntu 22.04・IBus 1.5.26）が起動した ibus-daemon で使うと、止まったまま戻らず、
+  デスクトップのアプリで入力できなくなった（2026-11-14）。install.sh は、動いている ibus-daemon と同じ引数・環境変数で
+  `--replace --daemonize` を付けて起動し直す
 - 実行ファイルと同じフォルダに `Dictionary`・`Symbols` を置く（install.sh が置く）。変換モデルはデータフォルダ
 - 記録は `<データフォルダ>/logs/ibus-iroha-<ホスト名>.log`（1MB を超えたら起動のときに 1 世代残して作り直す）
 - 入力の状態はセッション（`InputSession`）にあり、エンジンは Windows版の TIP と同じく、キーを送って返ってきた表示を
