@@ -1,6 +1,7 @@
 ﻿# 配布用zipを作る（macos/scripts/make-bundle.sh のWindows版）。
 #   iroha-<version>-windows.zip
-#     ├─ iroha-tip.dll / iroha-server.exe
+#     ├─ iroha-tip.dll / iroha-server.exe / iroha-settings.exe
+#     ├─ Dictionary/（辞書ラティスの辞書データ）・licenses/
 #     ├─ install.ps1 / uninstall.ps1 / fetch-model.ps1
 #     └─ README.txt
 # バージョンは引数、無ければ git describe から取る（リリースはCIがタグから注入する）。
@@ -37,11 +38,20 @@ Copy-Item (Join-Path $PSScriptRoot "bundle\install.ps1") $stage
 Copy-Item (Join-Path $PSScriptRoot "bundle\uninstall.ps1") $stage
 Copy-Item (Join-Path $PSScriptRoot "fetch-model.ps1") $stage
 
+# 辞書ラティスの辞書データ（azooKey_dictionary_storage、Apache-2.0）とライセンス文
+& (Join-Path $PSScriptRoot "fetch-dictionary.ps1")
+$DictionaryRoot = Join-Path $RepoRoot "vendor\azooKey_dictionary_storage"
+Copy-Item (Join-Path $DictionaryRoot "Dictionary") (Join-Path $stage "Dictionary") -Recurse
+Copy-Item (Join-Path $DictionaryRoot "LICENSE") (Join-Path $stage "Dictionary\LICENSE")
+New-Item -ItemType Directory -Force (Join-Path $stage "licenses") | Out-Null
+Copy-Item (Join-Path $RepoRoot "windows\iroha-core\src\lattice\LICENSE-AzooKeyKanaKanjiConverter.txt") `
+    (Join-Path $stage "licenses")
+
 @"
 iroha for Windows $Version
 ==========================
 
-LLM（zenzモデル）でかな漢字変換する日本語IMEです。
+LLM（iroha-kkc-v1）でかな漢字変換する日本語IMEです。
 
 インストール:
   install.ps1 を右クリック →「PowerShellで実行」…ではなく、
@@ -49,7 +59,7 @@ LLM（zenzモデル）でかな漢字変換する日本語IMEです。
 
     powershell -ExecutionPolicy Bypass -File .\install.ps1
 
-  初回はzenzモデル（約72MB）をダウンロードします。
+  初回は変換モデル iroha-kkc-v1（約82MB）をダウンロードします。
   設定 > 時刻と言語 > 言語と地域 > 日本語 > キーボード に「iroha」が
   追加され、Win+Space で切り替えられます。
 
@@ -64,8 +74,12 @@ LLM（zenzモデル）でかな漢字変換する日本語IMEです。
 
 ライセンス:
   iroha: https://github.com/TetsuakiBaba/iroha
-  zenz-v3.1-small: CC-BY-SA-4.0 (Miwa-Keita/zenz-v3.1-small-gguf)
+  変換モデル iroha-kkc-v1: CC BY-SA 4.0
+    (https://github.com/TetsuakiBaba/iroha/releases/tag/iroha-kkc-v1)
   llama.cpp: MIT (ggml-org/llama.cpp)
+  辞書データ azooKey_dictionary_storage: Apache-2.0 (Dictionary\LICENSE)
+  辞書ラティスの変換（AzooKeyKanaKanjiConverter を C++ に移したもの）: MIT
+    (licenses\LICENSE-AzooKeyKanaKanjiConverter.txt)
 "@ | Out-File (Join-Path $stage "README.txt") -Encoding utf8
 
 $zipTemp = Join-Path $env:TEMP "iroha-bundle\$stageName.zip"

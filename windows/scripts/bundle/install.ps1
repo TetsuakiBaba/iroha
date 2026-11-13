@@ -2,7 +2,7 @@
 #   1) ファイルを Program Files\iroha へ配置
 #   2) TSFへ登録（regsvr32）
 #   3) 変換サーバのログオン時自動起動を登録して起動
-#   4) zenzモデルをダウンロード（%LOCALAPPDATA%\iroha\models、約72MB）
+#   4) 変換モデル iroha-kkc-v1 をダウンロード（%LOCALAPPDATA%\iroha\models、約82MB）
 
 $ErrorActionPreference = "Stop"
 
@@ -30,6 +30,12 @@ if (Test-Path $InstalledDll) {
 Copy-Item (Join-Path $SourceDir "iroha-tip.dll") $InstalledDll
 Copy-Item (Join-Path $SourceDir "iroha-server.exe") $InstallDir -Force
 Copy-Item (Join-Path $SourceDir "iroha-settings.exe") $InstallDir -Force
+# 辞書ラティスの辞書データ（変換サーバが実行ファイルと同じフォルダの Dictionary を読む）とライセンス文
+foreach ($folder in @("Dictionary", "licenses")) {
+    $installed = Join-Path $InstallDir $folder
+    if (Test-Path $installed) { Remove-Item $installed -Recurse -Force }
+    Copy-Item (Join-Path $SourceDir $folder) $installed -Recurse
+}
 
 Write-Host "==> TSF登録"
 $p = Start-Process "$env:SystemRoot\System32\regsvr32.exe" -ArgumentList "/s", "`"$InstalledDll`"" -Wait -PassThru
@@ -39,7 +45,7 @@ if ($p.ExitCode -ne 0) { throw "regsvr32 が失敗しました（コード: $($p
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
     -Name "iroha-server" -Value "`"$(Join-Path $InstallDir 'iroha-server.exe')`""
 
-Write-Host "==> zenzモデルの確認"
+Write-Host "==> 変換モデルの確認"
 & (Join-Path $SourceDir "fetch-model.ps1")
 
 # 管理者スクリプトから直接起動すると昇格権限を引き継ぐため、explorer.exe経由で

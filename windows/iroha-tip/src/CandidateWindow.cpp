@@ -1,5 +1,7 @@
 #include "CandidateWindow.h"
 
+#include <algorithm>
+
 #include "iroha/unicode.h"
 
 namespace {
@@ -95,7 +97,8 @@ SIZE CandidateWindow::MeasureContent() const {
     SelectObject(dc, oldFont);
     ReleaseDC(hwnd_, dc);
     content.cx += padding_ * 4;
-    content.cy = static_cast<LONG>(items_.size()) * rowHeight_ + padding_ * 2;
+    const size_t rows = items_.size() + (footer_.empty() ? 0 : 1);
+    content.cy = static_cast<LONG>(rows) * rowHeight_ + padding_ * 2;
     return content;
 }
 
@@ -117,6 +120,15 @@ void CandidateWindow::Paint(HDC dc, const RECT& client) const {
         DrawTextW(dc, items_[i].c_str(), static_cast<int>(items_[i].size()), &row,
                   DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX);
     }
+    if (!footer_.empty()) {
+        // 候補が1ページに収まらないとき、いまのページ（例: 2/7）を右下に出す
+        RECT row = {padding_, padding_ + static_cast<LONG>(items_.size()) * rowHeight_,
+                    client.right - padding_,
+                    padding_ + static_cast<LONG>(items_.size() + 1) * rowHeight_};
+        SetTextColor(dc, GetSysColor(COLOR_GRAYTEXT));
+        DrawTextW(dc, footer_.c_str(), static_cast<int>(footer_.size()), &row,
+                  DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
+    }
     SelectObject(dc, oldFont);
 }
 
@@ -127,12 +139,20 @@ void CandidateWindow::Show(HWND owner, const RECT& anchor,
     if (!hwnd_) return;
     UpdateFont();
 
+    // 選んでいる候補のあるページだけを出す（数字キーはページの中の番号）
+    const size_t page = selectedIndex / kPageSize;
+    const size_t first = page * kPageSize;
+    const size_t last = (std::min)(first + kPageSize, candidates.size());
     items_.clear();
-    for (size_t i = 0; i < candidates.size(); ++i) {
-        items_.push_back(std::to_wstring(i + 1) + L"  " +
+    for (size_t i = first; i < last; ++i) {
+        items_.push_back(std::to_wstring(i - first + 1) + L"  " +
                          iroha::Utf32ToUtf16(candidates[i]));
     }
-    selected_ = selectedIndex;
+    selected_ = selectedIndex - first;
+    const size_t pageCount = (candidates.size() + kPageSize - 1) / kPageSize;
+    footer_ = pageCount > 1
+                  ? std::to_wstring(page + 1) + L"/" + std::to_wstring(pageCount)
+                  : std::wstring();
 
     const SIZE content = MeasureContent();
 

@@ -8,6 +8,16 @@
 
 namespace iroha {
 
+std::filesystem::path DefaultModelPath(const std::filesystem::path& modelsDirectory) {
+    const std::filesystem::path current = modelsDirectory / kDefaultModelFileName;
+    const std::filesystem::path previous = modelsDirectory / kPreviousDefaultModelFileName;
+    std::error_code ignored;
+    if (!std::filesystem::exists(current, ignored) && std::filesystem::exists(previous, ignored)) {
+        return previous;
+    }
+    return current;
+}
+
 Config LoadConfig(const std::filesystem::path& path) {
     Config config;
     std::ifstream file(path, std::ios::binary);

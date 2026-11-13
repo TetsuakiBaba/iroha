@@ -13,7 +13,10 @@
 #include <string>
 #include <vector>
 
+#include "iroha/candidate_scorer.h"
+#include "iroha/conversion_engine.h"
 #include "iroha/lattice_converter.h"
+#include "iroha/lattice_rescoring_engine.h"
 #include "iroha/unicode.h"
 #include "lattice/number.h"
 #include "lattice/special_candidates.h"
@@ -205,6 +208,112 @@ void TestWordBoundaries(iroha::LatticeConverter& lattice) {
     EXPECT_TRUE(!Contains(lattice.FullMatchCandidates(U"えま", 10), U"辞書にない江間"));
 }
 
+// ---- LatticeRescoringEngine（移植元: LatticeRescoringEngineTests.swift） ----
+
+// 採点と生成を差し替えられる偽のモデル
+class FakeBase : public iroha::ConversionEngine, public iroha::CandidateScorer {
+public:
+    FakeBase(std::vector<std::u32string> generated,
+             std::vector<std::pair<std::u32string, float>> scores)
+        : generated_(std::move(generated)), scores_(std::move(scores)) {}
+
+    bool Convert(const std::u32string&, const std::u32string&, int candidateCount,
+                 std::vector<std::u32string>* results, std::string*) override {
+        convertCalls.push_back(candidateCount);
+        const size_t count = std::min<size_t>(generated_.size(), std::max(candidateCount, 1));
+        results->assign(generated_.begin(), generated_.begin() + count);
+        return true;
+    }
+
+    bool Score(const std::vector<std::u32string>& candidates, const std::u32string&,
+               const std::u32string&, std::vector<float>* scores, std::string*) override {
+        ++scoreCalls;
+        scores->clear();
+        for (const std::u32string& candidate : candidates) {
+            float value = -100;
+            for (const auto& [text, score] : scores_) {
+                if (text == candidate) value = score;
+            }
+            scores->push_back(value);
+        }
+        return true;
+    }
+
+    int scoreCalls = 0;
+    std::vector<int> convertCalls;
+
+private:
+    std::vector<std::u32string> generated_;
+    std::vector<std::pair<std::u32string, float>> scores_;
+};
+
+std::vector<std::u32string> Rescore(FakeBase& base, iroha::LatticeConverter& lattice,
+                                    const std::u32string& reading, int candidateCount) {
+    iroha::LatticeRescoringEngine engine(&base, &base, &lattice);
+    std::vector<std::u32string> results;
+    std::string error;
+    EXPECT_TRUE(engine.Convert(reading, U"", candidateCount, &results, &error));
+    return results;
+}
+
+// 第一候補（ライブ変換）はラティスを通さずモデルの生成に任せる
+void TestSingleCandidateBypassesLattice(iroha::LatticeConverter& lattice) {
+    FakeBase base({U"記者"}, {});
+    EXPECT_TRUE(Rescore(base, lattice, U"きしゃ", 1) == (std::vector<std::u32string>{U"記者"}));
+    EXPECT_TRUE(base.scoreCalls == 0);
+}
+
+// 候補ウィンドウはラティス候補＋モデルの生成をモデルの採点順に並べる
+void TestMultipleCandidatesAreLatticeCandidatesRankedByScore(iroha::LatticeConverter& lattice) {
+    // モデルの答えは辞書にない語（採点は最上位）。辞書候補は 貴社 > 記者 > 汽車 の順に採点
+    FakeBase base({U"キシャ社"},
+                  {{U"キシャ社", -0.5f}, {U"貴社", -1.0f}, {U"記者", -2.0f}, {U"汽車", -3.0f}});
+    const auto result = Rescore(base, lattice, U"きしゃ", 4);
+    // 採点した上位が確率順で先頭に並び、その後ろに読みが一致する残りの辞書エントリが続く
+    EXPECT_TRUE(result.size() > 4);
+    if (result.size() > 4) {
+        EXPECT_EQ(result[0], U"キシャ社");
+        EXPECT_EQ(result[1], U"貴社");
+        EXPECT_EQ(result[2], U"記者");
+        EXPECT_EQ(result[3], U"汽車");
+    }
+    EXPECT_TRUE(base.scoreCalls == 1);
+}
+
+// モデルで並べた上位の後ろに、読みが一致する残りの辞書エントリ（﨑などの異体字・単漢字）が続く
+void TestRemainingDictionaryEntriesFollowRankedCandidates(iroha::LatticeConverter& lattice) {
+    FakeBase base({U"咲"}, {{U"咲", -1.0f}, {U"崎", -2.0f}, {U"先", -3.0f}});
+    const auto result = Rescore(base, lattice, U"さき", 8);
+    EXPECT_TRUE(result.size() > 10);
+    if (result.size() > 3) {
+        EXPECT_EQ(result[0], U"咲");
+        EXPECT_EQ(result[1], U"崎");
+        EXPECT_EQ(result[2], U"先");
+    }
+    EXPECT_TRUE(Contains(result, U"﨑"));
+    std::vector<std::u32string> unique = result;
+    std::sort(unique.begin(), unique.end());
+    EXPECT_TRUE(std::adjacent_find(unique.begin(), unique.end()) == unique.end());
+}
+
+// 辞書が候補を作れない読みはモデルのn-bestにそのまま任せる
+void TestFallsBackToBaseWhenLatticeHasNoCandidates(iroha::LatticeConverter& lattice) {
+    FakeBase base({U"Ａ", U"Ｂ"}, {});
+    // 空の読みはラティスが候補を返さない
+    EXPECT_TRUE(Rescore(base, lattice, U"", 2) == (std::vector<std::u32string>{U"Ａ", U"Ｂ"}));
+    EXPECT_TRUE(base.scoreCalls == 0);
+}
+
+// 計測用: 第一候補もラティス候補の再採点で決める
+void TestLatticeForFirstCandidate(iroha::LatticeConverter& lattice) {
+    FakeBase base({U"キシャ社"}, {{U"キシャ社", -5.0f}, {U"汽車", -1.0f}});
+    iroha::LatticeRescoringEngine engine(&base, &base, &lattice, 10, true);
+    std::vector<std::u32string> results;
+    std::string error;
+    EXPECT_TRUE(engine.Convert(U"きしゃ", U"", 1, &results, &error));
+    EXPECT_TRUE(results == (std::vector<std::u32string>{U"汽車"}));
+}
+
 void RunLatticeTests() {
     TestGraphemeCount();
     TestSpellOutJapanese();
@@ -223,6 +332,12 @@ void RunLatticeTests() {
     TestDictionaryEntriesFollowSentenceCandidates(*lattice);
     TestRawCandidatesAndEmptyReading(*lattice);
     TestWordBoundaries(*lattice);
+
+    TestSingleCandidateBypassesLattice(*lattice);
+    TestMultipleCandidatesAreLatticeCandidatesRankedByScore(*lattice);
+    TestRemainingDictionaryEntriesFollowRankedCandidates(*lattice);
+    TestFallsBackToBaseWhenLatticeHasNoCandidates(*lattice);
+    TestLatticeForFirstCandidate(*lattice);
 }
 
 } // namespace

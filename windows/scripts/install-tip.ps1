@@ -33,6 +33,8 @@ if ($Uninstall) {
         Remove-Item $InstalledDll -Force
     }
     Remove-Item (Join-Path $InstallDir "iroha-server.exe") -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $InstallDir "iroha-settings.exe") -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $InstallDir "Dictionary") -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $InstallDir "*.pdb") -Force -ErrorAction SilentlyContinue
     Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
         -Name "iroha-server" -ErrorAction SilentlyContinue
@@ -74,6 +76,17 @@ $BuiltSettings = Join-Path $RepoRoot "windows\build\iroha-settings\iroha-setting
 if (Test-Path $BuiltSettings) {
     try { Stop-Process -Name "iroha-settings" -Force -ErrorAction Stop } catch {}
     Copy-Item $BuiltSettings $InstallDir -Force
+}
+# 辞書ラティスの辞書データ（変換サーバが実行ファイルと同じフォルダの Dictionary を読む。
+# 無くても動くが、候補ウィンドウの候補がモデルの生成だけになる）
+$Dictionary = Join-Path $RepoRoot "vendor\azooKey_dictionary_storage\Dictionary"
+if (Test-Path (Join-Path $Dictionary "mm.binary")) {
+    Write-Host "==> 辞書データをコピー"
+    $InstalledDictionary = Join-Path $InstallDir "Dictionary"
+    if (Test-Path $InstalledDictionary) { Remove-Item $InstalledDictionary -Recurse -Force }
+    Copy-Item $Dictionary $InstalledDictionary -Recurse
+} else {
+    Write-Warning "辞書データがありません（windows\scripts\fetch-dictionary.ps1 で取得できます）: $Dictionary"
 }
 # デバッグ用にPDBも並べる（あれば）
 foreach ($src in @($BuiltDll, $BuiltServer)) {

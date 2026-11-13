@@ -16,7 +16,11 @@ public:
     CandidateWindow& operator=(const CandidateWindow&) = delete;
     ~CandidateWindow();
 
-    // anchor: コンポジションのスクリーン座標矩形。直下（入らなければ直上）に出す
+    // 1ページに出す候補数（数字キー 1〜9 で選ぶ）
+    static constexpr size_t kPageSize = 9;
+
+    // anchor: コンポジションのスクリーン座標矩形。直下（入らなければ直上）に出す。
+    // candidates は全候補。selectedIndex のあるページだけを表示する
     void Show(HWND owner, const RECT& anchor,
               const std::vector<std::u32string>& candidates, size_t selectedIndex);
     void Hide();
@@ -32,8 +36,11 @@ private:
     HWND hwnd_ = nullptr;
     HFONT font_ = nullptr;
     UINT dpi_ = 96;
+    // 表示中のページの候補（番号つき）と、その中で選んでいる位置
     std::vector<std::wstring> items_;
     size_t selected_ = 0;
+    // 複数ページあるときのページ表示（「2/7」。1ページなら空）
+    std::wstring footer_;
     int rowHeight_ = 0;
     int padding_ = 0;
 };

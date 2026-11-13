@@ -5,7 +5,7 @@
 namespace iroha {
 
 std::optional<ReadingConstraint> ReadingConstraint::Create(
-    const std::u32string& reading) {
+    const std::u32string& reading, bool restrictLatinToReading) {
     const std::u32string characters = KatakanaToHiragana(reading);
     if (characters.empty() ||
         characters.size() > static_cast<size_t>(kMaxReadingLength)) {
@@ -15,13 +15,17 @@ std::optional<ReadingConstraint> ReadingConstraint::Create(
     for (size_t index = 0; index < characters.size(); ++index) {
         positions[characters[index]] |= uint64_t{1} << index;
     }
-    return ReadingConstraint(static_cast<int>(characters.size()),
-                             std::move(positions));
+    bool hasLatin = false;
+    for (char32_t character : characters) hasLatin = hasLatin || IsLatinLetter(character);
+    return ReadingConstraint(static_cast<int>(characters.size()), std::move(positions),
+                             !restrictLatinToReading || hasLatin);
 }
 
 ReadingConstraint::ReadingConstraint(
-    int readingLength, std::unordered_map<char32_t, uint64_t> literalPositions)
+    int readingLength, std::unordered_map<char32_t, uint64_t> literalPositions,
+    bool allowsLatin)
     : readingLength_(readingLength),
+      allowsLatin_(allowsLatin),
       literalPositions_(std::move(literalPositions)) {}
 
 bool ReadingConstraint::IsComplete(uint64_t mask) const {
@@ -38,6 +42,15 @@ uint64_t ReadingConstraint::Advance(uint64_t mask, const std::u32string& text) c
 }
 
 uint64_t ReadingConstraint::Advance(uint64_t mask, char32_t character) const {
+    if (!allowsLatin_ && IsLatinLetter(character)) return 0;
+    // 読みの長さを超えた位置は捨てる
+    const uint64_t overflow = ~uint64_t{0} << (readingLength_ + 1);
+    if (IsWhitespace(character)) {
+        // 読みに空白があればその位置で消費し、なければ消費せずに通す（語頭マーカー由来の空白）
+        const auto space = literalPositions_.find(character);
+        const uint64_t positions = space != literalPositions_.end() ? space->second : 0;
+        return (((mask & positions) << 1) | mask) & ~overflow;
+    }
     char32_t normalized = character;
     if (character >= 0x30A1 && character <= 0x30F6) normalized = character - 0x60;
     // 読みの同じ文字に重なる位置は1文字進める
@@ -54,9 +67,16 @@ uint64_t ReadingConstraint::Advance(uint64_t mask, char32_t character) const {
         // 英数字とカタカナは読みを消費しないこともある（WOWOW←わうわう、コンピューター←こんぴゅーた）
         if (span == Span::ZeroOrMore) next |= mask;
     }
-    // 読みの長さを超えた位置は捨てる
-    const uint64_t overflow = ~uint64_t{0} << (readingLength_ + 1);
     return next & ~overflow;
+}
+
+bool ReadingConstraint::IsWhitespace(char32_t c) {
+    return c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D || c == 0x3000 || c == 0x2581;
+}
+
+bool ReadingConstraint::IsLatinLetter(char32_t c) {
+    return (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) ||
+           (c >= 0xFF21 && c <= 0xFF3A) || (c >= 0xFF41 && c <= 0xFF5A);
 }
 
 ReadingConstraint::Span ReadingConstraint::SpanOf(char32_t c) {

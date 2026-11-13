@@ -15,6 +15,9 @@ namespace iroha {
 //
 // - ひらがな・句読点・記号は読みにそのまま現れるはずなので、その位置と一致しなければ不許可
 // - 漢字・カタカナ・英数（読みが不定の文字）は読みを1〜maxSpan文字消費したものとみなす
+// - 空白は読みの同じ位置にあれば消費し、なければ消費なしで通す。SentencePiece系の語彙は
+//   語頭マーカー「▁」がスペースになって出てくるため、空白を読みと突き合わせると
+//   語頭トークンが全部弾かれてしまう
 // - 終端は読みを使い切ったときのみ許可する
 //
 // 消費位置は「ありうる位置の集合」をビットマスクで持つ（bit p = 読みをp文字消費した状態）。
@@ -27,8 +30,12 @@ public:
     // ビットマスクに収まる読みの最大長。これを超える読みでは制約をかけない
     static constexpr int kMaxReadingLength = 62;
 
-    // 読みが空、または長すぎて追跡できない場合はnullopt（制約なしで生成する）
-    static std::optional<ReadingConstraint> Create(const std::u32string& reading);
+    // 読みが空、または長すぎて追跡できない場合はnullopt（制約なしで生成する）。
+    // restrictLatinToReading が真のとき、読みにラテン文字が1つもなければ出力のラテン文字を禁じる
+    // （英語語彙の多いモデルが「グループ→group」のように英単語へ逸れるのを防ぐ。
+    // 代償として「ゆーえすびー→USB」のようなかな読みからの英字変換も出せなくなる）
+    static std::optional<ReadingConstraint> Create(const std::u32string& reading,
+                                                   bool restrictLatinToReading = false);
 
     // 何も消費していない初期状態
     uint64_t InitialMask() const { return 1; }
@@ -48,14 +55,22 @@ public:
     };
     static Span SpanOf(char32_t character);
 
+    // 空白（半角・全角スペース、タブ・改行、SentencePieceの語頭マーカー ▁ U+2581）か
+    static bool IsWhitespace(char32_t character);
+    // ASCII・全角のラテン文字（アルファベット）か
+    static bool IsLatinLetter(char32_t character);
+
 private:
     // 漢字1文字が持ちうる読みの最大長（承る=うけたまわ など）
     static constexpr int kMaxSpan = 8;
 
     ReadingConstraint(int readingLength,
-                      std::unordered_map<char32_t, uint64_t> literalPositions);
+                      std::unordered_map<char32_t, uint64_t> literalPositions,
+                      bool allowsLatin);
 
     int readingLength_;
+    // 出力にラテン文字（A-Z/a-z・全角含む）を許すか
+    bool allowsLatin_;
     // 文字 → その文字が読みのどの位置に現れるか（bit p = reading[p]がその文字）
     std::unordered_map<char32_t, uint64_t> literalPositions_;
 };

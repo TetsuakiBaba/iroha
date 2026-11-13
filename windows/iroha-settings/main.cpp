@@ -36,7 +36,10 @@ struct KnownModel {
     const wchar_t* url;
 };
 const KnownModel kKnownModels[] = {
-    {L"zenz-v3.1-small（標準・高精度 95M / 約70MB）",
+    {L"iroha-kkc-v1（既定・文字単位T5 / 約82MB）",
+     L"iroha-kkc-v1-Q5_K_M.gguf",
+     L"https://github.com/TetsuakiBaba/iroha/releases/download/iroha-kkc-v1/iroha-kkc-v1-Q5_K_M.gguf"},
+    {L"zenz-v3.1-small（以前の既定 95M / 約70MB）",
      L"zenz-v3.1-small-Q5_K_M.gguf",
      L"https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf/resolve/main/ggml-model-Q5_K_M.gguf"},
     {L"zenz-v3.1-xsmall（高速・軽量 26M / 約21MB）",
@@ -264,9 +267,11 @@ void App::RefreshModelPage() {
     const bool downloaded = std::filesystem::exists(ModelPath(model.fileName));
 
     const iroha::Config config = iroha::LoadConfig(ConfigPath());
-    const std::wstring current = config.model.empty()
-                                     ? L"zenz-v3.1-small-Q5_K_M.gguf"
-                                     : iroha::Utf32ToUtf16(config.model);
+    // 未設定なら既定のモデル（変換サーバと同じ決め方）
+    const std::wstring current =
+        config.model.empty()
+            ? iroha::DefaultModelPath(ModelPath(L"").parent_path()).filename().wstring()
+            : iroha::Utf32ToUtf16(config.model);
     std::wstring status = downloaded ? L"状態: ダウンロード済み" : L"状態: 未ダウンロード";
     if (current == model.fileName) status += L"（現在使用中）";
     SetWindowTextW(modelStatus, status.c_str());

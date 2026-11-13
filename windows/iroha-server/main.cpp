@@ -19,6 +19,8 @@
 
 #include "iroha/config.h"
 #include "iroha/conversion_engine.h"
+#include "iroha/lattice_converter.h"
+#include "iroha/lattice_rescoring_engine.h"
 #include "iroha/learning_engine.h"
 #include "iroha/learning_store.h"
 #include "iroha/reading_aligner.h"
@@ -54,8 +56,15 @@ std::string ResolveModelPath() {
         if (path.is_absolute()) return iroha::Utf32ToUtf8(config.model);
         return iroha::Utf32ToUtf8(iroha::Utf16ToUtf32(DataDir() + L"\\models\\" + model));
     }
-    return iroha::Utf32ToUtf8(
-        iroha::Utf16ToUtf32(DataDir() + L"\\models\\zenz-v3.1-small-Q5_K_M.gguf"));
+    return iroha::Utf32ToUtf8(iroha::Utf16ToUtf32(
+        iroha::DefaultModelPath(std::filesystem::path(DataDir() + L"\\models")).wstring()));
+}
+
+std::filesystem::path ExecutableDirectory() {
+    wchar_t modulePath[MAX_PATH];
+    const DWORD length = GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return {};
+    return std::filesystem::path(modulePath).parent_path();
 }
 
 std::filesystem::path StorePath(const wchar_t* envName, const wchar_t* fileName) {
@@ -96,11 +105,15 @@ PSECURITY_DESCRIPTOR CreatePipeSecurityDescriptor() {
     return descriptor;
 }
 
-// IME本体と同じ構成のエンジン一式: 学習 → ユーザ辞書 → zenz。
+// IME本体と同じ構成のエンジン一式: 学習 → ユーザ辞書 → 辞書ラティスの候補をモデルで再採点 → モデル。
+// 候補を複数求められたとき（候補ウィンドウ）は辞書ラティスで候補を作ってモデルで並べ、
+// 1つだけのとき（全体の変換）はモデルの生成に任せる。辞書が無ければモデル単体で動く。
 // 設定GUIからのReload要求で設定・辞書を読み直す（モデルは変わったときだけロード）
 struct ServerState {
     std::string modelPath;
     std::unique_ptr<iroha::ZenzEngine> zenz;
+    std::unique_ptr<iroha::LatticeConverter> lattice;
+    std::unique_ptr<iroha::LatticeRescoringEngine> rescoring;
     std::unique_ptr<iroha::UserDictionaryStore> userDictionary;
     std::unique_ptr<iroha::LearningStore> learning;
     std::unique_ptr<iroha::UserDictionaryEngine> dictionaryEngine;
@@ -119,12 +132,29 @@ struct ServerState {
                 Log(("prewarm failed: " + error).c_str());
             }
         }
+        if (!lattice) {
+            if (const auto dictionary =
+                    iroha::LatticeConverter::DefaultDictionaryPath(ExecutableDirectory())) {
+                lattice = std::make_unique<iroha::LatticeConverter>(*dictionary);
+                // 辞書の読み込みを済ませておく（最初の候補ウィンドウのもたつき防止）
+                lattice->Candidates(U"うぉーむあっぷ", 1);
+                Log("dictionary loaded");
+            } else {
+                Log("dictionary not found (candidates come from the model only)");
+            }
+        }
+        iroha::ConversionEngine* core = zenz.get();
+        if (lattice) {
+            rescoring = std::make_unique<iroha::LatticeRescoringEngine>(
+                zenz.get(), zenz.get(), lattice.get());
+            core = rescoring.get();
+        }
         userDictionary = std::make_unique<iroha::UserDictionaryStore>(
             StorePath(L"IROHA_USER_DICT", L"user-dictionary.json"));
         learning = std::make_unique<iroha::LearningStore>(
             StorePath(L"IROHA_LEARNING", L"learning.json"));
         dictionaryEngine = std::make_unique<iroha::UserDictionaryEngine>(
-            zenz.get(), [this] { return userDictionary->Current(); });
+            core, [this] { return userDictionary->Current(); });
         engine = std::make_unique<iroha::LearningEngine>(
             dictionaryEngine.get(), [this] { return learning->Current(); });
     }

@@ -13,12 +13,23 @@
 //                                                 : 読みの一覧にラティスの読み一致候補を付けて書き出す
 //   iroha-cli lattice-parity <macOS版の出力.jsonl> [--n 10] [--examples 10]
 //                                                 : macOS 版の lattice-dump / ajimee-dump の候補と突き合わせる
+//   iroha-cli model-parity <macOS版のajimee-dumpの出力.jsonl> [--examples 10]
+//                                                 : モデルの生成と採点を macOS 版の出力と突き合わせる
+//   iroha-cli model-selfcheck <同じ形式.jsonl> [--limit N]
+//                                                 : モデルの採点が生成と辻褄が合うかを確かめる（macOS版の出力は使わない）
 //   iroha-cli remote <読み>                        : 変換サーバ経由の変換（IPC検証用）
 //   iroha-cli repl                                : 対話モード
-//   環境変数 IROHA_MODEL でモデルパスを上書き可能
-//
-// 注意: macOS版と違い学習・ユーザ辞書のデコレータは未移植（zenz単体）。
-// 既定ストアが空ならmacOS版benchと同条件になる。
+//   環境変数 IROHA_MODEL でモデルパス、IROHA_LORA で追加学習した LoRA アダプタ（GGUF）、
+//   IROHA_USER_DICT でユーザ辞書、IROHA_LEARNING で学習結果のファイルを上書き可能。
+//   bench / ajimee はモデルの素の力を測るため、既定でユーザ辞書・学習を空にする
+//   （IROHA_WITH_USER_DATA=1 でIME本体のデータを使う。IROHA_USER_DICT / IROHA_LEARNING の
+//   明示指定はそのまま使う）。convert / segment / repl はIME本体と同じデータを使う
+//   IROHA_LATTICE=off で辞書ラティスを使わずモデル単体、IROHA_LATTICE=always で第一候補も
+//   ラティス候補の再採点で決める（既定は候補数 2 以上のときだけラティス。IME本体と同じ）
+//   IROHA_NO_LATIN=1 で読みにラテン文字がないときの英字出力を禁じる（実験用）
+//   IROHA_NO_CONSTRAINT=1 で読み制約（constrained decoding）を丸ごと切り素の貪欲生成にする（実験用）
+//   IROHA_KV_REUSE=0 で前回の計算の再利用（KVキャッシュ・エンコーダ出力）を切る（切り分け用）
+//   IROHA_THREADS で推論のスレッド数を変える（計測用）
 
 #define NOMINMAX
 #include <windows.h>
@@ -36,8 +47,10 @@
 #include <vector>
 
 #include "ipc_protocol.h"
+#include "iroha/config.h"
 #include "iroha/json.h"
 #include "iroha/lattice_converter.h"
+#include "iroha/lattice_rescoring_engine.h"
 #include "iroha/learning_engine.h"
 #include "iroha/learning_store.h"
 #include "iroha/reading_aligner.h"
@@ -71,7 +84,9 @@ std::string DefaultModelPath() {
     if (const wchar_t* env = _wgetenv(L"IROHA_MODEL")) {
         return Utf32ToUtf8(Utf16ToUtf32(env));
     }
-    return Utf32ToUtf8(Utf16ToUtf32(DataDir() + L"\\models\\zenz-v3.1-small-Q5_K_M.gguf"));
+    // IME本体と同じ既定のモデル（iroha-kkc-v1。未取得で以前の既定があればそれ）
+    return Utf32ToUtf8(Utf16ToUtf32(
+        iroha::DefaultModelPath(std::filesystem::path(DataDir() + L"\\models")).wstring()));
 }
 
 std::filesystem::path StorePath(const wchar_t* envName, const wchar_t* fileName) {
@@ -79,17 +94,93 @@ std::filesystem::path StorePath(const wchar_t* envName, const wchar_t* fileName)
     return std::filesystem::path(DataDir() + L"\\" + fileName);
 }
 
-// IME本体と同じ構成（zenz + ユーザ辞書 + 学習）でエンジンを組み立てる。
-// IROHA_MODEL / IROHA_USER_DICT / IROHA_LEARNING で差し替えられる
+bool EnvEquals(const wchar_t* name, const wchar_t* value) {
+    const wchar_t* env = _wgetenv(name);
+    return env && std::wstring(env) == value;
+}
+
+// IROHA_LORA / IROHA_NO_LATIN / IROHA_NO_CONSTRAINT を反映したモデルの設定（macOS版 iroha-cli と同じ）
+iroha::ZenzEngine::Options ZenzOptions() {
+    iroha::ZenzEngine::Options options;
+    if (const wchar_t* adapter = _wgetenv(L"IROHA_LORA")) {
+        options.adapterPath = Utf32ToUtf8(Utf16ToUtf32(adapter));
+    }
+    // IROHA_NO_LATIN=1: 読みにラテン文字がなければ出力の英字を禁じる（英語語彙の多いモデルの評価用）
+    options.restrictLatinToReading = EnvEquals(L"IROHA_NO_LATIN", L"1");
+    // IROHA_NO_CONSTRAINT=1: 読み制約を切って素の貪欲生成にする（制約なし計測との突き合わせ用）
+    options.usesReadingConstraint = !EnvEquals(L"IROHA_NO_CONSTRAINT", L"1");
+    if (!options.usesReadingConstraint) {
+        std::fprintf(stderr, "読み制約なし（IROHA_NO_CONSTRAINT=1）\n");
+    }
+    return options;
+}
+
+std::filesystem::path ExecutableDirectory() {
+    wchar_t modulePath[MAX_PATH];
+    const DWORD length = GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return {};
+    return std::filesystem::path(modulePath).parent_path();
+}
+
+// ユーザ辞書・学習の扱い。評価（bench / ajimee）はモデル単体の力を測るので既定で空にする。
+// 実データを混ぜると学習ファイルの成長で同じモデルでも数値が変わり、再現性がなくなる
+enum class UserDataMode {
+    // IME本体と同じファイル（IROHA_USER_DICT / IROHA_LEARNING で差し替え可）
+    Ime,
+    // 空。IROHA_WITH_USER_DATA=1 なら Ime と同じ、IROHA_USER_DICT / IROHA_LEARNING の明示指定は使う
+    Evaluation,
+};
+
+// 存在しないファイルを指すストアは空として振る舞う（評価では書き込みも起きない）
+std::filesystem::path UserDataPath(UserDataMode mode, const wchar_t* envName,
+                                   const wchar_t* fileName) {
+    if (_wgetenv(envName) || mode == UserDataMode::Ime ||
+        EnvEquals(L"IROHA_WITH_USER_DATA", L"1")) {
+        return StorePath(envName, fileName);
+    }
+    return std::filesystem::temp_directory_path() /
+           (L"iroha-cli-empty-" + std::to_wstring(GetCurrentProcessId())) / fileName;
+}
+
+// IME本体と同じ構成（学習 → ユーザ辞書 → 辞書ラティスの候補をモデルで再採点 → モデル）で
+// エンジンを組み立てる。IROHA_MODEL / IROHA_USER_DICT / IROHA_LEARNING で差し替えられる。
+// IROHA_LATTICE=off で辞書ラティスを使わずモデル単体、IROHA_LATTICE=always で第一候補も
+// ラティス候補の再採点で決める（既定は候補ウィンドウのみラティス）
 struct EngineStack {
-    iroha::ZenzEngine zenz{DefaultModelPath()};
-    iroha::UserDictionaryStore userDictionary{
-        StorePath(L"IROHA_USER_DICT", L"user-dictionary.json")};
-    iroha::LearningStore learning{StorePath(L"IROHA_LEARNING", L"learning.json")};
-    iroha::UserDictionaryEngine dictionaryEngine{
-        &zenz, [this] { return userDictionary.Current(); }};
-    iroha::LearningEngine engine{&dictionaryEngine,
-                                 [this] { return learning.Current(); }};
+    explicit EngineStack(UserDataMode mode = UserDataMode::Ime)
+        : zenz(DefaultModelPath(), ZenzOptions()),
+          userDictionary(UserDataPath(mode, L"IROHA_USER_DICT", L"user-dictionary.json")),
+          learning(UserDataPath(mode, L"IROHA_LEARNING", L"learning.json")),
+          dictionaryEngine(MakeCore(), [this] { return userDictionary.Current(); }),
+          engine(&dictionaryEngine, [this] { return learning.Current(); }) {
+        if (mode == UserDataMode::Evaluation) {
+            std::fprintf(stderr, "%s\n",
+                         EnvEquals(L"IROHA_WITH_USER_DATA", L"1")
+                             ? "IME本体のユーザ辞書・学習を使用（IROHA_WITH_USER_DATA=1）"
+                             : "ユーザ辞書・学習は空（IME本体のデータを使うなら IROHA_WITH_USER_DATA=1）");
+        }
+    }
+
+    iroha::ZenzEngine zenz;
+    std::unique_ptr<iroha::LatticeConverter> lattice;
+    std::unique_ptr<iroha::LatticeRescoringEngine> rescoring;
+    iroha::UserDictionaryStore userDictionary;
+    iroha::LearningStore learning;
+    iroha::UserDictionaryEngine dictionaryEngine;
+    iroha::LearningEngine engine;
+
+private:
+    // 辞書ラティス + モデルの採点。辞書が無い・OFF指定ならモデル単体
+    iroha::ConversionEngine* MakeCore() {
+        if (EnvEquals(L"IROHA_LATTICE", L"off")) return &zenz;
+        const auto dictionary =
+            iroha::LatticeConverter::DefaultDictionaryPath(ExecutableDirectory());
+        if (!dictionary) return &zenz;
+        lattice = std::make_unique<iroha::LatticeConverter>(*dictionary);
+        rescoring = std::make_unique<iroha::LatticeRescoringEngine>(
+            &zenz, &zenz, lattice.get(), 10, EnvEquals(L"IROHA_LATTICE", L"always"));
+        return rescoring.get();
+    }
 };
 
 std::u32string RomajiToKana(const std::u32string& input) {
@@ -320,13 +411,7 @@ int RunAjimee(iroha::ConversionEngine& engine, const std::wstring& path) {
 
 // 辞書フォルダを探してラティスを作る（見つからなければ nullptr）
 std::unique_ptr<iroha::LatticeConverter> MakeLattice() {
-    std::filesystem::path executableDirectory;
-    wchar_t modulePath[MAX_PATH];
-    const DWORD length = GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
-    if (length > 0 && length < MAX_PATH) {
-        executableDirectory = std::filesystem::path(modulePath).parent_path();
-    }
-    const auto dictionary = iroha::LatticeConverter::DefaultDictionaryPath(executableDirectory);
+    const auto dictionary = iroha::LatticeConverter::DefaultDictionaryPath(ExecutableDirectory());
     if (!dictionary) {
         std::fprintf(stderr,
                      "辞書が見つかりません（windows\\scripts\\fetch-dictionary.ps1 で取得できます）\n");
@@ -531,6 +616,188 @@ int RunLatticeParity(const std::wstring& referencePath, int nBest, int examples)
     return exact == total ? 0 : 2;
 }
 
+// macOS 版の `iroha-cli ajimee-dump` の出力（1 行に reading・context・generated・scoredCandidates・zenzScores）と、
+// モデルの生成（第一候補）と採点（候補ごとの対数確率）を突き合わせる。モデルの移植が正しいかの判定に使う。
+// 同じモデル（IROHA_MODEL）で比べること。計算機が違う（Metal と CPU）ので、採点は誤差の範囲で一致すればよい
+int RunModelParity(const std::wstring& referencePath, int examples) {
+    std::ifstream input(std::filesystem::path(referencePath), std::ios::binary);
+    if (!input) {
+        std::fprintf(stderr, "入力が読めません\n");
+        return 1;
+    }
+    iroha::ZenzEngine zenz(DefaultModelPath(), ZenzOptions());
+    std::string error;
+    if (!zenz.Prewarm(&error)) {
+        std::fprintf(stderr, "エラー: %s\n", error.c_str());
+        return 1;
+    }
+    constexpr double kTolerance = 0.05;
+    int total = 0;
+    int sameGenerated = 0;
+    int scoredItems = 0;     // 採点を比べた項目
+    int sameBest = 0;        // 採点が最も高い候補が同じ項目
+    int scoreCount = 0;      // 比べた候補の数
+    int scoreWithin = 0;     // 差が kTolerance 以内の候補の数
+    double maxDifference = 0.0;
+    double generateMilliseconds = 0.0;
+    double scoreMilliseconds = 0.0;
+    int shown = 0;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        iroha::json::Value record;
+        if (line.empty() || !iroha::json::Parse(line, &record)) continue;
+        const iroha::json::Value* readingValue = record.Find("reading");
+        const iroha::json::Value* generatedValue = record.Find("generated");
+        if (!readingValue || !generatedValue) continue;
+        const iroha::json::Value* contextValue = record.Find("context");
+        const std::u32string reading = Utf8ToUtf32(readingValue->AsString());
+        const std::u32string context = contextValue ? Utf8ToUtf32(contextValue->AsString()) : U"";
+        const std::u32string expected = Utf8ToUtf32(generatedValue->AsString());
+
+        auto start = std::chrono::steady_clock::now();
+        std::vector<std::u32string> converted;
+        if (!zenz.Convert(reading, context, 1, &converted, &error)) {
+            std::fprintf(stderr, "エラー: %s\n", error.c_str());
+            return 1;
+        }
+        generateMilliseconds += MillisecondsSince(start);
+        ++total;
+        const std::u32string actual = converted.empty() ? U"" : converted.front();
+        if (actual == expected) {
+            ++sameGenerated;
+        } else if (shown++ < examples) {
+            PrintUtf8("  \xE2\x9C\x97 生成 macOS: ");
+            Print32(expected);
+            PrintUtf8("\n         Windows: ");
+            Print32(actual);
+            PrintUtf8("\n");
+        }
+
+        const iroha::json::Value* candidatesValue = record.Find("scoredCandidates");
+        const iroha::json::Value* scoresValue = record.Find("zenzScores");
+        if (!candidatesValue || !scoresValue ||
+            candidatesValue->array.size() != scoresValue->array.size() ||
+            candidatesValue->array.empty()) {
+            continue;
+        }
+        std::vector<std::u32string> candidates;
+        for (const iroha::json::Value& item : candidatesValue->array) {
+            candidates.push_back(Utf8ToUtf32(item.AsString()));
+        }
+        start = std::chrono::steady_clock::now();
+        std::vector<float> scores;
+        if (!zenz.Score(candidates, reading, context, &scores, &error)) {
+            std::fprintf(stderr, "エラー: %s\n", error.c_str());
+            return 1;
+        }
+        scoreMilliseconds += MillisecondsSince(start);
+        ++scoredItems;
+        size_t expectedBest = 0;
+        size_t actualBest = 0;
+        for (size_t i = 0; i < scores.size(); ++i) {
+            const double reference = scoresValue->array[i].number;
+            const double difference = std::abs(static_cast<double>(scores[i]) - reference);
+            maxDifference = std::max(maxDifference, difference);
+            ++scoreCount;
+            if (difference <= kTolerance) {
+                ++scoreWithin;
+            } else if (shown++ < examples) {
+                PrintUtf8("  \xE2\x9C\x97 採点 ");
+                Print32(candidates[i]);
+                std::printf("  macOS %.3f / Windows %.3f\n", reference, scores[i]);
+            }
+            if (reference > scoresValue->array[expectedBest].number) expectedBest = i;
+            if (scores[i] > scores[actualBest]) actualBest = i;
+        }
+        if (expectedBest == actualBest) ++sameBest;
+    }
+    const int denominator = std::max(total, 1);
+    std::printf("件数: %d  生成が一致: %d (%.1f%%)  平均 %.1fms/生成\n", total, sameGenerated,
+                100.0 * sameGenerated / denominator, generateMilliseconds / denominator);
+    std::printf("採点: %d 候補のうち差が %.2f 以内 %d (%.1f%%)  最大の差 %.4f  "
+                "最良の候補が一致 %d/%d  平均 %.1fms/採点\n",
+                scoreCount, kTolerance, scoreWithin, 100.0 * scoreWithin / std::max(scoreCount, 1),
+                maxDifference, sameBest, scoredItems,
+                scoreMilliseconds / std::max(scoredItems, 1));
+    return sameGenerated == total && scoreWithin == scoreCount ? 0 : 2;
+}
+
+// モデルの採点（Score）が生成と辻褄が合っているかを、macOS 版の出力なしで確かめる。
+// 入力は `model-parity` と同じ JSONL（reading・context・scoredCandidates を使う）。
+//   1. 候補をまとめて採点した値と、1 つずつ採点した値が同じか（複数の系列を 1 バッチに載せる経路の確認）
+//   2. 貪欲に生成した文をあらためて採点した値が、生成のときの対数確率と同じか
+//      （採点は終端を「終端トークンのどれか」で測るので、採点の方がわずかに高くなることはある）
+int RunModelSelfCheck(const std::wstring& referencePath, int limit) {
+    std::ifstream input(std::filesystem::path(referencePath), std::ios::binary);
+    if (!input) {
+        std::fprintf(stderr, "入力が読めません\n");
+        return 1;
+    }
+    iroha::ZenzEngine zenz(DefaultModelPath(), ZenzOptions());
+    std::string error;
+    const auto fail = [&error] {
+        std::fprintf(stderr, "エラー: %s\n", error.c_str());
+        return 1;
+    };
+    int total = 0;
+    double maxBatchDifference = 0.0;    // まとめて採点 と 1 つずつ採点 の差
+    double maxGenerateDifference = 0.0; // 生成の対数確率 と 生成した文の採点 の差
+    int generateBelow = 0;              // 採点の方が 0.01 より大きく低かった件数（あれば実装の誤り）
+    int shownBatch = 0;
+    std::string line;
+    while (total < limit && std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        iroha::json::Value record;
+        if (line.empty() || !iroha::json::Parse(line, &record)) continue;
+        const iroha::json::Value* readingValue = record.Find("reading");
+        const iroha::json::Value* candidatesValue = record.Find("scoredCandidates");
+        if (!readingValue || !candidatesValue || candidatesValue->array.empty()) continue;
+        const iroha::json::Value* contextValue = record.Find("context");
+        const std::u32string reading = Utf8ToUtf32(readingValue->AsString());
+        const std::u32string context = contextValue ? Utf8ToUtf32(contextValue->AsString()) : U"";
+        std::vector<std::u32string> candidates;
+        for (const iroha::json::Value& item : candidatesValue->array) {
+            candidates.push_back(Utf8ToUtf32(item.AsString()));
+        }
+        ++total;
+
+        std::vector<float> batched;
+        if (!zenz.Score(candidates, reading, context, &batched, &error)) return fail();
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            std::vector<float> single;
+            if (!zenz.Score({candidates[i]}, reading, context, &single, &error)) return fail();
+            const double batchDifference = std::abs(static_cast<double>(batched[i]) - single[0]);
+            if (batchDifference > 0.01 && shownBatch++ < 8) {
+                PrintUtf8("  \xE2\x9C\x97 "); // ✗
+                Print32(candidates[i].substr(0, 30));
+                std::printf("  [%zu/%zu] まとめて %.4f / 1つずつ %.4f\n", i, candidates.size(),
+                            batched[i], single[0]);
+            }
+            maxBatchDifference = std::max(maxBatchDifference, batchDifference);
+        }
+
+        iroha::ZenzEngine::ScoredConversion generated;
+        if (!zenz.ConvertScored(reading, context, &generated, &error)) return fail();
+        std::vector<float> rescored;
+        if (!zenz.Score({generated.text}, reading, context, &rescored, &error)) return fail();
+        const double difference = static_cast<double>(rescored[0]) - generated.logProb;
+        maxGenerateDifference = std::max(maxGenerateDifference, std::abs(difference));
+        if (difference < -0.01) {
+            ++generateBelow;
+            if (generateBelow <= 5) {
+                PrintUtf8("  \xE2\x9C\x97 "); // ✗
+                Print32(generated.text);
+                std::printf("  生成 %.4f / 採点 %.4f\n", generated.logProb, rescored[0]);
+            }
+        }
+    }
+    std::printf("件数: %d  まとめて採点と1つずつ採点の差の最大 %.5f  "
+                "生成の対数確率と採点の差の最大 %.5f（採点の方が低い %d 件）\n",
+                total, maxBatchDifference, maxGenerateDifference, generateBelow);
+    return maxBatchDifference < 0.01 && generateBelow == 0 ? 0 : 2;
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -612,7 +879,52 @@ int wmain(int argc, wchar_t** argv) {
         return RunLatticeDump(Utf32ToUtf16(args[2]), Utf32ToUtf16(args[3]), nBest, limit, skip);
     }
 
-    EngineStack stack;
+    if (command == U"model-parity" && args.size() >= 3) {
+        int examples = 10;
+        for (size_t index = 3; index + 1 < args.size(); index += 2) {
+            if (args[index] == U"--examples") {
+                examples = std::atoi(Utf32ToUtf8(args[index + 1]).c_str());
+            }
+        }
+        return RunModelParity(Utf32ToUtf16(args[2]), examples);
+    }
+
+    if (command == U"score" && args.size() >= 4) {
+        // 候補ごとのモデルの対数確率を見る（調査用）: iroha-cli score [--context 文脈] <読み> <候補>...
+        std::u32string context;
+        size_t index = 2;
+        if (args[index] == U"--context" && index + 2 < args.size()) {
+            context = args[index + 1];
+            index += 2;
+        }
+        const std::u32string reading = RomajiToKana(args[index++]);
+        const std::vector<std::u32string> candidates(args.begin() + index, args.end());
+        iroha::ZenzEngine zenz(DefaultModelPath(), ZenzOptions());
+        std::vector<float> scores;
+        std::string error;
+        if (!zenz.Score(candidates, reading, context, &scores, &error)) {
+            std::fprintf(stderr, "エラー: %s\n", error.c_str());
+            return 1;
+        }
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            std::printf("%10.4f  ", scores[i]);
+            Print32(candidates[i]);
+            PrintUtf8("\n");
+        }
+        return 0;
+    }
+
+    if (command == U"model-selfcheck" && args.size() >= 3) {
+        int limit = INT_MAX;
+        for (size_t index = 3; index + 1 < args.size(); index += 2) {
+            if (args[index] == U"--limit") limit = std::atoi(Utf32ToUtf8(args[index + 1]).c_str());
+        }
+        return RunModelSelfCheck(Utf32ToUtf16(args[2]), limit);
+    }
+
+    // bench / ajimee はモデルの素の力を測るため、既定でユーザ辞書・学習を空にする
+    EngineStack stack(command == U"bench" || command == U"ajimee" ? UserDataMode::Evaluation
+                                                                  : UserDataMode::Ime);
     iroha::ConversionEngine& engine = stack.engine;
 
     if (command == U"convert") {

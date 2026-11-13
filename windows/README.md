@@ -37,8 +37,10 @@ powershell -ExecutionPolicy Bypass -File windows\scripts\install-tip.ps1
 # 解除
 powershell -ExecutionPolicy Bypass -File windows\scripts\install-tip.ps1 -Uninstall
 
-# zenzモデルの取得（%LOCALAPPDATA%\iroha\models へ、約72MB）
+# 既定の変換モデル iroha-kkc-v1 の取得（%LOCALAPPDATA%\iroha\models へ、約82MB。SHA-256 を照合する）
 powershell -ExecutionPolicy Bypass -File windows\scripts\fetch-model.ps1
+# 以前の既定（zenz-v3.1-small）を比較用に取得する
+powershell -ExecutionPolicy Bypass -File windows\scripts\fetch-model.ps1 -Model zenz-v3.1-small
 
 # Vulkan対応ビルド（要Vulkan SDK。dist-windows-vulkan / build-vulkan に分離）
 powershell -ExecutionPolicy Bypass -File windows\scripts\build-llama.ps1 -Backend vulkan
@@ -83,6 +85,50 @@ windows\build\iroha-cli\iroha-cli.exe lattice-parity <macOS版の出力.jsonl> -
   両方で直してある（2026-11-13。macOS版は `EraYearCandidates.swift`、Windows版は `special_candidates.cpp`。
   規則を変えるときは両方を合わせる）。これより前に書き出した macOS版の出力と突き合わせると、明治の年の読みだけ違いが出る
 
+## 変換モデル（ZenzEngine）
+
+`iroha-engine` の `ZenzEngine` は macOS版の `ZenzEngine.swift` を移したもの。デコーダ専用のモデル（zenz）と
+エンコーダ・デコーダ型のモデル（既定の iroha-kkc-v1、文字単位 T5）を同じプロンプト形式で動かす。
+生成（第一候補・n-best）・候補の採点（`Score`）・LoRA アダプタ・読み制約の設定に対応。
+文字ごとの自信度（`convertWithConfidence`。「AIで直す」の判定に使う）は未移植。
+
+```powershell
+# モデルの生成と採点を macOS版の出力（iroha-cli ajimee-dump）と突き合わせる。同じモデルを IROHA_MODEL で指定する
+windows\build\iroha-cli\iroha-cli.exe model-parity <macOS版の出力.jsonl>
+# 採点が生成と辻褄が合うかを確かめる（macOS版の出力は使わない。入力は同じ形式の JSONL）
+windows\build\iroha-cli\iroha-cli.exe model-selfcheck <同じ形式.jsonl> --limit 40
+# 2条件での評価（モデルのみ / 辞書ラティス + モデルの再採点）
+$env:IROHA_LATTICE = "off";    windows\build\iroha-cli\iroha-cli.exe ajimee testdata\ajimee\evaluation_items.json
+$env:IROHA_LATTICE = "always"; windows\build\iroha-cli\iroha-cli.exe ajimee testdata\ajimee\evaluation_items.json
+```
+
+- **候補の採点は1つずつ行う（macOS版と違う）。**macOS版はプロンプトのKVキャッシュを候補ごとの系列へ複製し、
+  全候補を1バッチで採点する。llama.cppのCPU版は、1バッチに載せるトークン数（64以上で別の計算経路）や
+  キャッシュ上の位置で値が変わり、同じ候補でも対数確率が 0.1〜0.9 動く（2026-11-13 実測。同じ候補を2つ並べると
+  2つが違う値になる。候補どうしが見えているわけではなく、並べる候補の長さだけで変わる）。Windows版は
+  プロンプトを1回だけ評価してその直後のlogitsを取っておき、候補ごとにKVキャッシュをプロンプトだけの状態に
+  戻して続きに並べる。これで生成と同じ経路になり、生成した文の採点が生成のときの対数確率と一致する
+  （`model-selfcheck` が差 0.00000）。同じプロンプトでの n-best の分岐・変換のあとの採点も、プロンプトを評価し直さない
+- 確認（2026-11-13、このWindows機のCPU・4スレッド）:
+
+  | モデル | 評価 | 結果 | macOS版の記録 |
+  |---|---|---|---|
+  | zenz-v3.1-small | macOS版の出力との照合（AJIMEE 200件） | 生成の一致 196/200、最良の候補の一致 198/200 | — |
+  | zenz-v3.1-small | AJIMEE モデルのみ / ラティス再採点 | 169 (84.5%) / 169 (84.5%) | 171 (85.5%) / 169 (84.5%) |
+  | zenz-v3.1-small | eval.tsv 40件 | 36 (90.0%)、89ms | 36 (90.0%) |
+  | iroha-kkc-v1 | AJIMEE モデルのみ / ラティス再採点 | 171 (85.5%) / 171 (85.5%)、221ms / 386ms | （手元に記録なし） |
+  | iroha-kkc-v1 | eval.tsv 40件 | 38 (95.0%)、85ms | （手元に記録なし） |
+
+  macOS版（Metal）とは計算機が違うので、採点の値は 2% ほどずれる（順位はほぼ同じ）
+- 既定のモデルは `iroha-core` の `config.h`（`kDefaultModelFileName`）。未取得で以前の既定（zenz-v3.1-small）が
+  あればそれを使う。差し替えるときは `fetch-model.ps1`・`iroha-settings` のモデル一覧と、macOS版の
+  `ModelDownloader.swift`・`fetch-model.sh` を合わせる
+- 変換サーバは「学習 → ユーザ辞書 → 辞書ラティスの候補をモデルで再採点（`LatticeRescoringEngine`）→ モデル」の順に重ねる。
+  候補を複数求められたとき（候補ウィンドウ）だけ辞書ラティスを使い、全体の変換（候補1つ）はモデルの生成に任せる。
+  辞書は実行ファイルと同じフォルダの `Dictionary`（`install-tip.ps1`・配布zipの `install.ps1` がコピーする）。
+  学習・ユーザ辞書は v0.5 時点の仕様のまま（macOS版の今の仕様への追随は未実装）。長い読みの分割・異体字も未移植
+- 候補ウィンドウは9件ずつのページで出す（数字キーはページの中の番号。右下に「2/7」）
+
 インストール後、設定 > 時刻と言語 > 言語と地域 > 日本語 > キーボード に
 「iroha」が現れ、Win+Space で切り替えられる（出ない場合はサインアウト）。
 
@@ -123,8 +169,11 @@ windows\build\iroha-cli\iroha-cli.exe lattice-parity <macOS版の出力.jsonl> -
 - [x] M6a: 設定ウィンドウ（iroha-settings.exe: モデル選択・ダウンロード・切替、
       ユーザ辞書の一覧/追加/削除、学習リセット。あ/Aボタン右クリックで起動。
       config.json + IPCのReloadでサーバへ即時反映）と配布用バンドル（make-bundle.ps1）
-- [x] M7a: 辞書ラティスのC++移植（`iroha-core/src/lattice/`。macOS版の候補の並びと一致を確認。
-      サーバ・候補ウィンドウへの組み込みと、モデルでの再採点［LatticeRescoringEngine］は未実装）
+- [x] M7a: 辞書ラティスのC++移植（`iroha-core/src/lattice/`。macOS版の候補の並びと一致を確認）
+- [x] M7b: モデルの採点・T5（iroha-kkc-v1）対応と、辞書ラティスの候補の再採点（`LatticeRescoringEngine`）。
+      変換サーバに組み込み、既定のモデルを iroha-kkc-v1 に変更。候補ウィンドウのページ送り
+- [ ] M7c: 学習・ユーザ辞書を macOS版の今の仕様に合わせる（直す前の結果つきの学習、ユーザ辞書の語の境目）、
+      長い読みの分割（ChunkedConversionEngine）、異体字（VariantKanjiEngine）、記号・絵文字の候補、専門辞書
 - [ ] M5b: UIlessモード（ITfCandidateListUIElement。タスクバー検索ボックス等）
 - [ ] M6b: 製品化の残り（インストーラ/署名、release.ymlの両OS対応、UIA対応、
       ライブ変換［エンジン準備済み・TIP非同期化が未実装］）

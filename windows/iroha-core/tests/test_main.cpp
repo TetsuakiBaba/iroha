@@ -202,6 +202,33 @@ void TestAllowsLooseKatakanaAndAlphabet() {
     EXPECT_TRUE(Accepts(U"にせんにじゅうごねん", U"2025年"));
 }
 
+// 空白は読みになければ消費なしで通す（SentencePiece語彙の語頭マーカー「▁」がスペースになって出る）
+void TestAllowsWordBoundarySpaces() {
+    EXPECT_TRUE(Accepts(U"ぐるーぷにわかれて", U" グループに分かれて"));
+    EXPECT_TRUE(Accepts(U"ぐるーぷにわかれて", U" グループに 分かれて"));
+    EXPECT_TRUE(Accepts(U"ぐるーぷにわかれて", U"▁グループに分かれて"));
+    // 読みに空白があればその位置で消費できる
+    EXPECT_TRUE(Accepts(U"こんにちは せかい", U"こんにちは 世界"));
+    // 空白を通しても他の制約は緩まない
+    EXPECT_TRUE(!Accepts(U"ぐるーぷにわかれて", U" グループに。分かれて"));
+}
+
+// 読みにラテン文字がないとき、出力の英字を禁じる設定
+void TestRestrictsLatinToReading() {
+    const auto acceptsStrict = [](const std::u32string& reading, const std::u32string& output) {
+        const auto constraint = iroha::ReadingConstraint::Create(reading, true);
+        if (!constraint) return true;
+        const uint64_t mask = constraint->Advance(constraint->InitialMask(), output);
+        return mask != 0 && constraint->IsComplete(mask);
+    };
+    EXPECT_TRUE(!acceptsStrict(U"グループニワカレテ", U"groupに分かれて"));
+    EXPECT_TRUE(acceptsStrict(U"グループニワカレテ", U"グループに分かれて"));
+    EXPECT_TRUE(!acceptsStrict(U"わうわうをみる", U"WOWOWを見る")); // 代償として弾かれる
+    EXPECT_TRUE(acceptsStrict(U"USBめもり", U"USBメモリ"));        // 読みに英字があれば許す
+    EXPECT_TRUE(acceptsStrict(U"にせんにじゅうごねん", U"2025年")); // 数字は対象外
+    EXPECT_TRUE(Accepts(U"わうわうをみる", U"WOWOWを見る"));        // 既定は従来どおり
+}
+
 // 追跡できない読み（長すぎる・空）では制約をかけない
 void TestNoConstraintForUntrackableReading() {
     EXPECT_TRUE(!iroha::ReadingConstraint::Create(U"").has_value());
@@ -331,6 +358,8 @@ int main() {
     TestRejectsMismatchedKana();
     TestRejectsIncompleteConsumption();
     TestAllowsLooseKatakanaAndAlphabet();
+    TestAllowsWordBoundarySpaces();
+    TestRestrictsLatinToReading();
     TestNoConstraintForUntrackableReading();
     TestSpanClassification();
 

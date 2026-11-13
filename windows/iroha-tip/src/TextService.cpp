@@ -524,6 +524,8 @@ HRESULT TextService::CycleCandidate(ITfContext* context, int delta) {
 HRESULT TextService::SelectCandidateIndex(ITfContext* context, size_t index) {
     if (!segmented_ || segments_.empty() || !candidateListOpen_) return S_OK;
     ConversionSegment& segment = segments_[currentSegment_];
+    // 数字キーの番号は、表示中のページの中の位置
+    index += segment.candidateIndex / CandidateWindow::kPageSize * CandidateWindow::kPageSize;
     if (index >= segment.candidates.size()) return S_OK;
     segment.candidateIndex = index;
     segment.result = segment.candidates[index];

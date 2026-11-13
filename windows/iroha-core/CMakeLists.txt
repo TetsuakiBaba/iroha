@@ -9,6 +9,7 @@ add_library(iroha-core STATIC
     src/json.cpp
     src/kana.cpp
     src/lattice_converter.cpp
+    src/lattice_rescoring_engine.cpp
     src/lattice/dicdata.cpp
     src/lattice/dicdata_store.cpp
     src/lattice/kana_kanji_converter.cpp

@@ -530,7 +530,13 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   **移植が正しいかの判定は `iroha-cli lattice-parity <macOS版の lattice-dump の出力>`**（候補の並びまで一致するか。
   AJIMEE 200件で一致を確認済み）。macOS側でAzooKeyKanaKanjiConverterの版や `LatticeConverter.swift` の
   呼び出し方（オプション・特別な候補）を変えたら、Windows側も合わせて `lattice-parity` を回す。
-  専門辞書をラティスに読ませる部分・サーバへの組み込み・モデルでの再採点は未移植（`windows/README.md`）
+  専門辞書をラティスに読ませる部分は未移植（`windows/README.md`）
+- Windows版の `ZenzEngine`（`windows/iroha-core/src/zenz_engine.cpp`）は `ZenzEngine.swift` を移したもので、
+  T5（既定の iroha-kkc-v1）と候補の採点に対応している（2026-11-13）。macOS側でプロンプト・読み制約・終端・n-best・
+  採点の規則を変えたら Windows側も合わせ、`iroha-cli model-parity`（macOS版の ajimee-dump の出力との照合）と
+  `iroha-cli model-selfcheck`（生成と採点の辻褄）を回す。**採点は macOS版と違い候補を1つずつ行う**
+  （llama.cppのCPU版は1バッチに載せるトークン数で値が動くため。理由と実測は `windows/README.md` の「変換モデル」節）。
+  変換サーバのエンジンの重ね方・未移植のもの（学習とユーザ辞書の新仕様・長い読みの分割・異体字など）も同じ節にある
 - 変換エンジンは選択肢が2つ: `macos/Sources/IrohaCore/` をSwift for Windowsで共有
   （Foundation + llama.cppのみ依存で移植可能な設計）、または別言語で再実装。
   **方針は未決定。実装前にユーザーに確認する**
