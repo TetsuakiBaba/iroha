@@ -1,4 +1,5 @@
-# iroha-settings: 設定ウィンドウ（モデル選択・ユーザ辞書編集・専門辞書の追加と削除・学習リセット）。
+# iroha-settings: 設定ウィンドウ（モデル選択・入力の設定・ユーザ辞書編集・専門辞書の追加と削除・変換ルール・
+# 学習・入力履歴・変換記録）。
 # macOS版の設定ウィンドウに相当。変更はconfig.json/辞書JSONへ保存し、
 # 変換サーバへReloadを送って即時反映する。
 cmake_minimum_required(VERSION 3.21)
@@ -6,7 +7,7 @@ project(iroha-settings LANGUAGES CXX)
 
 add_executable(iroha-settings WIN32 main.cpp ../shared/term_dictionary_fetcher.cpp)
 target_link_libraries(iroha-settings PRIVATE
-    iroha-core comctl32 urlmon wininet bcrypt ole32 shell32 user32 gdi32 advapi32)
+    iroha-core comctl32 uxtheme urlmon wininet bcrypt ole32 shell32 user32 gdi32 advapi32)
 target_include_directories(iroha-settings PRIVATE ../shared)
 target_compile_features(iroha-settings PRIVATE cxx_std_17)
 if(MSVC)

@@ -176,7 +176,7 @@ TIP はアプリのプロセスの中で動くので、判断と状態を置か�
   直前に確定した文字列を使う
 - 通信（`shared/ipc_protocol.h`）は、メッセージの種類を足すだけにして版を変えていない。アプリに読み込まれたままの
   古い TIP は、新しい変換サーバとも Convert / Record で動く
-- ライブ変換は `config.json` の `"liveConversion": false` で止められる（設定画面にはまだ無い）
+- ライブ変換は設定画面の「入力」タブ（`config.json` の `"liveConversion"`）で止められる
 
 ```powershell
 # 変換サーバのセッションにキーを順に送り、TIP が画面に出す内容を見る（インストールせずに確かめられる）。
@@ -208,11 +208,31 @@ windows\build\iroha-cli\iroha-cli.exe session --interval 120 "kyouhaiitenkidesun
 - Ctrl+. で句読点（、。⇄，．）を切り替える（`config.json` の `punctuation` に保存する）。入力していないときの Space は
   全角（`"fullWidthSpace": false` で半角）。合成中の矢印は握りつぶし、IME が扱わないキー（Tab・Ctrl+S など）は
   確定してからアプリに渡す（**TSF で OnKeyDown が「食わない」と返したキーがアプリに届くことは、実機で確かめる**）
-- 候補の数は `config.json` の `candidateCount`（既定 8。macOS版と同じ）
+- 候補の数は設定画面の「入力」タブ（`config.json` の `candidateCount`、既定 8。macOS版と同じ）
 
-未対応（macOS版にあるもの）: 区切り記号で囲んだ英字入力・候補ウィンドウを表に広げる（Tab）・予測変換・
+未対応（macOS版にあるもの）: 区切り記号で囲んだ英字入力・候補ウィンドウを表に広げる（Tab）・
 打ち間違いの訂正・AI の機能・「こえ」モード。
 変換サーバが止まっている間は、かな入力もできない（キーを受けても表示を決められない）
+
+## 予測変換・変換ルール・プライベートモード・変換記録
+
+macOS版の同じ機能を移した（2026-11-13）。ファイルの形式は macOS版と同じで、設定画面の「入力」「変換ルール」
+「学習・記録」タブから切り替え・編集する（変更は Reload で変換サーバにすぐ効く）。
+
+- 予測変換（既定 OFF）: 入力履歴（`%LOCALAPPDATA%\iroha\input-history\<コンピュータ名>.json`、`InputHistoryStore`）から、
+  読みの先頭が一致する語を、読みが 2 文字以上のときにカーソルの下の小窓に出す。Tab・↓ で選び、選んだまま打つと
+  その語が入って続きになる。Backspace・Esc で打っていた読みに戻す。入力履歴は予測変換が ON の間だけ記録する
+- 変換ルール（`user-rewrite-rules.json`、`UserRewriteRule`）: 読みが一致したら、出力のテンプレート（`{{date}}`・
+  `{{date+1}}`・`{{time:HH:mm}}`・`{{wareki}}` など）を展開して文節の候補の 2 番目に足す。初めて読むときに既定のルール
+  （きょう・あした・いま など）を入れる。ルールの出力を選んだ確定は学習しない
+- プライベートモード（Ctrl+Alt+P・設定画面）: 学習・入力履歴・予測変換・変換記録・ユーザ辞書を止める。
+  切り替えたらカーソルの近くに知らせを出し、言語バーの「あ/A」に下線を引く。モード中に確定した文字列は、
+  モードを切ったあとの左文脈に使わない
+- 変換記録（既定 OFF、`conversion_log`）: 確定を `logs\conversions\conversions-<コンピュータ名>-YYYY-MM.jsonl` に
+  1 行ずつ残す（追加学習用のデータ。項目と並びは macOS版の `ConversionLog` と同じ）。左文脈のない確定・読みを
+  そのまま確定した 1 文字・打ち直した文節や学習しない候補を含む確定は残さない。「直した確定だけ」も選べる。
+  確定の取り消し（Ctrl+Backspace）で取り消した確定は残さない（取り消せなくなったときに書く）
+- 設定画面を特定のタブで開く: `iroha-settings.exe --tab input|rules|learning`（ほかに model / dictionary / terms）
 
 ## 記号・顔文字・絵文字の候補
 
@@ -318,6 +338,8 @@ windows\build\iroha-cli\iroha-cli.exe lattice goenseihaien
       TIP はキーを送って表示を反映するだけ）
 - [x] M7e-1: 記号・顔文字・絵文字の候補（Mozc のデータ、Windows で描けない絵文字を除く、候補ウィンドウを Direct2D で描く）
 - [x] M7e-2: 専門辞書（設定画面のタブ・辞書ラティスへの組み込み・候補の辞書名の印）
+- [x] M7g: macOS版のキーの扱い（表示形・英字入力・文節の打ち直し・確定の取り消し・句読点の切り替え）、
+      予測変換・変換ルール・プライベートモード・変換記録と、設定画面の「入力」「変換ルール」「学習・記録」タブ
 - [ ] M5b: UIlessモード（ITfCandidateListUIElement。タスクバー検索ボックス等）
 - [ ] M6b: 製品化の残り（インストーラ/署名、release.ymlの両OS対応、UIA対応）
 

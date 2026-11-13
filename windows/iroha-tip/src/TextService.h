@@ -59,6 +59,8 @@ public:
 
     // 通知領域のモードボタンから呼ばれる
     bool IsDirectMode() const { return directMode_; }
+    // プライベートモードか（言語バーのアイコンに印を付ける）
+    bool IsPrivateMode() const { return privateMode_; }
     void OnModeButtonClicked();
 
 private:
@@ -102,6 +104,11 @@ private:
     HRESULT ApplyOutputInSession(TfEditCookie ec, ITfContext* context,
                                  const iroha::SessionOutput& output);
     HRESULT UpdateCandidateWindow(ITfContext* context);
+    // 予測変換の候補・知らせを、未確定文字列（無ければカーソル）の下に出す
+    HRESULT UpdatePredictionWindow(ITfContext* context);
+    void ShowNotice(ITfContext* context, const std::u32string& text);
+    // 未確定文字列（無ければカーソル）のスクリーン座標と、窓の持ち主
+    bool CompositionRect(ITfContext* context, RECT* rect, HWND* owner);
     // カーソルより前の文書のテキストを読む（左文脈。読めなければ偽）
     bool ReadLeftContext(ITfContext* context, std::u32string* text);
     // 手元の表示の控えを捨てる（合成が終わった）
@@ -112,7 +119,9 @@ private:
     void StopPolling();
     void OnPollTimer();
     void DestroyPollWindow();
+    bool EnsurePollWindow();
     static void CALLBACK PollTimerProc(HWND hwnd, UINT message, UINT_PTR id, DWORD time);
+    static void CALLBACK NoticeTimerProc(HWND hwnd, UINT message, UINT_PTR id, DWORD time);
 
     // コンポジション操作（Composition.cpp）
     HRESULT EnsureComposition(TfEditCookie ec, ITfContext* context);
@@ -144,6 +153,10 @@ private:
     // 取り消せる確定（Ctrl+Backspace を受けるか）と、Space を全角にするか
     std::u32string idleUndoable_;
     bool idleFullWidthSpace_ = true;
+    bool privateMode_ = false;
+    // 予測変換の候補の小窓と、知らせの小窓
+    CandidateWindow predictionWindow_;
+    CandidateWindow noticeWindow_;
     // 確定の取り消しで、未確定文字列に置き換えるカーソルの手前の長さ（UTF-16）
     LONG replaceBeforeLength_ = 0;
 

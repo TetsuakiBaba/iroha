@@ -96,7 +96,18 @@ std::vector<std::u32string> InputSession::AlphabetCandidates(const std::u32strin
 SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shift,
                                    const std::u32string* leftContext) {
     replacesCommitted_ = false;
-    if (leftContext && !IsComposing()) state_.context = NormalizeLeftContext(*leftContext);
+    notice_.clear();
+    if (!IsComposing()) {
+        state_.contextFromDocument = leftContext != nullptr;
+        if (leftContext) {
+            state_.context = NormalizeLeftContext(*leftContext);
+            state_.contextHasPrivateText = false;
+        } else if (state_.contextHasPrivateText && !settings_.privateMode) {
+            // プライベートモード中に確定した文字列を、モードを切ったあとの左文脈に残さない
+            state_.context.clear();
+            state_.contextHasPrivateText = false;
+        }
+    }
 
     std::u32string commit;
     if (key == SessionKey::UndoCommit) {
@@ -104,6 +115,12 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
     } else {
         // 確定を取り消せるのは確定した直後だけ。ほかのキーが来たら取り消せなくする（持っていた記録をここで書く）
         CloseCommitUndo();
+        // 予測変換の小窓: Tab で候補を選ぶ。選んだまま他のキーを押すと、その候補を入れてからキーを処理する
+        if (prediction_ && state_.mode == Mode::Composing && HandlePredictionKey(key, shift)) {
+            ++revision_;
+            SessionOutput output = Current();
+            return output;
+        }
         switch (key) {
         case SessionKey::Reset:
             ResetState();
@@ -111,13 +128,30 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
         case SessionKey::CommitNow:
             if (IsComposing()) {
                 ForgetRejectedLearnings();
-                if (const auto text = ResolveCommitText()) CommitText(*text, &commit);
+                if (const auto text = ResolveCommitText()) {
+                    if (state_.mode == Mode::Segmenting) {
+                        RecordInputHistory(std::nullopt);
+                    } else {
+                        const std::u32string prefix = FixedText();
+                        RecordInputHistory(!state_.alphabetRun && text->compare(0, prefix.size(), prefix) == 0
+                                               ? std::optional<std::u32string>(text->substr(prefix.size()))
+                                               : std::nullopt);
+                    }
+                    CommitText(*text, &commit);
+                }
             }
             break;
         case SessionKey::TogglePunctuation:
             settings_.punctuation = settings_.punctuation == U"、。" ? U"，．" : U"、。";
             host_->PunctuationChanged(settings_.punctuation);
             if (!IsComposing()) state_.composer = MakeComposer();
+            notice_ = U"句読点: " + settings_.punctuation;
+            break;
+        case SessionKey::TogglePrivateMode:
+            settings_.privateMode = !settings_.privateMode;
+            host_->PrivateModeChanged(settings_.privateMode);
+            notice_ = settings_.privateMode ? U"プライベートモード: オン（学習・入力履歴・予測・ユーザ辞書を止めます）"
+                                            : U"プライベートモード: オフ";
             break;
         default:
             if (state_.mode == Mode::Segmenting) {
@@ -128,11 +162,110 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
             break;
         }
     }
+    // キーの処理で読み・状態が変わったら予測の候補を引き直す（変わっていなければ選択はそのまま）
+    RefreshPrediction();
     ++revision_;
     SessionOutput output = Current();
     output.commit = std::move(commit);
     output.replacesCommitted = replacesCommitted_;
     return output;
+}
+
+// ---- 予測変換（入力履歴） ----
+
+// 入力履歴から、いまの読みの先頭が一致する語を引く（候補が無ければ閉じる）。
+// 読みが前回と同じなら引き直さず、Tab の選択もそのまま残す。英字入力中・表示形の指定中は出さない
+void InputSession::RefreshPrediction() {
+    const State& s = state_;
+    if (!PredictionActive() || s.mode != Mode::Composing || s.alphabetRun || s.displayOverride) {
+        prediction_.reset();
+        return;
+    }
+    const std::u32string& reading = s.composer.Text();
+    if (prediction_ && prediction_->reading == reading) return;
+    // 候補を出し始める読みの文字数（1文字では候補が多すぎて当たらない。macOS版と同じ 2）
+    std::vector<InputHistoryEntry> candidates;
+    if (reading.size() >= 2) candidates = host_->PredictionCandidates(reading);
+    if (candidates.empty()) {
+        prediction_.reset();
+        return;
+    }
+    prediction_ = Prediction{reading, std::move(candidates), std::nullopt};
+}
+
+bool InputSession::HandlePredictionKey(SessionKey key, bool shift) {
+    Prediction& prediction = *prediction_;
+    int step = 0;
+    if ((key == SessionKey::Tab && !shift) || (key == SessionKey::Down && !shift)) step = 1;
+    if ((key == SessionKey::Tab && shift) || (key == SessionKey::Up && !shift)) step = -1;
+    if (step != 0) {
+        const size_t count = prediction.candidates.size();
+        if (prediction.selected) {
+            prediction.selected = (*prediction.selected + (step > 0 ? 1 : count - 1)) % count;
+        } else {
+            prediction.selected = step > 0 ? 0 : count - 1;
+        }
+        return true;
+    }
+    if (!prediction.selected) return key == SessionKey::Tab; // 選んでいない Tab は何もしない
+    if (key == SessionKey::Escape || key == SessionKey::Backspace) {
+        prediction.selected.reset();
+        return true;
+    }
+    ApplyPrediction(prediction.candidates[*prediction.selected]);
+    return false;
+}
+
+// 候補を未確定文字列に入れる（確定はしない）。打っていた読みを候補の読み・表記に置き換え、
+// 以降この部分はライブ変換にかけ直さない。Backspace・Esc で打っていた読みに戻せる
+void InputSession::ApplyPrediction(InputHistoryEntry entry) {
+    State& s = state_;
+    prediction_.reset();
+    FixedChunk chunk;
+    chunk.reading = entry.reading;
+    chunk.text = entry.text;
+    chunk.kind = FixedChunk::Kind::Prediction;
+    chunk.typedReading = s.composer.Text();
+    s.fixedChunks.push_back(std::move(chunk));
+    s.composer = MakeComposer();
+    s.lastConversion.reset();
+    s.showsKanaOnly = false;
+    CancelLiveConversion();
+}
+
+// 直前に入れた予測の候補を取り消し、候補を入れる前に打っていた読みに戻す
+void InputSession::UndoLastPrediction() {
+    State& s = state_;
+    if (s.fixedChunks.empty() || s.fixedChunks.back().kind != FixedChunk::Kind::Prediction) return;
+    const FixedChunk last = s.fixedChunks.back();
+    s.fixedChunks.pop_back();
+    s.composer.PrependText(last.typedReading.empty() ? last.reading : last.typedReading);
+    s.showsKanaOnly = false;
+    ComposerDidChange();
+}
+
+// 確定する内容を入力履歴に記録する（予測変換が ON でプライベートモードでないときだけ。取り消せなくなったときに書く）。
+// ローマ字で打った部分だけを対象にし、Shift+英字の部分・学習しない候補を選んだ文節は残さない。
+// composerText は、入力中の読み（Flush 済みの composer.Text()）を確定する表記。文節変換中は使わない
+void InputSession::RecordInputHistory(const std::optional<std::u32string>& composerText) {
+    if (!PredictionActive()) return;
+    const State& s = state_;
+    std::vector<std::pair<std::u32string, std::u32string>> pieces;
+    if (s.mode == Mode::Segmenting) {
+        for (const Segment& segment : s.segments) {
+            if (segment.unlearnable.count(segment.result) == 0) pieces.push_back({segment.reading, segment.result});
+        }
+    } else {
+        for (const FixedChunk& chunk : s.fixedChunks) {
+            if (chunk.kind != FixedChunk::Kind::Alphabet) pieces.push_back({chunk.reading, chunk.text});
+        }
+        if (composerText && !s.composer.Text().empty()) pieces.push_back({s.composer.Text(), *composerText});
+    }
+    if (pieces.empty()) return;
+    Host* host = host_;
+    pendingEffects_.push_back([host, pieces] {
+        for (const auto& piece : pieces) host->RecordInputHistory(piece.first, piece.second);
+    });
 }
 
 // ---- 入力・ライブ変換中 ----
@@ -155,10 +288,23 @@ void InputSession::HandleComposing(SessionKey key, char32_t character, bool shif
     case SessionKey::Enter:
         if (!StateComposing()) break;
         ForgetRejectedLearnings();
-        if (const auto text = ResolveCommitText()) CommitText(*text, commit);
+        if (const auto text = ResolveCommitText()) {
+            const std::u32string prefix = FixedText();
+            RecordInputHistory(!s.alphabetRun && text->compare(0, prefix.size(), prefix) == 0
+                                   ? std::optional<std::u32string>(text->substr(prefix.size()))
+                                   : std::nullopt);
+            CommitText(*text, commit);
+        }
         break;
     case SessionKey::Backspace:
         if (!StateComposing()) break;
+        if (!s.alphabetRun && s.composer.Empty() && !s.fixedChunks.empty() &&
+            s.fixedChunks.back().kind == FixedChunk::Kind::Prediction) {
+            // 入れた予測の候補に戻ってきた: 1文字ずつは消さず、候補を入れる前に打っていた読みに戻す
+            s.displayOverride.reset();
+            UndoLastPrediction();
+            break;
+        }
         if (!s.alphabetRun && s.composer.Empty() && !s.fixedChunks.empty() &&
             s.fixedChunks.back().kind == FixedChunk::Kind::Alphabet) {
             // 直前の英字部分に戻ってきた: 英字入力として開き直してから1文字消す
@@ -197,6 +343,10 @@ void InputSession::HandleComposing(SessionKey key, char32_t character, bool shif
             s.displayOverride.reset();
             s.displayOverrideRejected.reset();
             s.showsKanaOnly = true;
+        } else if (s.composer.Empty() && !s.fixedChunks.empty() &&
+                   s.fixedChunks.back().kind == FixedChunk::Kind::Prediction) {
+            // 入れた予測の候補を取り消す（Backspace と同じ。入力全体を消してしまわないように）
+            UndoLastPrediction();
         } else if (UnlockFixedChunks() || (s.lastConversion && !s.showsKanaOnly)) {
             // 1回目のEsc: 固定した部分をかなに戻し、変換をやめてかな表示にする
             // （英字の固定部分はかなに戻せないのでそのまま残る）
@@ -368,13 +518,28 @@ std::optional<std::u32string> InputSession::ResolveCommitText() {
     if (!StateComposing()) return std::nullopt;
     const std::u32string prefix = FixedText();
     if (s.alphabetRun) return prefix + s.composer.Display() + *s.alphabetRun;
-    if (s.displayOverride) return prefix + *s.displayOverride;
+    if (s.displayOverride) {
+        // 表示形の指定で Flush 済みなので composer.Text() がこの部分の読み。
+        // ライブ変換が同じ読みを変換していれば、それを退けて表示形を選んだ記録になる
+        const std::u32string& reading = s.composer.Text();
+        LogConversion(ConversionLogEntry::Mode::FunctionKey, s.context + prefix, reading,
+                      s.lastConversion && s.lastConversion->first == reading
+                          ? std::optional<std::u32string>(s.lastConversion->second)
+                          : std::nullopt,
+                      *s.displayOverride);
+        return prefix + *s.displayOverride;
+    }
     const std::u32string readingBeforeFlush = s.composer.Text();
     s.composer.Flush();
     const std::u32string flushedSuffix = s.composer.Text().substr(readingBeforeFlush.size());
     if (s.lastConversion && !s.showsKanaOnly) {
         const std::u32string& reading = s.lastConversion->first;
-        if (reading == readingBeforeFlush) return prefix + s.lastConversion->second + flushedSuffix;
+        if (reading == readingBeforeFlush) {
+            // ライブ変換の表示をそのまま確定（修正なしの例）。Flush で増えたかなは読みにも結果にも付く
+            const std::u32string text = s.lastConversion->second + flushedSuffix;
+            LogConversion(ConversionLogEntry::Mode::Live, s.context + prefix, s.composer.Text(), text, text);
+            return prefix + text;
+        }
         if (StartsWith(readingBeforeFlush, reading)) {
             // 変換が追いつく前の確定: 表示と同じく「変換済み接頭辞 + 追加のかな」を確定する
             return prefix + s.lastConversion->second + readingBeforeFlush.substr(reading.size()) +
@@ -432,6 +597,7 @@ std::optional<InputSession::RejectedLearning> InputSession::RejectedLearningFor(
 
 // 表示形の指定で退けた学習を消す（確定するときに呼ぶ。取り消せなくなったときに行う）
 void InputSession::ForgetRejectedLearnings() {
+    if (settings_.privateMode) return;
     std::vector<RejectedLearning> rejected;
     for (const FixedChunk& chunk : state_.fixedChunks) {
         if (chunk.rejectedLearning) rejected.push_back(*chunk.rejectedLearning);
@@ -476,13 +642,15 @@ void InputSession::UnlockLastFixedChunk() {
     state_.composer.PrependText(last.reading);
 }
 
-// 固定部分を読みに戻して composer へ返す。英字の固定部分はかなに戻せないので、
-// 最後の英字部分より後ろだけを戻す。戻したものがあれば真
+// 固定部分を読みに戻して composer へ返す。英字の固定部分はかなに戻せない（読みに英字が混ざると
+// エンジンの読み制約が崩れる）し、入れた予測の候補は打った読みと違う読みなので、
+// 最後の英字・予測部分より後ろだけを戻す。戻したものがあれば真
 bool InputSession::UnlockFixedChunks() {
     auto& chunks = state_.fixedChunks;
     size_t start = 0;
     for (size_t i = chunks.size(); i > 0; --i) {
-        if (chunks[i - 1].kind == FixedChunk::Kind::Alphabet) {
+        if (chunks[i - 1].kind == FixedChunk::Kind::Alphabet ||
+            chunks[i - 1].kind == FixedChunk::Kind::Prediction) {
             start = i;
             break;
         }
@@ -762,14 +930,52 @@ void InputSession::CommitSegments(std::u32string* commit) {
     const std::u32string text = JoinedResults();
     ForgetRejectedLearnings();
     LearnIfCorrected(text);
+    LogSegmentsCommit(text);
+    RecordInputHistory(std::nullopt);
     CommitText(text.empty() ? KanaDisplay() : text, commit);
+}
+
+// 文節変換での確定を変換記録に書く。学習と同じく、打ち直した文節や学習しない候補（変換ルールの出力・
+// 候補ウィンドウ専用の語・記号）を含む確定は残さない（毎回変わる日付や、読みと対応しない語は学習例にならない）
+void InputSession::LogSegmentsCommit(const std::u32string& committed) {
+    const State& s = state_;
+    if (s.segmentsRetyped || s.segments.empty() || committed.empty()) return;
+    std::u32string reading;
+    std::vector<ConversionLogEntry::Segment> segments;
+    for (const Segment& segment : s.segments) {
+        if (segment.unlearnable.count(segment.result) != 0) return;
+        reading += segment.reading;
+        segments.push_back({segment.reading, segment.result});
+    }
+    LogConversion(ConversionLogEntry::Mode::Segments, s.context, reading, s.segmentBaseline, committed,
+                  std::move(segments));
+}
+
+// 確定1件を変換記録に書く（設定が OFF・プライベートモードなら何もしない。取り消せなくなったときに書く）。
+// context はエンジンに渡した左文脈（文書側の文脈 + 未確定文字列の固定部分）、committed は確定した文字列（固定部分を除く）
+void InputSession::LogConversion(ConversionLogEntry::Mode mode, const std::u32string& context,
+                                 const std::u32string& reading, const std::optional<std::u32string>& proposed,
+                                 const std::u32string& committed,
+                                 std::optional<std::vector<ConversionLogEntry::Segment>> segments) {
+    if (!settings_.conversionLog || settings_.privateMode || reading.empty() || committed.empty()) return;
+    // プライベートモード中に確定した文字列が左文脈に入っている
+    if (state_.contextHasPrivateText) return;
+    const auto source = state_.contextFromDocument ? ConversionLogEntry::ContextSource::Document
+                        : state_.context.empty()   ? ConversionLogEntry::ContextSource::None
+                                                   : ConversionLogEntry::ContextSource::Committed;
+    ConversionLogEntry entry =
+        ConversionLogEntry::Make(mode, context, source, reading, proposed, committed, std::move(segments));
+    // 左文脈のない確定・読みをそのままの1文字は記録しない。「直した確定だけ」なら、そのまま確定したものも残さない
+    if (!ShouldRecordConversion(entry, settings_.conversionLogScope)) return;
+    Host* host = host_;
+    pendingEffects_.push_back([host, entry] { host->RecordConversion(entry); });
 }
 
 // 文節変換の結果がエンジンの出力と違っていたら、ユーザによる修正として学習する（macOS版 learnIfCorrected）。
 // 記号・顔文字・絵文字を選んだ文節を含む確定と、打ち直した文節を含む確定は学習しない
 void InputSession::LearnIfCorrected(const std::u32string& committed) {
     const State& s = state_;
-    if (s.segmentsRetyped || s.segments.empty() || committed.empty() || !s.segmentBaseline ||
+    if (settings_.privateMode || s.segmentsRetyped || s.segments.empty() || committed.empty() || !s.segmentBaseline ||
         committed == *s.segmentBaseline) {
         return;
     }
@@ -788,7 +994,7 @@ void InputSession::LearnIfCorrected(const std::u32string& committed) {
 
 // 文節の候補は「選択中の文節の読み + 左側の変換結果を文脈」で求める。
 // 並びは macOS版（IrohaInputController の候補ウィンドウを開く処理）と同じ:
-// 今の表示 → エンジンの候補（絵文字は 7 番目に合流）→ 顔文字・記号 → ひらがな・カタカナ
+// 今の表示 → 変換ルールの出力 → エンジンの候補（絵文字は 7 番目に合流）→ 顔文字・記号 → ひらがな・カタカナ
 bool InputSession::EnsureSegmentCandidates(size_t index) {
     State& s = state_;
     if (index >= s.segments.size()) return false;
@@ -808,18 +1014,37 @@ bool InputSession::EnsureSegmentCandidates(size_t index) {
                          candidates.end());
         candidates.insert(candidates.begin(), segment.result);
     }
-    // 記号・顔文字・絵文字（Mozc のデータ）。今の表示は動かさない
+    // ユーザ定義の変換ルール（日付など）の出力を、今の表示の直後に置く
+    std::vector<std::u32string> rewrites;
+    if (rewriteRules_) {
+        for (const std::u32string& rewrite : rewriteRules_->Candidates(segment.reading, RewriteContext::Now())) {
+            if (std::find(candidates.begin(), candidates.end(), rewrite) == candidates.end()) {
+                rewrites.push_back(rewrite);
+            }
+        }
+    }
+    candidates.insert(candidates.begin() + static_cast<std::ptrdiff_t>(std::min<size_t>(1, candidates.size())),
+                      rewrites.begin(), rewrites.end());
+    // 記号・顔文字・絵文字（Mozc のデータ）。今の表示と変換ルールの出力は動かさない
     SymbolCandidates symbols;
     if (symbolTable_) symbols = symbolTable_->Candidates(segment.reading);
-    candidates =
-        SymbolCandidateMerger::Merge(candidates, symbols, std::min<size_t>(1, candidates.size()));
+    candidates = SymbolCandidateMerger::Merge(candidates, symbols,
+                                              std::min<size_t>(1 + rewrites.size(), candidates.size()));
     // 定番のフォールバック候補（ひらがな・カタカナ）を末尾に足す
     for (const std::u32string& extra : {segment.reading, HiraganaToKatakana(segment.reading)}) {
         if (std::find(candidates.begin(), candidates.end(), extra) == candidates.end()) {
             candidates.push_back(extra);
         }
     }
+    // 変換ルールの出力（毎回変わる日付など）・ユーザ辞書の候補ウィンドウ専用の語を含む候補・記号は学習しない
+    // （覚えるとライブ変換に戻ってくる）
     segment.unlearnable = SymbolCandidateMerger::UnlearnableCandidates(candidates, symbols);
+    segment.unlearnable.insert(rewrites.begin(), rewrites.end());
+    for (const std::u32string& word : host_->CandidateOnlyWords(segment.reading)) {
+        for (const std::u32string& candidate : candidates) {
+            if (candidate.find(word) != std::u32string::npos) segment.unlearnable.insert(candidate);
+        }
+    }
     // 専門辞書の語（か、その語＋読みの残りのかな）になっている候補に、辞書の名前の印を付ける
     segment.annotations.clear();
     if (termLookup_ && !termLookup_->Empty()) {
@@ -1251,6 +1476,7 @@ void InputSession::CommitText(const std::u32string& text, std::u32string* commit
     ResetState();
     // 次の合成でアプリのテキストを読めなかったときのために、確定した文字列を左文脈に足しておく
     state_.context = NormalizeLeftContext(state_.context + text);
+    if (settings_.privateMode) state_.contextHasPrivateText = true;
     *commit += text;
 }
 
@@ -1279,10 +1505,13 @@ bool InputSession::UndoCommit() {
 // 合成の状態を捨てる（左文脈は残す）
 void InputSession::ResetState() {
     const std::u32string context = state_.context;
+    const bool contextHasPrivateText = state_.contextHasPrivateText;
     CancelLiveConversion();
     state_ = State();
     state_.composer = MakeComposer();
     state_.context = context;
+    state_.contextHasPrivateText = contextHasPrivateText;
+    prediction_.reset();
 }
 
 // ---- 表示 ----
@@ -1293,7 +1522,13 @@ SessionOutput InputSession::Current() const {
     output.revision = revision_;
     output.livePending = livePending_;
     output.fullWidthSpace = settings_.fullWidthSpace;
+    output.privateMode = settings_.privateMode;
+    output.notice = notice_;
     if (commitUndo_) output.undoableCommit = commitUndo_->text;
+    if (prediction_ && s.mode == Mode::Composing) {
+        for (const InputHistoryEntry& entry : prediction_->candidates) output.predictions.push_back(entry.text);
+        output.predictionIndex = prediction_->selected ? static_cast<int32_t>(*prediction_->selected) : -1;
+    }
     if (s.mode == Mode::Segmenting) {
         output.segmenting = true;
         for (size_t i = 0; i < s.segments.size(); ++i) {

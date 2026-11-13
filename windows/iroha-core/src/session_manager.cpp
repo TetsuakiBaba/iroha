@@ -50,6 +50,24 @@ struct SessionManager::Entry : InputSession::Host {
         EngineLock lock(manager);
         manager->backend_->ForgetLearning(reading, engineResult, shown);
     }
+    std::vector<std::u32string> CandidateOnlyWords(const std::u32string& reading) override {
+        return manager->backend_->CandidateOnlyWords(reading);
+    }
+    std::vector<InputHistoryEntry> PredictionCandidates(const std::u32string& prefix) override {
+        return manager->backend_->PredictionCandidates(prefix);
+    }
+    void RecordInputHistory(const std::u32string& reading, const std::u32string& text) override {
+        manager->backend_->RecordInputHistory(reading, text);
+    }
+    void RecordConversion(const ConversionLogEntry& entry) override { manager->backend_->RecordConversion(entry); }
+    // プライベートモードは、ほかのセッションにも効かせて設定に保存する（stateMutex_ を持った状態で呼ばれる）
+    void PrivateModeChanged(bool enabled) override {
+        manager->settings_.privateMode = enabled;
+        for (auto& item : manager->sessions_) {
+            if (item.first != id) item.second->session.SetSettings(manager->settings_);
+        }
+        manager->backend_->PrivateModeChanged(enabled);
+    }
     // 句読点の切り替えは、ほかのセッションにも効かせて設定に保存する（stateMutex_ を持った状態で呼ばれる）
     void PunctuationChanged(const std::u32string& punctuation) override {
         manager->settings_.punctuation = punctuation;
@@ -95,6 +113,7 @@ SessionManager::Entry& SessionManager::EntryFor(uint64_t sessionId) {
         entry->session.SetSettings(settings_);
         entry->session.SetSymbolTable(symbolTable_);
         entry->session.SetTermLookup(termLookup_);
+        entry->session.SetRewriteRules(rewriteRules_);
         found = sessions_.emplace(sessionId, std::move(entry)).first;
     }
     found->second->lastUsed = ++useCounter_;
@@ -156,6 +175,12 @@ void SessionManager::SetTermLookup(std::shared_ptr<const TermDictionaryLookup> l
     std::lock_guard<std::mutex> lock(stateMutex_);
     termLookup_ = std::move(lookup);
     for (auto& item : sessions_) item.second->session.SetTermLookup(termLookup_);
+}
+
+void SessionManager::SetRewriteRules(std::shared_ptr<const UserRewriteRuleSet> rules) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    rewriteRules_ = std::move(rules);
+    for (auto& item : sessions_) item.second->session.SetRewriteRules(rewriteRules_);
 }
 
 size_t SessionManager::SessionCount() {

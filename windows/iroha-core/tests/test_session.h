@@ -81,6 +81,29 @@ public:
 
     void PunctuationChanged(const std::u32string& value) override { punctuation = value; }
 
+    std::vector<std::u32string> CandidateOnlyWords(const std::u32string& reading) override {
+        const auto it = candidateOnly.find(reading);
+        return it == candidateOnly.end() ? std::vector<std::u32string>() : it->second;
+    }
+
+    std::vector<iroha::InputHistoryEntry> PredictionCandidates(const std::u32string& prefix) override {
+        std::vector<iroha::InputHistoryEntry> found;
+        for (const auto& entry : history) {
+            if (entry.reading.size() > prefix.size() && entry.reading.compare(0, prefix.size(), prefix) == 0) {
+                found.push_back(entry);
+            }
+        }
+        return found;
+    }
+
+    void RecordInputHistory(const std::u32string& reading, const std::u32string& text) override {
+        recordedHistory.push_back(reading + U"→" + text);
+    }
+
+    void PrivateModeChanged(bool enabled) override { privateModeChanges.push_back(enabled); }
+
+    void RecordConversion(const iroha::ConversionLogEntry& entry) override { conversions.push_back(entry); }
+
     // 読み → 変換結果（候補数1）、読み → 候補の一覧（候補数2以上）
     std::map<std::u32string, std::u32string> table;
     std::map<std::u32string, std::vector<std::u32string>> candidateTable;
@@ -93,6 +116,12 @@ public:
     std::vector<Commit> commits;
     std::vector<std::tuple<std::u32string, std::u32string, std::u32string>> forgotten;
     std::u32string punctuation;
+    // 読み → ユーザ辞書の候補ウィンドウ専用の語
+    std::map<std::u32string, std::vector<std::u32string>> candidateOnly;
+    std::vector<iroha::InputHistoryEntry> history;
+    std::vector<std::u32string> recordedHistory;
+    std::vector<bool> privateModeChanges;
+    std::vector<iroha::ConversionLogEntry> conversions;
 };
 
 using Key = iroha::SessionKey;
@@ -478,6 +507,43 @@ void TestSessionTermAnnotations() {
     EXPECT_TRUE(Press(plain, Key::Space).candidateAnnotations.empty());
 }
 
+// 変換ルールの出力を今の表示の直後に置く。ルールの出力・候補ウィンドウ専用の語を含む候補を選んだ確定は学習しない
+void TestSessionRewriteRulesAndCandidateOnlyWords() {
+    FakeSessionHost host;
+    host.table[U"きょう"] = U"今日";
+    host.candidateTable[U"きょう"] = {U"今日", U"京", U"#今日の一枚"};
+    host.candidateOnly[U"きょう"] = {U"#今日の一枚"};
+    iroha::InputSession session(&host);
+    session.SetRewriteRules(std::make_shared<iroha::UserRewriteRuleSet>(
+        std::vector<iroha::UserRewriteRule>{iroha::UserRewriteRule::Make(U"きょう", U"{{date}}")}));
+    const std::u32string today = iroha::RewriteTemplate(U"{{date}}").Render(iroha::RewriteContext::Now());
+    Type(session, U"kyou");
+    auto output = Press(session, Key::Space);
+    EXPECT_TRUE(output.candidates == (Strings{U"今日", today, U"京", U"#今日の一枚", U"きょう", U"キョウ"}));
+    output = Press(session, Key::Down);
+    EXPECT_EQ(output.PreeditText(), today);
+    EXPECT_EQ(Press(session, Key::Enter).commit, today);
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.commits.empty());
+
+    Type(session, U"kyou");
+    Press(session, Key::Space);
+    Press(session, Key::Down);
+    Press(session, Key::Down);
+    EXPECT_EQ(Press(session, Key::Down).PreeditText(), U"#今日の一枚");
+    Press(session, Key::Enter);
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.commits.empty());
+
+    Type(session, U"kyou");
+    Press(session, Key::Space);
+    Press(session, Key::Down);
+    EXPECT_EQ(Press(session, Key::Down).PreeditText(), U"京");
+    Press(session, Key::Enter);
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.commits.size() == 1);
+}
+
 // 文節の移動と、文節の候補を求めるときの文脈（左側の変換結果を足す）
 void TestSessionMoveSegment() {
     FakeSessionHost host;
@@ -823,6 +889,186 @@ void TestSessionUndoCommit() {
     EXPECT_TRUE(!Press(session, Key::UndoCommit).replacesCommitted);
 }
 
+// 予測変換: 読みが 2 文字以上で入力履歴の候補を出し、Tab で選ぶ。選んだまま打つと候補が入って続きになる。
+// Backspace で打っていた読みに戻す。確定した内容は入力履歴に記録する（取り消せなくなったとき）
+void TestSessionPrediction() {
+    FakeSessionHost host;
+    host.history = {{U"もでる", U"モデル", 3, 100}, {U"もでむ", U"モデム", 1, 90}};
+    iroha::InputSession session(&host);
+    iroha::SessionSettings settings;
+    settings.predictive = true;
+    session.SetSettings(settings);
+    auto output = Type(session, U"m");
+    EXPECT_TRUE(output.predictions.empty());
+    output = Type(session, U"ode");
+    EXPECT_TRUE(output.predictions == (Strings{U"モデル", U"モデム"}) && output.predictionIndex == -1);
+    output = Press(session, Key::Tab);
+    EXPECT_TRUE(output.predictionIndex == 0);
+    EXPECT_EQ(output.PreeditText(), U"もで"); // 選んだだけでは入れない
+    output = Press(session, Key::Tab);
+    EXPECT_TRUE(output.predictionIndex == 1);
+    output = Press(session, Key::Tab, true); // Shift+Tab は前の候補
+    EXPECT_TRUE(output.predictionIndex == 0);
+    output = Type(session, U"ga"); // 選んだまま打つと候補が入り、続きになる
+    EXPECT_EQ(output.PreeditText(), U"モデルが");
+    EXPECT_EQ(host.liveRequests.back().reading, U"が");
+    EXPECT_EQ(host.liveRequests.back().context, U"モデル");
+    // Backspace で、続きを消してから予測を取り消し、打っていた読みに戻す
+    Press(session, Key::Backspace);
+    output = Press(session, Key::Backspace);
+    EXPECT_EQ(output.PreeditText(), U"もで");
+
+    // 確定した内容を入力履歴に記録する
+    Press(session, Key::Tab);
+    Type(session, U"wo");
+    CompleteLatest(session, host, U"を");
+    EXPECT_EQ(Press(session, Key::Enter).commit, U"モデルを");
+    EXPECT_TRUE(host.recordedHistory.empty());
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.recordedHistory == (Strings{U"もでる→モデル", U"を→を"}));
+
+    // 選んでいるときの Esc は選ぶのをやめる
+    Type(session, U"mode");
+    Press(session, Key::Tab);
+    output = Press(session, Key::Escape);
+    EXPECT_TRUE(output.predictionIndex == -1 && output.Composing());
+}
+
+// プライベートモード: 学習・入力履歴・予測を止める。切り替えは設定に知らせ、知らせの文を出す
+void TestSessionPrivateMode() {
+    FakeSessionHost host;
+    host.table[U"きしゃ"] = U"記者";
+    host.candidateTable[U"きしゃ"] = {U"記者", U"汽車"};
+    host.history = {{U"きしゃ", U"汽車", 1, 1}};
+    iroha::InputSession session(&host);
+    iroha::SessionSettings settings;
+    settings.predictive = true;
+    session.SetSettings(settings);
+    auto output = Press(session, Key::TogglePrivateMode);
+    EXPECT_TRUE(output.privateMode && !output.notice.empty());
+    EXPECT_TRUE(host.privateModeChanges == std::vector<bool>{true});
+    output = Type(session, U"kis");
+    EXPECT_TRUE(output.predictions.empty());
+    Type(session, U"ha");
+    Press(session, Key::Space);
+    Press(session, Key::Space);
+    EXPECT_EQ(Press(session, Key::Enter).commit, U"汽車");
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.commits.empty() && host.recordedHistory.empty());
+    // モードを切ったあとの合成では、モード中に確定した文字列を左文脈に使わない
+    output = Press(session, Key::TogglePrivateMode);
+    EXPECT_TRUE(!output.privateMode);
+    Type(session, U"a");
+    EXPECT_EQ(host.liveRequests.back().context, U"");
+}
+
+// 変換記録: ライブ変換・文節変換・表示形の指定での確定を、取り消せなくなったときに書く（macOS版と同じ項目）
+void TestSessionConversionLog() {
+    using Entry = iroha::ConversionLogEntry;
+    FakeSessionHost host;
+    host.candidateTable[U"きしゃ"] = {U"記者", U"汽車"};
+    iroha::InputSession session(&host);
+    iroha::SessionSettings settings;
+    settings.conversionLog = true;
+    session.SetSettings(settings);
+    const std::u32string context = U"駅で";
+
+    // ライブ変換の表示をそのまま確定
+    session.Handle(Key::Character, U'k', false, &context);
+    Type(session, U"isha");
+    CompleteLatest(session, host, U"記者");
+    Press(session, Key::Enter);
+    EXPECT_TRUE(host.conversions.empty()); // 取り消せる間は書かない
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.conversions.size() == 1);
+    if (host.conversions.size() == 1) {
+        const Entry& entry = host.conversions[0];
+        EXPECT_TRUE(entry.mode == Entry::Mode::Live && entry.contextSource == Entry::ContextSource::Document);
+        EXPECT_EQ(entry.context, U"駅で");
+        EXPECT_EQ(entry.reading, U"きしゃ");
+        EXPECT_TRUE(entry.proposed == std::optional<std::u32string>(U"記者") && entry.edited == false);
+        EXPECT_EQ(entry.committed, U"記者");
+        EXPECT_TRUE(!entry.segments);
+    }
+
+    // 文節変換で候補を選んで確定
+    session.Handle(Key::Character, U'k', false, &context);
+    Type(session, U"isha");
+    CompleteLatest(session, host, U"記者");
+    Press(session, Key::Space);
+    Press(session, Key::Space);
+    EXPECT_EQ(Press(session, Key::Enter).commit, U"汽車");
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.conversions.size() == 2);
+    if (host.conversions.size() == 2) {
+        const Entry& entry = host.conversions[1];
+        EXPECT_TRUE(entry.mode == Entry::Mode::Segments && entry.edited == true);
+        EXPECT_TRUE(entry.proposed == std::optional<std::u32string>(U"記者"));
+        EXPECT_EQ(entry.committed, U"汽車");
+        EXPECT_TRUE(entry.segments && entry.segments->size() == 1 && (*entry.segments)[0].result == U"汽車");
+    }
+
+    // 表示形（F7 のカタカナ）で確定: ライブ変換の結果を退けた記録
+    session.Handle(Key::Character, U'k', false, &context);
+    Type(session, U"isha");
+    CompleteLatest(session, host, U"記者");
+    Press(session, Key::DisplayKatakana);
+    EXPECT_EQ(Press(session, Key::Enter).commit, U"キシャ");
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.conversions.size() == 3);
+    if (host.conversions.size() == 3) {
+        const Entry& entry = host.conversions[2];
+        EXPECT_TRUE(entry.mode == Entry::Mode::FunctionKey && entry.edited == true);
+        EXPECT_TRUE(entry.proposed == std::optional<std::u32string>(U"記者"));
+        EXPECT_EQ(entry.committed, U"キシャ");
+    }
+
+    // 左文脈がない確定・読みをそのままの 1 文字は残さない
+    const std::u32string empty;
+    session.Handle(Key::Character, U'k', false, &empty);
+    Type(session, U"isha");
+    CompleteLatest(session, host, U"記者");
+    Press(session, Key::Enter);
+    session.Handle(Key::Character, U'n', false, &context);
+    Type(session, U"o");
+    CompleteLatest(session, host, U"の");
+    Press(session, Key::Enter);
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.conversions.size() == 3);
+
+    // 取り消した確定は残さない
+    session.Handle(Key::Character, U'k', false, &context);
+    Type(session, U"isha");
+    CompleteLatest(session, host, U"記者");
+    Press(session, Key::Enter);
+    Press(session, Key::UndoCommit);
+    Press(session, Key::Escape);
+    Press(session, Key::Escape);
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.conversions.size() == 3);
+
+    // 「直した確定だけ」ではライブ変換をそのまま確定したものを残さない。プライベートモードの間は何も残さない
+    settings.conversionLogScope = iroha::ConversionLogScope::Corrections;
+    session.SetSettings(settings);
+    session.Handle(Key::Character, U'k', false, &context);
+    Type(session, U"isha");
+    CompleteLatest(session, host, U"記者");
+    Press(session, Key::Enter);
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.conversions.size() == 3);
+    settings.conversionLogScope = iroha::ConversionLogScope::All;
+    settings.privateMode = true;
+    session.SetSettings(settings);
+    session.Handle(Key::Character, U'k', false, &context);
+    Type(session, U"isha");
+    CompleteLatest(session, host, U"記者");
+    Press(session, Key::Space);
+    Press(session, Key::Space);
+    Press(session, Key::Enter);
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.conversions.size() == 3);
+}
+
 void RunSessionTests() {
     TestSessionLiveConversionReplacesKana();
     TestSessionKeepsPreviousConversionAsPrefix();
@@ -843,6 +1089,7 @@ void RunSessionTests() {
     TestSessionKeepsCurrentResultInCandidates();
     TestSessionSymbolCandidates();
     TestSessionTermAnnotations();
+    TestSessionRewriteRulesAndCandidateOnlyWords();
     TestSessionMoveSegment();
     TestSessionResizeSegment();
     TestSessionEscapeFromSegmentMode();
@@ -857,6 +1104,9 @@ void RunSessionTests() {
     TestSessionTogglePunctuation();
     TestSessionIdleSpace();
     TestSessionUndoCommit();
+    TestSessionPrediction();
+    TestSessionPrivateMode();
+    TestSessionConversionLog();
 }
 
 } // namespace

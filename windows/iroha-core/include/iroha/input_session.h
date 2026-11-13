@@ -9,9 +9,12 @@
 #include <utility>
 #include <vector>
 
+#include "iroha/conversion_log.h"
+#include "iroha/input_history.h"
 #include "iroha/romaji_composer.h"
 #include "iroha/symbol_candidates.h"
 #include "iroha/term_dictionary.h"
+#include "iroha/user_rewrite_rule.h"
 
 namespace iroha {
 
@@ -42,8 +45,12 @@ enum class SessionKey : uint32_t {
     // 直前の確定を取り消して、確定する前の未確定文字列に戻す（Ctrl+Backspace。TIP は、カーソルの手前が
     // 確定した文字列のまま（SessionOutput::undoableCommit）であることを確かめてから送る）
     UndoCommit = 18,
+    // Tab（予測変換の候補を選ぶ。Shift+Tab は前の候補）
+    Tab = 19,
+    // プライベートモードの切り替え（Ctrl+Alt+P）
+    TogglePrivateMode = 20,
 };
-constexpr uint32_t kMaxSessionKey = static_cast<uint32_t>(SessionKey::UndoCommit);
+constexpr uint32_t kMaxSessionKey = static_cast<uint32_t>(SessionKey::TogglePrivateMode);
 
 // キー 1 つを処理したあと（またはライブ変換が届いたあと）に TIP が画面へ反映する内容
 struct SessionOutput {
@@ -82,6 +89,13 @@ struct SessionOutput {
     bool replacesCommitted = false;
     // 合成していないときの Space を全角スペースとして受けるか（設定。Shift+Space は常に半角でアプリに任せる）
     bool fullWidthSpace = true;
+    // 予測変換の候補（入力履歴から。無ければ空）と、Tab で選んでいる位置（-1 なら選んでいない）
+    std::vector<std::u32string> predictions;
+    int32_t predictionIndex = -1;
+    // プライベートモードか
+    bool privateMode = false;
+    // カーソルの近くに少しのあいだ出す知らせ（句読点・プライベートモードの切り替え。無ければ空）
+    std::u32string notice;
 
     bool Composing() const { return !preedit.empty(); }
     // 未確定文字列をつなげたもの
@@ -98,6 +112,13 @@ struct SessionSettings {
     bool fullWidthSpace = true;
     // 文節の候補として求める数（macOS版の candidateCount。3〜16）
     int candidateCount = 8;
+    // 予測変換（入力履歴から読みの先頭が一致する語を出す。入力履歴もこれが ON の間だけ記録する）
+    bool predictive = false;
+    // プライベートモード（学習・入力履歴・予測変換・変換記録を止める。ユーザ辞書は変換サーバが止める）
+    bool privateMode = false;
+    // 変換記録（学習用データ。既定 OFF）と、何を記録するか
+    bool conversionLog = false;
+    ConversionLogScope conversionLogScope = ConversionLogScope::All;
 };
 
 // 入力の状態（読み・ライブ変換の結果・固定部分・英字入力・文節・候補）を持ち、キーごとに表示を決める。
@@ -147,6 +168,25 @@ public:
         }
         // 句読点の組を切り替えた（設定に保存して、ほかのセッションにも効かせる）
         virtual void PunctuationChanged(const std::u32string& punctuation) { (void)punctuation; }
+        // 読み（文節全体）の中に一致する、ユーザ辞書の候補ウィンドウ専用の語（それを含む候補は学習しない）
+        virtual std::vector<std::u32string> CandidateOnlyWords(const std::u32string& reading) {
+            (void)reading;
+            return {};
+        }
+        // 予測変換の候補（入力履歴から、読みが prefix で始まり、それより長い語）
+        virtual std::vector<InputHistoryEntry> PredictionCandidates(const std::u32string& prefix) {
+            (void)prefix;
+            return {};
+        }
+        // 確定した「読み → 表記」を入力履歴に記録する
+        virtual void RecordInputHistory(const std::u32string& reading, const std::u32string& text) {
+            (void)reading;
+            (void)text;
+        }
+        // プライベートモードを切り替えた（設定に保存して、ほかのセッションと変換エンジンにも効かせる）
+        virtual void PrivateModeChanged(bool enabled) { (void)enabled; }
+        // 確定を変換記録に書く（モデルの名前は変換サーバが入れる）
+        virtual void RecordConversion(const ConversionLogEntry& entry) { (void)entry; }
     };
 
     explicit InputSession(Host* host);
@@ -186,6 +226,10 @@ public:
     void SetTermLookup(std::shared_ptr<const TermDictionaryLookup> lookup) {
         termLookup_ = std::move(lookup);
     }
+    // 文節の候補ウィンドウに合流させる変換ルール（nullptr なら合流させない）
+    void SetRewriteRules(std::shared_ptr<const UserRewriteRuleSet> rules) {
+        rewriteRules_ = std::move(rules);
+    }
 
     // 候補ウィンドウの1ページの候補数（数字キー 1〜9 はページの中の番号。TIP の表示と同じにする）
     static constexpr size_t kCandidatePageSize = 9;
@@ -218,11 +262,21 @@ private:
             Display,        // F6-F10 / Ctrl+U…T で指定した表示形
             LiveConversion, // Shift+英字で英字入力を始めた時点のライブ変換結果で固定したかな
             Alphabet,       // Shift+英字で入力した英字（読みも英字そのまま。かなには戻さない）
+            Prediction,     // 予測変換で入れた入力履歴の語（読みは履歴の読み。かなには戻さない）
         };
         std::u32string reading; // 元の読み（Backspace・Esc でかなに戻すときに使う）
         std::u32string text;    // 固定した表示
         Kind kind = Kind::Display;
         std::optional<RejectedLearning> rejectedLearning;
+        // Prediction で、候補を入れる前に打っていた読み（Backspace・Esc でこの読みに戻す）
+        std::u32string typedReading;
+    };
+
+    // 予測変換: 出している入力履歴の候補（reading は候補を引いたときの読み）と、Tab で選んでいる候補
+    struct Prediction {
+        std::u32string reading;
+        std::vector<InputHistoryEntry> candidates;
+        std::optional<size_t> selected;
     };
 
     struct Segment {
@@ -231,7 +285,7 @@ private:
         bool candidatesFetched = false;
         std::vector<std::u32string> candidates; // 取得済みの候補
         size_t candidateIndex = 0;
-        // 選んで確定しても学習しない候補（記号・顔文字・絵文字）
+        // 選んで確定しても学習しない候補（変換ルールの出力・候補ウィンドウ専用の語を含む候補・記号・顔文字・絵文字）
         std::set<std::u32string> unlearnable;
         // 候補ごとの印（専門辞書の名前。candidates と同じ数か空）
         std::vector<std::u32string> annotations;
@@ -281,8 +335,11 @@ private:
         // 打ち直した文節があるか（学習しない）
         bool segmentsRetyped = false;
         std::optional<SegmentEdit> segmentEdit;
-        // 合成を始めたときの左文脈
+        // 合成を始めたときの左文脈と、それをアプリの文書から読んだか（変換記録の contextSource）
         std::u32string context;
+        bool contextFromDocument = false;
+        // 左文脈（確定した文字列を足したもの）に、プライベートモード中に確定した文字列が入っているか
+        bool contextHasPrivateText = false;
     };
 
     // 裏で頼んだ変換の種類
@@ -366,8 +423,22 @@ private:
     void SyncCompositionWithRetypedSegment(size_t index, bool removed);
     static bool IsAlphabetText(const std::u32string& text);
 
+    // 予測変換・入力履歴
+    void RefreshPrediction();
+    // 予測変換の小窓のキー。処理し終えたら真（キーを飲み込む）。選んだ候補を入れて、キーは普段どおりに処理させるなら偽
+    bool HandlePredictionKey(SessionKey key, bool shift);
+    void ApplyPrediction(InputHistoryEntry entry);
+    void UndoLastPrediction();
+    void RecordInputHistory(const std::optional<std::u32string>& composerText);
+    bool PredictionActive() const { return settings_.predictive && !settings_.privateMode; }
+
     // 確定と取り消し
     void LearnIfCorrected(const std::u32string& committed);
+    // 変換記録（macOS版 logSegmentsCommit / logConversion）
+    void LogSegmentsCommit(const std::u32string& committed);
+    void LogConversion(ConversionLogEntry::Mode mode, const std::u32string& context, const std::u32string& reading,
+                       const std::optional<std::u32string>& proposed, const std::u32string& committed,
+                       std::optional<std::vector<ConversionLogEntry::Segment>> segments = std::nullopt);
     void CommitText(const std::u32string& text, std::u32string* commit);
     void CloseCommitUndo();
     bool UndoCommit();
@@ -382,6 +453,7 @@ private:
     uint64_t revision_ = 0;
     std::shared_ptr<const SymbolCandidateTable> symbolTable_;
     std::shared_ptr<const TermDictionaryLookup> termLookup_;
+    std::shared_ptr<const UserRewriteRuleSet> rewriteRules_;
 
     State state_;
     // 裏で頼んだ変換（番号 → 種類）。liveValidAfter_ 以下の番号の結果は受け取らない
@@ -397,6 +469,9 @@ private:
     std::optional<CommitUndo> commitUndo_;
     // 直前のキーが UndoCommit で、確定した文字列を未確定文字列に置き換える
     bool replacesCommitted_ = false;
+    std::optional<Prediction> prediction_;
+    // このキーで出す知らせ
+    std::u32string notice_;
 };
 
 } // namespace iroha

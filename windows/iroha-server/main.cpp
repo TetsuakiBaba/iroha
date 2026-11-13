@@ -14,6 +14,7 @@
 #include <sddl.h>
 
 #include <cstdio>
+#include <atomic>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -23,6 +24,7 @@
 
 #include "iroha/chunked_conversion_engine.h"
 #include "iroha/config.h"
+#include "iroha/conversion_log.h"
 #include "iroha/conversion_engine.h"
 #include "iroha/lattice_converter.h"
 #include "iroha/lattice_rescoring_engine.h"
@@ -32,6 +34,8 @@
 #include "iroha/session_manager.h"
 #include "iroha/symbol_candidates.h"
 #include "iroha/term_dictionary.h"
+#include "iroha/input_history.h"
+#include "iroha/user_rewrite_rule.h"
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_engine.h"
 #include "iroha/user_dictionary_store.h"
@@ -74,6 +78,14 @@ std::filesystem::path ExecutableDirectory() {
     const DWORD length = GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
     if (length == 0 || length >= MAX_PATH) return {};
     return std::filesystem::path(modulePath).parent_path();
+}
+
+// このコンピュータの名前（入力履歴のファイル名。macOS版のホスト名にあたる）
+std::string HostName() {
+    wchar_t name[MAX_COMPUTERNAME_LENGTH + 1];
+    DWORD length = ARRAYSIZE(name);
+    if (!GetComputerNameW(name, &length)) return "windows";
+    return iroha::Utf32ToUtf8(iroha::Utf16ToUtf32(std::wstring(name, length)));
 }
 
 std::filesystem::path StorePath(const wchar_t* envName, const wchar_t* fileName) {
@@ -128,6 +140,15 @@ struct ServerState {
     std::unique_ptr<iroha::ChunkedConversionEngine> chunked;
     std::unique_ptr<iroha::UserDictionaryStore> userDictionary;
     std::unique_ptr<iroha::LearningStore> learning;
+    // 入力履歴（予測変換。<データフォルダ>/input-history/<コンピュータ名>.json）
+    std::unique_ptr<iroha::InputHistoryStore> inputHistory;
+    // 変換記録（学習用データ。<データフォルダ>/logs/conversions/。設定で ON のときだけ書く）
+    std::unique_ptr<iroha::ConversionLog> conversionLog;
+    // プライベートモードの間は、学習の差し替えとユーザ辞書を止める（変換のスレッドからも読む）
+    std::atomic<bool> privateMode{false};
+    // 変換ルール（設定画面が書き換えたら Reload で読み直す。初回は既定のルールを足す。macOS版と同じ）
+    std::unique_ptr<iroha::UserRewriteRuleStore> rewriteRules;
+    std::shared_ptr<const iroha::UserRewriteRuleSet> rewriteRuleSet;
     std::unique_ptr<iroha::UserDictionaryEngine> dictionaryEngine;
     std::unique_ptr<iroha::LearningEngine> engine;
     // セッションの設定（ライブ変換・句読点・全角スペース・候補数）
@@ -176,6 +197,23 @@ struct ServerState {
         sessionSettings.punctuation = config.punctuation;
         sessionSettings.fullWidthSpace = config.fullWidthSpace;
         sessionSettings.candidateCount = config.candidateCount;
+        sessionSettings.predictive = config.predictive;
+        sessionSettings.privateMode = config.privateMode;
+        sessionSettings.conversionLog = config.conversionLog;
+        sessionSettings.conversionLogScope = config.conversionLogCorrectionsOnly
+                                                 ? iroha::ConversionLogScope::Corrections
+                                                 : iroha::ConversionLogScope::All;
+        privateMode = config.privateMode;
+        if (!conversionLog) {
+            conversionLog = std::make_unique<iroha::ConversionLog>(
+                StorePath(L"IROHA_CONVERSION_LOG", L"logs\\conversions"), HostName());
+        }
+        if (!inputHistory) {
+            inputHistory = std::make_unique<iroha::InputHistoryStore>(
+                StorePath(L"IROHA_INPUT_HISTORY", L"input-history"), HostName());
+        } else {
+            inputHistory->Reload();
+        }
         if (config.symbolCandidates && !symbolsLoaded) {
             symbolsLoaded = true;
             if (const auto directory =
@@ -238,10 +276,21 @@ struct ServerState {
             StorePath(L"IROHA_USER_DICT", L"user-dictionary.json"));
         learning = std::make_unique<iroha::LearningStore>(
             StorePath(L"IROHA_LEARNING", L"learning.json"));
+        if (!rewriteRules) {
+            rewriteRules = std::make_unique<iroha::UserRewriteRuleStore>(
+                StorePath(L"IROHA_REWRITE_RULES", L"user-rewrite-rules.json"), /*seedsDefaults=*/true);
+        } else {
+            rewriteRules->Reload();
+        }
+        rewriteRuleSet = std::make_shared<iroha::UserRewriteRuleSet>(rewriteRules->Current());
+        // プライベートモードの間はユーザ辞書と学習を使わない（変換を iroha 本来の結果にする。macOS版と同じ）
         dictionaryEngine = std::make_unique<iroha::UserDictionaryEngine>(
-            core, [this] { return userDictionary->Current(); }, lattice.get());
+            core,
+            [this] { return privateMode ? iroha::UserDictionary() : userDictionary->Current(); },
+            lattice.get());
         engine = std::make_unique<iroha::LearningEngine>(
-            dictionaryEngine.get(), [this] { return learning->Current(); });
+            dictionaryEngine.get(),
+            [this] { return privateMode ? iroha::LearningDictionary() : learning->Current(); });
     }
 };
 
@@ -298,6 +347,40 @@ public:
                                                const std::u32string& shown) override {
         if (!state_->engine) return std::nullopt;
         return state_->engine->EngineResult(reading, shown);
+    }
+
+    std::vector<std::u32string> CandidateOnlyWords(const std::u32string& reading) override {
+        if (!state_->userDictionary || state_->privateMode) return {};
+        return state_->userDictionary->Current().CandidateOnlyWords(reading);
+    }
+
+    std::vector<iroha::InputHistoryEntry> PredictionCandidates(const std::u32string& prefix) override {
+        if (!state_->inputHistory) return {};
+        return state_->inputHistory->Candidates(prefix);
+    }
+
+    void RecordInputHistory(const std::u32string& reading, const std::u32string& text) override {
+        if (state_->inputHistory) state_->inputHistory->Record(reading, text, iroha::InputHistoryStore::NowSeconds());
+    }
+
+    // 確定を変換記録に書く（モデルの名前はファイル名から拡張子を除いたもの。macOS版と同じ）
+    void RecordConversion(const iroha::ConversionLogEntry& entry) override {
+        if (!state_->conversionLog) return;
+        iroha::ConversionLogEntry named = entry;
+        named.model = iroha::Utf32ToUtf8(iroha::Utf16ToUtf32(
+            std::filesystem::path(iroha::Utf32ToUtf16(iroha::Utf8ToUtf32(state_->modelPath))).stem().wstring()));
+        state_->conversionLog->Record(named);
+    }
+
+    // Ctrl+Alt+P で切り替えたプライベートモードを設定に保存する（次に起動したときも同じにする。macOS版と同じ）
+    void PrivateModeChanged(bool enabled) override {
+        const std::filesystem::path path(DataDir() + L"\\config.json");
+        iroha::Config config = iroha::LoadConfig(path);
+        config.privateMode = enabled;
+        iroha::SaveConfig(path, config);
+        state_->privateMode = enabled;
+        state_->sessionSettings.privateMode = enabled;
+        Log(enabled ? "private mode on" : "private mode off");
     }
 
     void ForgetLearning(const std::u32string& reading, const std::u32string& engineResult,
@@ -381,6 +464,7 @@ bool HandleRequest(ServerState& state, iroha::SessionManager& sessions,
             sessions.SetSettings(state.sessionSettings);
             sessions.SetSymbolTable(state.symbols);
             sessions.SetTermLookup(state.termLookup);
+            sessions.SetRewriteRules(state.rewriteRuleSet);
             *response = iroha::ipc::BuildOkResponse({});
             return true;
         }
@@ -475,6 +559,7 @@ int wmain() {
     sessions.SetSettings(state.sessionSettings);
     sessions.SetSymbolTable(state.symbols);
     sessions.SetTermLookup(state.termLookup);
+    sessions.SetRewriteRules(state.rewriteRuleSet);
 
     const std::wstring pipeName = iroha::ipc::PipeName();
     PSECURITY_DESCRIPTOR pipeSecurity = CreatePipeSecurityDescriptor();

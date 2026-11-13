@@ -22,10 +22,11 @@
 //                    u32 spanCount, (u32 style, string text)×spanCount,
 //                    u32 candidateIndex, u32 candidateCount, string×candidateCount,
 //                    u32 annotationCount, string×annotationCount（候補の右に出す印）,
-//                    string undoableCommit（取り消せる確定）
+//                    string undoableCommit（取り消せる確定）,
+//                    u32 predictionCount, string×predictionCount, u32 predictionIndex, string notice
 //                    （印と取り消せる確定は後から足したので、無い返事も読めるようにしてある）
 //                flags: 1 文節変換中 / 2 変換の結果待ち / 4 候補ウィンドウ / 8 入力していないときの Space は全角 /
-//                       16 確定した文字列を未確定文字列に置き換える（UndoCommit への返事）
+//                       16 確定した文字列を未確定文字列に置き換える（UndoCommit への返事） / 32 プライベートモード
 //                エラー: string message
 //
 // セッションのメッセージは、入力の状態（読み・ライブ変換・文節・候補）をサーバ側に持つためのもの
@@ -207,6 +208,7 @@ constexpr uint32_t kOutputFlagLivePending = 2;
 constexpr uint32_t kOutputFlagCandidatesVisible = 4;
 constexpr uint32_t kOutputFlagFullWidthSpace = 8;
 constexpr uint32_t kOutputFlagReplacesCommitted = 16;
+constexpr uint32_t kOutputFlagPrivateMode = 32;
 
 // leftContext は、合成していないときにカーソルより前から読んだ文書のテキスト（読めなければ nullptr）
 inline std::vector<char> BuildSessionKeyRequest(uint64_t sessionId, SessionKey key,
@@ -253,7 +255,8 @@ inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
                      (output->livePending ? kOutputFlagLivePending : 0) |
                      (output->candidatesVisible ? kOutputFlagCandidatesVisible : 0) |
                      (output->fullWidthSpace ? kOutputFlagFullWidthSpace : 0) |
-                     (output->replacesCommitted ? kOutputFlagReplacesCommitted : 0));
+                     (output->replacesCommitted ? kOutputFlagReplacesCommitted : 0) |
+                     (output->privateMode ? kOutputFlagPrivateMode : 0));
     PutU32(&buf, static_cast<uint32_t>(output->preedit.size()));
     for (const SessionOutput::Span& span : output->preedit) {
         PutU32(&buf, span.style);
@@ -290,6 +293,11 @@ inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
     for (const std::string& annotation : annotationTexts) PutString(&buf, annotation);
     // 取り消せる確定（後から足した。無い返事も読める）
     PutString(&buf, Utf32ToUtf8(output->undoableCommit));
+    // 予測変換の候補・選んでいる位置（0xFFFFFFFF なら選んでいない）・知らせ（後から足した。無い返事も読める）
+    PutU32(&buf, static_cast<uint32_t>(output->predictions.size()));
+    for (const std::u32string& prediction : output->predictions) PutString(&buf, Utf32ToUtf8(prediction));
+    PutU32(&buf, output->predictionIndex < 0 ? 0xFFFFFFFFu : static_cast<uint32_t>(output->predictionIndex));
+    PutString(&buf, Utf32ToUtf8(output->notice));
     return buf;
 }
 
@@ -338,6 +346,7 @@ inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
     output.candidatesVisible = (flags & kOutputFlagCandidatesVisible) != 0;
     output.fullWidthSpace = (flags & kOutputFlagFullWidthSpace) != 0;
     output.replacesCommitted = (flags & kOutputFlagReplacesCommitted) != 0;
+    output.privateMode = (flags & kOutputFlagPrivateMode) != 0;
     for (uint32_t i = 0; i < spanCount; ++i) {
         uint32_t style = 0;
         std::string text;
@@ -376,6 +385,20 @@ inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
         }
         std::string undoable;
         if (reader.String(&undoable)) output.undoableCommit = Utf8ToUtf32(undoable);
+        uint32_t predictionCount = 0;
+        if (reader.U32(&predictionCount)) {
+            for (uint32_t i = 0; i < predictionCount && i < 16; ++i) {
+                std::string prediction;
+                if (!reader.String(&prediction)) break;
+                output.predictions.push_back(Utf8ToUtf32(prediction));
+            }
+            uint32_t predictionIndex = 0xFFFFFFFFu;
+            if (reader.U32(&predictionIndex) && predictionIndex < output.predictions.size()) {
+                output.predictionIndex = static_cast<int32_t>(predictionIndex);
+            }
+            std::string notice;
+            if (reader.String(&notice)) output.notice = Utf8ToUtf32(notice);
+        }
     }
     if (output.candidateIndex >= output.candidates.size()) output.candidateIndex = 0;
     result.changed = true;

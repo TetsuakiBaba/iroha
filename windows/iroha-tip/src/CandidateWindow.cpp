@@ -346,25 +346,27 @@ void CandidateWindow::PaintWithGdi(HDC dc, const RECT& client) const {
 
 void CandidateWindow::Show(HWND owner, const RECT& anchor,
                            const std::vector<std::u32string>& candidates,
-                           const std::vector<std::u32string>& annotations, size_t selectedIndex) {
+                           const std::vector<std::u32string>& annotations, size_t selectedIndex,
+                           bool numbered) {
     EnsureWindow(owner);
     if (!hwnd_) return;
     UpdateFont();
 
     // 選んでいる候補のあるページだけを出す（数字キーはページの中の番号）
-    const size_t page = selectedIndex / kPageSize;
+    const bool hasSelection = selectedIndex < candidates.size();
+    const size_t page = hasSelection ? selectedIndex / kPageSize : 0;
     const size_t first = page * kPageSize;
     const size_t last = (std::min)(first + kPageSize, candidates.size());
     ReleaseLayouts();
     rows_.clear();
     for (size_t i = first; i < last; ++i) {
         Row row;
-        row.label = std::to_wstring(i - first + 1) + L"  ";
+        if (numbered) row.label = std::to_wstring(i - first + 1) + L"  ";
         row.text = iroha::Utf32ToUtf16(candidates[i]);
         if (annotations.size() == candidates.size()) row.annotation = iroha::Utf32ToUtf16(annotations[i]);
         rows_.push_back(std::move(row));
     }
-    selected_ = selectedIndex - first;
+    selected_ = hasSelection ? selectedIndex - first : SIZE_MAX;
     const size_t pageCount = (candidates.size() + kPageSize - 1) / kPageSize;
     footer_ = pageCount > 1
                   ? std::to_wstring(page + 1) + L"/" + std::to_wstring(pageCount)

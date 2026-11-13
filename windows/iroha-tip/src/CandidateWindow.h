@@ -28,8 +28,10 @@ public:
     // anchor: コンポジションのスクリーン座標矩形。直下（入らなければ直上）に出す。
     // candidates は全候補。selectedIndex のあるページだけを表示する。
     // annotations は候補の右に小さく出す印（専門辞書の名前。候補と同じ数か空）
+    // numbered が偽なら番号を付けない（予測変換の候補・知らせ）。selectedIndex が候補の数以上なら何も選ばない
     void Show(HWND owner, const RECT& anchor, const std::vector<std::u32string>& candidates,
-              const std::vector<std::u32string>& annotations, size_t selectedIndex);
+              const std::vector<std::u32string>& annotations, size_t selectedIndex,
+              bool numbered = true);
     void Hide();
 
     // 絵文字として描く候補か（絵文字のフォントで描く）

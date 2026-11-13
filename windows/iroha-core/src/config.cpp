@@ -43,6 +43,18 @@ Config LoadConfig(const std::filesystem::path& path) {
     if (const json::Value* space = root.Find("fullWidthSpace")) {
         if (space->type == json::Value::Type::Bool) config.fullWidthSpace = space->boolean;
     }
+    if (const json::Value* predictive = root.Find("predictive")) {
+        if (predictive->type == json::Value::Type::Bool) config.predictive = predictive->boolean;
+    }
+    if (const json::Value* privateMode = root.Find("privateMode")) {
+        if (privateMode->type == json::Value::Type::Bool) config.privateMode = privateMode->boolean;
+    }
+    if (const json::Value* log = root.Find("conversionLogEnabled")) {
+        if (log->type == json::Value::Type::Bool) config.conversionLog = log->boolean;
+    }
+    if (const json::Value* scope = root.Find("conversionLogScope")) {
+        config.conversionLogCorrectionsOnly = scope->AsString() == "corrections";
+    }
     if (const json::Value* count = root.Find("candidateCount")) {
         if (count->type == json::Value::Type::Number) {
             config.candidateCount = std::max(3, std::min(16, static_cast<int>(count->number)));
@@ -58,6 +70,10 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                       ",\"punctuation\":" + json::QuoteString(Utf32ToUtf8(config.punctuation)) +
                       ",\"fullWidthSpace\":" + (config.fullWidthSpace ? "true" : "false") +
                       ",\"candidateCount\":" + std::to_string(config.candidateCount) +
+                      ",\"predictive\":" + (config.predictive ? "true" : "false") +
+                      ",\"privateMode\":" + (config.privateMode ? "true" : "false") +
+                      ",\"conversionLogEnabled\":" + (config.conversionLog ? "true" : "false") +
+                      ",\"conversionLogScope\":" + (config.conversionLogCorrectionsOnly ? "\"corrections\"" : "\"all\"") +
                       ",\"version\":1}";
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);

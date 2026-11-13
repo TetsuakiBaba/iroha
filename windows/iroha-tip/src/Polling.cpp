@@ -23,21 +23,27 @@ void CALLBACK TextService::PollTimerProc(HWND, UINT, UINT_PTR id, DWORD) {
     reinterpret_cast<TextService*>(id)->OnPollTimer();
 }
 
+bool TextService::EnsurePollWindow() {
+    if (pollWindow_) return true;
+    // タイマーを受けるだけのメッセージ専用ウィンドウ（システムのクラスを使い、クラス登録を持たない）
+    pollWindow_ = CreateWindowExW(0, L"Static", nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, g_hInst,
+                                  nullptr);
+    if (!pollWindow_) IrohaLog(L"poll window creation failed: %u", GetLastError());
+    return pollWindow_ != nullptr;
+}
+
 void TextService::StartPolling() {
     pollStartedTick_ = GetTickCount();
     pollFailures_ = 0;
-    if (polling_) return;
-    if (!pollWindow_) {
-        // タイマーを受けるだけのメッセージ専用ウィンドウ（システムのクラスを使い、クラス登録を持たない）
-        pollWindow_ = CreateWindowExW(0, L"Static", nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
-                                      g_hInst, nullptr);
-        if (!pollWindow_) {
-            IrohaLog(L"poll window creation failed: %u", GetLastError());
-            return;
-        }
-    }
+    if (polling_ || !EnsurePollWindow()) return;
     polling_ = SetTimer(pollWindow_, reinterpret_cast<UINT_PTR>(this), kPollIntervalMs,
                         &TextService::PollTimerProc) != 0;
+}
+
+// 知らせの小窓を閉じるタイマー（番号は TextService のポインタ + 1。ポインタは偶数なので問い合わせのタイマーと重ならない）
+void CALLBACK TextService::NoticeTimerProc(HWND hwnd, UINT, UINT_PTR id, DWORD) {
+    KillTimer(hwnd, id);
+    reinterpret_cast<TextService*>(id - 1)->noticeWindow_.Hide();
 }
 
 void TextService::StopPolling() {
@@ -49,6 +55,8 @@ void TextService::StopPolling() {
 void TextService::DestroyPollWindow() {
     StopPolling();
     if (pollWindow_) {
+        KillTimer(pollWindow_, reinterpret_cast<UINT_PTR>(this) + 1);
+        noticeWindow_.Hide();
         DestroyWindow(pollWindow_);
         pollWindow_ = nullptr;
     }

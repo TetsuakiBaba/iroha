@@ -58,6 +58,23 @@ public:
         }
         // 句読点の組を切り替えた（設定に保存する）。エンジンを持たずに呼ぶ
         virtual void PunctuationChanged(const std::u32string& punctuation) { (void)punctuation; }
+        // ユーザ辞書の候補ウィンドウ専用の語（InputSession::Host::CandidateOnlyWords）
+        virtual std::vector<std::u32string> CandidateOnlyWords(const std::u32string& reading) {
+            (void)reading;
+            return {};
+        }
+        // 予測変換の候補・入力履歴の記録（InputSession::Host と同じ。エンジンを持たずに呼ぶ）
+        virtual std::vector<InputHistoryEntry> PredictionCandidates(const std::u32string& prefix) {
+            (void)prefix;
+            return {};
+        }
+        virtual void RecordInputHistory(const std::u32string& reading, const std::u32string& text) {
+            (void)reading;
+            (void)text;
+        }
+        // プライベートモードを切り替えた（設定に保存し、変換エンジンの学習・ユーザ辞書を止める）。エンジンを持たずに呼ぶ
+        virtual void PrivateModeChanged(bool enabled) { (void)enabled; }
+        virtual void RecordConversion(const ConversionLogEntry& entry) { (void)entry; }
     };
 
     explicit SessionManager(Backend* backend);
@@ -85,6 +102,8 @@ public:
     void SetSymbolTable(std::shared_ptr<const SymbolCandidateTable> table);
     // 候補に専門辞書の名前の印を付けるための表（nullptr なら付けない。同じく全セッションに効く）
     void SetTermLookup(std::shared_ptr<const TermDictionaryLookup> lookup);
+    // 候補に合流させる変換ルール（nullptr なら合流させない。同じく全セッションに効く）
+    void SetRewriteRules(std::shared_ptr<const UserRewriteRuleSet> rules);
 
     size_t SessionCount();
 
@@ -118,6 +137,7 @@ private:
     SessionSettings settings_;
     std::shared_ptr<const SymbolCandidateTable> symbolTable_;
     std::shared_ptr<const TermDictionaryLookup> termLookup_;
+    std::shared_ptr<const UserRewriteRuleSet> rewriteRules_;
 
     // エンジン。キーの処理が待っている間（engineWaiters_ > 0）、ライブ変換は途中でやめる。
     // 鍵を取る順は stateMutex_ → engineMutex_（裏のスレッドは engineMutex_ を離してから stateMutex_）

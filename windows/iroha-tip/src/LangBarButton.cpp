@@ -93,8 +93,10 @@ STDMETHODIMP LangBarButton::Show(BOOL) {
 STDMETHODIMP LangBarButton::GetTooltipString(BSTR* tooltip) {
     if (!tooltip) return E_INVALIDARG;
     const bool direct = owner_ && owner_->IsDirectMode();
-    *tooltip = SysAllocString(direct ? L"iroha: 英数（クリックでかなに切替）"
-                                     : L"iroha: かな（クリックで英数に切替）");
+    const bool privateMode = owner_ && owner_->IsPrivateMode();
+    std::wstring text = direct ? L"iroha: 英数（クリックでかなに切替）" : L"iroha: かな（クリックで英数に切替）";
+    if (privateMode) text += L"\nプライベートモード（Ctrl+Alt+P で戻す）";
+    *tooltip = SysAllocString(text.c_str());
     return *tooltip ? S_OK : E_OUTOFMEMORY;
 }
 
@@ -167,6 +169,14 @@ HICON LangBarButton::CreateModeIcon() const {
     SetTextColor(memory, light ? RGB(16, 16, 16) : RGB(255, 255, 255));
     RECT rect = {0, 0, size, size};
     DrawTextW(memory, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    // プライベートモードの間は下に線を引く（macOS版はカーソルの横に鍵のマークを出す）
+    if (owner_ && owner_->IsPrivateMode()) {
+        const int thickness = size >= 24 ? 3 : 2;
+        RECT bar = {1, size - thickness, size - 1, size};
+        HBRUSH brush = CreateSolidBrush(light ? RGB(16, 16, 16) : RGB(255, 255, 255));
+        FillRect(memory, &bar, brush);
+        DeleteObject(brush);
+    }
     GdiFlush();
 
     // GDIの文字描画はアルファを書かないため、色が付いた画素を不透明にする

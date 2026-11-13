@@ -31,6 +31,14 @@ struct Config {
     bool fullWidthSpace = true;
     // 文節の候補として求める数（3〜16）
     int candidateCount = 8;
+    // 予測変換（入力履歴から読みの先頭が一致する語を出す。入力履歴もこれが ON の間だけ記録する。既定 OFF）
+    bool predictive = false;
+    // プライベートモード（学習・入力履歴・予測・ユーザ辞書を止める。Ctrl+Alt+P で切り替えると保存する）
+    bool privateMode = false;
+    // 変換記録（確定を logs/conversions/ に残す。左文脈に文書の文章が入るので既定 OFF）と、
+    // 直した確定だけを残すか（キーの名前は macOS版の設定と同じ）
+    bool conversionLog = false;
+    bool conversionLogCorrectionsOnly = false;
 };
 
 Config LoadConfig(const std::filesystem::path& path);

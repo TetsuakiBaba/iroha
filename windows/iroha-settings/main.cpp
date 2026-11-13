@@ -1,6 +1,9 @@
 // iroha 設定ウィンドウ。
-// タブ: モデル（選択・ダウンロード） / ユーザ辞書（一覧・追加・削除） / 専門辞書（配布している辞書の追加・削除） / 学習。
-// 保存先は %LOCALAPPDATA%\iroha\（config.json / user-dictionary.json / dictionaries\ / learning.json）。
+// タブ: モデル（選択・ダウンロード） / 入力（ライブ変換・予測変換・句読点・候補の数・プライベートモードなど） /
+// ユーザ辞書（一覧・追加・削除） / 専門辞書（配布している辞書の追加・削除） / 変換ルール（日付などの候補） /
+// 学習・記録（学習・入力履歴・変換記録）。
+// 保存先は %LOCALAPPDATA%\iroha\（config.json / user-dictionary.json / dictionaries\ / user-rewrite-rules.json /
+// learning.json / input-history\ / logs\conversions\）。
 // 保存後は変換サーバへReloadを送って即時反映する（サーバ未起動でも次回起動時に反映）。
 
 #ifndef NOMINMAX
@@ -9,19 +12,27 @@
 #include <windows.h>
 
 #include <commctrl.h>
+#include <shellapi.h>
 #include <urlmon.h>
+#include <uxtheme.h>
+#include <vssym32.h>
 
 #include <filesystem>
+#include <initializer_list>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "ipc_protocol.h"
 #include "iroha/config.h"
+#include "iroha/conversion_log.h"
+#include "iroha/input_history.h"
 #include "iroha/learning_store.h"
 #include "iroha/term_dictionary.h"
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_store.h"
+#include "iroha/user_rewrite_rule.h"
 #include "term_dictionary_fetcher.h"
 
 #pragma comment(linker, \
@@ -72,10 +83,41 @@ enum {
     kIdTermRemove,
     kIdTermStatus,
     kIdTermDetail,
+    kIdLive,
+    kIdPredictive,
+    kIdSymbols,
+    kIdFullWidthSpace,
+    kIdPunctuation,
+    kIdCandidateCount,
+    kIdPrivateMode,
+    kIdRuleList,
+    kIdRuleTrigger,
+    kIdRuleOutput,
+    kIdRuleAdd,
+    kIdRuleRemove,
+    kIdHistoryReset,
+    kIdLogEnabled,
+    kIdLogScope,
+    kIdLogOpen,
+    kIdLogReset,
 };
 
 // タブの並び
-enum TabIndex { kTabModel = 0, kTabUserDictionary, kTabTermDictionary, kTabLearning };
+enum TabIndex {
+    kTabModel = 0,
+    kTabInput,
+    kTabUserDictionary,
+    kTabTermDictionary,
+    kTabRewriteRules,
+    kTabLearning,
+    kTabCount,
+};
+
+// 句読点の組（設定の値と表示）
+const wchar_t* const kPunctuations[] = {L"、。", L"，．"};
+// 候補の数の範囲（変換サーバの設定と同じ）
+constexpr int kMinCandidateCount = 3;
+constexpr int kMaxCandidateCount = 16;
 
 std::wstring DataDir() {
     wchar_t buffer[MAX_PATH];
@@ -87,6 +129,15 @@ std::wstring DataDir() {
 }
 
 std::filesystem::path ConfigPath() { return DataDir() + L"\\config.json"; }
+std::filesystem::path ConversionLogDirectory() { return DataDir() + L"\\logs\\conversions"; }
+
+// このコンピュータの名前（入力履歴・変換記録のファイル名。変換サーバと同じ）
+std::string HostName() {
+    wchar_t name[MAX_COMPUTERNAME_LENGTH + 1];
+    DWORD length = ARRAYSIZE(name);
+    if (!GetComputerNameW(name, &length)) return "windows";
+    return iroha::Utf32ToUtf8(iroha::Utf16ToUtf32(std::wstring(name, length)));
+}
 std::filesystem::path ModelPath(const wchar_t* fileName) {
     return DataDir() + L"\\models\\" + fileName;
 }
@@ -124,6 +175,9 @@ struct App {
     HWND window = nullptr;
     HWND tab = nullptr;
     HFONT font = nullptr;
+    // タブの地の色（ラベル・チェックボックスの背景をこれで塗る。窓の地の色のままだと灰色の帯に見える）
+    COLORREF pageColor = GetSysColor(COLOR_BTNFACE);
+    HBRUSH pageBrush = nullptr;
     // モデル
     HWND modelCombo = nullptr;
     HWND modelStatus = nullptr;
@@ -138,10 +192,42 @@ struct App {
     HWND dictRemove = nullptr;
     HWND dictLabelReading = nullptr;
     HWND dictLabelWord = nullptr;
-    // 学習
+    // 入力
+    HWND liveCheck = nullptr;
+    HWND predictiveCheck = nullptr;
+    HWND symbolsCheck = nullptr;
+    HWND spaceCheck = nullptr;
+    HWND punctuationLabel = nullptr;
+    HWND punctuationCombo = nullptr;
+    HWND countLabel = nullptr;
+    HWND countCombo = nullptr;
+    HWND privateCheck = nullptr;
+    HWND inputNote = nullptr;
+    // 変換ルール
+    HWND ruleList = nullptr;
+    HWND ruleLabelTrigger = nullptr;
+    HWND ruleTrigger = nullptr;
+    HWND ruleLabelOutput = nullptr;
+    HWND ruleOutput = nullptr;
+    HWND ruleAdd = nullptr;
+    HWND ruleRemove = nullptr;
+    HWND ruleNote = nullptr;
+    std::vector<iroha::UserRewriteRule> rules; // 一覧の行と同じ並び
+    bool ruleRefreshing = false;               // 一覧を作り直している間はチェックの変化を無視する
+    // 学習・記録
     HWND learnStatus = nullptr;
     HWND learnReset = nullptr;
+    HWND historyStatus = nullptr;
+    HWND historyReset = nullptr;
+    HWND logCheck = nullptr;
+    HWND logScopeLabel = nullptr;
+    HWND logScopeCombo = nullptr;
+    HWND logStatus = nullptr;
+    HWND logOpen = nullptr;
+    HWND logReset = nullptr;
     HWND about = nullptr;
+    // タブごとのコントロール（ShowTab で出し分ける）
+    std::vector<std::pair<int, HWND>> pages;
     // 専門辞書
     HWND termList = nullptr;
     HWND termAdd = nullptr;
@@ -155,6 +241,13 @@ struct App {
 
     std::unique_ptr<iroha::UserDictionaryStore> dictionary;
     std::unique_ptr<iroha::LearningStore> learning;
+    std::unique_ptr<iroha::UserRewriteRuleStore> rewriteRules;
+    std::unique_ptr<iroha::InputHistoryStore> inputHistory;
+    std::unique_ptr<iroha::ConversionLog> conversionLog;
+
+    void AddToPage(int page, std::initializer_list<HWND> controls) {
+        for (HWND control : controls) pages.push_back({page, control});
+    }
 
     int Scale(int value) const {
         return MulDiv(value, static_cast<int>(GetDpiForWindow(window)), 96);
@@ -166,6 +259,16 @@ struct App {
     void RefreshModelPage();
     void RefreshDictionaryList();
     void RefreshLearningPage();
+    void RefreshInputPage();
+    void SaveInputPage();
+    void RefreshRuleList();
+    void OnRuleAdd();
+    void OnRuleRemove();
+    void OnRuleChecked(int row);
+    void OnHistoryReset();
+    void SaveLogSettings();
+    void OnLogOpen();
+    void OnLogReset();
     void OnModelDownload();
     void OnModelApply();
     void OnDictAdd();
@@ -198,16 +301,31 @@ void App::CreateControls() {
                        L"Meiryo UI");
 
     tab = CreateChild(WC_TABCONTROLW, L"", WS_VISIBLE | WS_CLIPSIBLINGS, kIdTab);
+    // タブの地はテーマの画像で描かれるので、小さな画像に描いて中ほどの色を取る
+    if (HTHEME theme = OpenThemeData(tab, L"TAB")) {
+        HDC screen = GetDC(nullptr);
+        HDC memory = CreateCompatibleDC(screen);
+        HBITMAP bitmap = CreateCompatibleBitmap(screen, 64, 64);
+        HGDIOBJ previous = SelectObject(memory, bitmap);
+        RECT area = {0, 0, 64, 64};
+        if (SUCCEEDED(DrawThemeBackground(theme, memory, TABP_PANE, 0, &area, nullptr))) {
+            pageColor = GetPixel(memory, 32, 32);
+        }
+        SelectObject(memory, previous);
+        DeleteObject(bitmap);
+        DeleteDC(memory);
+        ReleaseDC(nullptr, screen);
+        CloseThemeData(theme);
+    }
+    pageBrush = CreateSolidBrush(pageColor);
     TCITEMW item = {};
     item.mask = TCIF_TEXT;
-    item.pszText = const_cast<wchar_t*>(L"モデル");
-    TabCtrl_InsertItem(tab, 0, &item);
-    item.pszText = const_cast<wchar_t*>(L"ユーザ辞書");
-    TabCtrl_InsertItem(tab, kTabUserDictionary, &item);
-    item.pszText = const_cast<wchar_t*>(L"専門辞書");
-    TabCtrl_InsertItem(tab, kTabTermDictionary, &item);
-    item.pszText = const_cast<wchar_t*>(L"学習");
-    TabCtrl_InsertItem(tab, kTabLearning, &item);
+    const wchar_t* const titles[kTabCount] = {L"モデル",   L"入力",     L"ユーザ辞書",
+                                              L"専門辞書", L"変換ルール", L"学習・記録"};
+    for (int i = 0; i < kTabCount; ++i) {
+        item.pszText = const_cast<wchar_t*>(titles[i]);
+        TabCtrl_InsertItem(tab, i, &item);
+    }
 
     // ---- モデル ----
     modelCombo = CreateChild(WC_COMBOBOXW, L"",
@@ -219,6 +337,34 @@ void App::CreateControls() {
     modelStatus = CreateChild(WC_STATICW, L"", 0, kIdModelStatus);
     modelDownload = CreateChild(WC_BUTTONW, L"ダウンロード", WS_TABSTOP, kIdModelDownload);
     modelApply = CreateChild(WC_BUTTONW, L"このモデルを使う", WS_TABSTOP, kIdModelApply);
+    AddToPage(kTabModel, {modelCombo, modelStatus, modelDownload, modelApply});
+
+    // ---- 入力 ----
+    const DWORD check = BS_AUTOCHECKBOX | WS_TABSTOP;
+    liveCheck = CreateChild(WC_BUTTONW, L"ライブ変換（入力中に変換して見せる）", check, kIdLive);
+    predictiveCheck = CreateChild(WC_BUTTONW, L"予測変換（入力履歴から続きの語を出す。Tab・↓ で選ぶ）", check,
+                                  kIdPredictive);
+    symbolsCheck = CreateChild(WC_BUTTONW, L"記号・顔文字・絵文字を候補ウィンドウに出す", check, kIdSymbols);
+    spaceCheck = CreateChild(WC_BUTTONW, L"入力していないときの Space を全角スペースにする（Shift+Space は半角）",
+                             check, kIdFullWidthSpace);
+    punctuationLabel = CreateChild(WC_STATICW, L"句読点（Ctrl+. でも切り替え）:", 0, 0);
+    punctuationCombo = CreateChild(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_TABSTOP, kIdPunctuation);
+    for (const wchar_t* punctuation : kPunctuations) {
+        SendMessageW(punctuationCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(punctuation));
+    }
+    countLabel = CreateChild(WC_STATICW, L"候補ウィンドウの候補の数:", 0, 0);
+    countCombo = CreateChild(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, kIdCandidateCount);
+    for (int count = kMinCandidateCount; count <= kMaxCandidateCount; ++count) {
+        const std::wstring text = std::to_wstring(count);
+        SendMessageW(countCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text.c_str()));
+    }
+    privateCheck = CreateChild(WC_BUTTONW, L"プライベートモード（Ctrl+Alt+P でも切り替え）", check, kIdPrivateMode);
+    inputNote = CreateChild(WC_STATICW,
+                            L"プライベートモードの間は、学習・入力履歴・予測変換・変換記録・ユーザ辞書を止めます。\n"
+                            L"変更はすぐに反映されます。",
+                            0, 0);
+    AddToPage(kTabInput, {liveCheck, predictiveCheck, symbolsCheck, spaceCheck, punctuationLabel,
+                          punctuationCombo, countLabel, countCombo, privateCheck, inputNote});
 
     // ---- 辞書 ----
     dictList = CreateChild(WC_LISTVIEWW, L"",
@@ -246,6 +392,8 @@ void App::CreateControls() {
                            WS_EX_CLIENTEDGE);
     dictAdd = CreateChild(WC_BUTTONW, L"追加", WS_TABSTOP, kIdDictAdd);
     dictRemove = CreateChild(WC_BUTTONW, L"選択を削除", WS_TABSTOP, kIdDictRemove);
+    AddToPage(kTabUserDictionary,
+              {dictList, dictLabelReading, dictReading, dictLabelWord, dictWord, dictAdd, dictRemove});
 
     // ---- 専門辞書 ----
     termList = CreateChild(WC_LISTVIEWW, L"",
@@ -268,13 +416,55 @@ void App::CreateControls() {
     termDetail = CreateChild(WC_EDITW, L"",
                              ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, kIdTermDetail,
                              WS_EX_CLIENTEDGE);
+    AddToPage(kTabTermDictionary, {termList, termAdd, termRemove, termStatus, termDetail});
 
-    // ---- 学習 ----
+    // ---- 変換ルール ----
+    ruleList = CreateChild(WC_LISTVIEWW, L"", LVS_REPORT | LVS_SHOWSELALWAYS | WS_TABSTOP, kIdRuleList,
+                           WS_EX_CLIENTEDGE);
+    ListView_SetExtendedListViewStyle(ruleList, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_CHECKBOXES);
+    const struct {
+        const wchar_t* title;
+        int width;
+    } ruleColumns[] = {{L"読み", 130}, {L"出力", 200}, {L"いま出る候補", 170}};
+    for (int i = 0; i < static_cast<int>(ARRAYSIZE(ruleColumns)); ++i) {
+        column.cx = Scale(ruleColumns[i].width);
+        column.pszText = const_cast<wchar_t*>(ruleColumns[i].title);
+        ListView_InsertColumn(ruleList, i, &column);
+    }
+    ruleLabelTrigger = CreateChild(WC_STATICW, L"読み:", 0, 0);
+    ruleTrigger = CreateChild(WC_EDITW, L"", WS_TABSTOP | ES_AUTOHSCROLL, kIdRuleTrigger, WS_EX_CLIENTEDGE);
+    ruleLabelOutput = CreateChild(WC_STATICW, L"出力:", 0, 0);
+    ruleOutput = CreateChild(WC_EDITW, L"", WS_TABSTOP | ES_AUTOHSCROLL, kIdRuleOutput, WS_EX_CLIENTEDGE);
+    ruleAdd = CreateChild(WC_BUTTONW, L"追加", WS_TABSTOP, kIdRuleAdd);
+    ruleRemove = CreateChild(WC_BUTTONW, L"選択を削除", WS_TABSTOP, kIdRuleRemove);
+    ruleNote = CreateChild(WC_STATICW,
+                           L"読みを打って Space を押したときの候補に、出力を加えます（ライブ変換は変えません）。"
+                           L"チェックを外したルールは使いません。\n"
+                           L"出力に書けるもの: {{date}}（今日の日付）・{{date+1}}（明日）・{{time:HH:mm}}・"
+                           L"{{datetime}}・{{wareki}}（和暦）。日付の書式は {{date:yyyy年M月d日（E）}} のように指定します。",
+                           0, 0);
+    AddToPage(kTabRewriteRules, {ruleList, ruleLabelTrigger, ruleTrigger, ruleLabelOutput, ruleOutput, ruleAdd,
+                                 ruleRemove, ruleNote});
+
+    // ---- 学習・記録 ----
     learnStatus = CreateChild(WC_STATICW, L"", 0, kIdLearnStatus);
     learnReset = CreateChild(WC_BUTTONW, L"学習をリセット", WS_TABSTOP, kIdLearnReset);
+    historyStatus = CreateChild(WC_STATICW, L"", 0, 0);
+    historyReset = CreateChild(WC_BUTTONW, L"入力履歴を消去", WS_TABSTOP, kIdHistoryReset);
+    logCheck = CreateChild(WC_BUTTONW, L"変換記録を残す（追加学習に使うデータ。カーソルの手前の文章も残ります）", check,
+                           kIdLogEnabled);
+    logScopeLabel = CreateChild(WC_STATICW, L"記録する確定:", 0, 0);
+    logScopeCombo = CreateChild(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_TABSTOP, kIdLogScope);
+    SendMessageW(logScopeCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"すべての確定"));
+    SendMessageW(logScopeCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"直した確定だけ"));
+    logStatus = CreateChild(WC_STATICW, L"", 0, 0);
+    logOpen = CreateChild(WC_BUTTONW, L"フォルダを開く", WS_TABSTOP, kIdLogOpen);
+    logReset = CreateChild(WC_BUTTONW, L"変換記録を消去", WS_TABSTOP, kIdLogReset);
     about = CreateChild(WC_STATICW,
                         L"iroha for Windows\nhttps://github.com/TetsuakiBaba/iroha", 0,
                         kIdAbout);
+    AddToPage(kTabLearning, {learnStatus, learnReset, historyStatus, historyReset, logCheck, logScopeLabel,
+                             logScopeCombo, logStatus, logOpen, logReset, about});
 }
 
 void App::LayoutControls() {
@@ -293,6 +483,23 @@ void App::LayoutControls() {
     MoveWindow(modelStatus, x, y + Scale(36), width, Scale(40), TRUE);
     MoveWindow(modelDownload, x, y + Scale(84), Scale(130), Scale(28), TRUE);
     MoveWindow(modelApply, x + Scale(140), y + Scale(84), Scale(150), Scale(28), TRUE);
+
+    // 入力
+    {
+        int rowY = y;
+        for (HWND checkBox : {liveCheck, predictiveCheck, symbolsCheck, spaceCheck}) {
+            MoveWindow(checkBox, x, rowY, width, Scale(24), TRUE);
+            rowY += Scale(32);
+        }
+        MoveWindow(punctuationLabel, x, rowY + Scale(4), Scale(230), Scale(20), TRUE);
+        MoveWindow(punctuationCombo, x + Scale(236), rowY, Scale(90), Scale(200), TRUE);
+        rowY += Scale(36);
+        MoveWindow(countLabel, x, rowY + Scale(4), Scale(230), Scale(20), TRUE);
+        MoveWindow(countCombo, x + Scale(236), rowY, Scale(90), Scale(300), TRUE);
+        rowY += Scale(40);
+        MoveWindow(privateCheck, x, rowY, width, Scale(24), TRUE);
+        MoveWindow(inputNote, x, rowY + Scale(36), width, Scale(48), TRUE);
+    }
 
     // 辞書
     const int listHeight = page.bottom - y - Scale(88);
@@ -315,39 +522,42 @@ void App::LayoutControls() {
     MoveWindow(termStatus, x + Scale(178), termRowY + Scale(4), width - Scale(178), Scale(20), TRUE);
     MoveWindow(termDetail, x, termRowY + Scale(34), width, detailHeight, TRUE);
 
-    // 学習
-    MoveWindow(learnStatus, x, y, width, Scale(40), TRUE);
-    MoveWindow(learnReset, x, y + Scale(48), Scale(140), Scale(28), TRUE);
-    MoveWindow(about, x, y + Scale(96), width, Scale(48), TRUE);
+    // 変換ルール
+    const int noteHeight = Scale(64);
+    const int ruleListHeight = page.bottom - y - noteHeight - Scale(84);
+    MoveWindow(ruleList, x, y, width, ruleListHeight, TRUE);
+    const int ruleRowY = y + ruleListHeight + Scale(10);
+    MoveWindow(ruleLabelTrigger, x, ruleRowY + Scale(4), Scale(38), Scale(20), TRUE);
+    MoveWindow(ruleTrigger, x + Scale(40), ruleRowY, Scale(120), Scale(24), TRUE);
+    MoveWindow(ruleLabelOutput, x + Scale(170), ruleRowY + Scale(4), Scale(38), Scale(20), TRUE);
+    MoveWindow(ruleOutput, x + Scale(210), ruleRowY, Scale(200), Scale(24), TRUE);
+    MoveWindow(ruleAdd, x + Scale(420), ruleRowY, Scale(60), Scale(26), TRUE);
+    MoveWindow(ruleRemove, x, ruleRowY + Scale(34), Scale(110), Scale(26), TRUE);
+    MoveWindow(ruleNote, x, ruleRowY + Scale(66), width, noteHeight, TRUE);
+
+    // 学習・記録
+    MoveWindow(learnStatus, x, y, width, Scale(20), TRUE);
+    MoveWindow(learnReset, x, y + Scale(26), Scale(140), Scale(28), TRUE);
+    MoveWindow(historyStatus, x, y + Scale(70), width, Scale(20), TRUE);
+    MoveWindow(historyReset, x, y + Scale(96), Scale(140), Scale(28), TRUE);
+    MoveWindow(logCheck, x, y + Scale(142), width, Scale(24), TRUE);
+    MoveWindow(logScopeLabel, x + Scale(20), y + Scale(176), Scale(110), Scale(20), TRUE);
+    MoveWindow(logScopeCombo, x + Scale(134), y + Scale(172), Scale(160), Scale(200), TRUE);
+    MoveWindow(logStatus, x + Scale(20), y + Scale(206), width - Scale(20), Scale(20), TRUE);
+    MoveWindow(logOpen, x + Scale(20), y + Scale(232), Scale(130), Scale(28), TRUE);
+    MoveWindow(logReset, x + Scale(158), y + Scale(232), Scale(140), Scale(28), TRUE);
+    MoveWindow(about, x, y + Scale(286), width, Scale(48), TRUE);
 }
 
 void App::ShowTab(int index) {
     auto show = [](HWND hwnd, bool visible) {
         ShowWindow(hwnd, visible ? SW_SHOW : SW_HIDE);
     };
-    const bool model = index == kTabModel;
-    const bool dict = index == kTabUserDictionary;
+    for (const auto& [page, control] : pages) show(control, page == index);
     const bool term = index == kTabTermDictionary;
-    const bool learn = index == kTabLearning;
-    show(modelCombo, model);
-    show(modelStatus, model);
-    show(modelDownload, model);
-    show(modelApply, model);
-    show(dictList, dict);
-    show(dictLabelReading, dict);
-    show(dictReading, dict);
-    show(dictLabelWord, dict);
-    show(dictWord, dict);
-    show(dictAdd, dict);
-    show(dictRemove, dict);
-    show(termList, term);
-    show(termAdd, term);
-    show(termRemove, term);
-    show(termStatus, term);
-    show(termDetail, term);
-    show(learnStatus, learn);
-    show(learnReset, learn);
-    show(about, learn);
+    // 件数は、ほかのところ（変換サーバ）で増えるので、タブを開くたびに数え直す
+    if (index == kTabLearning) RefreshLearningPage();
+    if (index == kTabInput) RefreshInputPage();
     // 専門辞書の一覧は、タブを初めて開いたときに取りにいく（入れてある辞書が作り直されていれば入れ直す）
     if (term && !termCatalogRequested) {
         termCatalogRequested = true;
@@ -397,9 +607,177 @@ void App::RefreshDictionaryList() {
 }
 
 void App::RefreshLearningPage() {
-    wchar_t text[128];
-    _snwprintf_s(text, _TRUNCATE, L"学習済み: %zu 件", learning->Count());
+    learning = std::make_unique<iroha::LearningStore>(std::filesystem::path(DataDir() + L"\\learning.json"));
+    wchar_t text[256];
+    _snwprintf_s(text, _TRUNCATE, L"学習: %zu 件", learning->Count());
     SetWindowTextW(learnStatus, text);
+    inputHistory->Reload();
+    _snwprintf_s(text, _TRUNCATE, L"入力履歴（予測変換が ON の間だけ記録）: %zu 件", inputHistory->Count());
+    SetWindowTextW(historyStatus, text);
+
+    const iroha::Config config = iroha::LoadConfig(ConfigPath());
+    SendMessageW(logCheck, BM_SETCHECK, config.conversionLog ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(logScopeCombo, CB_SETCURSEL, config.conversionLogCorrectionsOnly ? 1 : 0, 0);
+    EnableWindow(logScopeCombo, config.conversionLog);
+    const size_t count = conversionLog->Items().size();
+    const uintmax_t size = conversionLog->TotalSize();
+    _snwprintf_s(text, _TRUNCATE, L"記録: %zu 件（%.1f KB）%ls", count, static_cast<double>(size) / 1024.0,
+                 config.privateMode && config.conversionLog ? L"  プライベートモードの間は記録しません" : L"");
+    SetWindowTextW(logStatus, text);
+    EnableWindow(logReset, count > 0 || size > 0);
+}
+
+// ---- 入力のページ ----
+
+void App::RefreshInputPage() {
+    const iroha::Config config = iroha::LoadConfig(ConfigPath());
+    const auto setCheck = [](HWND control, bool checked) {
+        SendMessageW(control, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
+    };
+    setCheck(liveCheck, config.liveConversion);
+    setCheck(predictiveCheck, config.predictive);
+    setCheck(symbolsCheck, config.symbolCandidates);
+    setCheck(spaceCheck, config.fullWidthSpace);
+    setCheck(privateCheck, config.privateMode);
+    SendMessageW(punctuationCombo, CB_SETCURSEL, iroha::Utf32ToUtf16(config.punctuation) == kPunctuations[1] ? 1 : 0,
+                 0);
+    SendMessageW(countCombo, CB_SETCURSEL, config.candidateCount - kMinCandidateCount, 0);
+}
+
+// 入力のページの値を設定に書いて、変換サーバに読み直してもらう（ほかの項目は今の設定のまま）
+void App::SaveInputPage() {
+    iroha::Config config = iroha::LoadConfig(ConfigPath());
+    const auto checked = [](HWND control) { return SendMessageW(control, BM_GETCHECK, 0, 0) == BST_CHECKED; };
+    config.liveConversion = checked(liveCheck);
+    config.predictive = checked(predictiveCheck);
+    config.symbolCandidates = checked(symbolsCheck);
+    config.fullWidthSpace = checked(spaceCheck);
+    config.privateMode = checked(privateCheck);
+    const LRESULT punctuation = SendMessageW(punctuationCombo, CB_GETCURSEL, 0, 0);
+    config.punctuation = iroha::Utf16ToUtf32(kPunctuations[punctuation == 1 ? 1 : 0]);
+    const LRESULT count = SendMessageW(countCombo, CB_GETCURSEL, 0, 0);
+    if (count >= 0) config.candidateCount = kMinCandidateCount + static_cast<int>(count);
+    if (!iroha::SaveConfig(ConfigPath(), config)) {
+        MessageBoxW(window, L"設定の保存に失敗しました", L"iroha", MB_ICONERROR);
+        return;
+    }
+    RequestServerReload();
+}
+
+// ---- 変換ルールのページ ----
+
+void App::RefreshRuleList() {
+    rewriteRules->Reload();
+    rules = rewriteRules->Rules();
+    ruleRefreshing = true;
+    ListView_DeleteAllItems(ruleList);
+    const iroha::RewriteContext now = iroha::RewriteContext::Now();
+    for (int i = 0; i < static_cast<int>(rules.size()); ++i) {
+        const iroha::UserRewriteRule& rule = rules[i];
+        std::wstring trigger = iroha::Utf32ToUtf16(rule.trigger);
+        std::wstring output = iroha::Utf32ToUtf16(rule.output);
+        std::wstring rendered = iroha::Utf32ToUtf16(iroha::RewriteTemplate(rule.output).Render(now));
+        LVITEMW item = {};
+        item.mask = LVIF_TEXT;
+        item.iItem = i;
+        item.pszText = trigger.data();
+        ListView_InsertItem(ruleList, &item);
+        ListView_SetItemText(ruleList, i, 1, output.data());
+        ListView_SetItemText(ruleList, i, 2, rendered.data());
+        ListView_SetCheckState(ruleList, i, rule.isEnabled);
+    }
+    ruleRefreshing = false;
+}
+
+void App::OnRuleAdd() {
+    wchar_t trigger[256];
+    wchar_t output[1024];
+    GetWindowTextW(ruleTrigger, trigger, ARRAYSIZE(trigger));
+    GetWindowTextW(ruleOutput, output, ARRAYSIZE(output));
+    const std::u32string normalized = iroha::UserRewriteRule::NormalizedTrigger(iroha::Utf16ToUtf32(trigger));
+    const std::u32string templateText = iroha::Utf16ToUtf32(output);
+    if (normalized.empty() || templateText.empty()) {
+        MessageBoxW(window, L"読みと出力を入力してください", L"iroha", MB_ICONINFORMATION);
+        return;
+    }
+    // 知らない {{…}} はそのまま文字として出るので、追加する前に知らせる
+    const auto unknown = iroha::RewriteTemplate(templateText).UnknownPlaceholders();
+    if (!unknown.empty()) {
+        std::wstring names;
+        for (const auto& name : unknown) names += L"{{" + iroha::Utf32ToUtf16(name) + L"}} ";
+        const std::wstring message =
+            L"次の書き方には対応していないので、そのまま文字として出ます:\n" + names + L"\n\nこのまま追加しますか？";
+        if (MessageBoxW(window, message.c_str(), L"iroha", MB_YESNO | MB_ICONWARNING) != IDYES) return;
+    }
+    rewriteRules->Add(normalized, templateText);
+    SetWindowTextW(ruleTrigger, L"");
+    SetWindowTextW(ruleOutput, L"");
+    RefreshRuleList();
+    RequestServerReload();
+}
+
+void App::OnRuleRemove() {
+    std::set<std::string> ids;
+    for (int row = ListView_GetNextItem(ruleList, -1, LVNI_SELECTED); row >= 0;
+         row = ListView_GetNextItem(ruleList, row, LVNI_SELECTED)) {
+        if (row < static_cast<int>(rules.size())) ids.insert(rules[row].id);
+    }
+    if (ids.empty()) return;
+    rewriteRules->Remove(ids);
+    RefreshRuleList();
+    RequestServerReload();
+}
+
+// 一覧のチェック（使う・使わない）を切り替えた
+void App::OnRuleChecked(int row) {
+    if (ruleRefreshing || row < 0 || row >= static_cast<int>(rules.size())) return;
+    const bool enabled = ListView_GetCheckState(ruleList, row) != FALSE;
+    if (enabled == rules[row].isEnabled) return;
+    rewriteRules->SetEnabled(enabled, rules[row].id);
+    rules[row].isEnabled = enabled;
+    RequestServerReload();
+}
+
+// ---- 入力履歴・変換記録 ----
+
+void App::OnHistoryReset() {
+    if (MessageBoxW(window, L"入力履歴（予測変換の候補）をすべて消去します。よろしいですか？", L"iroha",
+                    MB_YESNO | MB_ICONWARNING) != IDYES) {
+        return;
+    }
+    inputHistory->Reset(iroha::InputHistoryStore::NowSeconds());
+    inputHistory->Flush();
+    RequestServerReload();
+    RefreshLearningPage();
+}
+
+void App::SaveLogSettings() {
+    iroha::Config config = iroha::LoadConfig(ConfigPath());
+    config.conversionLog = SendMessageW(logCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    config.conversionLogCorrectionsOnly = SendMessageW(logScopeCombo, CB_GETCURSEL, 0, 0) == 1;
+    if (!iroha::SaveConfig(ConfigPath(), config)) {
+        MessageBoxW(window, L"設定の保存に失敗しました", L"iroha", MB_ICONERROR);
+        return;
+    }
+    RequestServerReload();
+    RefreshLearningPage();
+}
+
+void App::OnLogOpen() {
+    std::error_code error;
+    std::filesystem::create_directories(ConversionLogDirectory(), error);
+    ShellExecuteW(window, L"open", ConversionLogDirectory().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+void App::OnLogReset() {
+    if (MessageBoxW(window,
+                    L"変換記録をすべて消去します。よろしいですか？\n"
+                    L"（データフォルダを共有しているほかのコンピュータの記録も消えます）",
+                    L"iroha", MB_YESNO | MB_ICONWARNING) != IDYES) {
+        return;
+    }
+    conversionLog->RemoveAll();
+    RefreshLearningPage();
 }
 
 struct DownloadContext {
@@ -714,8 +1092,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             g_app.RefreshModelPage();
             g_app.RefreshDictionaryList();
             g_app.RefreshTermList();
+            g_app.RefreshInputPage();
+            g_app.RefreshRuleList();
             g_app.RefreshLearningPage();
             return 0;
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORBTN:
+            // 読み取り専用の入力欄（専門辞書の説明）は既定のまま
+            if (reinterpret_cast<HWND>(lParam) != g_app.termDetail && g_app.pageBrush) {
+                SetBkColor(reinterpret_cast<HDC>(wParam), g_app.pageColor);
+                return reinterpret_cast<LRESULT>(g_app.pageBrush);
+            }
+            break;
         case WM_SIZE:
             g_app.LayoutControls();
             return 0;
@@ -726,6 +1114,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
             if (header->hwndFrom == g_app.termList && header->code == LVN_ITEMCHANGED) {
                 g_app.ShowTermDetail();
+            }
+            if (header->hwndFrom == g_app.ruleList && header->code == LVN_ITEMCHANGED) {
+                const auto* change = reinterpret_cast<const NMLISTVIEW*>(lParam);
+                if ((change->uChanged & LVIF_STATE) &&
+                    ((change->uNewState ^ change->uOldState) & LVIS_STATEIMAGEMASK)) {
+                    g_app.OnRuleChecked(change->iItem);
+                }
             }
             return 0;
         }
@@ -748,6 +1143,38 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     return 0;
                 case kIdLearnReset:
                     g_app.OnLearnReset();
+                    return 0;
+                case kIdLive:
+                case kIdPredictive:
+                case kIdSymbols:
+                case kIdFullWidthSpace:
+                case kIdPrivateMode:
+                    if (HIWORD(wParam) == BN_CLICKED) g_app.SaveInputPage();
+                    return 0;
+                case kIdPunctuation:
+                case kIdCandidateCount:
+                    if (HIWORD(wParam) == CBN_SELCHANGE) g_app.SaveInputPage();
+                    return 0;
+                case kIdRuleAdd:
+                    g_app.OnRuleAdd();
+                    return 0;
+                case kIdRuleRemove:
+                    g_app.OnRuleRemove();
+                    return 0;
+                case kIdHistoryReset:
+                    g_app.OnHistoryReset();
+                    return 0;
+                case kIdLogEnabled:
+                    if (HIWORD(wParam) == BN_CLICKED) g_app.SaveLogSettings();
+                    return 0;
+                case kIdLogScope:
+                    if (HIWORD(wParam) == CBN_SELCHANGE) g_app.SaveLogSettings();
+                    return 0;
+                case kIdLogOpen:
+                    g_app.OnLogOpen();
+                    return 0;
+                case kIdLogReset:
+                    g_app.OnLogReset();
                     return 0;
                 case kIdTermAdd:
                 case kIdTermRemove: {
@@ -783,7 +1210,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
 } // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_TAB_CLASSES | ICC_LISTVIEW_CLASSES};
     InitCommonControlsEx(&icc);
@@ -792,6 +1219,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         std::filesystem::path(DataDir() + L"\\user-dictionary.json"));
     g_app.learning = std::make_unique<iroha::LearningStore>(
         std::filesystem::path(DataDir() + L"\\learning.json"));
+    // 変換ルールは変換サーバと同じく、初めてなら既定のルール（きょう・あした など）を用意する
+    g_app.rewriteRules = std::make_unique<iroha::UserRewriteRuleStore>(
+        std::filesystem::path(DataDir() + L"\\user-rewrite-rules.json"), /*seedsDefaults=*/true);
+    g_app.inputHistory = std::make_unique<iroha::InputHistoryStore>(
+        std::filesystem::path(DataDir() + L"\\input-history"), HostName(), /*saveDelayMs=*/0);
+    g_app.conversionLog = std::make_unique<iroha::ConversionLog>(ConversionLogDirectory(), HostName());
 
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
@@ -805,9 +1238,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 
     HWND window = CreateWindowExW(
         0, L"IrohaSettings", L"iroha の設定",
-        WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT, 620, 560,
+        WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT, 680, 580,
         nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
+    // --tab <名前> で開くタブを選ぶ（model / input / dictionary / terms / rules / learning）
+    const std::wstring arguments = commandLine ? commandLine : L"";
+    const wchar_t* const tabNames[kTabCount] = {L"model", L"input", L"dictionary", L"terms", L"rules", L"learning"};
+    if (const size_t option = arguments.find(L"--tab "); option != std::wstring::npos) {
+        const std::wstring name = arguments.substr(option + 6, arguments.find(L' ', option + 6) - option - 6);
+        for (int i = 0; i < kTabCount; ++i) {
+            if (name != tabNames[i]) continue;
+            TabCtrl_SetCurSel(g_app.tab, i);
+            g_app.ShowTab(i);
+        }
+    }
     ShowWindow(window, showCommand);
 
     MSG message;

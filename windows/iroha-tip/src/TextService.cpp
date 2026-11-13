@@ -346,6 +346,8 @@ TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) co
         if (composing && !IsModifierKey(wParam)) decision.kind = KeyDecision::Kind::CommitThenPass;
         return decision;
     };
+    // プライベートモードの切り替え（Ctrl+Alt+P。入力中かどうかによらず効く。macOS版の Ctrl+Option+P）
+    if (control && alt && wParam == 'P') return session(iroha::SessionKey::TogglePrivateMode);
     if (alt) return commitThenPass();
     if (control) {
         if (wParam == VK_OEM_PERIOD) return session(iroha::SessionKey::TogglePunctuation);
@@ -374,6 +376,10 @@ TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) co
                            : wParam == VK_F8 ? iroha::SessionKey::DisplayHalfKatakana
                            : wParam == VK_F9 ? iroha::SessionKey::DisplayFullAlphanumeric
                                              : iroha::SessionKey::DisplayHalfAlphanumeric);
+        case VK_TAB:
+            // 予測変換の候補が出ていれば Tab で選ぶ（Shift+Tab は前の候補）
+            if (composing && !segmenting && !shown_.predictions.empty()) return session(iroha::SessionKey::Tab);
+            return commitThenPass();
         case VK_RETURN:
             return composing ? session(iroha::SessionKey::Enter) : decision;
         case VK_ESCAPE:
@@ -468,6 +474,10 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
     shown_.commit.clear();
     idleUndoable_ = output.undoableCommit;
     idleFullWidthSpace_ = output.fullWidthSpace;
+    if (privateMode_ != output.privateMode) {
+        privateMode_ = output.privateMode;
+        if (langBarButton_) langBarButton_->NotifyUpdate();
+    }
 
     HRESULT hr = S_OK;
     if (synchronous) {
@@ -510,6 +520,7 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
         return hr;
     }
 
+    if (synchronous && !output.notice.empty()) ShowNotice(context, output.notice);
     if (!composition_) {
         ClearShown();
         return S_OK;
@@ -518,6 +529,11 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
         UpdateCandidateWindow(context);
     } else {
         candidateWindow_.Hide();
+    }
+    if (!shown_.predictions.empty() && !shown_.segmenting && synchronous) {
+        UpdatePredictionWindow(context);
+    } else if (shown_.predictions.empty() || shown_.segmenting) {
+        predictionWindow_.Hide();
     }
     if (shown_.livePending) {
         StartPolling();
@@ -552,7 +568,60 @@ HRESULT TextService::ApplyOutputInSession(TfEditCookie ec, ITfContext* context,
 void TextService::ClearShown() {
     shown_ = iroha::SessionOutput();
     candidateWindow_.Hide();
+    predictionWindow_.Hide();
     StopPolling();
+}
+
+// 未確定文字列（無ければカーソル）のスクリーン座標
+bool TextService::CompositionRect(ITfContext* context, RECT* rect, HWND* owner) {
+    bool found = false;
+    RequestSyncEditSession(
+        context, clientId_,
+        [this, context, rect, owner, &found](TfEditCookie ec) -> HRESULT {
+            ITfContextView* view = nullptr;
+            if (FAILED(context->GetActiveView(&view)) || !view) return S_OK;
+            view->GetWnd(owner);
+            if (!*owner) *owner = GetFocus();
+            ITfRange* range = nullptr;
+            if (composition_) {
+                composition_->GetRange(&range);
+            } else {
+                TF_SELECTION selection = {};
+                ULONG fetched = 0;
+                if (SUCCEEDED(context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched)) &&
+                    fetched == 1) {
+                    range = selection.range;
+                }
+            }
+            if (range) {
+                BOOL clipped = FALSE;
+                found = SUCCEEDED(view->GetTextExt(ec, range, rect, &clipped));
+                range->Release();
+            }
+            view->Release();
+            return S_OK;
+        },
+        TF_ES_SYNC | TF_ES_READ);
+    return found;
+}
+
+// 予測変換の候補を、未確定文字列の下に出す（番号は付けない。Tab で選ぶ）
+HRESULT TextService::UpdatePredictionWindow(ITfContext* context) {
+    RECT rect = {};
+    HWND owner = nullptr;
+    if (!CompositionRect(context, &rect, &owner)) return S_OK;
+    const size_t selected = shown_.predictionIndex < 0 ? SIZE_MAX : static_cast<size_t>(shown_.predictionIndex);
+    predictionWindow_.Show(owner, rect, shown_.predictions, {}, selected, /*numbered=*/false);
+    return S_OK;
+}
+
+// 知らせ（句読点・プライベートモードの切り替え）をカーソルの近くに少しのあいだ出す
+void TextService::ShowNotice(ITfContext* context, const std::u32string& text) {
+    RECT rect = {};
+    HWND owner = nullptr;
+    if (!CompositionRect(context, &rect, &owner) || !EnsurePollWindow()) return;
+    noticeWindow_.Show(owner, rect, {text}, {}, SIZE_MAX, /*numbered=*/false);
+    SetTimer(pollWindow_, reinterpret_cast<UINT_PTR>(this) + 1, 2500, &TextService::NoticeTimerProc);
 }
 
 // 選んでいる文節の位置に候補ウィンドウを出す。
