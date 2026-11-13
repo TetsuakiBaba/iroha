@@ -42,6 +42,11 @@ UserDictionary::UserDictionary(std::vector<UserDictionaryEntry> entries)
         std::vector<std::u32string>& words = wordsByReading_[reading];
         if (std::find(words.begin(), words.end(), entry.word) != words.end()) continue;
         words.push_back(entry.word);
+        if (IsSuitableForLiveConversion(reading, entry.word)) {
+            liveWordsByReading_[reading].push_back(entry.word);
+        } else {
+            candidateOnlyWordsByReading_[reading].push_back(entry.word);
+        }
         maxReadingLength_ = std::max(maxReadingLength_, reading.size());
     }
     // 索引に何も入らなかった読みのキーを消す（emptyの判定を単純に保つ）
@@ -55,9 +60,52 @@ std::vector<std::u32string> UserDictionary::Words(const std::u32string& reading)
     return it != wordsByReading_.end() ? it->second : std::vector<std::u32string>{};
 }
 
-std::vector<UserDictionary::Chunk> UserDictionary::Split(const std::u32string& reading,
-                                                         int minimumMatchLength) const {
-    if (IsEmpty() || reading.empty()) return {Chunk{false, reading}};
+std::vector<std::u32string> UserDictionary::LiveWords(const std::u32string& reading) const {
+    auto it = liveWordsByReading_.find(NormalizedReading(reading));
+    return it != liveWordsByReading_.end() ? it->second : std::vector<std::u32string>{};
+}
+
+std::vector<std::u32string> UserDictionary::CandidateOnlyWords(const std::u32string& reading,
+                                                               int minimumMatchLength) const {
+    std::vector<std::u32string> result;
+    const std::u32string normalized = NormalizedReading(reading);
+    if (normalized.empty()) return result;
+    for (const auto& [key, words] : candidateOnlyWordsByReading_) {
+        if (key == normalized || (key.size() >= static_cast<size_t>(minimumMatchLength) &&
+                                  normalized.find(key) != std::u32string::npos)) {
+            result.insert(result.end(), words.begin(), words.end());
+        }
+    }
+    return result;
+}
+
+bool UserDictionary::IsSuitableForLiveConversion(const std::u32string& reading,
+                                                 const std::u32string& word) {
+    const size_t readingLength = GraphemeCount(reading);
+    const size_t wordLength = GraphemeCount(word);
+    const bool isMuchLonger = wordLength > readingLength * 2 && wordLength >= readingLength + 3;
+    return !isMuchLonger;
+}
+
+std::vector<std::pair<std::u32string, std::u32string>> UserDictionary::EntriesOccurringIn(
+    const std::u32string& reading, int minimumMatchLength, bool forLiveConversion) const {
+    const Index& table = forLiveConversion ? liveWordsByReading_ : wordsByReading_;
+    std::vector<std::pair<std::u32string, std::u32string>> result;
+    for (const auto& [key, words] : table) {
+        if (key.size() < static_cast<size_t>(minimumMatchLength) ||
+            reading.find(key) == std::u32string::npos) {
+            continue;
+        }
+        for (const std::u32string& word : words) result.emplace_back(key, word);
+    }
+    return result;
+}
+
+std::vector<UserDictionary::Chunk> UserDictionary::Split(
+    const std::u32string& reading, int minimumMatchLength, bool forLiveConversion,
+    const std::set<int>* wordBoundaries) const {
+    const Index& table = forLiveConversion ? liveWordsByReading_ : wordsByReading_;
+    if (table.empty() || reading.empty()) return {Chunk{false, reading}};
     std::vector<Chunk> chunks;
     std::u32string plain;
     size_t index = 0;
@@ -67,8 +115,12 @@ std::vector<UserDictionary::Chunk> UserDictionary::Split(const std::u32string& r
         const std::u32string* matchWord = nullptr;
         size_t length = std::min(maxReadingLength_, reading.size() - index);
         while (length >= static_cast<size_t>(minimumMatchLength)) {
-            auto it = wordsByReading_.find(reading.substr(index, length));
-            if (it != wordsByReading_.end() && !it->second.empty()) {
+            auto it = table.find(reading.substr(index, length));
+            const bool onBoundaries =
+                !wordBoundaries ||
+                (wordBoundaries->count(static_cast<int>(index)) != 0 &&
+                 wordBoundaries->count(static_cast<int>(index + length)) != 0);
+            if (it != table.end() && !it->second.empty() && onBoundaries) {
                 matchLength = length;
                 matchWord = &it->second.front();
                 break;

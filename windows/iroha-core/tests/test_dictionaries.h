@@ -1,10 +1,11 @@
 #pragma once
-// 学習・ユーザ辞書のテスト。
-// 移植元: macos/Tests/IrohaCoreTests/{LearningTests,UserDictionaryTests}.swift
+// ユーザ辞書のテスト（学習のテストは test_learning.h）。
+// 移植元: macos/Tests/IrohaCoreTests/UserDictionaryTests.swift
 // test_main.cpp からインクルードされる（テストマクロを共有するため）。
 
 #include <algorithm>
 #include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -60,177 +61,9 @@ std::vector<std::u32string> MustConvert(iroha::ConversionEngine& engine,
     return results;
 }
 
-iroha::LearningEntry Seg(const std::u32string& reading, const std::u32string& result,
-                         const std::u32string& context = U"") {
-    return {iroha::LearningEntry::Kind::Segment, reading, result, context, 0};
-}
-
 std::filesystem::path TempJsonPath(const char* prefix) {
     return std::filesystem::temp_directory_path() /
            (std::string(prefix) + "-" + iroha::GenerateUuid() + ".json");
-}
-
-// ---- LearningEngine ----
-
-void TestEmptyLearningPassesThrough() {
-    StubEngine stub;
-    iroha::LearningEngine engine(&stub, [] { return iroha::LearningDictionary(); });
-    EXPECT_EQ(MustConvert(engine, U"きしゃ", U"", 1).front(), U"キシャ");
-    EXPECT_TRUE(stub.calls.size() == 1);
-}
-
-void TestSentenceMatchSkipsEngine() {
-    StubEngine stub;
-    const iroha::LearningDictionary dictionary({{iroha::LearningEntry::Kind::Sentence,
-                                                 U"きしゃのきしゃ", U"記者の貴社",
-                                                 U"", 0}});
-    iroha::LearningEngine engine(&stub, [&] { return dictionary; });
-    EXPECT_EQ(MustConvert(engine, U"きしゃのきしゃ", U"", 1).front(), U"記者の貴社");
-    EXPECT_TRUE(stub.calls.empty()); // 入力全体が一致すればエンジンを呼ばない
-}
-
-// 同じ読みでも位置によって違う変換を再現する（この機能の肝）
-void TestSegmentsChainWithContext() {
-    StubEngine stub;
-    const iroha::LearningDictionary dictionary(
-        {Seg(U"きしゃの", U"記者の"), Seg(U"きしゃ", U"貴社", U"記者の")});
-    iroha::LearningEngine engine(&stub, [&] { return dictionary; });
-    EXPECT_EQ(MustConvert(engine, U"きしゃのきしゃがきた", U"", 1).front(),
-              U"記者の貴社ガキタ");
-    // 学習で埋められなかった「がきた」だけがエンジンに渡る
-    EXPECT_TRUE(stub.calls.size() == 1);
-    EXPECT_EQ(stub.calls[0].reading, U"がきた");
-    EXPECT_EQ(stub.calls[0].context, U"記者の貴社");
-}
-
-// 文脈なしで覚えた文節を文中で無差別に当てはめない
-void TestContextlessEntryDoesNotFireMidSentence() {
-    StubEngine stub;
-    const iroha::LearningDictionary dictionary({Seg(U"きしゃ", U"記者")});
-    iroha::LearningEngine engine(&stub, [&] { return dictionary; });
-    EXPECT_EQ(MustConvert(engine, U"あのきしゃ", U"", 1).front(), U"アノキシャ");
-    EXPECT_TRUE(stub.calls.size() == 1); // 読み全体を1回で変換する（分割しない）
-    EXPECT_EQ(stub.calls[0].reading, U"あのきしゃ");
-}
-
-void TestContextlessEntryFiresAtStart() {
-    StubEngine stub;
-    const iroha::LearningDictionary dictionary({Seg(U"きしゃ", U"記者")});
-    iroha::LearningEngine engine(&stub, [&] { return dictionary; });
-    EXPECT_EQ(MustConvert(engine, U"きしゃがきた", U"", 1).front(), U"記者ガキタ");
-    EXPECT_TRUE(stub.calls.size() == 1);
-    EXPECT_EQ(stub.calls[0].reading, U"がきた");
-}
-
-void TestContextMismatchFallsBackToEngine() {
-    StubEngine stub;
-    const iroha::LearningDictionary dictionary({Seg(U"きしゃ", U"貴社", U"記者の")});
-    iroha::LearningEngine engine(&stub, [&] { return dictionary; });
-    // 文脈が合わないので学習結果は使わない（読みは分割されるが内容はエンジンの変換）
-    EXPECT_EQ(MustConvert(engine, U"あのきしゃ", U"", 1).front(), U"アノキシャ");
-    EXPECT_TRUE(stub.calls.size() == 2);
-    EXPECT_EQ(stub.calls[0].reading, U"あの");
-    EXPECT_EQ(stub.calls[1].reading, U"きしゃ");
-}
-
-void TestLongestMatchWins() {
-    StubEngine stub;
-    const iroha::LearningDictionary dictionary(
-        {Seg(U"きしゃ", U"記者"), Seg(U"きしゃに", U"汽車に")});
-    iroha::LearningEngine engine(&stub, [&] { return dictionary; });
-    EXPECT_EQ(MustConvert(engine, U"きしゃにのる", U"", 1).front(), U"汽車にノル");
-}
-
-void TestCandidatePanelPutsLearnedResultsFirst() {
-    StubEngine stub;
-    const iroha::LearningDictionary dictionary({Seg(U"きしゃ", U"記者")});
-    iroha::LearningEngine engine(&stub, [&] { return dictionary; });
-    const auto result = MustConvert(engine, U"きしゃ", U"", 3);
-    EXPECT_EQ(result.front(), U"記者");
-    EXPECT_TRUE(std::find(result.begin(), result.end(), U"キシャ") != result.end());
-}
-
-void TestCandidatePanelPrefersContextMatch() {
-    StubEngine stub;
-    const iroha::LearningDictionary dictionary(
-        {Seg(U"きしゃ", U"記者"), Seg(U"きしゃ", U"貴社", U"記者の")});
-    iroha::LearningEngine engine(&stub, [&] { return dictionary; });
-    const auto result = MustConvert(engine, U"きしゃ", U"きょうは記者の", 3);
-    EXPECT_EQ(result.front(), U"貴社"); // 文脈が合う学習結果を優先する
-    EXPECT_TRUE(std::find(result.begin(), result.end(), U"記者") != result.end());
-}
-
-// ---- LearningStore ----
-
-// ユーザの例:「きしゃのきしゃ」を「記者の貴社」に直したら次から再現される
-void TestRecordThenReproduce() {
-    const auto path = TempJsonPath("iroha-learning");
-    iroha::LearningStore store(path);
-    store.Record(U"きしゃのきしゃ", U"記者の貴社",
-                 {{U"きしゃの", U"記者の"}, {U"きしゃ", U"貴社"}});
-
-    // 入力全体が同じならそのまま
-    const std::u32string* sentence = store.Current().Sentence(U"きしゃのきしゃ");
-    EXPECT_TRUE(sentence != nullptr);
-    if (sentence) EXPECT_EQ(*sentence, U"記者の貴社");
-
-    // 続きが違っても文節の学習で再現される
-    StubEngine stub;
-    const iroha::LearningDictionary dictionary = store.Current();
-    iroha::LearningEngine engine(&stub, [&] { return dictionary; });
-    EXPECT_EQ(MustConvert(engine, U"きしゃのきしゃがきた", U"", 1).front(),
-              U"記者の貴社ガキタ");
-    std::filesystem::remove(path);
-}
-
-void TestLeftContextIsRecordedPerSegment() {
-    const auto path = TempJsonPath("iroha-learning");
-    iroha::LearningStore store(path);
-    store.Record(U"きしゃのきしゃ", U"記者の貴社",
-                 {{U"きしゃの", U"記者の"}, {U"きしゃ", U"貴社"}});
-    for (const auto& entry : store.Current().Entries()) {
-        if (entry.kind != iroha::LearningEntry::Kind::Segment) continue;
-        if (entry.result == U"記者の") EXPECT_EQ(entry.leftContext, U"");
-        if (entry.result == U"貴社") EXPECT_EQ(entry.leftContext, U"記者の");
-    }
-    std::filesystem::remove(path);
-}
-
-void TestLatestRecordWins() {
-    const auto path = TempJsonPath("iroha-learning");
-    iroha::LearningStore store(path);
-    store.Record(U"きしゃ", U"記者", {{U"きしゃ", U"記者"}});
-    store.Record(U"きしゃ", U"汽車", {{U"きしゃ", U"汽車"}});
-    const std::u32string* sentence = store.Current().Sentence(U"きしゃ");
-    EXPECT_TRUE(sentence != nullptr);
-    if (sentence) EXPECT_EQ(*sentence, U"汽車");
-    EXPECT_EQ(store.Current().LearnedResults(U"きしゃ", U"").front(), U"汽車");
-    std::filesystem::remove(path);
-}
-
-void TestPersistsAcrossInstances() {
-    const auto path = TempJsonPath("iroha-learning");
-    {
-        iroha::LearningStore store(path);
-        store.Record(U"きしゃのきしゃ", U"記者の貴社",
-                     {{U"きしゃの", U"記者の"}, {U"きしゃ", U"貴社"}});
-    }
-    iroha::LearningStore reloaded(path);
-    const std::u32string* sentence = reloaded.Current().Sentence(U"きしゃのきしゃ");
-    EXPECT_TRUE(sentence != nullptr);
-    if (sentence) EXPECT_EQ(*sentence, U"記者の貴社");
-    EXPECT_EQ(reloaded.Current().LearnedResults(U"きしゃ", U"記者の").front(),
-              U"貴社");
-    std::filesystem::remove(path);
-}
-
-void TestResetClearsEverything() {
-    const auto path = TempJsonPath("iroha-learning");
-    iroha::LearningStore store(path);
-    store.Record(U"きしゃ", U"記者", {{U"きしゃ", U"記者"}});
-    store.Reset();
-    EXPECT_TRUE(store.Current().IsEmpty());
-    EXPECT_TRUE(store.Count() == 0);
 }
 
 // ---- UserDictionary ----
@@ -457,23 +290,133 @@ void TestSyncKeepsManualEntries() {
     std::filesystem::remove(path);
 }
 
+// ---- ライブ変換への適用可否（単語が読みより大幅に長いものは候補ウィンドウ専用） ----
+
+void TestLiveConversionSuitabilityLooksOnlyAtMuchLongerWords() {
+    const auto suitable = [](const std::u32string& reading, const std::u32string& word) {
+        return iroha::UserDictionary::IsSuitableForLiveConversion(reading, word);
+    };
+    // 短くなる方向（漢字変換）は常に通す
+    EXPECT_TRUE(suitable(U"とうきょうとりつだいがく", U"東京都立大学"));
+    EXPECT_TRUE(suitable(U"しょう", U"賞"));
+    EXPECT_TRUE(suitable(U"まる", U"○"));
+    // 同程度の長さ・軽い略記は通す
+    EXPECT_TRUE(suitable(U"あいふぉん", U"iPhone"));
+    EXPECT_TRUE(suitable(U"はっしゅたぐ", U"#iroha"));
+    EXPECT_TRUE(suitable(U"かぶ", U"株式会社")); // 2倍ちょうど・差2は通す
+    // 大幅に長い（2倍超かつ3文字以上）は除外
+    EXPECT_TRUE(!suitable(U"たぐ", U"#helloworld #dummytagu"));
+    EXPECT_TRUE(!suitable(U"たぐ", U"#hello"));
+    EXPECT_TRUE(!suitable(U"めーる", U"someone@example.com"));
+    EXPECT_TRUE(!suitable(U"おせわ", U"お世話になっております。"));
+}
+
+void TestLiveWordsExcludeCandidateOnlyEntries() {
+    const auto dictionary = MakeDict(
+        {{U"たぐ", U"#helloworld #dummytagu"}, {U"たぐ", U"タグ"}, {U"きららざか", U"雲母坂"}});
+    // 候補ウィンドウ用には全部残る
+    EXPECT_TRUE(dictionary.Words(U"たぐ") ==
+                (std::vector<std::u32string>{U"#helloworld #dummytagu", U"タグ"}));
+    EXPECT_TRUE(dictionary.LiveWords(U"たぐ") == (std::vector<std::u32string>{U"タグ"}));
+    EXPECT_TRUE(dictionary.LiveWords(U"きららざか") == (std::vector<std::u32string>{U"雲母坂"}));
+    EXPECT_TRUE(!dictionary.IsEmptyForLiveConversion());
+}
+
+void TestDictionaryWithOnlyCandidateOnlyEntriesIsEmptyForLiveConversion() {
+    const auto dictionary = MakeDict({{U"たぐ", U"#helloworld #dummytagu"}});
+    EXPECT_TRUE(!dictionary.IsEmpty());
+    EXPECT_TRUE(dictionary.IsEmptyForLiveConversion());
+    EXPECT_TRUE(dictionary.LiveWords(U"たぐ").empty());
+}
+
+void TestSplitForLiveConversionSkipsCandidateOnlyEntries() {
+    using Chunk = iroha::UserDictionary::Chunk;
+    const auto dictionary =
+        MakeDict({{U"たぐ", U"#helloworld #dummytagu"}, {U"きららざか", U"雲母坂"}});
+    EXPECT_TRUE(dictionary.Split(U"たぐをつける") ==
+                (std::vector<Chunk>{{true, U"#helloworld #dummytagu"}, {false, U"をつける"}}));
+    EXPECT_TRUE(dictionary.Split(U"たぐをつける", 2, true) ==
+                (std::vector<Chunk>{{false, U"たぐをつける"}}));
+    EXPECT_TRUE(dictionary.Split(U"きららざかのたぐ", 2, true) ==
+                (std::vector<Chunk>{{true, U"雲母坂"}, {false, U"のたぐ"}}));
+}
+
+void TestCandidateOnlyWordsMatchWholeOrPartialReading() {
+    const auto dictionary = MakeDict({{U"たぐ", U"#helloworld #dummytagu"},
+                                      {U"きららざか", U"雲母坂"},
+                                      {U"め", U"someone@example.com"}});
+    using Words = std::vector<std::u32string>;
+    EXPECT_TRUE(dictionary.CandidateOnlyWords(U"たぐ") == (Words{U"#helloworld #dummytagu"}));
+    EXPECT_TRUE(dictionary.CandidateOnlyWords(U"たぐをつける") == (Words{U"#helloworld #dummytagu"}));
+    EXPECT_TRUE(dictionary.CandidateOnlyWords(U"きららざか").empty()); // ライブ変換に使う語は含まない
+    EXPECT_TRUE(dictionary.CandidateOnlyWords(U"め") == (Words{U"someone@example.com"})); // 完全一致は1文字でも拾う
+    EXPECT_TRUE(dictionary.CandidateOnlyWords(U"めがね").empty()); // 1文字の部分一致は拾わない
+    EXPECT_TRUE(iroha::UserDictionary().CandidateOnlyWords(U"たぐ").empty());
+}
+
+// ---- 辞書ラティスの語の境目（読みの並びが一致するだけの所には当てない） ----
+
+void TestSplitUsesOnlyMatchesOnWordBoundaries() {
+    using Chunk = iroha::UserDictionary::Chunk;
+    const auto dictionary = MakeDict({{U"えま", U"江間"}});
+    // 「えらーが|きえ|ました」: 「えま」(5..<7) は語の途中なので当てない
+    const std::set<int> inside = {0, 3, 4, 6, 9};
+    EXPECT_TRUE(dictionary.Split(U"えらーがきえました", 2, false, &inside) ==
+                (std::vector<Chunk>{{false, U"えらーがきえました"}}));
+    const std::set<int> onBoundary = {0, 2, 3, 6};
+    EXPECT_TRUE(dictionary.Split(U"えまとあそぶ", 2, false, &onBoundary) ==
+                (std::vector<Chunk>{{true, U"江間"}, {false, U"とあそぶ"}}));
+    // 境目が分からなければ（ラティスが無い）読みが並べば当てる
+    EXPECT_TRUE(dictionary.Split(U"えらーがきえました") ==
+                (std::vector<Chunk>{{false, U"えらーがき"}, {true, U"江間"}, {false, U"した"}}));
+}
+
+void TestSplitFallsBackToShorterMatchOnWordBoundaries() {
+    using Chunk = iroha::UserDictionary::Chunk;
+    const auto dictionary = MakeDict({{U"とうきょう", U"東京"}, {U"とうきょうと", U"東京都"}});
+    // 「とうきょう|とっきょ」: 長い一致の終わりが境目でなければ短い一致を使う
+    const std::set<int> boundaries = {0, 5, 9};
+    EXPECT_TRUE(dictionary.Split(U"とうきょうとっきょ", 2, false, &boundaries) ==
+                (std::vector<Chunk>{{true, U"東京"}, {false, U"とっきょ"}}));
+}
+
+void TestEntriesOccurringInReading() {
+    const auto dictionary = MakeDict({{U"えま", U"江間"}, {U"きららざか", U"雲母坂"}, {U"あ", U"阿"}});
+    const auto found = dictionary.EntriesOccurringIn(U"きえました");
+    EXPECT_TRUE(found.size() == 1 && found[0].second == U"江間");
+    EXPECT_TRUE(dictionary.EntriesOccurringIn(U"あさ").empty()); // 1文字の読みは部分一致の対象外
+}
+
+// ---- UserDictionaryEngine（ライブ変換と候補ウィンドウ専用の語） ----
+
+void TestCandidateOnlyWordIsNotUsedForLiveConversion() {
+    StubEngine stub;
+    const auto dictionary = MakeDict({{U"たぐ", U"#helloworld #dummytagu"}});
+    iroha::UserDictionaryEngine engine(&stub, [&dictionary] { return dictionary; });
+    // ライブ変換は素通しでエンジンの結果
+    EXPECT_TRUE(MustConvert(engine, U"たぐ", U"", 1) == (std::vector<std::u32string>{U"タグ"}));
+    EXPECT_TRUE(stub.calls.size() == 1 && stub.calls[0].reading == U"たぐ");
+    // 部分一致でも埋め込まない
+    EXPECT_TRUE(MustConvert(engine, U"たぐをつける", U"", 1) ==
+                (std::vector<std::u32string>{U"タグヲツケル"}));
+    // 候補ウィンドウには先頭で出る
+    const auto panel = MustConvert(engine, U"たぐ", U"", 3);
+    EXPECT_EQ(panel.front(), U"#helloworld #dummytagu");
+    EXPECT_TRUE(std::find(panel.begin(), panel.end(), U"タグ") != panel.end());
+}
+
+void TestLiveConversionStillUsesShortWordsAlongsideCandidateOnlyOnes() {
+    StubEngine stub;
+    const auto dictionary = MakeDict(
+        {{U"たぐ", U"#helloworld #dummytagu"}, {U"たぐ", U"タグ付け"}, {U"きららざか", U"雲母坂"}});
+    iroha::UserDictionaryEngine engine(&stub, [&dictionary] { return dictionary; });
+    // 同じ読みでも通常の語はライブ変換に使う
+    EXPECT_TRUE(MustConvert(engine, U"たぐ", U"", 1) == (std::vector<std::u32string>{U"タグ付け"}));
+    EXPECT_TRUE(MustConvert(engine, U"きららざかのたぐ", U"", 1) ==
+                (std::vector<std::u32string>{U"雲母坂ノタグ付け"}));
+}
+
 void RunDictionaryTests() {
-    TestEmptyLearningPassesThrough();
-    TestSentenceMatchSkipsEngine();
-    TestSegmentsChainWithContext();
-    TestContextlessEntryDoesNotFireMidSentence();
-    TestContextlessEntryFiresAtStart();
-    TestContextMismatchFallsBackToEngine();
-    TestLongestMatchWins();
-    TestCandidatePanelPutsLearnedResultsFirst();
-    TestCandidatePanelPrefersContextMatch();
-
-    TestRecordThenReproduce();
-    TestLeftContextIsRecordedPerSegment();
-    TestLatestRecordWins();
-    TestPersistsAcrossInstances();
-    TestResetClearsEverything();
-
     TestNormalizedReadingConvertsKatakanaAndTrims();
     TestIsImportableReadingAcceptsKanaOnly();
     TestWordsForReadingKeepsRegistrationOrder();
@@ -482,6 +425,14 @@ void RunDictionaryTests() {
     TestSplitPrefersLongestMatch();
     TestSplitIgnoresSingleCharacterEntriesInsideSentence();
     TestEmptyDictionaryDoesNotSplit();
+    TestLiveConversionSuitabilityLooksOnlyAtMuchLongerWords();
+    TestLiveWordsExcludeCandidateOnlyEntries();
+    TestDictionaryWithOnlyCandidateOnlyEntriesIsEmptyForLiveConversion();
+    TestSplitForLiveConversionSkipsCandidateOnlyEntries();
+    TestCandidateOnlyWordsMatchWholeOrPartialReading();
+    TestSplitUsesOnlyMatchesOnWordBoundaries();
+    TestSplitFallsBackToShorterMatchOnWordBoundaries();
+    TestEntriesOccurringInReading();
 
     TestEmptyDictionaryPassesThrough();
     TestExactMatchSkipsEngine();
@@ -490,6 +441,8 @@ void RunDictionaryTests() {
     TestCandidatePanelPutsUserWordsFirst();
     TestUserWordsSurviveEngineFailure();
     TestEngineFailurePropagatesWithoutUserWords();
+    TestCandidateOnlyWordIsNotUsedForLiveConversion();
+    TestLiveConversionStillUsesShortWordsAlongsideCandidateOnlyOnes();
 
     TestAddAndReload();
     TestStoreDropsEmptyEntries();

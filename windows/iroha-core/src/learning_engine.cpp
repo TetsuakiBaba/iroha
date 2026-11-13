@@ -4,95 +4,99 @@
 
 namespace iroha {
 
+namespace {
+
+// 学習結果の列から重複を除く（最初に出た順）
+std::vector<std::u32string> UniqueResults(const std::vector<LearningEntry>& entries) {
+    std::vector<std::u32string> results;
+    for (const LearningEntry& entry : entries) {
+        if (std::find(results.begin(), results.end(), entry.result) == results.end()) {
+            results.push_back(entry.result);
+        }
+    }
+    return results;
+}
+
+} // namespace
+
 LearningEngine::LearningEngine(ConversionEngine* base, DictionaryProvider dictionary)
     : base_(base), dictionaryProvider_(std::move(dictionary)) {}
 
 bool LearningEngine::Convert(const std::u32string& reading,
                              const std::u32string& context, int candidateCount,
                              std::vector<std::u32string>* results, std::string* error) {
-    results->clear();
+    if (!results) return false;
     const LearningDictionary dictionary = dictionaryProvider_();
-    if (dictionary.IsEmpty()) {
+    const std::vector<LearningEntry>& entries = dictionary.EntriesForReading(reading);
+    if (entries.empty()) {
+        if (candidateCount <= 1) recentDecisions_.erase(reading);
         return base_->Convert(reading, context, candidateCount, results, error);
     }
 
-    if (candidateCount <= 1) {
-        // 入力全体を過去に確定していればそれをそのまま返す（エンジンを呼ばない）
-        if (const std::u32string* sentence = dictionary.Sentence(reading)) {
-            results->push_back(*sentence);
-            return true;
+    std::vector<std::u32string> baseCandidates;
+    std::string baseError;
+    if (!base_->Convert(reading, context, candidateCount, &baseCandidates, &baseError)) {
+        // エンジンが失敗したら、条件なしで差し替えられる学習結果だけで返す
+        // （候補ウィンドウは学習結果が1件でもあれば開く）
+        results->clear();
+        if (candidateCount <= 1) {
+            if (const LearningEntry* entry = dictionary.Entry(reading, nullptr)) {
+                results->push_back(entry->result);
+            }
+        } else {
+            *results = UniqueResults(entries);
         }
-        std::u32string composed;
-        if (!Compose(reading, context, dictionary, &composed, error)) return false;
-        results->push_back(composed);
+        if (results->empty()) {
+            if (error) *error = baseError;
+            return false;
+        }
         return true;
     }
 
-    // 候補ウィンドウ: この読みで学習済みの変換を先頭に、続けてエンジンの候補
-    *results = dictionary.LearnedResults(reading, context);
-    std::vector<std::u32string> baseCandidates;
-    std::string baseError;
-    if (base_->Convert(reading, context, candidateCount, &baseCandidates, &baseError)) {
-        for (const auto& candidate : baseCandidates) {
-            if (std::find(results->begin(), results->end(), candidate) ==
-                results->end()) {
-                results->push_back(candidate);
-            }
+    const std::u32string* engineFirst = baseCandidates.empty() ? nullptr : &baseCandidates.front();
+    const LearningEntry* applied = dictionary.Entry(reading, engineFirst);
+
+    if (candidateCount <= 1) {
+        if (!applied && !engineFirst) {
+            *results = std::move(baseCandidates);
+            return true;
         }
-    } else if (results->empty()) {
-        if (error) *error = baseError;
-        return false;
+        const std::u32string shown = applied ? applied->result : *engineFirst;
+        if (engineFirst) {
+            if (recentDecisions_.size() >= kMaxRecentDecisions) recentDecisions_.clear();
+            recentDecisions_[reading] = {shown, *engineFirst};
+        }
+        results->assign(1, shown);
+        return true;
     }
+
+    // 候補ウィンドウ: 差し替える学習結果があれば先頭に、残りの学習結果はその次に置く
+    *results = std::move(baseCandidates);
+    if (applied) {
+        results->erase(std::remove(results->begin(), results->end(), applied->result), results->end());
+        results->insert(results->begin(), applied->result);
+    }
+    std::vector<std::u32string> others = UniqueResults(entries);
+    if (!results->empty()) {
+        const std::u32string first = results->front();
+        others.erase(std::remove(others.begin(), others.end(), first), others.end());
+    }
+    results->erase(std::remove_if(results->begin(), results->end(),
+                                  [&](const std::u32string& candidate) {
+                                      return std::find(others.begin(), others.end(), candidate) !=
+                                             others.end();
+                                  }),
+                   results->end());
+    results->insert(results->begin() + std::min<size_t>(1, results->size()), others.begin(),
+                    others.end());
     return true;
 }
 
-// 学習済みの文節で埋めながら左から変換する。
-// 文脈の条件を判定するには直前までの変換結果が要るので、学習済みの読みに
-// ぶつかった時点で、そこまでの未変換部分を先にエンジンへ渡して確定させる
-bool LearningEngine::Compose(const std::u32string& reading,
-                             const std::u32string& context,
-                             const LearningDictionary& dictionary, std::u32string* out,
-                             std::string* error) {
-    std::u32string result;  // 変換済みの部分（文脈にもなる）
-    std::u32string pending; // まだエンジンに渡していない読み
-    size_t index = 0;
-
-    while (index < reading.size()) {
-        if (dictionary.MayMatch(reading, index, index == 0)) {
-            if (!pending.empty()) {
-                std::u32string converted;
-                if (!ConvertChunk(pending, context + result, &converted, error)) {
-                    return false;
-                }
-                result += converted;
-                pending.clear();
-            }
-            if (const LearningEntry* match =
-                    dictionary.BestMatch(reading, index, result, index == 0)) {
-                result += match->result;
-                index += match->reading.size();
-                continue;
-            }
-        }
-        pending.push_back(reading[index]);
-        ++index;
-    }
-    if (!pending.empty()) {
-        std::u32string converted;
-        if (!ConvertChunk(pending, context + result, &converted, error)) return false;
-        result += converted;
-    }
-    *out = result;
-    return true;
-}
-
-bool LearningEngine::ConvertChunk(const std::u32string& reading,
-                                  const std::u32string& context, std::u32string* out,
-                                  std::string* error) {
-    std::vector<std::u32string> candidates;
-    if (!base_->Convert(reading, context, 1, &candidates, error)) return false;
-    *out = candidates.empty() ? reading : candidates.front();
-    return true;
+std::optional<std::u32string> LearningEngine::EngineResult(const std::u32string& reading,
+                                                           const std::u32string& shown) const {
+    const auto it = recentDecisions_.find(reading);
+    if (it == recentDecisions_.end() || it->second.first != shown) return std::nullopt;
+    return it->second.second;
 }
 
 } // namespace iroha

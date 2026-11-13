@@ -127,7 +127,12 @@ $env:IROHA_LATTICE = "always"; windows\build\iroha-cli\iroha-cli.exe ajimee test
   辞書ラティスの候補をモデルで再採点（`LatticeRescoringEngine`）→ モデル」の順に重ねる（macOS版 iroha-cli の makeEngine と同じ順）。
   候補を複数求められたとき（候補ウィンドウ）だけ辞書ラティスを使い、全体の変換（候補1つ）はモデルの生成に任せる。
   辞書は実行ファイルと同じフォルダの `Dictionary`（`install-tip.ps1`・配布zipの `install.ps1` がコピーする）。
-  学習・ユーザ辞書は v0.5 時点の仕様のまま（macOS版の今の仕様への追随は未実装）
+  学習とユーザ辞書は macOS版の今の仕様（2026-11-13 に合わせた）:
+  学習は「読み全体 → 確定文字列」と「直す前にエンジンが出していた結果」を覚え、エンジンがまた同じ結果を出したときだけ
+  差し替える（差し替えた結果をエンジンの結果に戻して確定したら消す。文節単位の学習は読み込み時に捨てる）。
+  ユーザ辞書は、読みの途中の一致を辞書ラティスで語の境目になる所だけ使い、単語が読みより大幅に長いエントリは
+  候補ウィンドウにだけ出す。learning.json・user-dictionary.json は macOS版と同じ形式。
+  ほかの端末が書いたファイルの取り込み（macOS版の `reloadIfChanged`）は未移植
 - 候補ウィンドウは9件ずつのページで出す（数字キーはページの中の番号。右下に「2/7」）
 
 インストール後、設定 > 時刻と言語 > 言語と地域 > 日本語 > キーボード に
@@ -174,8 +179,9 @@ $env:IROHA_LATTICE = "always"; windows\build\iroha-cli\iroha-cli.exe ajimee test
 - [x] M7b: モデルの採点・T5（iroha-kkc-v1）対応と、辞書ラティスの候補の再採点（`LatticeRescoringEngine`）。
       変換サーバに組み込み、既定のモデルを iroha-kkc-v1 に変更。候補ウィンドウのページ送り
 - [x] M7c: 長い読みの分割（ChunkedConversionEngine）と異体字（VariantKanjiEngine）
-- [ ] M7d: 学習・ユーザ辞書を macOS版の今の仕様に合わせる（直す前の結果つきの学習、ユーザ辞書の語の境目）、
-      記号・絵文字の候補、専門辞書
+- [x] M7d: 学習・ユーザ辞書を macOS版の今の仕様に合わせる（直す前の結果つきの学習、ユーザ辞書の語の境目、
+      候補ウィンドウ専用の語）
+- [ ] M7e: 記号・絵文字の候補、専門辞書
 - [ ] M5b: UIlessモード（ITfCandidateListUIElement。タスクバー検索ボックス等）
 - [ ] M6b: 製品化の残り（インストーラ/署名、release.ymlの両OS対応、UIA対応、
       ライブ変換［エンジン準備済み・TIP非同期化が未実装］）

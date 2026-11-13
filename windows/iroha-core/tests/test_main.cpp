@@ -338,6 +338,8 @@ void TestUnicodeRoundTrip() {
 #include "test_lattice.h"
 // 異体字・長い読みの分割のテスト
 #include "test_engines.h"
+// 学習のテスト
+#include "test_learning.h"
 
 int main() {
     TestBasicGojuon();
@@ -378,6 +380,7 @@ int main() {
     RunDictionaryTests();
     RunLatticeTests();
     RunEngineTests();
+    RunLearningTests();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

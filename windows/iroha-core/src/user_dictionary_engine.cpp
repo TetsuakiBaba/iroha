@@ -4,33 +4,47 @@
 
 namespace iroha {
 
+namespace {
+
+bool HasWordChunk(const std::vector<UserDictionary::Chunk>& chunks) {
+    return std::any_of(chunks.begin(), chunks.end(),
+                       [](const UserDictionary::Chunk& chunk) { return chunk.isWord; });
+}
+
+} // namespace
+
 UserDictionaryEngine::UserDictionaryEngine(ConversionEngine* base,
-                                           DictionaryProvider dictionary)
-    : base_(base), dictionaryProvider_(std::move(dictionary)) {}
+                                           DictionaryProvider dictionary,
+                                           LatticeConverter* lattice)
+    : base_(base), dictionaryProvider_(std::move(dictionary)), lattice_(lattice) {}
 
 bool UserDictionaryEngine::Convert(const std::u32string& reading,
                                    const std::u32string& context, int candidateCount,
                                    std::vector<std::u32string>* results,
                                    std::string* error) {
+    if (!results) return false;
     results->clear();
     const UserDictionary dictionary = dictionaryProvider_();
     if (dictionary.IsEmpty()) {
         return base_->Convert(reading, context, candidateCount, results, error);
     }
 
-    const std::vector<std::u32string> exactWords = dictionary.Words(reading);
-    const std::vector<UserDictionary::Chunk> chunks = dictionary.Split(reading);
-    const bool hasWordChunk =
-        std::any_of(chunks.begin(), chunks.end(),
-                    [](const UserDictionary::Chunk& c) { return c.isWord; });
-
-    // ライブ変換・文節分割用（1候補）: 辞書を当てた結果をそのまま返す
+    // ライブ変換・文節分割用（1候補）: 辞書を当てた結果をそのまま返す。
+    // ただし出力が読みより大幅に長いエントリ（ハッシュタグ・定型文など）は
+    // 文中に埋め込まれると邪魔なので使わない（候補ウィンドウにだけ出す）
     if (candidateCount <= 1) {
-        if (!exactWords.empty()) {
-            results->push_back(exactWords.front());
+        if (dictionary.IsEmptyForLiveConversion()) {
+            return base_->Convert(reading, context, 1, results, error);
+        }
+        const std::vector<std::u32string> liveWords = dictionary.LiveWords(reading);
+        if (!liveWords.empty()) {
+            results->push_back(liveWords.front());
             return true;
         }
-        if (!hasWordChunk) {
+        const std::optional<std::set<int>> boundaries = WordBoundaries(reading, dictionary, true);
+        const std::vector<UserDictionary::Chunk> chunks =
+            dictionary.Split(reading, 2, true, boundaries ? &*boundaries : nullptr);
+        if (!HasWordChunk(chunks)) {
             return base_->Convert(reading, context, 1, results, error);
         }
         std::u32string composed;
@@ -40,8 +54,12 @@ bool UserDictionaryEngine::Convert(const std::u32string& reading,
     }
 
     // 候補ウィンドウ用: ユーザ辞書の単語を先頭に、続けてエンジンの候補を並べる
+    const std::vector<std::u32string> exactWords = dictionary.Words(reading);
+    const std::optional<std::set<int>> boundaries = WordBoundaries(reading, dictionary, false);
+    const std::vector<UserDictionary::Chunk> chunks =
+        dictionary.Split(reading, 2, false, boundaries ? &*boundaries : nullptr);
     *results = exactWords;
-    if (hasWordChunk && exactWords.empty()) {
+    if (HasWordChunk(chunks) && exactWords.empty()) {
         std::u32string composed;
         if (!Compose(chunks, context, &composed, error)) return false;
         results->push_back(composed);
@@ -61,6 +79,16 @@ bool UserDictionaryEngine::Convert(const std::u32string& reading,
         return false;
     }
     return true;
+}
+
+// 読みの中に一致するエントリを辞書ラティスに入れて変換したときの語の境目。
+// 一致するエントリが無い・ラティスが無いときは nullopt（ラティスを呼ばない）
+std::optional<std::set<int>> UserDictionaryEngine::WordBoundaries(
+    const std::u32string& reading, const UserDictionary& dictionary, bool forLiveConversion) {
+    if (!lattice_) return std::nullopt;
+    const auto words = dictionary.EntriesOccurringIn(reading, 2, forLiveConversion);
+    if (words.empty()) return std::nullopt;
+    return lattice_->WordBoundaries(reading, words);
 }
 
 // 辞書一致部分はそのまま、それ以外はエンジンに変換させて連結する。

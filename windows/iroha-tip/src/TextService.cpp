@@ -420,8 +420,11 @@ HRESULT TextService::StartConversion(ITfContext* context) {
     // コンポジション直前の文書テキストを左文脈として渡す
     // （macOS版の「直前に確定した文字列」に相当。zenz側で末尾40文字に切り詰められる）
     const std::u32string leftContext = ReadLeftContext(context);
+    // 全体の変換は候補1つ（モデルの生成）で求める。macOS版のライブ変換・文節分割と同じ経路で、
+    // 学習の「直す前にエンジンが出していた結果」もこの変換から記録される。
+    // 文節ごとの候補（辞書ラティス + 再採点）は、候補ウィンドウを開くときに取る
     std::vector<std::u32string> candidates;
-    if (!ConvertClient::Convert(reading, leftContext, 9, &candidates) ||
+    if (!ConvertClient::Convert(reading, leftContext, 1, &candidates) ||
         candidates.empty()) {
         // サーバ不調時は読みのまま表示を続ける（Enterでかな確定できる）
         IrohaLog(L"StartConversion: server unavailable");
@@ -435,11 +438,6 @@ HRESULT TextService::StartConversion(ITfContext* context) {
     for (const auto& segment :
          iroha::ReadingAligner::SegmentReading(reading, candidates.front())) {
         segments_.push_back({segment.reading, segment.conversion, {}, 0});
-    }
-    if (segments_.size() == 1) {
-        // 全体が1文節なら取得済みの候補をそのまま流用できる
-        segments_[0].candidates = std::move(candidates);
-        segments_[0].candidateIndex = 0;
     }
     currentSegment_ = 0;
     segmented_ = true;

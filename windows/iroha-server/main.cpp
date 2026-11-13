@@ -163,7 +163,7 @@ struct ServerState {
         learning = std::make_unique<iroha::LearningStore>(
             StorePath(L"IROHA_LEARNING", L"learning.json"));
         dictionaryEngine = std::make_unique<iroha::UserDictionaryEngine>(
-            core, [this] { return userDictionary->Current(); });
+            core, [this] { return userDictionary->Current(); }, lattice.get());
         engine = std::make_unique<iroha::LearningEngine>(
             dictionaryEngine.get(), [this] { return learning->Current(); });
     }
@@ -235,19 +235,23 @@ bool HandleRequest(ServerState& state, const std::vector<char>& request,
                 *response = iroha::ipc::BuildErrorResponse("プロトコルが不正です");
                 return true;
             }
-            // エンジンの出力をそのまま確定した場合は何も覚えない（macOS版と同じ）
-            if (committedUtf8 != baselineUtf8 && !committedUtf8.empty()) {
+            // 文節変換の結果が表示していた変換（baseline）と違っていたら、ユーザによる修正として学習する
+            // （macOS版 IrohaInputController.learnIfCorrected と同じ規則）。
+            // 覚えるのは入力の読み全体 → 確定文字列と、直す前にエンジンが出していた結果。
+            // 学習が差し替えた結果を、ユーザがエンジンの結果に戻して確定したら、その学習を消す
+            if (committedUtf8 != baselineUtf8 && !committedUtf8.empty() && state.engine) {
                 const std::u32string reading = iroha::Utf8ToUtf32(readingUtf8);
                 const std::u32string committed = iroha::Utf8ToUtf32(committedUtf8);
-                // 文節UIがまだないため、文節の内訳はReadingAlignerの推定で近似する
-                const auto segments =
-                    iroha::ReadingAligner::SegmentReading(reading, committed);
-                std::vector<iroha::LearningStore::SegmentPair> pairs;
-                for (const auto& segment : segments) {
-                    pairs.push_back({segment.reading, segment.conversion});
+                const std::u32string baseline = iroha::Utf8ToUtf32(baselineUtf8);
+                const std::u32string engineResult =
+                    state.engine->EngineResult(reading, baseline).value_or(baseline);
+                if (committed == engineResult) {
+                    state.learning->Forget(reading, engineResult, baseline);
+                    Log("learning forgotten");
+                } else {
+                    state.learning->Record(reading, engineResult, committed);
+                    Log("learned");
                 }
-                state.learning->Record(reading, committed, pairs);
-                Log("learned");
             }
             *response = iroha::ipc::BuildOkResponse({});
             return true;

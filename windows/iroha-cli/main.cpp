@@ -155,7 +155,7 @@ struct EngineStack {
           learning(UserDataPath(mode, L"IROHA_LEARNING", L"learning.json")),
           variants(MakeCore()),
           chunked(&variants),
-          dictionaryEngine(&chunked, [this] { return userDictionary.Current(); }),
+          dictionaryEngine(&chunked, [this] { return userDictionary.Current(); }, lattice.get()),
           engine(&dictionaryEngine, [this] { return learning.Current(); }) {
         if (mode == UserDataMode::Evaluation) {
             std::fprintf(stderr, "%s\n",

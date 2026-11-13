@@ -18,6 +18,8 @@
 #include "iroha/lattice_converter.h"
 #include "iroha/lattice_rescoring_engine.h"
 #include "iroha/unicode.h"
+#include "iroha/user_dictionary.h"
+#include "iroha/user_dictionary_engine.h"
 #include "lattice/number.h"
 #include "lattice/special_candidates.h"
 
@@ -314,6 +316,24 @@ void TestLatticeForFirstCandidate(iroha::LatticeConverter& lattice) {
     EXPECT_TRUE(results == (std::vector<std::u32string>{U"汽車"}));
 }
 
+// 読みの並びが一致しても、辞書ラティスで語の境目にならない所にはユーザ辞書の語を当てない
+// （移植元: UserDictionaryTests.swift の testPartialMatchInsideWordIsIgnoredWithLattice）
+void TestPartialMatchInsideWordIsIgnoredWithLattice(iroha::LatticeConverter& lattice) {
+    StubEngine stub;
+    const iroha::UserDictionary dictionary({iroha::MakeUserDictionaryEntry(U"えま", U"江間")});
+    iroha::UserDictionaryEngine engine(&stub, [&dictionary] { return dictionary; }, &lattice);
+    for (const char32_t* reading : {U"えらーがきえました", U"きえます", U"とりかえました"}) {
+        EXPECT_TRUE(MustConvert(engine, reading, U"", 1) ==
+                    (std::vector<std::u32string>{iroha::HiraganaToKatakana(reading)}));
+    }
+    EXPECT_TRUE(MustConvert(engine, U"えまとあそぶ", U"", 1) ==
+                (std::vector<std::u32string>{U"江間トアソブ"}));
+    EXPECT_TRUE(MustConvert(engine, U"きのうえまにきいた", U"", 1) ==
+                (std::vector<std::u32string>{U"キノウ江間ニキイタ"}));
+    EXPECT_TRUE(MustConvert(engine, U"えまさん", U"", 1) ==
+                (std::vector<std::u32string>{U"江間サン"}));
+}
+
 void RunLatticeTests() {
     TestGraphemeCount();
     TestSpellOutJapanese();
@@ -332,6 +352,7 @@ void RunLatticeTests() {
     TestDictionaryEntriesFollowSentenceCandidates(*lattice);
     TestRawCandidatesAndEmptyReading(*lattice);
     TestWordBoundaries(*lattice);
+    TestPartialMatchInsideWordIsIgnoredWithLattice(*lattice);
 
     TestSingleCandidateBypassesLattice(*lattice);
     TestMultipleCandidatesAreLatticeCandidatesRankedByScore(*lattice);

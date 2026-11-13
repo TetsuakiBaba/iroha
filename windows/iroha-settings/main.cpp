@@ -301,15 +301,8 @@ void App::RefreshDictionaryList() {
 }
 
 void App::RefreshLearningPage() {
-    size_t sentences = 0;
-    size_t segments = 0;
-    for (const iroha::LearningEntry& entry : learning->Current().Entries()) {
-        if (entry.kind == iroha::LearningEntry::Kind::Sentence) ++sentences;
-        else ++segments;
-    }
     wchar_t text[128];
-    _snwprintf_s(text, _TRUNCATE, L"学習済み: 文 %zu 件 / 文節 %zu 件", sentences,
-                 segments);
+    _snwprintf_s(text, _TRUNCATE, L"学習済み: %zu 件", learning->Count());
     SetWindowTextW(learnStatus, text);
 }
 
