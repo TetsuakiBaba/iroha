@@ -17,6 +17,7 @@
 
 #include <memory>
 
+#include "iroha/chunked_conversion_engine.h"
 #include "iroha/config.h"
 #include "iroha/conversion_engine.h"
 #include "iroha/lattice_converter.h"
@@ -27,6 +28,7 @@
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_engine.h"
 #include "iroha/user_dictionary_store.h"
+#include "iroha/variant_kanji_engine.h"
 #include "iroha/zenz_engine.h"
 
 namespace {
@@ -105,7 +107,8 @@ PSECURITY_DESCRIPTOR CreatePipeSecurityDescriptor() {
     return descriptor;
 }
 
-// IME本体と同じ構成のエンジン一式: 学習 → ユーザ辞書 → 辞書ラティスの候補をモデルで再採点 → モデル。
+// IME本体と同じ構成のエンジン一式:
+// 学習 → ユーザ辞書 → 長い読みの区切り → 異体字 → 辞書ラティスの候補をモデルで再採点 → モデル。
 // 候補を複数求められたとき（候補ウィンドウ）は辞書ラティスで候補を作ってモデルで並べ、
 // 1つだけのとき（全体の変換）はモデルの生成に任せる。辞書が無ければモデル単体で動く。
 // 設定GUIからのReload要求で設定・辞書を読み直す（モデルは変わったときだけロード）
@@ -114,6 +117,8 @@ struct ServerState {
     std::unique_ptr<iroha::ZenzEngine> zenz;
     std::unique_ptr<iroha::LatticeConverter> lattice;
     std::unique_ptr<iroha::LatticeRescoringEngine> rescoring;
+    std::unique_ptr<iroha::VariantKanjiEngine> variants;
+    std::unique_ptr<iroha::ChunkedConversionEngine> chunked;
     std::unique_ptr<iroha::UserDictionaryStore> userDictionary;
     std::unique_ptr<iroha::LearningStore> learning;
     std::unique_ptr<iroha::UserDictionaryEngine> dictionaryEngine;
@@ -149,6 +154,10 @@ struct ServerState {
                 zenz.get(), zenz.get(), lattice.get());
             core = rescoring.get();
         }
+        // 異体字を候補の末尾に補い、80文字を超える読みは区切って順に変換する
+        variants = std::make_unique<iroha::VariantKanjiEngine>(core);
+        chunked = std::make_unique<iroha::ChunkedConversionEngine>(variants.get());
+        core = chunked.get();
         userDictionary = std::make_unique<iroha::UserDictionaryStore>(
             StorePath(L"IROHA_USER_DICT", L"user-dictionary.json"));
         learning = std::make_unique<iroha::LearningStore>(

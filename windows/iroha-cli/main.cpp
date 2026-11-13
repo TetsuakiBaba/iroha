@@ -47,6 +47,7 @@
 #include <vector>
 
 #include "ipc_protocol.h"
+#include "iroha/chunked_conversion_engine.h"
 #include "iroha/config.h"
 #include "iroha/json.h"
 #include "iroha/lattice_converter.h"
@@ -58,6 +59,7 @@
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_engine.h"
 #include "iroha/user_dictionary_store.h"
+#include "iroha/variant_kanji_engine.h"
 #include "iroha/zenz_engine.h"
 
 namespace {
@@ -142,8 +144,8 @@ std::filesystem::path UserDataPath(UserDataMode mode, const wchar_t* envName,
            (L"iroha-cli-empty-" + std::to_wstring(GetCurrentProcessId())) / fileName;
 }
 
-// IME本体と同じ構成（学習 → ユーザ辞書 → 辞書ラティスの候補をモデルで再採点 → モデル）で
-// エンジンを組み立てる。IROHA_MODEL / IROHA_USER_DICT / IROHA_LEARNING で差し替えられる。
+// IME本体と同じ構成（学習 → ユーザ辞書 → 長い読みの区切り → 異体字 → 辞書ラティスの候補を
+// モデルで再採点 → モデル）でエンジンを組み立てる。IROHA_MODEL / IROHA_USER_DICT / IROHA_LEARNING で差し替えられる。
 // IROHA_LATTICE=off で辞書ラティスを使わずモデル単体、IROHA_LATTICE=always で第一候補も
 // ラティス候補の再採点で決める（既定は候補ウィンドウのみラティス）
 struct EngineStack {
@@ -151,7 +153,9 @@ struct EngineStack {
         : zenz(DefaultModelPath(), ZenzOptions()),
           userDictionary(UserDataPath(mode, L"IROHA_USER_DICT", L"user-dictionary.json")),
           learning(UserDataPath(mode, L"IROHA_LEARNING", L"learning.json")),
-          dictionaryEngine(MakeCore(), [this] { return userDictionary.Current(); }),
+          variants(MakeCore()),
+          chunked(&variants),
+          dictionaryEngine(&chunked, [this] { return userDictionary.Current(); }),
           engine(&dictionaryEngine, [this] { return learning.Current(); }) {
         if (mode == UserDataMode::Evaluation) {
             std::fprintf(stderr, "%s\n",
@@ -166,6 +170,9 @@ struct EngineStack {
     std::unique_ptr<iroha::LatticeRescoringEngine> rescoring;
     iroha::UserDictionaryStore userDictionary;
     iroha::LearningStore learning;
+    // 異体字を候補の末尾に補い、80文字を超える読みは区切って順に変換する
+    iroha::VariantKanjiEngine variants;
+    iroha::ChunkedConversionEngine chunked;
     iroha::UserDictionaryEngine dictionaryEngine;
     iroha::LearningEngine engine;
 

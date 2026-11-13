@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.21)
 project(iroha-core LANGUAGES CXX)
 
 add_library(iroha-core STATIC
+    src/chunked_conversion_engine.cpp
     src/config.cpp
     src/json.cpp
     src/kana.cpp
@@ -26,6 +27,7 @@ add_library(iroha-core STATIC
     src/user_dictionary.cpp
     src/user_dictionary_engine.cpp
     src/user_dictionary_store.cpp
+    src/variant_kanji_engine.cpp
 )
 target_compile_features(iroha-core PUBLIC cxx_std_17)
 target_include_directories(iroha-core PUBLIC include)
