@@ -7,6 +7,7 @@ project(iroha-core LANGUAGES CXX)
 add_library(iroha-core STATIC
     src/chunked_conversion_engine.cpp
     src/config.cpp
+    src/input_session.cpp
     src/json.cpp
     src/kana.cpp
     src/lattice_converter.cpp

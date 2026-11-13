@@ -340,6 +340,8 @@ void TestUnicodeRoundTrip() {
 #include "test_engines.h"
 // 学習のテスト
 #include "test_learning.h"
+// 入力セッションのテスト
+#include "test_session.h"
 
 int main() {
     TestBasicGojuon();
@@ -381,6 +383,7 @@ int main() {
     RunLatticeTests();
     RunEngineTests();
     RunLearningTests();
+    RunSessionTests();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
