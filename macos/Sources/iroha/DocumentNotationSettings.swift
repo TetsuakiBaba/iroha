@@ -2,8 +2,8 @@ import Foundation
 import IrohaCore
 import IrohaDocuments
 
-/// 自分の原稿に合わせる（設定 > 辞書・学習、スキル「自分の原稿に合わせる」、既定OFF・同期する。2026-11-07）。
-/// スキルを解除していなければ、設定が ON で残っていても働かない（`isEnabled`）
+/// 自分の原稿に合わせる（設定 > 辞書・学習の開発者モードの節、既定OFF・同期する。2026-11-07）。
+/// 開発者モードを OFF にしても、ON にしてあれば効き続ける（隠すのは表示だけ。入力メニューの切り替えも出る）
 ///
 /// `<データフォルダ>/documents/` に置いた文書（PDF・Word・テキスト）から、読みごとにどの表記を何回使ったか
 /// （`NotationPreference`）を数え、かな漢字変換のモデルの採点に 2 つの項を加える（`NotationPreferenceEngine`）:
@@ -13,9 +13,9 @@ import IrohaDocuments
 /// 必ず置き換える辞書ではなく、モデルの点数に足すだけなので、文脈から見て合わない書き換えはモデルが拒む。
 /// 決め方と計測は `experiments/document-vocabulary/README.md`（リポジトリ外）と CLAUDE.md。
 ///
-/// - 表記の重み（既定 2・同期する）: 論文 12 本の計測で、2 が論文の文で +6、文書と関係のない文で
+/// - 表記の重み（開発者モード、既定 2・同期する）: 論文 12 本の計測で、2 が論文の文で +6、文書と関係のない文で
 ///   ほぼ変わらない（4 では「おすすめ→お進め」のような別の語への書き換えが出始めた）
-/// - 用語の重み（既定 2・同期する）: 同じ原稿の続きを書く場合の計測で +6（231 → 237）、
+/// - 用語の重み（開発者モード、既定 2・同期する）: 同じ原稿の続きを書く場合の計測で +6（231 → 237）、
 ///   iroha-bench-v1 で −1。4 にすると +10 だが、研究報告の文で 期間→機関・作製→作成 のような書き換えが出た
 /// - プライベートモードの間は止める（ユーザ辞書と同じく、変換を iroha 本来の結果にする）
 /// - 文書のフォルダはデータフォルダの中なので、データフォルダを共有している Mac では同じ文書を使う
@@ -32,7 +32,7 @@ enum DocumentNotationSettings {
     static let defaultTopicWeight = 2.0
 
     static var isEnabled: Bool {
-        Skill.documentNotation.isUnlocked && UserDefaults.standard.bool(forKey: enabledKey)
+        UserDefaults.standard.bool(forKey: enabledKey)
     }
 
     static var weight: Double {

@@ -1,21 +1,21 @@
 import Cocoa
 import IrohaCore
 
-/// デバッグ表示の設定（設定 > 情報 > 推論の時間の表示）。スキル「推論の時間の表示」・既定OFF。
-/// スキルが解除されているときだけ効く。
+/// デバッグ表示の設定（設定 > 情報 > 開発者向け）。開発者向けで既定OFF。
+/// 開発者モード（`DeveloperModeSettings`）が ON のときだけ効く（OFF にしたら表示も止める）。
 /// 他の Mac とは同期しない（`PreferencesSync.syncedKeys` に入れない）
 enum DeveloperOverlaySettings {
     static let enabledKey = "developerOverlay"
 
     static var isEnabled: Bool {
-        Skill.inferenceOverlay.isUnlocked
+        DeveloperModeSettings.isEnabled
             && UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
     }
 
     /// デバッグ表示に本体の加速度センサの揺れをグラフで出す（`KeystrokeAccelerometer`）。
-    /// グラフを出す設定（`AccelerometerSettings.showsGraph`）が ON のときだけ
+    /// 加速度センサを利用する設定（`AccelerometerSettings`）が ON のときだけ
     static var showsAccelerometer: Bool {
-        isEnabled && AccelerometerSettings.showsGraph
+        isEnabled && AccelerometerSettings.isEnabled
     }
 }
 

@@ -394,17 +394,6 @@ h3 { font-family: var(--font-mincho); font-weight: 500; font-size: 17px; margin:
 @media (max-width: 560px) { .feature-grid { grid-template-columns: 1fr; } }
 .feature { background: var(--card); border: 1px solid var(--line); border-radius: 0; padding: 18px 18px 16px; }
 .feature h3 { font-size: 16px; display: flex; align-items: center; gap: 8px; }
-/* スキル（コードで解除する機能）の印 */
-.skill-tag { margin-left: 4px; font-family: var(--font-body); font-size: 10px; font-weight: 500; letter-spacing: .2em; color: var(--accent); border: 1px solid var(--accent-mid); padding: 0 6px 0 8px; line-height: 1.7; white-space: nowrap; }
-/* スキルの節 */
-.skill-steps { max-width: 720px; }
-.skill-list-title { margin: 56px 0 14px; font-size: 19px; letter-spacing: .14em; }
-.skill-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 48px; margin: 0; border-bottom: 1px solid var(--line); }
-@media (max-width: 760px) { .skill-list { grid-template-columns: 1fr; } }
-.skill-list > div { border-top: 1px solid var(--line); padding: 14px 0 12px; }
-.skill-list dt { font-family: var(--font-mincho); font-weight: 500; font-size: 16px; letter-spacing: .08em; }
-.skill-list dd { margin: 2px 0 0; font-size: 13px; line-height: 1.9; color: var(--ink-soft); }
-.skill-note { margin: 22px 0 0; max-width: 56em; font-size: 13px; line-height: 2; color: var(--ink-soft); }
 .feature h3::before { content: ""; width: 8px; height: 8px; border-radius: 0; transform: rotate(45deg); background: var(--fuji); flex: none; }
 .feature p { margin: 0; color: var(--ink-soft); font-size: 14px; line-height: 1.8; }
 .feature .eg { display: block; margin-top: 8px; font-size: 13px; color: var(--ink-faint); }
@@ -559,14 +548,42 @@ table.keys td { color: var(--ink-soft); }
 .thanks p:last-child { margin-bottom: 0; }
 .credits-head { font-size: 16px; margin: 0 0 8px; }
 
-/* くわしい説明の枠（スキルの節の「自分の入力で追加学習」） */
-.detail-card { margin-top: 28px; padding: 22px 24px; background: var(--card); border: 1px solid var(--line); border-radius: 0; }
-.detail-card h3 { margin: 0 0 10px; }
-.detail-card p { color: var(--ink-soft); font-size: 14px; line-height: 1.95; margin: 0 0 14px; }
-@media (max-width: 560px) { .detail-card { padding: 18px 16px; } }
-.detail-steps { margin: 0 0 14px; padding-left: 1.4em; color: var(--ink-soft); font-size: 15px; line-height: 1.9; }
-.detail-steps li { margin-bottom: 6px; }
-.detail-note { font-size: 14px !important; }
+/* 開発者モードの説明（切り替えで出す） */
+.devmode { margin-top: 28px; padding: 22px 24px; background: var(--card); border: 1px solid var(--line); border-radius: 0; }
+.devmode-head { display: flex; align-items: center; justify-content: space-between; gap: 16px 24px; flex-wrap: wrap; }
+.devmode-head h3 { margin: 0 0 4px; font-size: 18px; }
+.devmode-head p { margin: 0; color: var(--ink-soft); font-size: 14px; }
+.switch {
+  display: inline-flex; align-items: center; gap: 12px; padding: 6px 2px; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 14px; color: var(--ink); text-align: left;
+}
+.switch-track {
+  position: relative; flex: none; width: 44px; height: 26px; border-radius: 13px; background: var(--line);
+  transition: background-color .2s ease;
+}
+.switch-thumb {
+  position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .25); transition: transform .2s ease;
+}
+.switch[aria-checked="true"] .switch-track { background: var(--kobai); }
+.switch[aria-checked="true"] .switch-thumb { transform: translateX(18px); }
+.switch:focus-visible { outline: none; }
+.switch:focus-visible .switch-track { box-shadow: 0 0 0 3px color-mix(in srgb, var(--kobai) 35%, transparent); }
+@media (prefers-reduced-motion: reduce) { .switch-track, .switch-thumb { transition: none; } }
+.devmode-body { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+.devmode-body p { color: var(--ink-soft); font-size: 15px; line-height: 1.9; margin: 0 0 14px; }
+.devmode-body h4 { font-size: 16px; margin: 22px 0 8px; }
+.devmode-list { display: grid; grid-template-columns: 7.5em 1fr; gap: 8px 16px; margin: 0 0 6px; font-size: 14px; }
+.devmode-list dt { font-weight: 600; color: var(--ink); }
+.devmode-list dd { margin: 0; color: var(--ink-soft); line-height: 1.8; }
+@media (max-width: 560px) {
+  .devmode { padding: 18px 16px; }
+  .devmode-list { grid-template-columns: 1fr; gap: 2px; }
+  .devmode-list dd { margin-bottom: 8px; }
+}
+.devmode-steps { margin: 0 0 14px; padding-left: 1.4em; color: var(--ink-soft); font-size: 15px; line-height: 1.9; }
+.devmode-steps li { margin-bottom: 6px; }
+.devmode-note { font-size: 14px !important; }
 
 /* これまでの歩み（縦のタイムライン） */
 .timeline { list-style: none; margin: 0; padding: 0; position: relative; }

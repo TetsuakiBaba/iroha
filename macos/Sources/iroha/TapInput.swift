@@ -3,7 +3,7 @@ import Carbon.HIToolbox
 import Cocoa
 import IrohaCore
 
-/// タップ入力の設定（設定 > 入力 > タップ入力。スキル「タップ入力」・加速度センサのある Mac だけ・既定OFF・
+/// タップ入力の設定（設定 > 入力 > タップ入力。開発者モードで加速度センサを利用するときだけ出す・既定OFF・
 /// 他のMacと同期しない（センサの有無も叩き方も機械ごとのため）。2026-10-24）
 enum TapInputSettings {
     static let enabledKey = "tapInputEnabled"
@@ -11,8 +11,7 @@ enum TapInputSettings {
     static let doubleTapShortcutKey = "tapInputDoubleTapShortcut"
 
     static var isEnabled: Bool {
-        Skill.tapInput.isUnlocked && KeystrokeAccelerometer.isSensorPresent
-            && UserDefaults.standard.bool(forKey: enabledKey)
+        AccelerometerSettings.isEnabled && UserDefaults.standard.bool(forKey: enabledKey)
     }
 
     static var doubleTapShortcut: GlobalShortcut? {

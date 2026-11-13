@@ -1,6 +1,6 @@
 import Foundation
 
-/// 区切り記号で囲んで英字を入力する設定（スキル「区切り記号で英字を入力」、既定OFF・他のMacと同期しない。2026-10-04）。
+/// 区切り記号で囲んで英字を入力する設定（開発者モードの項目、既定OFF・他のMacと同期しない。2026-10-04）。
 ///
 /// かな入力のまま、開始の記号（既定「_」）を打つと英字入力になり、終わりの記号（既定「_」）を打つまで
 /// 打ったとおりの英字が入る（大文字・小文字は Shift で打ち分ける。Shift+スペースで英字の中にスペースを入れる）。
@@ -16,7 +16,7 @@ enum DelimitedAlphabetSettings {
     static let defaultSymbol = "_"
 
     static var isEnabled: Bool {
-        Skill.delimitedAlphabet.isUnlocked && UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
+        UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
     }
 
     /// 開始の記号（設定が使えない値なら既定）

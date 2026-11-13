@@ -11,7 +11,6 @@ enum SettingsTab: Hashable {
     case dictionary  // ユーザ辞書・変換ルール・変換の学習・変換記録
     case selection   // 他アプリの選択テキストのAI編集 + 選択した文字数の表示
     case model       // かな漢字変換に使うモデルとAIサービス
-    case skills      // スキル（青空写経のコードで解除する機能）
     case about       // アップデートとバージョン情報
 }
 
@@ -45,7 +44,6 @@ final class SettingsUIState: ObservableObject {
 /// コントローラ側が都度読み出す。
 struct SettingsView: View {
     @ObservedObject private var uiState = SettingsUIState.shared
-    @ObservedObject private var skills = SkillObserver.shared
 
     var body: some View {
         TabView(selection: $uiState.selectedTab) {
@@ -55,26 +53,19 @@ struct SettingsView: View {
             DictionarySettingsTab()
                 .tabItem { Label("辞書・学習", systemImage: "character.book.closed") }
                 .tag(SettingsTab.dictionary)
-            // 選択テキストのタブは、中身が 2 つのスキルだけなので、どちらかを解除するまで出さない
-            if skills.has(.selectionEdit) || skills.has(.characterCount) {
-                SelectionSettingsTab()
-                    .tabItem { Label("選択テキスト", systemImage: "cursorarrow.rays") }
-                    .tag(SettingsTab.selection)
-            }
+            SelectionSettingsTab()
+                .tabItem { Label("選択テキスト", systemImage: "cursorarrow.rays") }
+                .tag(SettingsTab.selection)
             ModelSettingsTab()
                 .tabItem { Label("モデル", systemImage: "cube") }
                 .tag(SettingsTab.model)
-            SkillSettingsTab()
-                .tabItem { Label("スキル", systemImage: "sparkles") }
-                .tag(SettingsTab.skills)
             AboutSettingsTab()
                 .tabItem { Label("情報", systemImage: "info.circle") }
                 .tag(SettingsTab.about)
         }
         // タブごとに高さが変わらないよう固定サイズにする（収まらない分はフォーム内でスクロール）。
         // macOS 26ではタブがタイトルバーに入るため、全項目が折り畳まれない幅が要る
-        // （タブが 6 つのとき 660 では折り畳まれた。2026-11-11 にスキルのタブを足して 760 にした）
-        .frame(minWidth: 760, idealWidth: 760, minHeight: 690, idealHeight: 690)
+        .frame(minWidth: 660, idealWidth: 660, minHeight: 690, idealHeight: 690)
         .sheet(isPresented: $uiState.showingUserDictionary) { UserDictionaryView() }
         .sheet(isPresented: $uiState.showingRewriteRules) { UserRewriteRulesView() }
         .sheet(isPresented: $uiState.showingConversionLog) { ConversionLogView() }
@@ -89,7 +80,7 @@ struct SettingsView: View {
 private struct InputSettingsTab: View {
     @AppStorage("liveConversion") private var liveConversion = true
     @AppStorage(DocumentContextSettings.enabledKey) private var documentContext = true
-    @ObservedObject private var skills = SkillObserver.shared
+    @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
     @AppStorage("candidateCount") private var candidateCount = 8
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
     @AppStorage(KeyInputSettings.yenKeyCharacterKey) private var yenKeyCharacter = KeyInputSettings.yen
@@ -97,6 +88,7 @@ private struct InputSettingsTab: View {
     @AppStorage(SecureInputNoticeSettings.enabledKey) private var secureInputNotice = true
     @AppStorage(PredictionSettings.predictiveEnabledKey) private var predictiveConversion = false
     @AppStorage(PrivateModeSettings.enabledKey) private var privateMode = false
+    @AppStorage(AccelerometerSettings.enabledKey) private var accelerometer = false
     @AppStorage(TypoNormalizerSettings.enabledKey) private var typoNormalizer = false
     @ObservedObject private var typoDownloader = TypoNormalizerDownloader.shared
     @AppStorage(TypoNormalizerSettings.thresholdKey)
@@ -119,13 +111,13 @@ private struct InputSettingsTab: View {
                         Text("\(candidateCount)").foregroundStyle(.secondary)
                     }
                 }
-                // 既定 ON の調整。単独のスキルにはせず、コードが 7 つ揃ったときにだけ出す
-                if skills.allUnlocked {
+                if developerMode {
                     HelpToggle(
                         title: "アプリの文章を文脈に使う", isOn: $documentContext,
                         help: "入力を始めた位置の手前にある文章（最大40文字）をアプリから読み取り、変換の文脈にします。"
                             + "文章の途中に書き足すときや、別のアプリに移った直後でも前後に合った変換になります。"
-                            + "文章を返さないアプリでは、irohaで直前に確定した文字列を文脈にします。")
+                            + "文章を返さないアプリでは、irohaで直前に確定した文字列を文脈にします。",
+                        developer: true)
                 }
             }
 
@@ -146,14 +138,14 @@ private struct InputSettingsTab: View {
                         typoDownloader.cancel()
                     }
                 }
-                // モデルの欄（版・削除・入れ替え）と訂正の細かな調整は、スキル「打ち間違いの訂正の調整」で出す。
-                // 解除するまでは、取得中と失敗のときだけ状態を出す
-                if skills.has(.typoTuning) {
+                // モデルの欄（版・削除・入れ替え）と訂正の細かな調整は開発者モードだけで出す。
+                // 一般ユーザの画面では、取得中と失敗のときだけ状態を出す
+                if developerMode {
                     TypoNormalizerModelRow()
                 } else {
                     TypoNormalizerStatusRow(isEnabled: typoNormalizer)
                 }
-                if skills.has(.typoTuning) {
+                if developerMode {
                     TypoDelayRow(milliseconds: $typoDelayMs, isDisabled: !typoNormalizer)
                     LabeledContent {
                         HStack {
@@ -168,13 +160,12 @@ private struct InputSettingsTab: View {
                             title: "訂正する読みの最低文字数",
                             help: "読みがこの文字数に満たないときは直しません。短い読みは正しく打っていても"
                                 + "別の語の打ち間違いに見えやすいためです（例:「さど」が「さいど」に直る）。",
-                            isDisabled: !typoNormalizer)
+                            isDisabled: !typoNormalizer, developer: true)
                     }
                     TypoThresholdRow(threshold: $typoThreshold, isDisabled: !typoNormalizer)
                 }
             }
 
-            if skills.has(.prediction) {
             Section("予測変換") {
                 HelpToggle(
                     title: "入力履歴から予測する", isOn: $predictiveConversion,
@@ -191,7 +182,6 @@ private struct InputSettingsTab: View {
                     PrivateModePausedNote(text: "プライベートモードの間は、予測も入力履歴の記録も止めています")
                 }
                 InputHistoryRow(isEnabled: predictiveConversion && !privateMode)
-            }
             }
 
             Section("句読点・記号・スペース") {
@@ -233,20 +223,19 @@ private struct InputSettingsTab: View {
                         + "パスワード欄に入力している間は表示しません。")
             }
 
-            // 「こえ」モードは基本の項目（2026-11-11 に開発者モードから出した。既定 OFF のまま）
+            // 「こえ」モードは一般ユーザ向け（2026-11-11 に開発者モードから出した。既定 OFF のまま）
             VoiceInputSection()
 
-            if skills.has(.delimitedAlphabet) {
+            if developerMode {
                 DelimitedAlphabetSection()
             }
 
-            // 加速度センサのない Mac ではスキルを選べないが、コードが 7 つ揃うと解除済みになるので、ここでも確かめる
-            if skills.has(.tapInput) && KeystrokeAccelerometer.isSensorPresent {
+            // 加速度センサを利用するとき（設定 > 情報 > 開発者向け）だけ出す
+            if developerMode && accelerometer && KeystrokeAccelerometer.isSensorPresent {
                 TapInputSection()
             }
 
             // 未確定文字列をAIに渡して確定する（使うAIサービスは「モデル」タブで選ぶ）
-            if skills.has(.aiConversion) {
             Section {
                 AICommitPresetEditor(index: 0)
                 AICommitPresetEditor(index: 1)
@@ -262,9 +251,8 @@ private struct InputSettingsTab: View {
                         + "⌃Returnは、テキストエディットなど多くのアプリでmacOSが右クリックメニューに使うため効きません。"
                         + "使うAIサービスは「モデル」タブで選びます。")
             }
-            }
 
-            if skills.has(.aiFix) {
+            if developerMode {
                 AIFixSection()
             }
         }
@@ -272,7 +260,7 @@ private struct InputSettingsTab: View {
     }
 }
 
-/// 誤変換の疑いがあるときに「AIで直す」を出す（`AIFixSettings`。スキル「AIで直す」）
+/// 誤変換の疑いがあるときに「AIで直す」を出す（`AIFixSettings`。開発者モードの項目）
 private struct AIFixSection: View {
     @AppStorage(AIFixSettings.enabledKey) private var enabled = false
     @AppStorage(AIFixSettings.thresholdKey) private var threshold = Double(AIFixRule.defaultThreshold)
@@ -334,12 +322,12 @@ private struct AIFixSection: View {
                 Spacer()
             }
         } header: {
-            HelpSectionHeader(title: "AIで直す")
+            HelpSectionHeader(title: "AIで直す", developer: true)
         }
     }
 }
 
-/// 区切り記号で囲んで英字を入力する（スキル「区切り記号で英字を入力」）。開始・終わりの記号は1文字の記号から選べる
+/// 区切り記号で囲んで英字を入力する（開発者モードの項目）。開始・終わりの記号は1文字の記号から選べる
 /// タップ入力（`TapInput`）。⌘ を押しながら本体をダブルタップしたときに送るキーショートカットを決める
 private struct TapInputSection: View {
     @AppStorage(TapInputSettings.enabledKey) private var enabled = false
@@ -406,7 +394,7 @@ private struct TapInputSection: View {
                 help: "試験的な機能です。⌘を押したまま本体（パームレストなど）を指で叩くと、叩いた回数に応じたキーを送ります。"
                     + "今はダブルタップ（2回）だけです。叩いた回数は加速度センサの揺れから数えるので、"
                     + "強さや場所によっては数え違えることがあります。本体を置いた机を叩いても数えることがあります。"
-                    + "ふたを閉じて外付けのキーボードだけで使っているときは使えません。")
+                    + "ふたを閉じて外付けのキーボードだけで使っているときは使えません。", developer: true)
         }
         .onAppear { accessibilityGranted = AXIsProcessTrusted() }
         .onReceive(NotificationCenter.default.publisher(for: TapInput.detectedNotification)) { _ in
@@ -588,7 +576,7 @@ private struct DelimitedAlphabetSection: View {
             symbolField(title: "開始の記号", text: $start)
             symbolField(title: "終わりの記号", text: $end)
         } header: {
-            HelpSectionHeader(title: "区切り記号で英字を入力")
+            HelpSectionHeader(title: "区切り記号で英字を入力", developer: true)
         }
     }
 
@@ -700,7 +688,7 @@ private struct TypoNormalizerModelRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                HelpLabel(title: "訂正モデル", help: downloader.offerDescription)
+                HelpLabel(title: "訂正モデル", help: downloader.offerDescription, developer: true)
                 Spacer()
                 content
             }
@@ -765,7 +753,7 @@ private struct TypoDelayRow: View {
                     title: "訂正するまでの休止時間",
                     help: "キーを離してからこの時間だけ何も押さなければ訂正します。"
                         + "短いほど早く直りますが、語の途中で考えているだけのときにも動きます。",
-                    isDisabled: isDisabled)
+                    isDisabled: isDisabled, developer: true)
                 Spacer()
                 Text("\(milliseconds) ms")
                     .foregroundStyle(.secondary)
@@ -811,7 +799,7 @@ private struct TypoThresholdRow: View {
                     title: "訂正を出す確信の強さ",
                     help: "大きくするほど、モデルがよほど確信したときしか直しません。"
                         + "小さくすると打ち間違いをよく拾いますが、正しく打った読みも直してしまいます。",
-                    isDisabled: isDisabled)
+                    isDisabled: isDisabled, developer: true)
                 Spacer()
                 Text(String(format: "%.1f", threshold))
                     .foregroundStyle(.secondary)
@@ -838,7 +826,7 @@ private struct TypoThresholdRow: View {
 // MARK: - 辞書・学習
 
 /// 自分の原稿に合わせる（`DocumentNotationSettings`）
-/// スキル「自分の原稿に合わせる」の節
+/// 開発者モードの節（2026-11-07 に一般ユーザの画面から移した）
 private struct DocumentNotationSection: View {
     let privateMode: Bool
     @AppStorage(DocumentNotationSettings.enabledKey) private var enabled = false
@@ -936,7 +924,7 @@ private struct DocumentNotationSection: View {
                         + "ほかの研究報告の文で「期間」が「機関」になるような書き換えが出ました。")
             }
         } header: {
-            HelpSectionHeader(title: "自分の原稿に合わせる")
+            HelpSectionHeader(title: "自分の原稿に合わせる", developer: true)
         }
         .onChange(of: enabled) { _, isOn in
             if isOn { DocumentNotationStore.shared.reloadIfNeeded() }
@@ -1096,7 +1084,7 @@ private struct DictionarySettingsTab: View {
     @AppStorage(PrivateModeSettings.enabledKey) private var privateMode = false
     @AppStorage(PrivateModeSettings.caretIndicatorKey) private var privateModeCaretIndicator = true
     @AppStorage(SymbolCandidateSettings.enabledKey) private var symbolCandidates = true
-    @ObservedObject private var skills = SkillObserver.shared
+    @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
     @ObservedObject private var uiState = SettingsUIState.shared
 
     @State private var userDictionaryCount = UserDictionaryStore.shared.entries.count
@@ -1144,11 +1132,10 @@ private struct DictionarySettingsTab: View {
 
             TermDictionarySection()
 
-            if skills.has(.documentNotation) {
+            if developerMode {
                 DocumentNotationSection(privateMode: privateMode)
             }
 
-            if skills.has(.rewriteRules) {
             Section {
                 LabeledContent("登録ルール") {
                     HStack {
@@ -1164,10 +1151,8 @@ private struct DictionarySettingsTab: View {
                         + "ようなプレースホルダを書けて、変換のたびに今の日付・時刻に置き換わります"
                         + "（例:「きょう」→ 2026/09/06）。")
             }
-            }
 
-            // 既定 ON の調整。単独のスキルにはせず、コードが 7 つ揃ったときにだけ出す
-            if skills.allUnlocked {
+            if developerMode {
                 Section {
                     HelpToggle(
                         title: "記号・顔文字・絵文字を候補に出す", isOn: $symbolCandidates,
@@ -1179,7 +1164,7 @@ private struct DictionarySettingsTab: View {
                             + "このMacで描けない新しい絵文字は出しません。"
                             + "ライブ変換には使わず、選んで確定しても学習しません。")
                 } header: {
-                    HelpSectionHeader(title: "記号・顔文字・絵文字")
+                    HelpSectionHeader(title: "記号・顔文字・絵文字", developer: true)
                 }
             }
 
@@ -1218,8 +1203,6 @@ private struct DictionarySettingsTab: View {
                 }
             }
 
-            // 変換記録は、スキル「自分の入力で追加学習」と一緒に解除する（使い道が追加学習だけなので）
-            if skills.has(.training) {
             Section("変換記録") {
                 HelpToggle(
                     title: "確定した変換を記録する", isOn: $conversionLogEnabled,
@@ -1252,7 +1235,6 @@ private struct DictionarySettingsTab: View {
                             .disabled(conversionLogSize == 0)
                     }
                 }
-            }
             }
         }
         .formStyle(.grouped)
@@ -1304,11 +1286,10 @@ private struct SelectionSettingsTab: View {
     @AppStorage(SelectionSettings.onDemandHotkeyKey) private var onDemandHotkey = "Ctrl+0"
     @AppStorage(SelectionSettings.excludedBundleIdsKey) private var excludedBundleIds = ""
     @AppStorage(SelectionSettings.characterCountKey) private var characterCount = false
-    @ObservedObject private var skills = SkillObserver.shared
+    @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
 
     var body: some View {
         Form {
-            if skills.has(.selectionEdit) {
             Section {
                 SelectionIntroRows(selectionEnabled: $selectionEnabled)
             } header: {
@@ -1348,23 +1329,23 @@ private struct SelectionSettingsTab: View {
                         + "「テキストを生成」の入力欄になり、結果をカーソル位置へ挿入します。")
             }
 
-            Section {
-                TextField(
-                    "", text: $excludedBundleIds,
-                    prompt: Text("com.example.app, com.example.other"))
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(!selectionEnabled)
-            } header: {
-                HelpSectionHeader(
-                    title: "除外するアプリ",
-                    help: "ここに書いたバンドルIDのアプリでは、マウス選択のトリガーを出しません"
-                        + "（カンマまたは改行区切り）。")
-            }
+            if developerMode {
+                Section {
+                    TextField(
+                        "", text: $excludedBundleIds,
+                        prompt: Text("com.example.app, com.example.other"))
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(!selectionEnabled)
+                } header: {
+                    HelpSectionHeader(
+                        title: "除外するアプリ",
+                        help: "ここに書いたバンドルIDのアプリでは、マウス選択のトリガーを出しません"
+                            + "（カンマまたは改行区切り）。", developer: true)
+                }
             }
 
             // AI編集とは独立した機能（マウスで選択した文字数を選択範囲の近くに出す）。
             // アクセシビリティ権限と除外するアプリの設定はAI編集と共通なのでこのタブに置く
-            if skills.has(.characterCount) {
             Section("選択した文字数の表示") {
                 HelpToggle(
                     title: "選択した文字数を表示する", isOn: $characterCount,
@@ -1375,11 +1356,6 @@ private struct SelectionSettingsTab: View {
                         + "AI編集がONのときはアイコンに添えて表示します。"
                         + "アクセシビリティ権限が必要で、除外するアプリの設定も共通です。"
                         + "キーボードでの選択（Shift+矢印・⌘A）には反応しません。")
-                // アクセシビリティ権限の行は AI編集の節にある。AI編集を解除していないときはここに出す
-                if !skills.has(.selectionEdit) {
-                    AccessibilityPermissionRow()
-                }
-            }
             }
         }
         .formStyle(.grouped)
@@ -1404,6 +1380,7 @@ private struct FormSubheader: View {
 /// 「選択テキストのAI編集」グループの導入行（有効化トグルと権限の状態）
 private struct SelectionIntroRows: View {
     @Binding var selectionEnabled: Bool
+    @State private var accessibilityGranted = AXIsProcessTrusted()
 
     var body: some View {
         HelpToggle(
@@ -1412,15 +1389,7 @@ private struct SelectionIntroRows: View {
                 + "処理して置き換えられます。"
                 + "ショートカットはirohaが起動している間だけ有効です"
                 + "（ログイン後に一度日本語入力すると起動します）。")
-        AccessibilityPermissionRow()
-    }
-}
-
-/// アクセシビリティ権限の状態の行（選択テキストのAI編集と、選択した文字数の表示が使う）
-private struct AccessibilityPermissionRow: View {
-    @State private var accessibilityGranted = AXIsProcessTrusted()
-
-    var body: some View {
+            .onAppear { accessibilityGranted = AXIsProcessTrusted() }
         LabeledContent {
             HStack {
                 if accessibilityGranted {
@@ -1442,7 +1411,6 @@ private struct AccessibilityPermissionRow: View {
         } label: {
             HelpLabel(title: "アクセシビリティ権限", help: "選択テキストの取得と置換にアクセシビリティ権限が必要です。")
         }
-        .onAppear { accessibilityGranted = AXIsProcessTrusted() }
     }
 }
 
@@ -2021,7 +1989,7 @@ private struct PathDisplay: View {
 private struct ModelSettingsTab: View {
     @AppStorage("modelPath") private var modelPath = ""
     @AppStorage(InferenceBackend.userDefaultsKey) private var backend = InferenceBackend.llamaCpp.rawValue
-    @ObservedObject private var skills = SkillObserver.shared
+    @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
     @ObservedObject private var modelDownloader = ModelDownloader.shared
 
     /// 推論エンジンの状態の知らせ（選んだものと動いているものが違う理由）。無ければ nil
@@ -2061,7 +2029,7 @@ private struct ModelSettingsTab: View {
                     Text(IrohaInputController.engineModelDisplayName)
                         .foregroundStyle(.secondary)
                 }
-                if skills.has(.modelSelection) {
+                if developerMode {
                     Picker(selection: $backend) {
                         ForEach(InferenceBackend.allCases) { Text($0.displayName).tag($0.rawValue) }
                     } label: {
@@ -2070,13 +2038,17 @@ private struct ModelSettingsTab: View {
                             help: "モデルを動かす仕組みです。既定は llama.cpp です。"
                                 + "MLX は T5 のモデルにだけ対応していて、1 回の変換が 2 割ほど速くなります（変換の結果は同じです）。"
                                 + "zenz のモデルでは MLX を選んでも llama.cpp で動きます。"
-                                + "変更は iroha の再起動後に反映されます。")
+                                + "変更は iroha の再起動後に反映されます。",
+                            developer: true)
                     }
                     LabeledContent {
                         Text(IrohaInputController.engineBackend.displayName)
                             .foregroundStyle(.secondary)
                     } label: {
-                        Text("使用中の推論エンジン")
+                        HStack(spacing: 4) {
+                            Text("使用中の推論エンジン")
+                            DeveloperBadge()
+                        }
                     }
                     if let notice = backendNotice {
                         Text(notice.text)
@@ -2085,7 +2057,7 @@ private struct ModelSettingsTab: View {
                     }
                     // 長いパスが切れないよう、ラベルは上に置いてパスに幅を全部使わせる
                     VStack(alignment: .leading, spacing: 4) {
-                        HelpLabel(title: "モデルファイル（GGUF）のパス", help: "モデルの変更はirohaの再起動後に反映されます。")
+                        HelpLabel(title: "モデルファイル（GGUF）のパス", help: "モデルの変更はirohaの再起動後に反映されます。", developer: true)
                         PathDisplay(path: modelPath, placeholder: ZenzEngine.defaultModelPath)
                         // 消えたモデルを指したままだと変換が一切できなくなるので、パスの下で知らせる
                         if !modelPath.isEmpty, !FileManager.default.fileExists(atPath: modelPath) {
@@ -2114,9 +2086,16 @@ private struct ModelSettingsTab: View {
                         Button("既定に戻す") { modelPath = "" }
                             .disabled(modelPath.isEmpty)
                     }
+                    HStack(spacing: 4) {
+                        Button("irohaを再起動") {
+                            // 終了処理の詳細（_exitを使う理由等）はAppRestarterのコメントを参照
+                            AppRestarter.restartInstalledApp()
+                        }
+                        DeveloperBadge()
+                    }
                 } else if !modelPath.isEmpty, !FileManager.default.fileExists(atPath: modelPath) {
-                    // 指定したモデルが消えていると変換が一切できなくなるので、スキル「推論エンジンとモデルの指定」を
-                    // 解除していなくても（別の Mac の設定や前の版から値が残っている場合）知らせて既定に戻せるようにする
+                    // 開発者モードで指定したモデルが消えていると変換が一切できなくなるので、
+                    // 開発者モードでなくても知らせて既定に戻せるようにする
                     Text("指定したモデルファイルがありません。変換できないので、既定のモデルに戻して再起動してください。")
                         .font(.caption)
                         .foregroundStyle(.red)
@@ -2125,24 +2104,13 @@ private struct ModelSettingsTab: View {
                         AppRestarter.restartInstalledApp()
                     }
                 }
-                // 再起動は誰でも使える（2026-11-11、ユーザの判断。入力がおかしくなったときに自分で直せるように）
-                HStack(spacing: 4) {
-                    Button("irohaを再起動") {
-                        // 終了処理の詳細（_exitを使う理由等）はAppRestarterのコメントを参照
-                        AppRestarter.restartInstalledApp()
-                    }
-                    HelpButton("irohaを終了して起動し直します。入力中の未確定の文字は消えます。")
-                }
             }
 
-            if skills.has(.training) {
+            if developerMode {
                 TrainingSection()
             }
 
-            // AIサービスを使うスキル（AI変換・選択テキストのAI編集・AIで直す）のどれかを解除したら出す
-            if skills.usesAIService {
-                AIServiceSection()
-            }
+            AIServiceSection()
         }
         .formStyle(.grouped)
     }
@@ -2181,7 +2149,7 @@ private struct TrainingSection: View {
                     + "手順は 4 つ: ① 記録を1件ずつ今のモデルで変換し直す ② 間違えたものと正しかったものの一部を"
                     + "評価用に取り分ける ③ 残りの記録すべてで学習する ④ 評価用の記録をアダプタなし／ありで変換して"
                     + "結果を並べる。使った記録は .train.tsv / .mistakes.tsv / .correct.tsv としてアダプタの隣に残ります。"
-                    + "学習は数十秒〜数分かかり、その間 GPU を使います。アダプタの変更は再起動後に反映されます。")
+                    + "学習は数十秒〜数分かかり、その間 GPU を使います。アダプタの変更は再起動後に反映されます。", developer: true)
         }
         .onAppear { coordinator.refreshInfo(basePath: basePath) }
         .onReceive(NotificationCenter.default.publisher(for: ConversionLog.didChangeNotification)) { _ in
@@ -2658,7 +2626,7 @@ private struct AboutSettingsTab: View {
     @AppStorage("autoUpdateCheck") private var autoUpdateCheck = true
     @AppStorage(DeveloperOverlaySettings.enabledKey) private var developerOverlay = false
     @AppStorage(AccelerometerSettings.enabledKey) private var accelerometer = false
-    @ObservedObject private var skills = SkillObserver.shared
+    @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
     @State private var showingUninstallConfirm = false
 
     var body: some View {
@@ -2728,33 +2696,52 @@ private struct AboutSettingsTab: View {
                 TermDictionaryLicenseRows()
             }
 
-            if skills.has(.inferenceOverlay) {
-                Section("推論の時間の表示") {
+            Section("開発者向け") {
+                HelpToggle(
+                    title: "開発者モード", isOn: $developerMode,
+                    help: "ONにすると、細かな調整や開発者向けの項目を設定画面に表示します"
+                        + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ・"
+                        + "区切り記号で英字を入力・タップ入力（加速度センサを利用するとき）・AIで直す、"
+                        + "辞書・学習: 自分の原稿に合わせる・記号・顔文字・絵文字を候補に出す、"
+                        + "選択テキスト: 除外するアプリ、モデル: 推論エンジン・モデルファイルの指定・irohaを再起動・"
+                        + "自分の入力で追加学習、情報: 推論の時間の表示・加速度センサを利用する）。"
+                        + "開発者モードの項目には、項目名の右に紫色の「開発者」の印を付けています。"
+                        + "見出しに印があるものは、その節全体が開発者モードの項目です。"
+                        + "OFFにしても項目が見えなくなるだけで、変えた設定はそのまま効きます"
+                        + "（推論の時間の表示だけは止まります）。この設定は他のMacと同期しません。")
+                if developerMode {
+                    HStack(spacing: 4) {
+                        DeveloperBadge()
+                        Text("の付いた項目と節は、開発者モードのときだけ表示します")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     HelpToggle(
                         title: "推論にかかった時間と左文脈をカーソルの右下に表示する", isOn: $developerOverlay,
-                        help: "入力を始めたときに、カーソルの左の文字をアプリから読めたか"
+                        help: "開発者向けの表示です。入力を始めたときに、カーソルの左の文字をアプリから読めたか"
                             + "（読めなければその理由と、代わりに使う確定済みの文字列）を出します。"
                             + "あわせて、カーソルのある要素からテキストを何文字取れるか（文字数だけで、中身は出しません）と、"
                             + "入力の始めの処理にかかった時間を出します。"
                             + "かな漢字変換と打ち間違いの訂正を実行するたびに、かかった時間を出します。"
                             + "「全体」は変換を頼んでから結果が返るまで、「NN」はそのうちニューラルネットの計算だけの時間です"
                             + "（差は辞書・学習の処理と、先に走っている推論の待ち時間）。"
-                            + "「取り消し」は、前の表示のあと次の入力で打ち切った変換の数です。この設定は他のMacと同期しません。")
+                            + "「取り消し」は、前の表示のあと次の入力で打ち切った変換の数です。この設定は他のMacと同期しません。",
+                        developer: true)
                     // センサのない Mac では「（利用不可）」を付け、OFF のまま操作できなくする
                     let sensorPresent = KeystrokeAccelerometer.isSensorPresent
                     HelpToggle(
-                        title: sensorPresent ? "加速度センサの揺れをグラフで出す" : "加速度センサの揺れをグラフで出す（利用不可）",
+                        title: sensorPresent ? "加速度センサを利用する" : "加速度センサを利用する（利用不可）",
                         isOn: Binding(
                             get: { sensorPresent && accelerometer },
                             set: { accelerometer = $0 }),
-                        help: "試験的な機能です。MacBook（M2 以降）に内蔵されている加速度センサの値を読み、"
-                            + "直近2秒ぶんの本体の揺れを、上の表示の下にグラフで出します"
+                        help: "試験的な機能です。MacBook（M2 以降）に内蔵されている加速度センサの値を読みます。"
+                            + "ONにすると、入力タブに「タップ入力」が出ます。"
+                            + "上の推論の時間の表示もONなら、直近2秒ぶんの本体の揺れをその下にグラフで出します"
                             + "（縦軸は重力と本体の傾きを引いた揺れの大きさで、キーを押した時刻に赤い縦線を引きます。"
                             + "外付けのキーボードで打ったキーは本体が揺れないので出ません）。"
                             + "センサのない Mac では「（利用不可）」と出て、ONにできません。"
                             + "センサは Apple が公開していない方法で読むので、macOS の更新で使えなくなることがあります。"
-                            + "ONの間、上の表示もONならセンサを動かし続けます。この設定は他のMacと同期しません。",
-                        isDisabled: !sensorPresent || !developerOverlay)
+                            + "ONの間はセンサを動かし続けます。この設定は他のMacと同期しません。",
+                        isDisabled: !sensorPresent, developer: true)
                 }
             }
 

@@ -61,7 +61,7 @@ final class TypoNormalizerDownloader: ObservableObject {
         return catalog.model(id: installed.id) == nil
     }
 
-    /// 古いモデルを入れているときの案内（スキル「打ち間違いの訂正の調整」の画面用。こちらは自動では入れ替えないので、やり方を示す）
+    /// 古いモデルを入れているときの案内（開発者モードの画面用。こちらは自動では入れ替えないので、やり方を示す）
     var outdatedNotice: String? {
         guard isOutdated, let latest = catalog?.models.first else { return nil }
         return "カタログには新しいモデル（\(latest.id)）が載っています。"
@@ -69,7 +69,7 @@ final class TypoNormalizerDownloader: ObservableObject {
     }
 
     /// 一般ユーザの画面用: 機能をONにしているのにモデルが無ければ入れ、カタログから外れた古いモデルなら入れ替える。
-    /// スキル「打ち間違いの訂正の調整」を解除していない画面にはモデルの欄が無く、手で入れ替えられないため。
+    /// 開発者モードでない画面にはモデルの欄が無く、手で入れ替えられないため。
     /// 既に入っているときの一覧の取得は黙って行う（オフラインで設定を開いただけで赤い字を出さない）
     func ensureCurrentModel() {
         guard !isBusy else { return }

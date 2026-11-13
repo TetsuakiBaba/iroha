@@ -2,10 +2,10 @@ import CoreText
 import Foundation
 import IrohaCore
 
-/// 記号・顔文字・絵文字の候補（既定ON・他のMacと同期する。2026-10-16）。
+/// 記号・顔文字・絵文字の候補（開発者モードの項目、既定ON・他のMacと同期する。2026-10-16）。
 ///
 /// 文節の候補ウィンドウに Mozc の記号・顔文字・絵文字を足す（`SymbolCandidateTable` / `SymbolCandidateMerger`）。
-/// 一般のユーザにはあるほうがよいので既定で ON にし、切り替えは、スキルのコードが 7 つ揃ったときにだけ出す。
+/// 一般のユーザにはあるほうがよいので既定で ON にし、切り替えは開発者モードにだけ出す。
 /// ライブ変換には使わず、選んで確定しても学習しない
 enum SymbolCandidateSettings {
 
