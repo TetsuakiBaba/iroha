@@ -127,3 +127,17 @@ Start-Process explorer.exe -ArgumentList "`"$(Join-Path $InstallDir 'iroha-serve
 Write-Host "==> インストール完了"
 Write-Host "設定 > 時刻と言語 > 言語と地域 > 日本語 > 言語のオプション > キーボード に「iroha」が現れます。"
 Write-Host "現れない場合はサインアウト/サインインしてください。Win+Space で切り替えられます。"
+
+# 起動中のアプリは、読み込んだ TIP（前の版）を終了するまで使い続ける（Windows は読み込まれた DLL を入れ替えない）。
+# 前の版の TIP も新しい変換サーバと話せるので、動きが前のまま（例: ライブ変換が出ない）に見える。
+# ここで TIP を読み込んでいるアプリは、すべてこのインストールより前に読み込んだもの
+$stale = foreach ($process in Get-Process) {
+    try {
+        if ($process.Modules | Where-Object { $_.ModuleName -like "iroha-tip*" }) { $process }
+    } catch {}
+}
+if ($stale) {
+    Write-Host ""
+    Write-Warning "次のアプリは前の版の iroha を読み込んだままです。新しい版を使うには、アプリを終了して開き直してください（まとめて替えるならサインアウト/サインイン）:"
+    $stale | Sort-Object ProcessName -Unique | ForEach-Object { Write-Host "  $($_.ProcessName) (PID $($_.Id))" }
+}
