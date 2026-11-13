@@ -344,6 +344,7 @@ void TestUnicodeRoundTrip() {
 #include "test_session.h"
 #include "test_session_manager.h"
 #include "test_symbols.h"
+#include "test_terms.h"
 
 int main() {
     TestBasicGojuon();
@@ -388,6 +389,7 @@ int main() {
     RunSessionTests();
     RunSessionManagerTests();
     RunSymbolTests();
+    RunTermTests();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

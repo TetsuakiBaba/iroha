@@ -86,7 +86,7 @@ windows\build\iroha-cli\iroha-cli.exe lattice-parity <macOS版の出力.jsonl> -
 - 辞書フォルダは、環境変数 `IROHA_DICTIONARY` → 実行ファイルと同じフォルダの `Dictionary` →
   カレントディレクトリから上へたどった `vendor/azooKey_dictionary_storage/Dictionary` の順に探す
 - 移してあるのは macOS版の `LatticeConverter.swift` が使う経路だけ（かなを直接渡す・誤り訂正なし・
-  予測変換なし・azooKey自身の学習なし）。**専門辞書（azooKeyのユーザ辞書の形式に書き出して読ませる部分）は未移植**
+  予測変換なし・azooKey自身の学習なし）。専門辞書は下の「専門辞書」節
 - 確認（2026-11-13）: macOS版が同じ版（v0.11.2・辞書コミット 832fbb0）で書き出した AJIMEE-Bench 200件の
   候補一覧（`git show v0.12.0:experiments/jev/ajimee-candidates.jsonl` と `…-n30.jsonl`）と、
   候補の並びまで 200/200 件が一致。速度は iroha-bench-v1 の 3,253件で平均 4.3ms（最大 54ms）
@@ -220,6 +220,39 @@ windows\build\iroha-cli\iroha-cli.exe session --interval 120 "kyouhaiitenkidesun
 windows\build\iroha-cli\iroha-cli.exe symbols neko warai kaomoji
 ```
 
+## 専門辞書
+
+配布している辞書（JMdict の分野別の用語・百薬辞書・郵便番号データの地名・Wikidata の人名や駅など）を、
+設定画面の「専門辞書」タブから 1 つずつ入れ外しする（2026-11-13）。カタログ（`models/term-dictionaries.json`）・
+辞書ファイル・置き場所の形式（`%LOCALAPPDATA%\iroha\dictionaries\<ID>.tsv` と `<ID>.json`）は macOS版と同じ。
+使い道は候補ウィンドウだけで、ライブ変換の第一候補は変えない（macOS版と同じ）
+
+- `iroha-core` の `term_dictionary`: カタログ・設置の記録・辞書名の印（`TermDictionaryLookup`。辞書ファイルを
+  読み・語の順の二分探索で引く）。テストは macOS版の `TermDictionaryTests` を移したもの
+- 辞書ラティスへの加え方は macOS版と違う: macOS版は azooKey のユーザ辞書の形式（LOUDS）に書き出して読ませるが、
+  Windows版は同じたどり方ができる木をメモリに作り（`src/lattice/term_index.cpp`）、本体の辞書と並べてたどる
+  （どちらかに続きがある限り読みを伸ばす。azooKey がユーザ辞書「user」を扱うのと同じ）。品詞・評価値（-10）・
+  1 文字の読みを入れないこと・同じ組を最初の辞書だけ残すことは macOS版と同じ。ユーザ辞書の語の境目の判定には入れない。
+  本体の辞書とユーザ辞書の語の並ぶ順は azooKey ではハッシュ表の順で決まらないので、専門辞書を入れたときの
+  候補の並びは macOS版と照合していない
+- 取得（`shared/term_dictionary_fetcher.cpp`）は URLDownloadToFile で落とし、大きさと SHA-256（BCrypt）を照合してから置く。
+  設定画面は「専門辞書」タブを初めて開いたときに一覧を取り、作り直された辞書を入れ直す（macOS版と同じ）。
+  入れ外しのあとは変換サーバに Reload を送り、変換サーバは入れてある辞書の組（ID と SHA-256）が変わっていれば読み直す
+- 候補ウィンドウは、専門辞書の語（か、その語＋読みの残りのかな）になっている候補の右に辞書の名前を小さく出す。
+  通信では候補の後ろに印の列を足した（足す前の返事も読める）
+- 確認（2026-11-13）: 医学・工学・人名・地名（計 30 万語）で、ラティスに読ませるのに約 1 秒。人名と地名から
+  抜き出した語は、本体の辞書に無いものも専門辞書を入れたときだけ候補に出た。SHA-256 の合わないファイルは置かない
+
+```powershell
+# 一覧・取得・削除（設定画面と同じ経路）。辞書名の印を引く
+windows\build\iroha-cli\iroha-cli.exe terms list
+windows\build\iroha-cli\iroha-cli.exe terms install jmdict-medicine
+windows\build\iroha-cli\iroha-cli.exe terms lookup goenseihaien 誤嚥性肺炎
+# 入れた辞書を候補に加えて変換する（既定は使わない。macOS版と同じ）
+$env:IROHA_TERM_DICTIONARIES = "installed"
+windows\build\iroha-cli\iroha-cli.exe lattice goenseihaien
+```
+
 ## 開発メモ
 
 - ビルド環境: VS 2022の「C++によるデスクトップ開発」+ cmake/ninja。
@@ -266,7 +299,7 @@ windows\build\iroha-cli\iroha-cli.exe symbols neko warai kaomoji
 - [x] M7f: ライブ変換。入力の状態を変換サーバ側に移した（`InputSession` / `SessionManager`。
       TIP はキーを送って表示を反映するだけ）
 - [x] M7e-1: 記号・顔文字・絵文字の候補（Mozc のデータ、Windows で描けない絵文字を除く、候補ウィンドウを Direct2D で描く）
-- [ ] M7e-2: 専門辞書
+- [x] M7e-2: 専門辞書（設定画面のタブ・辞書ラティスへの組み込み・候補の辞書名の印）
 - [ ] M5b: UIlessモード（ITfCandidateListUIElement。タスクバー検索ボックス等）
 - [ ] M6b: 製品化の残り（インストーラ/署名、release.ymlの両OS対応、UIA対応）
 

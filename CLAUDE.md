@@ -269,6 +269,10 @@ cd macos && swift build --build-system native && swift test --build-system nativ
     `build-term-dictionaries.py` の `SOURCE_*` にまとめてある（2026-11-08 に条文を読み直して合わせた）
   ・iroha-cli は `IROHA_TERM_DICTIONARIES=installed`（入れた辞書）か `=a.tsv,b.tsv` で候補に加える（既定は使わない）。
     `iroha-cli terms list | install <ID> | remove <ID>` でアプリと同じ経路の取得を確かめる
+  ・Windows 版（2026-11-13）は同じカタログ・同じ置き場所の形式（`%LOCALAPPDATA%\iroha\dictionaries\<ID>.tsv`・`.json`）を使う。
+    辞書ラティスへは LOUDS に書き出さず、同じたどり方ができる木をメモリに作り、本体の辞書と並べてたどる
+    （`windows/iroha-core/src/lattice/term_index.cpp`。30 万語で約 1 秒。書き出しのキャッシュは持たない）。
+    **カタログの形式・記録の JSON のキー・辞書ファイルの形を変えるときは、Windows 版（`iroha/term_dictionary.h`）も合わせる**
 - 自分の原稿に合わせる（`DocumentNotationSettings` / `DocumentNotationStore`、設定 > 辞書・学習の開発者モードの節、既定OFF・同期する。
   表記・用語の 2 つの重みは開発者モード・既定 2。2026-11-07）は、`<データフォルダ>/documents/` の文書（PDF・Word・テキスト。HTML は main thread
   でしか読めないので対象外）から読みごとの表記の回数（IrohaCore の `NotationPreference`）を数え、モデルの採点に

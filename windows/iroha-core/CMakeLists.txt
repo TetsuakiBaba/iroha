@@ -18,6 +18,7 @@ add_library(iroha-core STATIC
     src/lattice/louds.cpp
     src/lattice/number.cpp
     src/lattice/special_candidates.cpp
+    src/lattice/term_index.cpp
     src/learning_dictionary.cpp
     src/learning_engine.cpp
     src/learning_store.cpp
@@ -26,6 +27,7 @@ add_library(iroha-core STATIC
     src/romaji_composer.cpp
     src/session_manager.cpp
     src/symbol_candidates.cpp
+    src/term_dictionary.cpp
     src/unicode.cpp
     src/user_dictionary.cpp
     src/user_dictionary_engine.cpp

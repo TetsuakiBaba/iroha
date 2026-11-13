@@ -7,6 +7,7 @@
 
 #include "iroha/unicode.h"
 #include "lattice/number.h"
+#include "lattice/term_index.h"
 
 namespace iroha::lattice {
 
@@ -149,18 +150,26 @@ std::u32string ToHiragana(const std::u32string& text) {
     return result;
 }
 
-DicdataStore::DicdataStore(std::filesystem::path dictionaryPath)
-    : dictionaryPath_(std::move(dictionaryPath)), ccParsed_(cid::kCount, false) {
+std::unordered_map<char32_t, uint8_t> DicdataStore::LoadCharIds(
+    const std::filesystem::path& dictionaryPath) {
+    std::unordered_map<char32_t, uint8_t> charIds;
     std::vector<uint8_t> bytes;
-    if (ReadFile(dictionaryPath_ / "louds" / "charID.chid", &bytes)) {
+    if (ReadFile(dictionaryPath / "louds" / "charID.chid", &bytes)) {
         const std::u32string text = Utf8ToUtf32(
             std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
         const std::vector<std::u32string> characters = SplitGraphemes(text);
         for (size_t i = 0; i < characters.size() && i < 256; ++i) {
             // 文字 ID の表は 1 文字 = 1 コードポイントのものだけ（この辞書ではすべてそう）
-            if (characters[i].size() == 1) charIds_[characters[i][0]] = static_cast<uint8_t>(i);
+            if (characters[i].size() == 1) charIds[characters[i][0]] = static_cast<uint8_t>(i);
         }
     }
+    return charIds;
+}
+
+DicdataStore::DicdataStore(std::filesystem::path dictionaryPath)
+    : dictionaryPath_(std::move(dictionaryPath)), ccParsed_(cid::kCount, false) {
+    charIds_ = LoadCharIds(dictionaryPath_);
+    std::vector<uint8_t> bytes;
     if (ReadFile(dictionaryPath_ / "mm.binary", &bytes)) {
         mmValues_.resize(bytes.size() / 4);
         for (size_t i = 0; i < mmValues_.size(); ++i) mmValues_[i] = ReadFloat32(&bytes[i * 4]);
@@ -227,16 +236,20 @@ std::vector<DicdataStore::Found> DicdataStore::Lookup(
     const size_t right = std::min(characters.size(), start + kMaxLength);
     if (start >= right) return found;
 
-    // 読みを 1 文字ずつ伸ばしながらトライ木をたどる。辞書に続きが無くなった長さで止める
+    // 読みを 1 文字ずつ伸ばしながらトライ木をたどる。本体の辞書と専門辞書（元の実装のユーザ辞書）を
+    // 並べてたどり、どちらにも続きが無くなった長さで止める
     // （止める判定に、この変換の間だけ加えた語は入らない。元の実装と同じ）
     struct Reached {
         size_t length;
         int nodeIndex;
     };
     std::vector<Reached> reached;
+    std::vector<Reached> termReached;
     const Louds* louds = LoadLouds(characters[start]);
     int nodeIndex = Louds::kRootNodeIndex;
     bool alive = louds != nullptr;
+    int termNode = TermLatticeIndex::kRootNode;
+    bool termAlive = termIndex_ != nullptr;
     std::u32string prefix;
     std::vector<std::u32string> prefixes; // prefixes[n - 1] = 長さ n の読み
     for (size_t end = start; end < right; ++end) {
@@ -244,15 +257,25 @@ std::vector<DicdataStore::Found> DicdataStore::Lookup(
         prefixes.push_back(prefix);
         const size_t length = end - start + 1;
         bool reachedThisLength = false;
+        const uint8_t charId = CharId(characters[end]);
         if (alive) {
-            const std::optional<int> next =
-                louds->SearchCharNodeIndex(nodeIndex, CharId(characters[end]));
+            const std::optional<int> next = louds->SearchCharNodeIndex(nodeIndex, charId);
             if (next) {
                 nodeIndex = *next;
                 reached.push_back({length, nodeIndex});
                 reachedThisLength = true;
             } else {
                 alive = false;
+            }
+        }
+        if (termAlive) {
+            const std::optional<int> next = termIndex_->Child(termNode, charId);
+            if (next) {
+                termNode = *next;
+                termReached.push_back({length, termNode});
+                reachedThisLength = true;
+            } else {
+                termAlive = false;
             }
         }
         for (const DicdataElement& word : dynamicUserDictionary_) {
@@ -269,6 +292,12 @@ std::vector<DicdataStore::Found> DicdataStore::Lookup(
         for (DicdataElement& element : elements) {
             if (element.ruby != prefixes[node.length - 1]) continue;
             found.push_back({std::move(element), static_cast<int>(start + node.length)});
+        }
+    }
+    // 専門辞書の語（元の実装では本体の辞書との順はハッシュ表の順で決まらない。ここでは本体の後ろ）
+    for (const Reached& node : termReached) {
+        for (const DicdataElement& element : termIndex_->Entries(node.nodeIndex)) {
+            found.push_back({element, static_cast<int>(start + node.length)});
         }
     }
 

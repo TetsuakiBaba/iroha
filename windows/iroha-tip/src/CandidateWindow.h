@@ -26,9 +26,10 @@ public:
     static constexpr size_t kPageSize = 9;
 
     // anchor: コンポジションのスクリーン座標矩形。直下（入らなければ直上）に出す。
-    // candidates は全候補。selectedIndex のあるページだけを表示する
-    void Show(HWND owner, const RECT& anchor,
-              const std::vector<std::u32string>& candidates, size_t selectedIndex);
+    // candidates は全候補。selectedIndex のあるページだけを表示する。
+    // annotations は候補の右に小さく出す印（専門辞書の名前。候補と同じ数か空）
+    void Show(HWND owner, const RECT& anchor, const std::vector<std::u32string>& candidates,
+              const std::vector<std::u32string>& annotations, size_t selectedIndex);
     void Hide();
 
     // 絵文字として描く候補か（絵文字のフォントで描く）
@@ -38,7 +39,9 @@ private:
     struct Row {
         std::wstring label; // 番号（「1  」）
         std::wstring text;  // 候補
+        std::wstring annotation; // 候補の右に出す印（無ければ空）
         IDWriteTextLayout* layout = nullptr;
+        IDWriteTextLayout* annotationLayout = nullptr;
     };
 
     static LRESULT CALLBACK WndProcThunk(HWND hwnd, UINT message, WPARAM wParam,
@@ -48,7 +51,8 @@ private:
     bool EnsureDirectWrite();
     void ReleaseLayouts();
     void BuildLayouts();
-    SIZE MeasureContent() const;
+    // 大きさを測る（印の列の位置 annotationX_ も決める）
+    SIZE MeasureContent();
     void Paint(HDC dc, const RECT& client);
     void PaintWithGdi(HDC dc, const RECT& client) const;
 
@@ -64,6 +68,8 @@ private:
     IDWriteTextLayout* footerLayout_ = nullptr;
     int rowHeight_ = 0;
     int padding_ = 0;
+    // 印の列の左端（候補の列の幅 + 間）。印が無ければ 0
+    int annotationX_ = 0;
 
     // Direct2D・DirectWrite（初めて表示するときに作る。作れなければ GDI で描く）
     bool directWriteTried_ = false;
@@ -72,4 +78,5 @@ private:
     ID2D1DCRenderTarget* renderTarget_ = nullptr;
     IDWriteTextFormat* textFormat_ = nullptr;
     IDWriteTextFormat* footerFormat_ = nullptr;
+    IDWriteTextFormat* annotationFormat_ = nullptr;
 };

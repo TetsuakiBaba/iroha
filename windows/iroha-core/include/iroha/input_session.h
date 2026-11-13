@@ -9,6 +9,7 @@
 
 #include "iroha/romaji_composer.h"
 #include "iroha/symbol_candidates.h"
+#include "iroha/term_dictionary.h"
 
 namespace iroha {
 
@@ -58,6 +59,8 @@ struct SessionOutput {
     bool candidatesVisible = false;
     std::vector<std::u32string> candidates;
     uint32_t candidateIndex = 0;
+    // 候補の右に小さく出す印（専門辞書の名前。候補と同じ数か空。印の無い候補は空文字列）
+    std::vector<std::u32string> candidateAnnotations;
 
     bool Composing() const { return !preedit.empty(); }
     // 未確定文字列をつなげたもの
@@ -125,6 +128,11 @@ public:
         symbolTable_ = std::move(table);
     }
 
+    // 候補に専門辞書の名前の印を付けるための表（nullptr なら付けない）
+    void SetTermLookup(std::shared_ptr<const TermDictionaryLookup> lookup) {
+        termLookup_ = std::move(lookup);
+    }
+
     // 文節の候補として求める数
     static constexpr int kSegmentCandidateCount = 9;
     // 候補ウィンドウの1ページの候補数（数字キー 1〜9 はページの中の番号。TIP の表示と同じにする）
@@ -146,6 +154,8 @@ private:
         size_t candidateIndex = 0;
         // 選んで確定しても学習しない候補（記号・顔文字・絵文字）
         std::set<std::u32string> unlearnable;
+        // 候補ごとの印（専門辞書の名前。candidates と同じ数か空）
+        std::vector<std::u32string> annotations;
     };
 
     void HandleComposing(SessionKey key, char32_t character, std::u32string* commit);
@@ -170,6 +180,7 @@ private:
     Host* host_;
     bool liveConversionEnabled_ = true;
     std::shared_ptr<const SymbolCandidateTable> symbolTable_;
+    std::shared_ptr<const TermDictionaryLookup> termLookup_;
     uint64_t revision_ = 0;
 
     // 合成（かな入力・ライブ変換）

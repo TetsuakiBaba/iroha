@@ -418,6 +418,33 @@ void TestSessionSymbolCandidates() {
     EXPECT_TRUE(host.commits.size() == 1);
 }
 
+// 専門辞書の語になっている候補に、辞書の名前の印を付ける（印の無い候補は空）
+void TestSessionTermAnnotations() {
+    FakeSessionHost host;
+    host.table[U"ちらくが"] = U"散楽が";
+    host.candidateTable[U"ちらくが"] = {U"散楽が", U"地絡が"};
+    iroha::InputSession session(&host);
+    iroha::TermDictionaryLookup::Table table;
+    table.label = U"工学";
+    table.data = "# 注記\nちらく\t地絡\n";
+    table.start = iroha::TermDictionaryLookup::BodyStart(table.data);
+    session.SetTermLookup(std::make_shared<iroha::TermDictionaryLookup>(
+        std::vector<iroha::TermDictionaryLookup::Table>{table}));
+    Type(session, U"chirakuga");
+    Press(session, Key::Space);
+    const auto output = Press(session, Key::Down);
+    EXPECT_TRUE(output.candidates ==
+                (std::vector<std::u32string>{U"散楽が", U"地絡が", U"ちらくが", U"チラクガ"}));
+    EXPECT_TRUE(output.candidateAnnotations ==
+                (std::vector<std::u32string>{U"", U"工学", U"", U""}));
+
+    // 印の付く候補が無ければ空にする
+    iroha::InputSession plain(&host);
+    Type(plain, U"chirakuga");
+    Press(plain, Key::Space);
+    EXPECT_TRUE(Press(plain, Key::Down).candidateAnnotations.empty());
+}
+
 // 文節の移動と、文節の候補を求めるときの文脈（左側の変換結果を足す）
 void TestSessionMoveSegment() {
     FakeSessionHost host;
@@ -569,6 +596,7 @@ void RunSessionTests() {
     TestSessionCandidatesAndCommit();
     TestSessionKeepsCurrentResultInCandidates();
     TestSessionSymbolCandidates();
+    TestSessionTermAnnotations();
     TestSessionMoveSegment();
     TestSessionResizeSegment();
     TestSessionEscapeFromSegmentMode();

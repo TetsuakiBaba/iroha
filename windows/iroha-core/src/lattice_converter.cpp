@@ -7,6 +7,7 @@
 #include "iroha/unicode.h"
 #include "lattice/dicdata_store.h"
 #include "lattice/kana_kanji_converter.h"
+#include "lattice/term_index.h"
 
 namespace iroha {
 
@@ -14,13 +15,20 @@ struct LatticeConverter::Impl {
     explicit Impl(const std::filesystem::path& dictionaryPath)
         : store(dictionaryPath), converter(&store) {}
 
-    std::vector<lattice::ConvertedCandidate> Request(const std::u32string& reading, int count) {
+    // `useTerms` が真なら専門辞書も引く（候補を作るとき）
+    std::vector<lattice::ConvertedCandidate> Request(const std::u32string& reading, int count,
+                                                     bool useTerms) {
+        store.SetTermIndex(useTerms ? termIndex.get() : nullptr);
         // macOS 版と同じく、探索で残す数は 5 以上にする
-        return converter.RequestCandidates(reading, std::max(count, 5), true);
+        std::vector<lattice::ConvertedCandidate> result =
+            converter.RequestCandidates(reading, std::max(count, 5), true);
+        store.SetTermIndex(nullptr);
+        return result;
     }
 
     lattice::DicdataStore store;
     lattice::KanaKanjiConverter converter;
+    std::shared_ptr<const TermLatticeIndex> termIndex;
 };
 
 std::optional<std::filesystem::path> LatticeConverter::DefaultDictionaryPath(
@@ -89,7 +97,7 @@ std::vector<LatticeConverter::Candidate> LatticeConverter::RawCandidates(
     std::vector<Candidate> results;
     if (reading.empty()) return results;
     const int readingLength = static_cast<int>(GraphemeCount(reading));
-    for (const lattice::ConvertedCandidate& candidate : impl_->Request(reading, count)) {
+    for (const lattice::ConvertedCandidate& candidate : impl_->Request(reading, count, true)) {
         results.push_back({candidate.text, static_cast<double>(candidate.value),
                            candidate.rubyCount == readingLength});
     }
@@ -107,7 +115,8 @@ std::optional<std::set<int>> LatticeConverter::WordBoundaries(
                            lattice::mid::kGeneral, lattice::PValue(-10));
     }
     impl_->store.SetDynamicUserDictionary(std::move(words));
-    const std::vector<lattice::ConvertedCandidate> candidates = impl_->Request(reading, 1);
+    // 専門辞書の語は入れない
+    const std::vector<lattice::ConvertedCandidate> candidates = impl_->Request(reading, 1, false);
     impl_->store.SetDynamicUserDictionary({});
 
     const int readingLength = static_cast<int>(GraphemeCount(reading));
@@ -122,6 +131,20 @@ std::optional<std::set<int>> LatticeConverter::WordBoundaries(
         return boundaries;
     }
     return std::nullopt;
+}
+
+std::shared_ptr<const TermLatticeIndex> LatticeConverter::BuildTermIndex(
+    const std::filesystem::path& dictionaryPath, const std::vector<TermDictionaryPack>& packs) {
+    return std::make_shared<const TermLatticeIndex>(lattice::DicdataStore::LoadCharIds(dictionaryPath),
+                                                    packs);
+}
+
+size_t LatticeConverter::TermIndexEntryCount(const TermLatticeIndex& index) {
+    return index.EntryCount();
+}
+
+void LatticeConverter::SetTermDictionary(std::shared_ptr<const TermLatticeIndex> index) {
+    impl_->termIndex = std::move(index);
 }
 
 } // namespace iroha

@@ -18,6 +18,8 @@
 //   iroha-cli model-selfcheck <同じ形式.jsonl> [--limit N]
 //                                                 : モデルの採点が生成と辻褄が合うかを確かめる（macOS版の出力は使わない）
 //   iroha-cli remote <読み>                        : 変換サーバ経由の変換（IPC検証用）
+//   iroha-cli terms list | install <ID> | remove <ID> | lookup <読み> <候補>...
+//                                                 : 専門辞書の一覧・取得と設置・削除（IME本体と同じ経路）・辞書名の印を引く
 //   iroha-cli symbols [読み...]                     : 記号・顔文字・絵文字の表（Mozc のデータ）を引く。
 //                                                   Windows で描けないとして除いた絵文字も数える
 //   iroha-cli session [--context 文脈] [--interval ミリ秒] <キー列>
@@ -34,6 +36,8 @@
 //   明示指定はそのまま使う）。convert / segment / repl はIME本体と同じデータを使う
 //   IROHA_LATTICE=off で辞書ラティスを使わずモデル単体、IROHA_LATTICE=always で第一候補も
 //   ラティス候補の再採点で決める（既定は候補数 2 以上のときだけラティス。IME本体と同じ）
+//   IROHA_TERM_DICTIONARIES=installed で IME 本体に入れた専門辞書を、=a.tsv,b.tsv でその辞書ファイルを
+//   候補ウィンドウの辞書ラティスに加える（既定は使わない。macOS版と同じ）
 //   IROHA_NO_LATIN=1 で読みにラテン文字がないときの英字出力を禁じる（実験用）
 //   IROHA_NO_CONSTRAINT=1 で読み制約（constrained decoding）を丸ごと切り素の貪欲生成にする（実験用）
 //   IROHA_KV_REUSE=0 で前回の計算の再利用（KVキャッシュ・エンコーダ出力）を切る（切り分け用）
@@ -66,6 +70,8 @@
 #include "iroha/reading_aligner.h"
 #include "iroha/romaji_composer.h"
 #include "iroha/symbol_candidates.h"
+#include "iroha/term_dictionary.h"
+#include "term_dictionary_fetcher.h"
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_engine.h"
 #include "iroha/user_dictionary_store.h"
@@ -134,6 +140,38 @@ std::filesystem::path ExecutableDirectory() {
     return std::filesystem::path(modulePath).parent_path();
 }
 
+// 専門辞書（IROHA_TERM_DICTIONARIES）。`installed` なら IME 本体で入れた辞書、それ以外はカンマ区切りの
+// 辞書ファイル（読み<TAB>語、用語として扱う）。指定が無ければ使わない（IME 本体と違い、既定は無し）
+std::shared_ptr<const iroha::TermLatticeIndex> CliTermIndex(const std::filesystem::path& dictionaryPath) {
+    const wchar_t* env = _wgetenv(L"IROHA_TERM_DICTIONARIES");
+    if (!env || env[0] == L'\0') return nullptr;
+    const std::wstring value = env;
+    std::vector<iroha::TermDictionaryPack> packs;
+    if (value == L"installed") {
+        const std::filesystem::path data = DataDir();
+        packs = iroha::TermDictionaryInstall::LoadPacks(
+            data, iroha::TermDictionaryInstall::InstalledRecords(data));
+    } else {
+        size_t start = 0;
+        while (start <= value.size()) {
+            size_t end = value.find(L',', start);
+            if (end == std::wstring::npos) end = value.size();
+            std::ifstream file(std::filesystem::path(value.substr(start, end - start)), std::ios::binary);
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            packs.push_back({iroha::TermKind::kNoun, iroha::TermDictionary::Parse(buffer.str())});
+            start = end + 1;
+        }
+    }
+    const auto started = std::chrono::steady_clock::now();
+    auto index = iroha::LatticeConverter::BuildTermIndex(dictionaryPath, packs);
+    std::fprintf(stderr, "専門辞書: %zu 語・%.0fms（IROHA_TERM_DICTIONARIES）\n",
+                 iroha::LatticeConverter::TermIndexEntryCount(*index),
+                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
+                     .count());
+    return index;
+}
+
 // ユーザ辞書・学習の扱い。評価（bench / ajimee）はモデル単体の力を測るので既定で空にする。
 // 実データを混ぜると学習ファイルの成長で同じモデルでも数値が変わり、再現性がなくなる
 enum class UserDataMode {
@@ -194,6 +232,7 @@ private:
             iroha::LatticeConverter::DefaultDictionaryPath(ExecutableDirectory());
         if (!dictionary) return &zenz;
         lattice = std::make_unique<iroha::LatticeConverter>(*dictionary);
+        lattice->SetTermDictionary(CliTermIndex(*dictionary));
         rescoring = std::make_unique<iroha::LatticeRescoringEngine>(
             &zenz, &zenz, lattice.get(), 10, EnvEquals(L"IROHA_LATTICE", L"always"));
         return rescoring.get();
@@ -434,7 +473,9 @@ std::unique_ptr<iroha::LatticeConverter> MakeLattice() {
                      "辞書が見つかりません（windows\\scripts\\fetch-dictionary.ps1 で取得できます）\n");
         return nullptr;
     }
-    return std::make_unique<iroha::LatticeConverter>(*dictionary);
+    auto lattice = std::make_unique<iroha::LatticeConverter>(*dictionary);
+    lattice->SetTermDictionary(CliTermIndex(*dictionary));
+    return lattice;
 }
 
 // 辞書ラティスの生の候補を見る（調査用）。★は読み全体に一致した候補。
@@ -815,6 +856,88 @@ int RunModelSelfCheck(const std::wstring& referencePath, int limit) {
     return maxBatchDifference < 0.01 && generateBelow == 0 ? 0 : 2;
 }
 
+// ---- terms: 専門辞書 ----
+
+// IME本体（設定画面）と同じ経路で、専門辞書の一覧を取り、入れ、外す。lookup は辞書名の印を引く
+int RunTerms(const std::vector<std::u32string>& args) {
+    const std::filesystem::path data = DataDir();
+    const std::u32string sub = args.empty() ? U"list" : args[0];
+    if (sub == U"lookup" && args.size() >= 3) {
+        const auto lookup = iroha::TermDictionaryLookup::Load(
+            data, iroha::TermDictionaryInstall::InstalledRecords(data));
+        const std::u32string reading = RomajiToKana(args[1]);
+        for (size_t i = 2; i < args.size(); ++i) {
+            std::string labels;
+            for (const std::u32string& label : lookup.Labels(reading, args[i])) {
+                labels += (labels.empty() ? "" : "・") + Utf32ToUtf8(label);
+            }
+            PrintUtf8(Utf32ToUtf8(reading) + " → " + Utf32ToUtf8(args[i]) + "  " +
+                      (labels.empty() ? std::string("（印なし）") : labels) + "\n");
+        }
+        return 0;
+    }
+    if (sub == U"remove" && args.size() >= 2) {
+        const std::string id = Utf32ToUtf8(args[1]);
+        if (!iroha::TermDictionaryInstall::Remove(data, id)) {
+            std::fprintf(stderr, "外せませんでした: %s\n", id.c_str());
+            return 1;
+        }
+        PrintUtf8("外しました: " + id + "\n");
+        return 0;
+    }
+
+    const std::string url = iroha::TermDictionaryCatalog::DefaultUrl();
+    iroha::TermDictionaryCatalog catalog;
+    std::string error;
+    if (!iroha::TermDictionaryFetcher::FetchCatalog(url, &catalog, &error)) {
+        std::fprintf(stderr, "辞書一覧を取れません: %s\n", error.c_str());
+        return 1;
+    }
+    const auto records = iroha::TermDictionaryInstall::InstalledRecords(data);
+    if (sub == U"install" && args.size() >= 2) {
+        const std::string id = Utf32ToUtf8(args[1]);
+        const auto* dictionary = catalog.Find(id);
+        if (!dictionary) {
+            std::fprintf(stderr, "辞書一覧にありません: %s\n", id.c_str());
+            return 1;
+        }
+        const auto started = std::chrono::steady_clock::now();
+        iroha::TermDictionaryInstall::Record record;
+        if (!iroha::TermDictionaryFetcher::Install(*dictionary, data, &record, &error)) {
+            std::fprintf(stderr, "入れられませんでした: %s\n", error.c_str());
+            return 1;
+        }
+        char line[256];
+        std::snprintf(line, sizeof(line), "入れました: %s（%llu 語・%.1f 秒）\n", id.c_str(),
+                      static_cast<unsigned long long>(record.entries),
+                      MillisecondsSince(started) / 1000.0);
+        PrintUtf8(line);
+        return 0;
+    }
+    // list
+    PrintUtf8(url + "\n");
+    std::u32string group;
+    for (const auto& dictionary : catalog.dictionaries) {
+        if (dictionary.group != group) {
+            group = dictionary.group;
+            PrintUtf8("■ " + Utf32ToUtf8(group) + "\n");
+        }
+        std::string state = "未設置";
+        for (const auto& record : records) {
+            if (record.id != dictionary.id) continue;
+            state = iroha::TermDictionaryInstall::NeedsUpdate(record, dictionary) ? "設置済み（更新あり）"
+                                                                                  : "設置済み";
+        }
+        char line[512];
+        std::snprintf(line, sizeof(line), "  %-24s %s  %llu 語  %s  [%s]\n", dictionary.id.c_str(),
+                      Utf32ToUtf8(dictionary.name).c_str(),
+                      static_cast<unsigned long long>(dictionary.entries),
+                      Utf32ToUtf8(dictionary.license).c_str(), state.c_str());
+        PrintUtf8(line);
+    }
+    return 0;
+}
+
 // ---- symbols: 記号・顔文字・絵文字の表を引く ----
 
 std::filesystem::path ExecutableDirectoryPath() {
@@ -945,6 +1068,10 @@ void PrintSessionOutput(const std::u32string& label, const iroha::SessionOutput&
         for (size_t i = 0; i < output.candidates.size(); ++i) {
             line += i == output.candidateIndex ? " *" : " ";
             line += Utf32ToUtf8(output.candidates[i]);
+            // 専門辞書の名前の印
+            if (i < output.candidateAnnotations.size() && !output.candidateAnnotations[i].empty()) {
+                line += "[" + Utf32ToUtf8(output.candidateAnnotations[i]) + "]";
+            }
         }
     }
     char timing[32];
@@ -1052,6 +1179,10 @@ int wmain(int argc, wchar_t** argv) {
         }
         std::printf("  [%.1fms]\n", ms);
         return 0;
+    }
+
+    if (command == U"terms") {
+        return RunTerms(std::vector<std::u32string>(args.begin() + 2, args.end()));
     }
 
     if (command == U"symbols") {

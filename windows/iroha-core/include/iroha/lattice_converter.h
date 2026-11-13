@@ -7,7 +7,12 @@
 #include <utility>
 #include <vector>
 
+#include "iroha/term_dictionary.h"
+
 namespace iroha {
+
+// 専門辞書を辞書ラティスで引ける形にしたもの（LatticeConverter::BuildTermIndex で作る。中身は src/lattice/）
+class TermLatticeIndex;
 
 // 辞書ラティスによるかな漢字変換。
 // 移植元: macos/Sources/IrohaCore/LatticeConverter.swift（挙動互換を維持すること）
@@ -21,8 +26,6 @@ namespace iroha {
 //
 // 読みは NFC のかな（結合濁点などを含む入力は、境界で正規化してから渡すこと）。
 // スレッドセーフではない（macOS 版は actor で直列化している。呼び出し側で直列化すること）
-//
-// 未移植: 専門辞書（`TermDictionary`。azooKey のユーザ辞書の形式に書き出して読ませる部分）
 class LatticeConverter {
 public:
     // ラティスが返した1候補
@@ -70,6 +73,18 @@ public:
 
     // ラティスの返した候補をそのまま（部分候補も含む。調査・デバッグ用）
     std::vector<Candidate> RawCandidates(const std::u32string& reading, int count);
+
+    // 専門辞書を辞書ラティスで引ける形にする（数十万語で 1 秒前後かかりうるので、変換と別のスレッドで作ってよい。
+    // 作ったものは変更しないので、複数の LatticeConverter で共有できる）。
+    // `dictionaryPath` は本体の辞書のフォルダ（文字 ID の表を合わせる）
+    static std::shared_ptr<const TermLatticeIndex> BuildTermIndex(
+        const std::filesystem::path& dictionaryPath, const std::vector<TermDictionaryPack>& packs);
+    // 入れた語の数
+    static size_t TermIndexEntryCount(const TermLatticeIndex& index);
+
+    // 候補を作るときに加える専門辞書（nullptr で外す）。ユーザ辞書の語の境目の判定（WordBoundaries）には入れない
+    // （ユーザ辞書をライブ変換に当てる位置を、専門辞書で変えない。macOS版と同じ）
+    void SetTermDictionary(std::shared_ptr<const TermLatticeIndex> index);
 
     // ユーザ辞書の語（読み, 語）を加えたラティスで読み全体を変換し、評価が最も良い候補の語の境目を返す。
     //

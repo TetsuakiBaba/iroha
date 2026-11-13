@@ -20,7 +20,9 @@
 //                u32 version, u32 status(0=ok),
 //                ok: u32 changed（0 なら以降なし）, u64 revision, string commit, u32 flags,
 //                    u32 spanCount, (u32 style, string text)×spanCount,
-//                    u32 candidateIndex, u32 candidateCount, string×candidateCount
+//                    u32 candidateIndex, u32 candidateCount, string×candidateCount,
+//                    u32 annotationCount, string×annotationCount（候補の右に出す印。後から足したので、
+//                    無い返事も読めるようにしてある）
 //                エラー: string message
 //
 // セッションのメッセージは、入力の状態（読み・ライブ変換・文節・候補）をサーバ側に持つためのもの
@@ -262,6 +264,23 @@ inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
     }
     PutU32(&buf, static_cast<uint32_t>(candidates.size()));
     for (const std::string& candidate : candidates) PutString(&buf, candidate);
+    // 印は候補と同じ数だけ（収まらなかった候補のぶんは送らない）
+    const size_t annotations = output->candidateAnnotations.size() == output->candidates.size()
+                                   ? candidates.size()
+                                   : 0;
+    std::vector<std::string> annotationTexts;
+    size_t annotationBytes = buf.size() + 4;
+    for (size_t i = 0; i < annotations; ++i) {
+        std::string utf8 = Utf32ToUtf8(output->candidateAnnotations[i]);
+        if (annotationBytes + 4 + utf8.size() > kMaxMessageBytes) {
+            annotationTexts.clear();
+            break;
+        }
+        annotationBytes += 4 + utf8.size();
+        annotationTexts.push_back(std::move(utf8));
+    }
+    PutU32(&buf, static_cast<uint32_t>(annotationTexts.size()));
+    for (const std::string& annotation : annotationTexts) PutString(&buf, annotation);
     return buf;
 }
 
@@ -329,6 +348,21 @@ inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
             return result;
         }
         output.candidates.push_back(Utf8ToUtf32(candidate));
+    }
+    // 候補の印（印を送らない古い変換サーバの返事には無い）
+    uint32_t annotationCount = 0;
+    if (reader.U32(&annotationCount)) {
+        for (uint32_t i = 0; i < annotationCount; ++i) {
+            std::string annotation;
+            if (!reader.String(&annotation)) {
+                output.candidateAnnotations.clear();
+                break;
+            }
+            output.candidateAnnotations.push_back(Utf8ToUtf32(annotation));
+        }
+        if (output.candidateAnnotations.size() != output.candidates.size()) {
+            output.candidateAnnotations.clear();
+        }
     }
     if (output.candidateIndex >= output.candidates.size()) output.candidateIndex = 0;
     result.changed = true;

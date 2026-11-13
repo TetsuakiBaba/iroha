@@ -19,6 +19,10 @@
 #include "lattice/dicdata.h"
 #include "lattice/louds.h"
 
+namespace iroha {
+class TermLatticeIndex;
+}
+
 namespace iroha::lattice {
 
 class DicdataStore {
@@ -42,6 +46,13 @@ public:
 
     // この変換の間だけ辞書に加える語（ルビはカタカナ。読みが丸ごと一致する所にだけ入る）
     void SetDynamicUserDictionary(std::vector<DicdataElement> words);
+
+    // 本体の辞書と一緒にたどる専門辞書（元の実装のユーザ辞書「user」にあたる。nullptr なら使わない）
+    void SetTermIndex(const TermLatticeIndex* index) { termIndex_ = index; }
+
+    // 本体の辞書の文字 ID の表（louds/charID.chid）
+    const std::unordered_map<char32_t, uint8_t>& CharIds() const { return charIds_; }
+    static std::unordered_map<char32_t, uint8_t> LoadCharIds(const std::filesystem::path& dictionaryPath);
 
     // 計算で使わないエントリか（評価値が低すぎる）
     static bool ShouldBeRemoved(const DicdataElement& data);
@@ -75,6 +86,7 @@ private:
     std::vector<bool> ccParsed_;
     std::unordered_map<int, std::vector<PValue>> ccLines_;
     std::vector<DicdataElement> dynamicUserDictionary_;
+    const TermLatticeIndex* termIndex_ = nullptr;
 };
 
 // ひらがな → カタカナ、カタカナ → ひらがな（かな以外はそのまま）

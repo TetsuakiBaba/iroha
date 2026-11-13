@@ -362,6 +362,21 @@ bool InputSession::EnsureSegmentCandidates(size_t index) {
         }
     }
     segment.unlearnable = SymbolCandidateMerger::UnlearnableCandidates(candidates, symbols);
+    // 専門辞書の語（か、その語＋読みの残りのかな）になっている候補に、辞書の名前の印を付ける
+    segment.annotations.clear();
+    if (termLookup_ && !termLookup_->Empty()) {
+        bool any = false;
+        for (const std::u32string& candidate : candidates) {
+            std::u32string annotation;
+            for (const std::u32string& label : termLookup_->Labels(segment.reading, candidate)) {
+                if (!annotation.empty()) annotation += U"・";
+                annotation += label;
+            }
+            any = any || !annotation.empty();
+            segment.annotations.push_back(std::move(annotation));
+        }
+        if (!any) segment.annotations.clear();
+    }
     segment.candidateIndex = 0;
     segment.candidates = std::move(candidates);
     return true;
@@ -469,6 +484,7 @@ SessionOutput InputSession::Current() const {
             const Segment& segment = segments_[currentSegment_];
             output.candidatesVisible = !segment.candidates.empty();
             output.candidates = segment.candidates;
+            output.candidateAnnotations = segment.annotations;
             output.candidateIndex = static_cast<uint32_t>(segment.candidateIndex);
         }
     } else if (!composer_.Empty()) {

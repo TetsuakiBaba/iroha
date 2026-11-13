@@ -30,6 +30,7 @@
 #include "iroha/reading_aligner.h"
 #include "iroha/session_manager.h"
 #include "iroha/symbol_candidates.h"
+#include "iroha/term_dictionary.h"
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_engine.h"
 #include "iroha/user_dictionary_store.h"
@@ -133,6 +134,38 @@ struct ServerState {
     std::shared_ptr<const iroha::SymbolCandidateTable> symbols;
     std::shared_ptr<const iroha::SymbolCandidateTable> loadedSymbols;
     bool symbolsLoaded = false;
+    // 専門辞書（設定画面から入れたもの。入れ外しされたら Reload で読み直す）
+    std::filesystem::path dictionaryPath;
+    std::string termSignature;
+    bool termsLoaded = false;
+    std::shared_ptr<const iroha::TermLatticeIndex> termIndex;
+    std::shared_ptr<const iroha::TermDictionaryLookup> termLookup;
+
+    // 入れている専門辞書が変わっていれば読み直す（数十万語で 1 秒前後）
+    void LoadTermDictionaries() {
+        const std::filesystem::path data(DataDir());
+        const auto records = iroha::TermDictionaryInstall::InstalledRecords(data);
+        const std::string signature = iroha::TermDictionaryInstall::Signature(records);
+        if (termsLoaded && signature == termSignature) return;
+        termsLoaded = true;
+        termSignature = signature;
+        termIndex = nullptr;
+        termLookup = nullptr;
+        if (records.empty()) return;
+        const auto start = GetTickCount64();
+        if (!dictionaryPath.empty()) {
+            termIndex = iroha::LatticeConverter::BuildTermIndex(
+                dictionaryPath, iroha::TermDictionaryInstall::LoadPacks(data, records));
+        }
+        termLookup = std::make_shared<iroha::TermDictionaryLookup>(
+            iroha::TermDictionaryLookup::Load(data, records));
+        char message[160];
+        std::snprintf(message, sizeof(message), "term dictionaries loaded: %zu dictionaries, %zu words (%llums)",
+                      records.size(),
+                      termIndex ? iroha::LatticeConverter::TermIndexEntryCount(*termIndex) : size_t(0),
+                      GetTickCount64() - start);
+        Log(message);
+    }
 
     void Build() {
         const iroha::Config config =
@@ -175,6 +208,7 @@ struct ServerState {
         if (!lattice) {
             if (const auto dictionary =
                     iroha::LatticeConverter::DefaultDictionaryPath(ExecutableDirectory())) {
+                dictionaryPath = *dictionary;
                 lattice = std::make_unique<iroha::LatticeConverter>(*dictionary);
                 // 辞書の読み込みを済ませておく（最初の候補ウィンドウのもたつき防止）
                 lattice->Candidates(U"うぉーむあっぷ", 1);
@@ -183,6 +217,8 @@ struct ServerState {
                 Log("dictionary not found (candidates come from the model only)");
             }
         }
+        LoadTermDictionaries();
+        if (lattice) lattice->SetTermDictionary(termIndex);
         iroha::ConversionEngine* core = zenz.get();
         if (lattice) {
             rescoring = std::make_unique<iroha::LatticeRescoringEngine>(
@@ -315,6 +351,7 @@ bool HandleRequest(ServerState& state, iroha::SessionManager& sessions,
             sessions.WithEngine([&] { state.Build(); });
             sessions.SetLiveConversionEnabled(state.liveConversion);
             sessions.SetSymbolTable(state.symbols);
+            sessions.SetTermLookup(state.termLookup);
             *response = iroha::ipc::BuildOkResponse({});
             return true;
         }
@@ -409,6 +446,7 @@ int wmain() {
     iroha::SessionManager sessions(&backend);
     sessions.SetLiveConversionEnabled(state.liveConversion);
     sessions.SetSymbolTable(state.symbols);
+    sessions.SetTermLookup(state.termLookup);
 
     const std::wstring pipeName = iroha::ipc::PipeName();
     PSECURITY_DESCRIPTOR pipeSecurity = CreatePipeSecurityDescriptor();

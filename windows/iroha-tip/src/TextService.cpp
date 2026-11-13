@@ -528,7 +528,7 @@ HRESULT TextService::UpdateCandidateWindow(ITfContext* context) {
                     BOOL clipped = FALSE;
                     if (SUCCEEDED(view->GetTextExt(ec, segmentRange, &rect, &clipped))) {
                         candidateWindow_.Show(owner, rect, shown_.candidates,
-                                              shown_.candidateIndex);
+                                              shown_.candidateAnnotations, shown_.candidateIndex);
                     }
                     segmentRange->Release();
                 }

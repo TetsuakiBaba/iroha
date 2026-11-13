@@ -70,6 +70,7 @@ CandidateWindow::~CandidateWindow() {
     ReleaseLayouts();
     SafeRelease(&textFormat_);
     SafeRelease(&footerFormat_);
+    SafeRelease(&annotationFormat_);
     SafeRelease(&renderTarget_);
     SafeRelease(&dwriteFactory_);
     SafeRelease(&d2dFactory_);
@@ -110,6 +111,7 @@ void CandidateWindow::UpdateFont() {
     fontSize_ = 10.0f * static_cast<float>(dpi_) / 72.0f;
     SafeRelease(&textFormat_);
     SafeRelease(&footerFormat_);
+    SafeRelease(&annotationFormat_);
 }
 
 // Direct2D・DirectWrite を用意する（文字の大きさが変わったら書式を作り直す）
@@ -144,6 +146,16 @@ bool CandidateWindow::EnsureDirectWrite() {
         footerFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         footerFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
     }
+    if (!annotationFormat_) {
+        // 印は候補より小さく出す
+        if (FAILED(dwriteFactory_->CreateTextFormat(
+                kTextFamily, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL, fontSize_ * 0.8f, L"ja-jp", &annotationFormat_))) {
+            return false;
+        }
+        annotationFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        annotationFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
     if (!renderTarget_) {
         // 画面の DC にそのまま描く。座標はピクセルのまま使う（DPI は 96 に固定し、文字の大きさで合わせる）
         const D2D1_RENDER_TARGET_PROPERTIES properties = D2D1::RenderTargetProperties(
@@ -165,7 +177,10 @@ bool CandidateWindow::IsEmojiText(const std::wstring& text) {
 }
 
 void CandidateWindow::ReleaseLayouts() {
-    for (Row& row : rows_) SafeRelease(&row.layout);
+    for (Row& row : rows_) {
+        SafeRelease(&row.layout);
+        SafeRelease(&row.annotationLayout);
+    }
     SafeRelease(&footerLayout_);
 }
 
@@ -186,6 +201,12 @@ void CandidateWindow::BuildLayouts() {
                 kEmojiFamily, DWRITE_TEXT_RANGE{static_cast<UINT32>(row.label.size()),
                                                 static_cast<UINT32>(row.text.size())});
         }
+        if (!row.annotation.empty() &&
+            FAILED(dwriteFactory_->CreateTextLayout(
+                row.annotation.c_str(), static_cast<UINT32>(row.annotation.size()), annotationFormat_,
+                10000.0f, height, &row.annotationLayout))) {
+            row.annotationLayout = nullptr;
+        }
     }
     if (!footer_.empty()) {
         if (FAILED(dwriteFactory_->CreateTextLayout(footer_.c_str(),
@@ -196,27 +217,44 @@ void CandidateWindow::BuildLayouts() {
     }
 }
 
-SIZE CandidateWindow::MeasureContent() const {
+SIZE CandidateWindow::MeasureContent() {
     SIZE content = {0, 0};
     const bool directWrite = !rows_.empty() && rows_.front().layout != nullptr;
     HDC dc = directWrite ? nullptr : GetDC(hwnd_);
     HGDIOBJ oldFont = dc ? SelectObject(dc, font_) : nullptr;
+    LONG annotationWidth = 0;
     for (const Row& row : rows_) {
         LONG width = 0;
+        LONG annotation = 0;
         DWRITE_TEXT_METRICS metrics = {};
         if (row.layout && SUCCEEDED(row.layout->GetMetrics(&metrics))) {
             width = static_cast<LONG>(std::ceil(metrics.widthIncludingTrailingWhitespace));
+            if (row.annotationLayout && SUCCEEDED(row.annotationLayout->GetMetrics(&metrics))) {
+                annotation = static_cast<LONG>(std::ceil(metrics.widthIncludingTrailingWhitespace));
+            }
         } else if (dc) {
             const std::wstring text = row.label + row.text;
             SIZE size = {};
             GetTextExtentPoint32W(dc, text.c_str(), static_cast<int>(text.size()), &size);
             width = size.cx;
+            if (!row.annotation.empty()) {
+                GetTextExtentPoint32W(dc, row.annotation.c_str(),
+                                      static_cast<int>(row.annotation.size()), &size);
+                annotation = size.cx;
+            }
         }
         content.cx = (std::max)(content.cx, width);
+        annotationWidth = (std::max)(annotationWidth, annotation);
     }
     if (dc) {
         SelectObject(dc, oldFont);
         ReleaseDC(hwnd_, dc);
+    }
+    // 印は候補の列の右に、そろえて出す
+    annotationX_ = 0;
+    if (annotationWidth > 0) {
+        annotationX_ = padding_ + content.cx + padding_ * 3;
+        content.cx += padding_ * 3 + annotationWidth;
     }
     content.cx += padding_ * 4;
     const size_t rows = rows_.size() + (footer_.empty() ? 0 : 1);
@@ -251,6 +289,13 @@ void CandidateWindow::Paint(HDC dc, const RECT& client) {
             D2D1::Point2F(static_cast<float>(padding_),
                           static_cast<float>(padding_ + static_cast<LONG>(i) * rowHeight_)),
             rows_[i].layout, brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+        if (rows_[i].annotationLayout && annotationX_ > 0) {
+            brush->SetColor(SystemColor(i == selected_ ? COLOR_HIGHLIGHTTEXT : COLOR_GRAYTEXT));
+            renderTarget_->DrawTextLayout(
+                D2D1::Point2F(static_cast<float>(annotationX_),
+                              static_cast<float>(padding_ + static_cast<LONG>(i) * rowHeight_)),
+                rows_[i].annotationLayout, brush, D2D1_DRAW_TEXT_OPTIONS_NONE);
+        }
     }
     if (footerLayout_) {
         // 候補が1ページに収まらないとき、いまのページ（例: 2/7）を右下に出す
@@ -280,6 +325,13 @@ void CandidateWindow::PaintWithGdi(HDC dc, const RECT& client) const {
         const std::wstring text = rows_[i].label + rows_[i].text;
         DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &row,
                   DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX);
+        if (!rows_[i].annotation.empty() && annotationX_ > 0) {
+            RECT annotation = row;
+            annotation.left = annotationX_;
+            SetTextColor(dc, GetSysColor(i == selected_ ? COLOR_HIGHLIGHTTEXT : COLOR_GRAYTEXT));
+            DrawTextW(dc, rows_[i].annotation.c_str(), static_cast<int>(rows_[i].annotation.size()),
+                      &annotation, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX);
+        }
     }
     if (!footer_.empty()) {
         RECT row = {padding_, padding_ + static_cast<LONG>(rows_.size()) * rowHeight_,
@@ -294,7 +346,7 @@ void CandidateWindow::PaintWithGdi(HDC dc, const RECT& client) const {
 
 void CandidateWindow::Show(HWND owner, const RECT& anchor,
                            const std::vector<std::u32string>& candidates,
-                           size_t selectedIndex) {
+                           const std::vector<std::u32string>& annotations, size_t selectedIndex) {
     EnsureWindow(owner);
     if (!hwnd_) return;
     UpdateFont();
@@ -309,6 +361,7 @@ void CandidateWindow::Show(HWND owner, const RECT& anchor,
         Row row;
         row.label = std::to_wstring(i - first + 1) + L"  ";
         row.text = iroha::Utf32ToUtf16(candidates[i]);
+        if (annotations.size() == candidates.size()) row.annotation = iroha::Utf32ToUtf16(annotations[i]);
         rows_.push_back(std::move(row));
     }
     selected_ = selectedIndex - first;

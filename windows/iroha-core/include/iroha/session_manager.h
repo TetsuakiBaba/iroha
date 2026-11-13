@@ -65,6 +65,8 @@ public:
     void SetLiveConversionEnabled(bool enabled);
     // 文節の候補に合流させる記号・顔文字・絵文字の表（nullptr なら合流させない。同じく全セッションに効く）
     void SetSymbolTable(std::shared_ptr<const SymbolCandidateTable> table);
+    // 候補に専門辞書の名前の印を付けるための表（nullptr なら付けない。同じく全セッションに効く）
+    void SetTermLookup(std::shared_ptr<const TermDictionaryLookup> lookup);
 
     size_t SessionCount();
 
@@ -97,6 +99,7 @@ private:
     uint64_t useCounter_ = 0;
     bool liveConversionEnabled_ = true;
     std::shared_ptr<const SymbolCandidateTable> symbolTable_;
+    std::shared_ptr<const TermDictionaryLookup> termLookup_;
 
     // エンジン。キーの処理が待っている間（engineWaiters_ > 0）、ライブ変換は途中でやめる。
     // 鍵を取る順は stateMutex_ → engineMutex_（裏のスレッドは engineMutex_ を離してから stateMutex_）
