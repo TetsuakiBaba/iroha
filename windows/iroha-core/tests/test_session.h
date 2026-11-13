@@ -104,6 +104,23 @@ public:
 
     void RecordConversion(const iroha::ConversionLogEntry& entry) override { conversions.push_back(entry); }
 
+    bool TypoCorrectionAvailable() override { return typoAvailable; }
+    void RequestTypoCorrection(uint64_t generation, const std::u32string& reading, int delayMs, double threshold,
+                               size_t minimumLength) override {
+        (void)threshold;
+        typoRequests.push_back({generation, reading, delayMs, minimumLength});
+    }
+    void CancelTypoCorrection() override { ++typoCancels; }
+    std::optional<iroha::TypoCorrection> CorrectTypo(const std::u32string& reading, double threshold,
+                                                     size_t minimumLength) override {
+        (void)threshold;
+        (void)minimumLength;
+        ++correctTypoCalls;
+        const auto it = typoTable.find(reading);
+        if (it == typoTable.end()) return std::nullopt;
+        return iroha::TypoCorrection{reading, it->second, 5};
+    }
+
     // 読み → 変換結果（候補数1）、読み → 候補の一覧（候補数2以上）
     std::map<std::u32string, std::u32string> table;
     std::map<std::u32string, std::vector<std::u32string>> candidateTable;
@@ -122,6 +139,18 @@ public:
     std::vector<std::u32string> recordedHistory;
     std::vector<bool> privateModeChanges;
     std::vector<iroha::ConversionLogEntry> conversions;
+    // 打ち間違いの訂正: 使えるか・頼まれた休止の訂正・取り消し・その場の訂正の回数・読み → 直した読み
+    struct TypoRequest {
+        uint64_t generation;
+        std::u32string reading;
+        int delayMs;
+        size_t minimumLength;
+    };
+    bool typoAvailable = false;
+    std::vector<TypoRequest> typoRequests;
+    int typoCancels = 0;
+    int correctTypoCalls = 0;
+    std::map<std::u32string, std::u32string> typoTable;
 };
 
 using Key = iroha::SessionKey;
@@ -1069,6 +1098,140 @@ void TestSessionConversionLog() {
     EXPECT_TRUE(host.conversions.size() == 3);
 }
 
+iroha::SessionSettings TypoSettings() {
+    iroha::SessionSettings settings;
+    settings.typoCorrection = true;
+    return settings;
+}
+
+// 頼まれた休止の訂正に結果を渡す（直した読みが無ければ「訂正なし」）
+bool CompleteTypo(iroha::InputSession& session, FakeSessionHost& host, const std::u32string& corrected) {
+    const auto& request = host.typoRequests.back();
+    std::optional<iroha::TypoCorrection> correction;
+    if (!corrected.empty()) correction = iroha::TypoCorrection{request.reading, corrected, 5};
+    return session.CompleteTypoCorrection(request.generation, request.reading, correction);
+}
+
+// 入力の休止で読みを直す。直したら「打った読み → 直した読み」を出し、直後の Backspace で取り消す。
+// 取り消した読みは再び直さない（macOS版 scheduleTypoCorrection・undoTypoCorrection）
+void TestSessionTypoIdleCorrection() {
+    FakeSessionHost host;
+    host.typoAvailable = true;
+    iroha::InputSession session(&host);
+    session.SetSettings(TypoSettings());
+    auto output = Type(session, U"kak");
+    EXPECT_TRUE(host.typoRequests.empty()); // 未解決のローマ字が残っている・4 文字未満
+    output = Type(session, U"uinshimashita");
+    EXPECT_TRUE(!host.typoRequests.empty() && output.typoPending);
+    EXPECT_EQ(host.typoRequests.back().reading, U"かくいんしました");
+    EXPECT_TRUE(host.typoRequests.back().delayMs == 500 && host.typoRequests.back().minimumLength == 4);
+
+    EXPECT_TRUE(CompleteTypo(session, host, U"かくにんしました"));
+    output = session.Current();
+    EXPECT_EQ(output.PreeditText(), U"かくにんしました");
+    EXPECT_TRUE(!output.typoPending && output.typoFeedback.has_value());
+    if (output.typoFeedback) {
+        EXPECT_EQ(output.typoFeedback->Original(), U"かくいんしました");
+        EXPECT_EQ(output.typoFeedback->Corrected(), U"かくにんしました");
+    }
+    EXPECT_EQ(host.liveRequests.back().reading, U"かくにんしました");
+    const size_t requests = host.typoRequests.size();
+    EXPECT_TRUE(requests >= 1);
+
+    // 直後の Backspace は訂正の取り消し。取り消した読みは再び直さない
+    output = Press(session, Key::Backspace);
+    EXPECT_EQ(output.PreeditText(), U"かくいんしました");
+    EXPECT_TRUE(!output.typoFeedback && !output.typoPending);
+    EXPECT_TRUE(host.typoRequests.size() == requests);
+    // 次の Backspace は普通に 1 文字消す
+    output = Press(session, Key::Backspace);
+    EXPECT_EQ(output.PreeditText(), U"かくいんしまし");
+
+    // 直したあと別のキーを打つと、取り消せなくなる（小窓も閉じる）
+    Press(session, Key::Escape);
+    Press(session, Key::Escape);
+    Type(session, U"kakuinshimashita");
+    CompleteTypo(session, host, U"かくにんしました");
+    output = Type(session, U"ne");
+    EXPECT_TRUE(!output.typoFeedback);
+    EXPECT_EQ(host.typoRequests.back().reading, U"かくにんしましたね");
+    output = Press(session, Key::Backspace); // 取り消せない（普通に 1 文字消す）
+    EXPECT_EQ(output.PreeditText(), U"かくにんしました");
+}
+
+// 入力が進んだあとに届いた古い結果・末尾に足すだけの訂正は使わない
+void TestSessionTypoIgnoresStaleAndTrailing() {
+    FakeSessionHost host;
+    host.typoAvailable = true;
+    iroha::InputSession session(&host);
+    session.SetSettings(TypoSettings());
+    Type(session, U"kakuinshi");
+    const auto stale = host.typoRequests.back();
+    Type(session, U"ta");
+    EXPECT_TRUE(!session.CompleteTypoCorrection(stale.generation, stale.reading,
+                                                iroha::TypoCorrection{stale.reading, U"かくにんし", 5}));
+    EXPECT_EQ(session.Current().PreeditText(), U"かくいんした");
+    // 「こえて」→「こえて、」は続きの補完なので捨てる（待ちは解く）
+    EXPECT_TRUE(CompleteTypo(session, host, U"かくいんした、"));
+    const auto output = session.Current();
+    EXPECT_EQ(output.PreeditText(), U"かくいんした");
+    EXPECT_TRUE(!output.typoPending && !output.typoFeedback);
+    // 設定が OFF・モデルが無ければ頼まない
+    FakeSessionHost off;
+    iroha::InputSession plain(&off);
+    plain.SetSettings(TypoSettings());
+    Type(plain, U"kakuinshita");
+    EXPECT_TRUE(off.typoRequests.empty());
+}
+
+// Space で文節変換したときは、読みを書き換えずに訂正を候補ウィンドウに出す（変換ルールの後ろ）。
+// 休止で同じ読みを確かめてあれば、その結果を使い回す。訂正の候補を選んだ確定は学習しない
+void TestSessionTypoSegmentCandidates() {
+    FakeSessionHost host;
+    host.typoAvailable = true;
+    host.typoTable[U"かくいんしました"] = U"かくにんしました";
+    host.table[U"かくにんしました"] = U"確認しました";
+    iroha::InputSession session(&host);
+    session.SetSettings(TypoSettings());
+    Type(session, U"kakuinshimashita");
+    CompleteLatest(session, host, U"かくいんしました");
+    auto output = Press(session, Key::Space);
+    EXPECT_TRUE(output.candidatesVisible && host.correctTypoCalls == 1);
+    EXPECT_TRUE(output.candidates.size() >= 3 && output.candidates[1] == U"確認しました" &&
+                output.candidates[2] == U"かくにんしました");
+    Press(session, Key::Space);
+    EXPECT_EQ(Press(session, Key::Enter).commit, U"確認しました");
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.commits.empty());
+
+    // 休止で確かめた結果（訂正なし）を使い回す
+    Type(session, U"kakuinshimasita");
+    CompleteTypo(session, host, U"");
+    CompleteLatest(session, host, U"かくいんしました");
+    Press(session, Key::Space);
+    EXPECT_TRUE(host.correctTypoCalls == 1);
+}
+
+// 差分が文節境界をまたぐ訂正は、文全体を訂正した候補を先頭の文節に出し、選んだら文節ごと置き換える
+void TestSessionTypoWholeSentence() {
+    FakeSessionHost host;
+    host.typoAvailable = true;
+    host.typoTable[U"きょうはあめ"] = U"きょうあはめ";
+    host.table[U"きょうあはめ"] = U"今日阿波目";
+    iroha::InputSession session(&host);
+    session.SetSettings(TypoSettings());
+    Type(session, U"kyouhaame");
+    CompleteLatest(session, host, U"今日は雨");
+    auto output = Press(session, Key::Space);
+    EXPECT_TRUE(output.preedit.size() == 2);
+    EXPECT_TRUE(output.candidates.size() >= 2 && output.candidates[1] == U"今日阿波目");
+    output = Press(session, Key::Space); // 文全体の訂正を選ぶと、後ろの文節を隠す
+    EXPECT_EQ(output.PreeditText(), U"今日阿波目");
+    EXPECT_EQ(Press(session, Key::Enter).commit, U"今日阿波目");
+    Press(session, Key::Reset);
+    EXPECT_TRUE(host.commits.empty());
+}
+
 void RunSessionTests() {
     TestSessionLiveConversionReplacesKana();
     TestSessionKeepsPreviousConversionAsPrefix();
@@ -1107,6 +1270,10 @@ void RunSessionTests() {
     TestSessionPrediction();
     TestSessionPrivateMode();
     TestSessionConversionLog();
+    TestSessionTypoIdleCorrection();
+    TestSessionTypoIgnoresStaleAndTrailing();
+    TestSessionTypoSegmentCandidates();
+    TestSessionTypoWholeSentence();
 }
 
 } // namespace

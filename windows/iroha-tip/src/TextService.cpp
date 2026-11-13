@@ -535,7 +535,9 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
     } else if (shown_.predictions.empty() || shown_.segmenting) {
         predictionWindow_.Hide();
     }
-    if (shown_.livePending) {
+    UpdateTypoFeedback(context, output, synchronous);
+    // ライブ変換・打ち間違いの訂正の結果待ちの間は問い合わせる
+    if (shown_.livePending || shown_.typoPending) {
         StartPolling();
     } else {
         StopPolling();
@@ -569,6 +571,10 @@ void TextService::ClearShown() {
     shown_ = iroha::SessionOutput();
     candidateWindow_.Hide();
     predictionWindow_.Hide();
+    if (!typoFeedbackShown_.empty()) {
+        typoFeedbackShown_.clear();
+        noticeWindow_.Hide();
+    }
     StopPolling();
 }
 
@@ -578,31 +584,81 @@ bool TextService::CompositionRect(ITfContext* context, RECT* rect, HWND* owner) 
     RequestSyncEditSession(
         context, clientId_,
         [this, context, rect, owner, &found](TfEditCookie ec) -> HRESULT {
-            ITfContextView* view = nullptr;
-            if (FAILED(context->GetActiveView(&view)) || !view) return S_OK;
-            view->GetWnd(owner);
-            if (!*owner) *owner = GetFocus();
-            ITfRange* range = nullptr;
-            if (composition_) {
-                composition_->GetRange(&range);
-            } else {
-                TF_SELECTION selection = {};
-                ULONG fetched = 0;
-                if (SUCCEEDED(context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched)) &&
-                    fetched == 1) {
-                    range = selection.range;
-                }
-            }
-            if (range) {
-                BOOL clipped = FALSE;
-                found = SUCCEEDED(view->GetTextExt(ec, range, rect, &clipped));
-                range->Release();
-            }
-            view->Release();
+            found = CompositionRectIn(ec, context, rect, owner);
             return S_OK;
         },
         TF_ES_SYNC | TF_ES_READ);
     return found;
+}
+
+bool TextService::CompositionRectIn(TfEditCookie ec, ITfContext* context, RECT* rect, HWND* owner) {
+    ITfContextView* view = nullptr;
+    if (FAILED(context->GetActiveView(&view)) || !view) return false;
+    view->GetWnd(owner);
+    if (!*owner) *owner = GetFocus();
+    ITfRange* range = nullptr;
+    if (composition_) {
+        composition_->GetRange(&range);
+    } else {
+        TF_SELECTION selection = {};
+        ULONG fetched = 0;
+        if (SUCCEEDED(context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched)) && fetched == 1) {
+            range = selection.range;
+        }
+    }
+    bool found = false;
+    if (range) {
+        BOOL clipped = FALSE;
+        found = SUCCEEDED(view->GetTextExt(ec, range, rect, &clipped));
+        range->Release();
+    }
+    view->Release();
+    return found;
+}
+
+// 打ち間違いを直したら「打った読み → 直した読み」を未確定文字列の下に出す（macOS版 showTypoFeedback）。
+// ライブ変換が ON だと画面に出るのは変換後の文字列なので、読みのどこが直ったかはここでしか見せられない。
+// 小窓が出ている間は Backspace で戻せる。出しっぱなしにしないよう 4 秒で閉じる（取り消しはそのまま効く）
+void TextService::UpdateTypoFeedback(ITfContext* context, const iroha::SessionOutput& output, bool synchronous) {
+    if (!output.typoFeedback) {
+        if (!typoFeedbackShown_.empty()) {
+            typoFeedbackShown_.clear();
+            noticeWindow_.Hide();
+        }
+        return;
+    }
+    const std::u32string text = output.typoFeedback->Original() + U" → " + output.typoFeedback->Corrected() +
+                                U"　（⌫ で戻す）";
+    if (text == typoFeedbackShown_ || !EnsurePollWindow()) return;
+    typoFeedbackShown_ = text;
+    const auto show = [this, text](const RECT& rect, HWND owner) {
+        noticeWindow_.Show(owner, rect, {text}, {}, SIZE_MAX, /*numbered=*/false);
+        SetTimer(pollWindow_, reinterpret_cast<UINT_PTR>(this) + 1, 4000, &TextService::NoticeTimerProc);
+    };
+    if (synchronous) {
+        RECT rect = {};
+        HWND owner = nullptr;
+        if (CompositionRect(context, &rect, &owner)) show(rect, owner);
+        return;
+    }
+    // 問い合わせで届いたとき: 書き込みのエディットセッションの後に、読み取りだけのセッションで位置を求める
+    AddRef();
+    context->AddRef();
+    const HRESULT hr = RequestEditSession(
+        context, clientId_,
+        [this, context, show](TfEditCookie ec) -> HRESULT {
+            RECT rect = {};
+            HWND owner = nullptr;
+            if (composition_ && CompositionRectIn(ec, context, &rect, &owner)) show(rect, owner);
+            context->Release();
+            Release();
+            return S_OK;
+        },
+        TF_ES_ASYNCDONTCARE | TF_ES_READ);
+    if (FAILED(hr)) {
+        context->Release();
+        Release();
+    }
 }
 
 // 予測変換の候補を、未確定文字列の下に出す（番号は付けない。Tab で選ぶ）

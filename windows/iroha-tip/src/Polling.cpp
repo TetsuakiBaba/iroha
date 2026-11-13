@@ -1,4 +1,4 @@
-// ライブ変換の結果待ちの間、変換サーバに「表示が変わったか」を問い合わせる。
+// ライブ変換・打ち間違いの訂正の結果待ちの間、変換サーバに「表示が変わったか」を問い合わせる。
 //
 // キーを送ると、変換サーバは今出せる表示（前の変換結果 + 増えたかな）をすぐ返し、
 // 変換そのものは裏で進める。届いたかどうかは、アプリのメッセージループで動くタイマーで確かめる
@@ -64,7 +64,7 @@ void TextService::DestroyPollWindow() {
 
 void TextService::OnPollTimer() {
     if (!polling_) return;
-    if (!composition_ || !compositionContext_ || !shown_.livePending ||
+    if (!composition_ || !compositionContext_ || (!shown_.livePending && !shown_.typoPending) ||
         GetTickCount() - pollStartedTick_ > kPollLimitMs) {
         StopPolling();
         return;

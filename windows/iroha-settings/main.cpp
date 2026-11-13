@@ -30,10 +30,12 @@
 #include "iroha/input_history.h"
 #include "iroha/learning_store.h"
 #include "iroha/term_dictionary.h"
+#include "iroha/typo_normalizer_catalog.h"
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_store.h"
 #include "iroha/user_rewrite_rule.h"
 #include "term_dictionary_fetcher.h"
+#include "typo_normalizer_fetcher.h"
 
 #pragma comment(linker, \
     "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' " \
@@ -45,6 +47,8 @@ namespace {
 constexpr UINT WM_APP_DOWNLOAD_DONE = WM_APP + 1;
 // 専門辞書の一覧の取得・追加・削除が終わった（lParam は TermTaskResult*。受け取った側が消す）
 constexpr UINT WM_APP_TERM_DONE = WM_APP + 2;
+// 打ち間違い訂正のモデルの取得が終わった（lParam は TypoTaskResult*。受け取った側が消す）
+constexpr UINT WM_APP_TYPO_DONE = WM_APP + 3;
 
 struct KnownModel {
     const wchar_t* label;
@@ -90,6 +94,9 @@ enum {
     kIdPunctuation,
     kIdCandidateCount,
     kIdPrivateMode,
+    kIdTypo,
+    kIdTypoLicense,
+    kIdTypoRemove,
     kIdRuleList,
     kIdRuleTrigger,
     kIdRuleOutput,
@@ -163,6 +170,12 @@ struct TermRow {
     bool needsUpdate = false;
 };
 
+// 裏のスレッドでした打ち間違い訂正のモデルの取得の結果
+struct TypoTaskResult {
+    std::wstring message;
+    bool failed = false;
+};
+
 // 裏のスレッドでした専門辞書の作業の結果
 struct TermTaskResult {
     bool catalogFetched = false;
@@ -203,6 +216,13 @@ struct App {
     HWND countCombo = nullptr;
     HWND privateCheck = nullptr;
     HWND inputNote = nullptr;
+    // 打ち間違いの訂正
+    HWND typoCheck = nullptr;
+    HWND typoStatus = nullptr;
+    HWND typoLicense = nullptr;
+    HWND typoRemove = nullptr;
+    bool typoBusy = false;
+    bool typoChecked = false; // 設定画面を開いてから、モデルの更新を確かめたか
     // 変換ルール
     HWND ruleList = nullptr;
     HWND ruleLabelTrigger = nullptr;
@@ -261,6 +281,12 @@ struct App {
     void RefreshLearningPage();
     void RefreshInputPage();
     void SaveInputPage();
+    void RefreshTypoStatus();
+    void OnTypoToggled();
+    void StartTypoTask(bool announce);
+    void OnTypoTaskDone(TypoTaskResult* result);
+    void OnTypoLicense();
+    void OnTypoRemove();
     void RefreshRuleList();
     void OnRuleAdd();
     void OnRuleRemove();
@@ -359,12 +385,18 @@ void App::CreateControls() {
         SendMessageW(countCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text.c_str()));
     }
     privateCheck = CreateChild(WC_BUTTONW, L"プライベートモード（Ctrl+Alt+P でも切り替え）", check, kIdPrivateMode);
+    typoCheck = CreateChild(WC_BUTTONW, L"打ち間違いを直す（入力が止まったときに読みを直す。直した直後の Backspace で戻す）",
+                            check, kIdTypo);
+    typoStatus = CreateChild(WC_STATICW, L"", 0, 0);
+    typoLicense = CreateChild(WC_BUTTONW, L"学習元とライセンス", WS_TABSTOP, kIdTypoLicense);
+    typoRemove = CreateChild(WC_BUTTONW, L"モデルを削除", WS_TABSTOP, kIdTypoRemove);
     inputNote = CreateChild(WC_STATICW,
                             L"プライベートモードの間は、学習・入力履歴・予測変換・変換記録・ユーザ辞書を止めます。\n"
                             L"変更はすぐに反映されます。",
                             0, 0);
-    AddToPage(kTabInput, {liveCheck, predictiveCheck, symbolsCheck, spaceCheck, punctuationLabel,
-                          punctuationCombo, countLabel, countCombo, privateCheck, inputNote});
+    AddToPage(kTabInput, {liveCheck, predictiveCheck, symbolsCheck, spaceCheck, punctuationLabel, punctuationCombo,
+                          countLabel, countCombo, privateCheck, typoCheck, typoStatus, typoLicense, typoRemove,
+                          inputNote});
 
     // ---- 辞書 ----
     dictList = CreateChild(WC_LISTVIEWW, L"",
@@ -498,7 +530,12 @@ void App::LayoutControls() {
         MoveWindow(countCombo, x + Scale(236), rowY, Scale(90), Scale(300), TRUE);
         rowY += Scale(40);
         MoveWindow(privateCheck, x, rowY, width, Scale(24), TRUE);
-        MoveWindow(inputNote, x, rowY + Scale(36), width, Scale(48), TRUE);
+        rowY += Scale(36);
+        MoveWindow(typoCheck, x, rowY, width, Scale(24), TRUE);
+        MoveWindow(typoStatus, x + Scale(20), rowY + Scale(28), width - Scale(20), Scale(20), TRUE);
+        MoveWindow(typoLicense, x + Scale(20), rowY + Scale(54), Scale(150), Scale(28), TRUE);
+        MoveWindow(typoRemove, x + Scale(178), rowY + Scale(54), Scale(120), Scale(28), TRUE);
+        MoveWindow(inputNote, x, rowY + Scale(96), width, Scale(48), TRUE);
     }
 
     // 辞書
@@ -639,6 +676,13 @@ void App::RefreshInputPage() {
     setCheck(symbolsCheck, config.symbolCandidates);
     setCheck(spaceCheck, config.fullWidthSpace);
     setCheck(privateCheck, config.privateMode);
+    setCheck(typoCheck, config.typoCorrection);
+    RefreshTypoStatus();
+    // ON なら、開いたときに 1 回だけ新しい版のモデルが出ていないか確かめる（macOS版と同じ）
+    if (config.typoCorrection && !typoChecked && !typoBusy) {
+        typoChecked = true;
+        StartTypoTask(/*announce=*/false);
+    }
     SendMessageW(punctuationCombo, CB_SETCURSEL, iroha::Utf32ToUtf16(config.punctuation) == kPunctuations[1] ? 1 : 0,
                  0);
     SendMessageW(countCombo, CB_SETCURSEL, config.candidateCount - kMinCandidateCount, 0);
@@ -653,6 +697,7 @@ void App::SaveInputPage() {
     config.symbolCandidates = checked(symbolsCheck);
     config.fullWidthSpace = checked(spaceCheck);
     config.privateMode = checked(privateCheck);
+    config.typoCorrection = checked(typoCheck);
     const LRESULT punctuation = SendMessageW(punctuationCombo, CB_GETCURSEL, 0, 0);
     config.punctuation = iroha::Utf16ToUtf32(kPunctuations[punctuation == 1 ? 1 : 0]);
     const LRESULT count = SendMessageW(countCombo, CB_GETCURSEL, 0, 0);
@@ -662,6 +707,131 @@ void App::SaveInputPage() {
         return;
     }
     RequestServerReload();
+}
+
+// ---- 打ち間違いの訂正 ----
+
+std::wstring Wide(const std::u32string& text);
+std::wstring Wide(const std::string& utf8);
+
+void App::RefreshTypoStatus() {
+    const std::filesystem::path data(DataDir());
+    const bool installed = iroha::TypoNormalizerInstall::IsInstalled(data);
+    const auto record = iroha::TypoNormalizerInstall::InstalledRecord(data);
+    if (!typoBusy) {
+        std::wstring text;
+        if (installed) {
+            text = L"モデル: " + (record ? iroha::Utf32ToUtf16(record->name) + L"（" +
+                                               iroha::Utf32ToUtf16(iroha::Utf8ToUtf32(record->id)) + L"）"
+                                         : std::wstring(L"入れてあります"));
+            if (record && !record->license.empty()) text += L"  " + iroha::Utf32ToUtf16(record->license);
+        } else {
+            text = L"ON にするとモデル（約 23MB）を取得します";
+        }
+        SetWindowTextW(typoStatus, text.c_str());
+    }
+    EnableWindow(typoCheck, !typoBusy);
+    EnableWindow(typoLicense, installed && record && !record->sources.empty());
+    EnableWindow(typoRemove, installed && !typoBusy);
+}
+
+void App::OnTypoToggled() {
+    SaveInputPage();
+    if (SendMessageW(typoCheck, BM_GETCHECK, 0, 0) == BST_CHECKED && !typoBusy) {
+        typoChecked = true;
+        StartTypoTask(/*announce=*/true);
+    }
+}
+
+// モデルの一覧を取り、入っていないか新しい版があれば取得して設置する（裏のスレッド）。
+// 入れたら変換サーバに読み直してもらう
+void App::StartTypoTask(bool announce) {
+    if (typoBusy) return;
+    typoBusy = true;
+    if (announce) SetWindowTextW(typoStatus, L"モデルを取得しています…");
+    RefreshTypoStatus();
+    struct Task {
+        HWND window;
+    };
+    auto* task = new Task{window};
+    const auto run = [](LPVOID param) -> DWORD {
+        std::unique_ptr<Task> task(static_cast<Task*>(param));
+        auto* result = new TypoTaskResult();
+        const std::filesystem::path data(DataDir());
+        iroha::TypoNormalizerCatalog catalog;
+        std::string error;
+        if (!iroha::TypoNormalizerFetcher::FetchCatalog(iroha::TypoNormalizerCatalog::DefaultUrl(), &catalog, &error)) {
+            // 入っていれば、そのまま使い続ける
+            if (!iroha::TypoNormalizerInstall::IsInstalled(data)) {
+                result->failed = true;
+                result->message = L"モデルの一覧を取得できませんでした: " + Wide(error);
+            }
+        } else {
+            // 入っているモデルがカタログにあればその新しい版、無ければ一覧の先頭
+            const auto record = iroha::TypoNormalizerInstall::InstalledRecord(data);
+            const auto* model = record ? catalog.Find(record->id) : nullptr;
+            if (!model) model = &catalog.models.front();
+            if (iroha::TypoNormalizerInstall::NeedsUpdate(data, *model)) {
+                if (iroha::TypoNormalizerFetcher::Install(*model, catalog.LicenseFor(*model), data, nullptr, &error)) {
+                    result->message = Wide(model->name) + L" のモデルを入れました";
+                    if (!RequestServerReload()) result->message += L"（変換サーバが動いていないため、次に起動したときから使います）";
+                } else {
+                    result->failed = true;
+                    result->message = L"モデルを取得できませんでした: " + Wide(error);
+                }
+            }
+        }
+        PostMessageW(task->window, WM_APP_TYPO_DONE, 0, reinterpret_cast<LPARAM>(result));
+        return 0;
+    };
+    HANDLE thread = CreateThread(nullptr, 0, run, task, 0, nullptr);
+    if (thread) {
+        CloseHandle(thread);
+    } else {
+        delete task;
+        typoBusy = false;
+        RefreshTypoStatus();
+    }
+}
+
+void App::OnTypoTaskDone(TypoTaskResult* result) {
+    typoBusy = false;
+    RefreshTypoStatus();
+    if (!result->message.empty()) SetWindowTextW(typoStatus, result->message.c_str());
+    if (result->failed) MessageBoxW(window, result->message.c_str(), L"iroha", MB_ICONERROR);
+    delete result;
+}
+
+// 学習元とライセンス（入れた時点のカタログの記録から。重みは本体のコードと別のライセンス）
+void App::OnTypoLicense() {
+    const auto record = iroha::TypoNormalizerInstall::InstalledRecord(std::filesystem::path(DataDir()));
+    if (!record) return;
+    std::wstring text = iroha::Utf32ToUtf16(record->name) + L"（" + Wide(record->id) + L"）\n";
+    if (!record->license.empty()) text += L"ライセンス: " + iroha::Utf32ToUtf16(record->license) + L"\n";
+    if (!record->page.empty()) text += Wide(record->page) + L"\n";
+    text += L"\n学習元:\n";
+    for (const auto& source : record->sources) {
+        text += L"・" + iroha::Utf32ToUtf16(source.name) + L"  © " + iroha::Utf32ToUtf16(source.holder) + L"  " +
+                iroha::Utf32ToUtf16(source.license) + L"\n    " + Wide(source.url) + L"\n";
+    }
+    MessageBoxW(window, text.c_str(), L"打ち間違い訂正のモデル", MB_OK | MB_ICONINFORMATION);
+}
+
+void App::OnTypoRemove() {
+    if (MessageBoxW(window, L"打ち間違い訂正のモデルを削除します。よろしいですか？\n（もう一度 ON にすると取得し直します）",
+                    L"iroha", MB_YESNO | MB_ICONWARNING) != IDYES) {
+        return;
+    }
+    iroha::Config config = iroha::LoadConfig(ConfigPath());
+    config.typoCorrection = false;
+    iroha::SaveConfig(ConfigPath(), config);
+    SendMessageW(typoCheck, BM_SETCHECK, BST_UNCHECKED, 0);
+    // 変換サーバに先にモデルを手放してもらってから消す
+    RequestServerReload();
+    if (!iroha::TypoNormalizerInstall::Remove(std::filesystem::path(DataDir()))) {
+        MessageBoxW(window, L"モデルを削除できませんでした", L"iroha", MB_ICONERROR);
+    }
+    RefreshTypoStatus();
 }
 
 // ---- 変換ルールのページ ----
@@ -1151,6 +1321,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case kIdPrivateMode:
                     if (HIWORD(wParam) == BN_CLICKED) g_app.SaveInputPage();
                     return 0;
+                case kIdTypo:
+                    if (HIWORD(wParam) == BN_CLICKED) g_app.OnTypoToggled();
+                    return 0;
+                case kIdTypoLicense:
+                    g_app.OnTypoLicense();
+                    return 0;
+                case kIdTypoRemove:
+                    g_app.OnTypoRemove();
+                    return 0;
                 case kIdPunctuation:
                 case kIdCandidateCount:
                     if (HIWORD(wParam) == CBN_SELCHANGE) g_app.SaveInputPage();
@@ -1192,6 +1371,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         case WM_APP_TERM_DONE:
             g_app.OnTermTaskDone(reinterpret_cast<TermTaskResult*>(lParam));
+            return 0;
+        case WM_APP_TYPO_DONE:
+            g_app.OnTypoTaskDone(reinterpret_cast<TypoTaskResult*>(lParam));
             return 0;
         case WM_APP_DOWNLOAD_DONE:
             g_app.downloading = false;

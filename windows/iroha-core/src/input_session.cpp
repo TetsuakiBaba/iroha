@@ -97,6 +97,8 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
                                    const std::u32string* leftContext) {
     replacesCommitted_ = false;
     notice_.clear();
+    // 打ち間違いの自動訂正を取り消せるのは「直した直後の Backspace」だけ。ほかのキーでその窓は閉じる
+    if (key != SessionKey::Backspace) EndTypoUndo();
     if (!IsComposing()) {
         state_.contextFromDocument = leftContext != nullptr;
         if (leftContext) {
@@ -177,7 +179,7 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
 // 読みが前回と同じなら引き直さず、Tab の選択もそのまま残す。英字入力中・表示形の指定中は出さない
 void InputSession::RefreshPrediction() {
     const State& s = state_;
-    if (!PredictionActive() || s.mode != Mode::Composing || s.alphabetRun || s.displayOverride) {
+    if (!PredictionActive() || s.mode != Mode::Composing || s.alphabetRun || s.displayOverride || typoFeedback_) {
         prediction_.reset();
         return;
     }
@@ -297,7 +299,14 @@ void InputSession::HandleComposing(SessionKey key, char32_t character, bool shif
         }
         break;
     case SessionKey::Backspace:
+        if (typoUndoAvailable_) {
+            // 自動で直した直後の Backspace は、1 文字消すのではなく訂正を取り消して打った読みに戻す
+            if (UndoTypoCorrection()) break;
+            EndTypoUndo();
+        }
         if (!StateComposing()) break;
+        // 確かめている途中の訂正は要らなくなる（読みが変わる）
+        CancelTypoCheck();
         if (!s.alphabetRun && s.composer.Empty() && !s.fixedChunks.empty() &&
             s.fixedChunks.back().kind == FixedChunk::Kind::Prediction) {
             // 入れた予測の候補に戻ってきた: 1文字ずつは消さず、候補を入れる前に打っていた読みに戻す
@@ -393,6 +402,8 @@ std::u32string InputSession::FixedText() const {
 
 // 入力内容が変わった: ライブ変換を頼む（結果は後から届く）。固定部分は変換し直さず、文脈として渡す
 void InputSession::ComposerDidChange() {
+    // 打ち間違いの訂正はライブ変換の ON/OFF に関わらず仕掛ける（読みを直すのが仕事なので）
+    ScheduleTypoCorrection();
     const std::u32string& reading = state_.composer.Text();
     if (!settings_.liveConversion || reading.empty()) {
         CancelLiveConversion();
@@ -803,6 +814,13 @@ void InputSession::EnterSegmentMode() {
         }
     }
 
+    // 合成中の訂正（読みを直す本線）はここで終わり。休止を待たずに Space を押した場合の保険として、
+    // 読みを書き換えずに訂正を候補ウィンドウに出す（休止で既に直っていれば訂正は出ない）
+    CancelTypoCorrection();
+    s.typoReading = reading.empty() ? std::nullopt : std::optional<std::u32string>(reading);
+    s.typoResolved = false;
+    s.typoSegmentCorrection.reset();
+    s.typoWholeSentence.reset();
     s.mode = Mode::Segmenting;
     s.segmentEdit.reset();
     s.segmentsRetyped = false;
@@ -854,7 +872,7 @@ void InputSession::HandleSegmenting(SessionKey key, char32_t character, bool shi
         break;
     case SessionKey::Escape:
         if (s.candidateListOpen) {
-            s.candidateListOpen = false;
+            CloseCandidateList();
         } else {
             ExitSegmentModeToKana();
         }
@@ -875,7 +893,7 @@ void InputSession::HandleSegmenting(SessionKey key, char32_t character, bool shi
         break;
     case SessionKey::Backspace:
         // 選んでいる文節の読みを後ろから 1 文字消す（かな入力に戻すのは Esc）
-        s.candidateListOpen = false;
+        CloseCandidateList();
         if (s.currentSegment < s.segments.size()) {
             StartSegmentEdit(std::nullopt);
         } else {
@@ -922,11 +940,16 @@ void InputSession::ExitSegmentModeToKana() {
     s.segmentEdit.reset();
     s.segmentsRetyped = false;
     s.showsKanaOnly = true;
+    s.typoReading.reset();
+    s.typoResolved = false;
+    s.typoSegmentCorrection.reset();
+    s.typoWholeSentence.reset();
     if (!StateComposing()) ResetState();
 }
 
 // 全文節の変換結果を結合して確定する
 void InputSession::CommitSegments(std::u32string* commit) {
+    ApplyTypoWholeSentenceIfSelected();
     const std::u32string text = JoinedResults();
     ForgetRejectedLearnings();
     LearnIfCorrected(text);
@@ -1025,11 +1048,18 @@ bool InputSession::EnsureSegmentCandidates(size_t index) {
     }
     candidates.insert(candidates.begin() + static_cast<std::ptrdiff_t>(std::min<size_t>(1, candidates.size())),
                       rewrites.begin(), rewrites.end());
-    // 記号・顔文字・絵文字（Mozc のデータ）。今の表示と変換ルールの出力は動かさない
+    // 打ち間違いの訂正も同じやり方で合流させる。変換ルールの後ろに置く（ルールはユーザが自分で書いたもの）
+    std::vector<std::u32string> typoFixes;
+    for (const std::u32string& fix : TypoCandidates(index)) {
+        if (std::find(candidates.begin(), candidates.end(), fix) == candidates.end()) typoFixes.push_back(fix);
+    }
+    const size_t typoInsertIndex = std::min<size_t>(1 + rewrites.size(), candidates.size());
+    candidates.insert(candidates.begin() + static_cast<std::ptrdiff_t>(typoInsertIndex), typoFixes.begin(),
+                      typoFixes.end());
+    // 記号・顔文字・絵文字（Mozc のデータ）。今の表示・変換ルールの出力・訂正は動かさない
     SymbolCandidates symbols;
     if (symbolTable_) symbols = symbolTable_->Candidates(segment.reading);
-    candidates = SymbolCandidateMerger::Merge(candidates, symbols,
-                                              std::min<size_t>(1 + rewrites.size(), candidates.size()));
+    candidates = SymbolCandidateMerger::Merge(candidates, symbols, typoInsertIndex + typoFixes.size());
     // 定番のフォールバック候補（ひらがな・カタカナ）を末尾に足す
     for (const std::u32string& extra : {segment.reading, HiraganaToKatakana(segment.reading)}) {
         if (std::find(candidates.begin(), candidates.end(), extra) == candidates.end()) {
@@ -1040,6 +1070,8 @@ bool InputSession::EnsureSegmentCandidates(size_t index) {
     // （覚えるとライブ変換に戻ってくる）
     segment.unlearnable = SymbolCandidateMerger::UnlearnableCandidates(candidates, symbols);
     segment.unlearnable.insert(rewrites.begin(), rewrites.end());
+    // 打ち間違いの訂正を選んだ確定も学習しない（覚えると、打ち間違えた読みがライブ変換で勝手に直るようになる）
+    segment.unlearnable.insert(typoFixes.begin(), typoFixes.end());
     for (const std::u32string& word : host_->CandidateOnlyWords(segment.reading)) {
         for (const std::u32string& candidate : candidates) {
             if (candidate.find(word) != std::u32string::npos) segment.unlearnable.insert(candidate);
@@ -1097,12 +1129,12 @@ void InputSession::ChooseCandidateOnPage(size_t indexOnPage) {
     if (index >= segment.candidates.size()) return;
     segment.candidateIndex = index;
     segment.result = segment.candidates[index];
-    s.candidateListOpen = false;
+    CloseCandidateList();
 }
 
 void InputSession::MoveSegment(int delta) {
     State& s = state_;
-    s.candidateListOpen = false;
+    CloseCandidateList();
     if (s.segments.empty()) return;
     size_t next = s.currentSegment;
     if (delta < 0 && next > 0) --next;
@@ -1113,7 +1145,7 @@ void InputSession::MoveSegment(int delta) {
 // 選んでいる文節の読みを1文字伸ばす・縮める。その文節と後ろを変換し直す
 void InputSession::ResizeSegment(int delta) {
     State& s = state_;
-    s.candidateListOpen = false;
+    CloseCandidateList();
     if (s.currentSegment >= s.segments.size()) return;
     std::u32string currentReading = s.segments[s.currentSegment].reading;
     std::u32string remainder;
@@ -1176,7 +1208,7 @@ std::u32string InputSession::LeftResults(size_t index) const {
 // character が無ければ Backspace で始める: 文節の読みをそのまま打ち直しの読みにして、後ろから 1 文字消す
 void InputSession::StartSegmentEdit(std::optional<char32_t> character) {
     State& s = state_;
-    s.candidateListOpen = false;
+    CloseCandidateList();
     if (s.currentSegment >= s.segments.size()) return;
     CancelLiveConversion();
     const size_t index = s.currentSegment;
@@ -1460,6 +1492,184 @@ void InputSession::SyncCompositionWithRetypedSegment(size_t index, bool removed)
     if (!chunk) --s.segmentFixedCount;
 }
 
+// ---- 打ち間違いの訂正 ----
+
+bool InputSession::TypoAccepts(const std::u32string& reading) const {
+    return reading.size() >= static_cast<size_t>(std::max(1, settings_.typoMinimumLength)) &&
+           reading.size() <= TypoNormalizer::kMaxReadingLength;
+}
+
+// 入力の休止を待って、読みそのものを直すよう頼む（macOS版 scheduleTypoCorrection）。
+// 未解決のローマ字が残っている間・英字入力中・表示形の指定中は頼まない。直した直後の読みと、
+// ユーザが取り消した読みも触らない（直し合いを起こさない）
+void InputSession::ScheduleTypoCorrection() {
+    CancelTypoCheck();
+    const State& s = state_;
+    if (!settings_.typoCorrection || s.mode != Mode::Composing || s.alphabetRun || s.displayOverride ||
+        !s.composer.Pending().empty()) {
+        return;
+    }
+    const std::u32string reading = s.composer.Text();
+    if (!TypoAccepts(reading) || (lastTypoCorrection_ && reading == lastTypoCorrection_->second) ||
+        (typoRejectedReading_ && reading == *typoRejectedReading_) || !host_->TypoCorrectionAvailable()) {
+        return;
+    }
+    typoPending_ = true;
+    host_->RequestTypoCorrection(typoGeneration_, reading, settings_.typoDelayMs, settings_.typoThreshold,
+                                 static_cast<size_t>(std::max(1, settings_.typoMinimumLength)));
+}
+
+bool InputSession::CompleteTypoCorrection(uint64_t generation, const std::u32string& reading,
+                                          const std::optional<TypoCorrection>& correction) {
+    if (!typoPending_ || generation != typoGeneration_) return false;
+    typoPending_ = false;
+    typoChecked_.emplace(reading, correction);
+    const State& s = state_;
+    // 「読みの末尾に足しただけ」は訂正ではなく続きの補完。打ちかけの読みは常に終わりが足りなく見えるので捨てる
+    if (correction && correction->reading == reading && !correction->IsTrailingInsertionOnly() &&
+        s.mode == Mode::Composing && !s.alphabetRun && !s.displayOverride && s.composer.Text() == reading &&
+        s.composer.Pending().empty()) {
+        ApplyTypoCorrection(*correction);
+    }
+    ++revision_;
+    return true;
+}
+
+// 読みを訂正後のものに差し替え、その読みで変換し直す
+void InputSession::ApplyTypoCorrection(const TypoCorrection& correction) {
+    State& s = state_;
+    s.composer.ReplaceText(correction.corrected);
+    s.showsKanaOnly = false;
+    lastTypoCorrection_.emplace(correction.reading, correction.corrected);
+    typoUndoAvailable_ = true;
+    typoFeedback_ = TypoCorrectionFeedback::Make(correction);
+    // 予測の候補と同じ小窓に出すので、候補は引っ込める
+    prediction_.reset();
+    ComposerDidChange();
+}
+
+// 直した直後の Backspace: 訂正を取り消して打った読みに戻す（取り消した読みは再び直さない）
+bool InputSession::UndoTypoCorrection() {
+    State& s = state_;
+    if (!lastTypoCorrection_ || s.mode != Mode::Composing || s.composer.Text() != lastTypoCorrection_->second ||
+        !s.composer.Pending().empty()) {
+        return false;
+    }
+    s.composer.ReplaceText(lastTypoCorrection_->first);
+    typoRejectedReading_ = lastTypoCorrection_->first;
+    lastTypoCorrection_.reset();
+    EndTypoUndo();
+    prediction_.reset();
+    ComposerDidChange();
+    return true;
+}
+
+// Backspace で取り消せる状態を終える（小窓も閉じる）
+void InputSession::EndTypoUndo() {
+    typoUndoAvailable_ = false;
+    typoFeedback_.reset();
+}
+
+// 休止を待っている訂正を捨てる
+void InputSession::CancelTypoCheck() {
+    ++typoGeneration_;
+    if (typoPending_) {
+        typoPending_ = false;
+        host_->CancelTypoCorrection();
+    }
+}
+
+// 訂正の状態をすべて捨てる（macOS版 cancelTypoCorrection）
+void InputSession::CancelTypoCorrection() {
+    CancelTypoCheck();
+    lastTypoCorrection_.reset();
+    EndTypoUndo();
+    typoRejectedReading_.reset();
+}
+
+// 文節変換に入ったときの読みの訂正（初めて候補を開くときに 1 回だけ求める。休止で同じ読みを確かめてあれば使い回す）
+std::optional<TypoCorrection> InputSession::TypoCorrectionForSegments() {
+    State& s = state_;
+    if (!s.typoReading) return std::nullopt;
+    if (!s.typoResolved) {
+        s.typoResolved = true;
+        if (settings_.typoCorrection && TypoAccepts(*s.typoReading) && host_->TypoCorrectionAvailable()) {
+            if (typoChecked_ && typoChecked_->first == *s.typoReading) {
+                s.typoSegmentCorrection = typoChecked_->second;
+            } else {
+                s.typoSegmentCorrection = host_->CorrectTypo(*s.typoReading, settings_.typoThreshold,
+                                                             static_cast<size_t>(std::max(1, settings_.typoMinimumLength)));
+            }
+        }
+    }
+    return s.typoSegmentCorrection;
+}
+
+// この文節に当たる訂正候補（訂正後の読みでの変換結果と、訂正後の読みそのもの）。
+// 差分が文節境界をまたぐときは、文全体を訂正した候補を訂正対象の先頭の文節に出す（macOS版 typoCandidates）
+std::vector<std::u32string> InputSession::TypoCandidates(size_t index) {
+    const auto correction = TypoCorrectionForSegments();
+    if (!correction) return {};
+    State& s = state_;
+    std::vector<std::u32string> readings;
+    for (const Segment& segment : s.segments) readings.push_back(segment.reading);
+    const std::u32string context = s.context + LeftResults(index);
+    std::vector<std::u32string> converted;
+    std::string error;
+    const auto placement = correction->PlacementWithFixedPrefix(readings);
+    if (!placement) {
+        // typo のせいで文節の切り方そのものが崩れている（「さsてえいただいていて」→「さ|sて|えいただいていて」）
+        const auto offset = correction->SegmentOffset(readings);
+        if (!offset || *offset != index || readings.size() - *offset <= 1) return {};
+        if (!host_->Convert(correction->corrected, context, 1, &converted, &error) || converted.empty() ||
+            converted.front().empty()) {
+            return {};
+        }
+        s.typoWholeSentence = State::TypoWholeSentence{converted.front(), correction->corrected, *offset};
+        return {converted.front()};
+    }
+    if (placement->index != index) return {};
+    std::vector<std::u32string> results;
+    if (host_->Convert(placement->correctedReading, context, 1, &converted, &error) && !converted.empty() &&
+        !converted.front().empty()) {
+        results.push_back(converted.front());
+    }
+    // 訂正後の読みそのものも出す（ローマ字がかなにならずに残った打ち間違いは、ひらがなに直るだけで用が足りることがある）
+    if (std::find(results.begin(), results.end(), placement->correctedReading) == results.end()) {
+        results.push_back(placement->correctedReading);
+    }
+    return results;
+}
+
+bool InputSession::IsSelectingTypoWholeSentence() const {
+    const State& s = state_;
+    if (!s.typoWholeSentence || s.currentSegment != s.typoWholeSentence->segmentOffset ||
+        s.currentSegment >= s.segments.size()) {
+        return false;
+    }
+    return s.segments[s.currentSegment].result == s.typoWholeSentence->candidate;
+}
+
+// 「文全体を訂正した候補」を選んだまま候補ウィンドウを閉じたら、訂正対象の文節をまとめて差し替える
+void InputSession::ApplyTypoWholeSentenceIfSelected() {
+    State& s = state_;
+    if (!IsSelectingTypoWholeSentence()) return;
+    const State::TypoWholeSentence whole = *s.typoWholeSentence;
+    std::vector<Segment> replacement = SegmentsFor(whole.reading, whole.candidate);
+    if (replacement.empty()) return;
+    // 訂正由来なので確定しても学習しない
+    for (Segment& segment : replacement) segment.unlearnable.insert(segment.result);
+    s.segments.resize(whole.segmentOffset);
+    for (Segment& segment : replacement) s.segments.push_back(std::move(segment));
+    s.currentSegment = std::min(whole.segmentOffset, s.segments.size() - 1);
+    s.typoWholeSentence.reset();
+}
+
+void InputSession::CloseCandidateList() {
+    ApplyTypoWholeSentenceIfSelected();
+    state_.candidateListOpen = false;
+}
+
 // ---- 確定と取り消し ----
 
 // 文字列を確定する。合成していたなら、確定する前の状態を持っておき、直後の Ctrl+Backspace で戻せるようにする
@@ -1507,6 +1717,8 @@ void InputSession::ResetState() {
     const std::u32string context = state_.context;
     const bool contextHasPrivateText = state_.contextHasPrivateText;
     CancelLiveConversion();
+    CancelTypoCorrection();
+    typoChecked_.reset();
     state_ = State();
     state_.composer = MakeComposer();
     state_.context = context;
@@ -1524,6 +1736,8 @@ SessionOutput InputSession::Current() const {
     output.fullWidthSpace = settings_.fullWidthSpace;
     output.privateMode = settings_.privateMode;
     output.notice = notice_;
+    output.typoPending = typoPending_;
+    if (typoUndoAvailable_ && s.mode == Mode::Composing) output.typoFeedback = typoFeedback_;
     if (commitUndo_) output.undoableCommit = commitUndo_->text;
     if (prediction_ && s.mode == Mode::Composing) {
         for (const InputHistoryEntry& entry : prediction_->candidates) output.predictions.push_back(entry.text);
@@ -1531,7 +1745,9 @@ SessionOutput InputSession::Current() const {
     }
     if (s.mode == Mode::Segmenting) {
         output.segmenting = true;
-        for (size_t i = 0; i < s.segments.size(); ++i) {
+        // 「文全体を訂正した候補」を選んでいる間は、その候補が後ろの文節ぶんまで含んでいるので後ろを隠す
+        const size_t visible = IsSelectingTypoWholeSentence() ? s.currentSegment + 1 : s.segments.size();
+        for (size_t i = 0; i < visible; ++i) {
             output.preedit.push_back({s.segments[i].result, i == s.currentSegment
                                                                 ? SessionOutput::kSelectedSegment
                                                                 : SessionOutput::kInput});

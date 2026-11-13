@@ -23,10 +23,13 @@
 //                    u32 candidateIndex, u32 candidateCount, string×candidateCount,
 //                    u32 annotationCount, string×annotationCount（候補の右に出す印）,
 //                    string undoableCommit（取り消せる確定）,
-//                    u32 predictionCount, string×predictionCount, u32 predictionIndex, string notice
-//                    （印と取り消せる確定は後から足したので、無い返事も読めるようにしてある）
+//                    u32 predictionCount, string×predictionCount, u32 predictionIndex, string notice,
+//                    u32 typoFeedbackCount（0 か 4）, string×typoFeedbackCount（打ち間違いの訂正の小窓。
+//                    前の部分・打った読みの変わった部分・直した読みの変わった部分・後の部分）
+//                    （印と取り消せる確定から後は後から足したので、無い返事も読めるようにしてある）
 //                flags: 1 文節変換中 / 2 変換の結果待ち / 4 候補ウィンドウ / 8 入力していないときの Space は全角 /
-//                       16 確定した文字列を未確定文字列に置き換える（UndoCommit への返事） / 32 プライベートモード
+//                       16 確定した文字列を未確定文字列に置き換える（UndoCommit への返事） / 32 プライベートモード /
+//                       64 打ち間違いの訂正の結果待ち
 //                エラー: string message
 //
 // セッションのメッセージは、入力の状態（読み・ライブ変換・文節・候補）をサーバ側に持つためのもの
@@ -209,6 +212,7 @@ constexpr uint32_t kOutputFlagCandidatesVisible = 4;
 constexpr uint32_t kOutputFlagFullWidthSpace = 8;
 constexpr uint32_t kOutputFlagReplacesCommitted = 16;
 constexpr uint32_t kOutputFlagPrivateMode = 32;
+constexpr uint32_t kOutputFlagTypoPending = 64;
 
 // leftContext は、合成していないときにカーソルより前から読んだ文書のテキスト（読めなければ nullptr）
 inline std::vector<char> BuildSessionKeyRequest(uint64_t sessionId, SessionKey key,
@@ -256,7 +260,8 @@ inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
                      (output->candidatesVisible ? kOutputFlagCandidatesVisible : 0) |
                      (output->fullWidthSpace ? kOutputFlagFullWidthSpace : 0) |
                      (output->replacesCommitted ? kOutputFlagReplacesCommitted : 0) |
-                     (output->privateMode ? kOutputFlagPrivateMode : 0));
+                     (output->privateMode ? kOutputFlagPrivateMode : 0) |
+                     (output->typoPending ? kOutputFlagTypoPending : 0));
     PutU32(&buf, static_cast<uint32_t>(output->preedit.size()));
     for (const SessionOutput::Span& span : output->preedit) {
         PutU32(&buf, span.style);
@@ -298,6 +303,16 @@ inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
     for (const std::u32string& prediction : output->predictions) PutString(&buf, Utf32ToUtf8(prediction));
     PutU32(&buf, output->predictionIndex < 0 ? 0xFFFFFFFFu : static_cast<uint32_t>(output->predictionIndex));
     PutString(&buf, Utf32ToUtf8(output->notice));
+    // 打ち間違いの訂正の小窓（後から足した。無い返事も読める）
+    if (output->typoFeedback) {
+        PutU32(&buf, 4);
+        for (const std::u32string* part : {&output->typoFeedback->prefix, &output->typoFeedback->originalChanged,
+                                           &output->typoFeedback->correctedChanged, &output->typoFeedback->suffix}) {
+            PutString(&buf, Utf32ToUtf8(*part));
+        }
+    } else {
+        PutU32(&buf, 0);
+    }
     return buf;
 }
 
@@ -347,6 +362,7 @@ inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
     output.fullWidthSpace = (flags & kOutputFlagFullWidthSpace) != 0;
     output.replacesCommitted = (flags & kOutputFlagReplacesCommitted) != 0;
     output.privateMode = (flags & kOutputFlagPrivateMode) != 0;
+    output.typoPending = (flags & kOutputFlagTypoPending) != 0;
     for (uint32_t i = 0; i < spanCount; ++i) {
         uint32_t style = 0;
         std::string text;
@@ -398,6 +414,15 @@ inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
             }
             std::string notice;
             if (reader.String(&notice)) output.notice = Utf8ToUtf32(notice);
+            uint32_t typoCount = 0;
+            if (reader.U32(&typoCount) && typoCount == 4) {
+                std::string parts[4];
+                if (reader.String(&parts[0]) && reader.String(&parts[1]) && reader.String(&parts[2]) &&
+                    reader.String(&parts[3])) {
+                    output.typoFeedback = TypoCorrectionFeedback{Utf8ToUtf32(parts[0]), Utf8ToUtf32(parts[1]),
+                                                                 Utf8ToUtf32(parts[2]), Utf8ToUtf32(parts[3])};
+                }
+            }
         }
     }
     if (output.candidateIndex >= output.candidates.size()) output.candidateIndex = 0;

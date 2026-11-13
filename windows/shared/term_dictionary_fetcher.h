@@ -24,6 +24,8 @@ public:
                         const std::filesystem::path& dataDirectory,
                         TermDictionaryInstall::Record* record, std::string* error);
 
+    // url を path に落とす（キャッシュを使わない。打ち間違い訂正のモデルの取得も使う）
+    static bool Download(const std::string& url, const std::filesystem::path& path, std::string* error);
     // ファイルの SHA-256（16進小文字）。読めなければ空
     static std::string Sha256Hex(const std::filesystem::path& path);
     // 今の時刻（UTC、ISO 8601。例 2026-11-13T10:00:00Z）

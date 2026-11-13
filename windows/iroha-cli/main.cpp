@@ -22,11 +22,19 @@
 //                                                 : 専門辞書の一覧・取得と設置・削除（IME本体と同じ経路）・辞書名の印を引く
 //   iroha-cli symbols [読み...]                     : 記号・顔文字・絵文字の表（Mozc のデータ）を引く。
 //                                                   Windows で描けないとして除いた絵文字も数える
+//   iroha-cli typo [--threshold θ] [--min-length N] <読み>...
+//                                                 : 打ち間違いの訂正（読みはかなのまま渡す。生成・margin・訂正・時間）
+//   iroha-cli typo catalog [install [ID]]         : 訂正モデルの一覧・取得と設置（IME本体と同じ経路。ID が無ければ先頭）
+//   iroha-cli typo logits <入力の読み> <正しい読み> [ステップ数]
+//                                                 : teacher forcing のロジットを JSON で出す（照合用）
+//   iroha-cli typo parity [--dir DIR]             : 書き出しに付いてくる parity.json と突き合わせる（macOS版と同じ判定）
+//                                                   モデルの場所は IROHA_TYPO_MODEL か <データフォルダ>/models/typo-normalizer
 //   iroha-cli session [--context 文脈] [--interval ミリ秒] <キー列>
 //                                                 : 変換サーバのセッションにキーを順に送り、TIP が画面に出す内容を見る。
 //                                                   キー列は打つ文字をそのまま並べ、特別なキーは <space> <enter> <esc>
 //                                                   <bs> <left> <right> <up> <down> <f6>〜<f10> <punct>（Ctrl+.）
 //                                                   <undo>（確定の取り消し）（Shift は <S-left> のように）と書く。
+//                                                   <wait> は、キーを送らずに変換・打ち間違いの訂正が届くまで待つ。
 //                                                   既定ではキーごとにライブ変換の到着を待つ。--interval を付けると
 //                                                   待たずにその間隔で送る（変換が打鍵に追いつかないときの表示を見る）
 //   iroha-cli repl                                : 対話モード
@@ -72,7 +80,10 @@
 #include "iroha/romaji_composer.h"
 #include "iroha/symbol_candidates.h"
 #include "iroha/term_dictionary.h"
+#include "iroha/typo_normalizer.h"
+#include "iroha/typo_normalizer_catalog.h"
 #include "term_dictionary_fetcher.h"
+#include "typo_normalizer_fetcher.h"
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_engine.h"
 #include "iroha/user_dictionary_store.h"
@@ -939,6 +950,194 @@ int RunTerms(const std::vector<std::u32string>& args) {
     return 0;
 }
 
+// ---- typo: 打ち間違いの訂正 ----
+
+std::filesystem::path TypoModelDirectory() {
+    if (const wchar_t* env = _wgetenv(L"IROHA_TYPO_MODEL")) {
+        if (env[0] != 0) return std::filesystem::path(env);
+    }
+    return iroha::TypoNormalizerInstall::Directory(DataDir());
+}
+
+// parity.json（書き出しに付いてくる、PyTorch 実装の出力）と突き合わせる。判定は macOS版の iroha-cli typo parity と同じ:
+// float32 ならロジット 1e-3・logP 0.01 以内・生成が全件一致（float16 ならロジット 0.05・logP 0.1）
+int RunTypoParity(const std::filesystem::path& directory) {
+    std::ifstream file(directory / "parity.json", std::ios::binary);
+    if (!file) {
+        std::fprintf(stderr, "parity.json がありません: %s\n", Utf32ToUtf8(Utf16ToUtf32(directory.wstring())).c_str());
+        return 1;
+    }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    iroha::json::Value root;
+    if (!iroha::json::Parse(buffer.str(), &root) || !root.Find("cases")) {
+        std::fprintf(stderr, "parity.json を読めません\n");
+        return 1;
+    }
+    std::ifstream manifestFile(directory / "manifest.json", std::ios::binary);
+    std::stringstream manifestBuffer;
+    manifestBuffer << manifestFile.rdbuf();
+    iroha::json::Value manifest;
+    iroha::json::Parse(manifestBuffer.str(), &manifest);
+    const bool half = manifest.Find("dtype") && manifest.Find("dtype")->AsString() != "float32-le";
+    const float logitTolerance = half ? 0.05f : 1e-3f;
+    const double logTolerance = half ? 0.1 : 0.01;
+
+    iroha::TypoNormalizer normalizer(directory);
+    std::string error;
+    if (!normalizer.Load(&error)) {
+        std::fprintf(stderr, "%s\n", error.c_str());
+        return 1;
+    }
+    float worstLogit = 0;
+    double worstLog = 0;
+    int greedyMismatches = 0;
+    int cases = 0;
+    for (const auto& item : root.Find("cases")->array) {
+        const std::u32string noisy = Utf8ToUtf32(item.Find("noisy")->AsString());
+        const std::u32string clean = Utf8ToUtf32(item.Find("clean")->AsString());
+        const std::u32string greedy = Utf8ToUtf32(item.Find("greedy")->AsString());
+        ++cases;
+        if (const auto* expected = item.Find("first_logits")) {
+            const auto logits = normalizer.Logits(noisy, clean, expected->array.size());
+            for (size_t step = 0; step < expected->array.size() && step < logits.size(); ++step) {
+                const auto& row = expected->array[step].array;
+                for (size_t j = 0; j < row.size() && j < logits[step].size(); ++j) {
+                    worstLogit = std::max(worstLogit, std::fabs(static_cast<float>(row[j].number) - logits[step][j]));
+                }
+            }
+        }
+        const auto generated = normalizer.Generate(noisy);
+        if (!generated || *generated != greedy) {
+            ++greedyMismatches;
+            if (greedyMismatches <= 10) {
+                PrintUtf8("  生成が違う: " + Utf32ToUtf8(noisy) + " → " + Utf32ToUtf8(generated.value_or(U"(なし)")) +
+                          "（期待 " + Utf32ToUtf8(greedy) + "）\n");
+            }
+        }
+        const double logGreedy = normalizer.LogProbability(greedy, noisy);
+        if (const auto* expected = item.Find("logprob_greedy")) {
+            worstLog = std::max(worstLog, std::fabs(logGreedy - expected->number));
+        }
+        const auto* expectedNoisy = item.Find("logprob_noisy");
+        if (expectedNoisy && expectedNoisy->type == iroha::json::Value::Type::Number) {
+            worstLog = std::max(worstLog, std::fabs(normalizer.LogProbability(noisy, noisy) - expectedNoisy->number));
+        }
+    }
+    char line[256];
+    std::snprintf(line, sizeof(line),
+                  "parity: %d 件  ロジットの最大誤差 %.6f（許容 %g）  logP の最大誤差 %.6f（許容 %g）  生成の不一致 %d 件  [%s]\n",
+                  cases, worstLogit, logitTolerance, worstLog, logTolerance, greedyMismatches,
+                  iroha::TypoNormalizer::KernelName());
+    PrintUtf8(line);
+    const bool ok = worstLogit <= logitTolerance && worstLog <= logTolerance && (half || greedyMismatches == 0);
+    return ok ? 0 : 2;
+}
+
+int RunTypo(const std::vector<std::u32string>& args) {
+    const std::u32string sub = args.empty() ? U"" : args[0];
+    if (sub == U"catalog") {
+        const std::string url = iroha::TypoNormalizerCatalog::DefaultUrl();
+        iroha::TypoNormalizerCatalog catalog;
+        std::string error;
+        if (!iroha::TypoNormalizerFetcher::FetchCatalog(url, &catalog, &error)) {
+            std::fprintf(stderr, "モデルの一覧を取れません: %s\n", error.c_str());
+            return 1;
+        }
+        const std::filesystem::path data = DataDir();
+        PrintUtf8(url + "\n");
+        for (const auto& model : catalog.models) {
+            char line[512];
+            std::snprintf(line, sizeof(line), "  %-16s %s  %s  %.1f MB  %s%s\n", model.id.c_str(),
+                          Utf32ToUtf8(model.name).c_str(), Utf32ToUtf8(model.summary).c_str(),
+                          static_cast<double>(model.TotalBytes()) / 1e6, Utf32ToUtf8(catalog.LicenseFor(model)).c_str(),
+                          iroha::TypoNormalizerInstall::NeedsUpdate(data, model) ? "" : "  [設置済み]");
+            PrintUtf8(line);
+        }
+        if (args.size() >= 2 && args[1] == U"install") {
+            // ID を指定しなければ、設定画面と同じく一覧の先頭のモデルを入れる
+            const auto* found = args.size() >= 3 ? catalog.Find(Utf32ToUtf8(args[2])) : &catalog.models.front();
+            if (!found) {
+                std::fprintf(stderr, "モデルの一覧にありません: %s\n", Utf32ToUtf8(args[2]).c_str());
+                return 1;
+            }
+            const auto& model = *found;
+            const auto started = std::chrono::steady_clock::now();
+            if (!iroha::TypoNormalizerFetcher::Install(model, catalog.LicenseFor(model), data, nullptr, &error)) {
+                std::fprintf(stderr, "入れられませんでした: %s\n", error.c_str());
+                return 1;
+            }
+            char line[256];
+            std::snprintf(line, sizeof(line), "入れました: %s（%.1f 秒）\n", model.id.c_str(),
+                          MillisecondsSince(started) / 1000.0);
+            PrintUtf8(line);
+        }
+        return 0;
+    }
+    if (sub == U"parity") {
+        std::filesystem::path directory = TypoModelDirectory();
+        if (args.size() >= 3 && args[1] == U"--dir") directory = std::filesystem::path(Utf32ToUtf16(args[2]));
+        return RunTypoParity(directory);
+    }
+    iroha::TypoNormalizer normalizer(TypoModelDirectory());
+    std::string error;
+    const auto loadStarted = std::chrono::steady_clock::now();
+    if (!normalizer.Load(&error)) {
+        std::fprintf(stderr, "%s\n", error.c_str());
+        return 1;
+    }
+    const double loadMs = MillisecondsSince(loadStarted);
+    if (sub == U"logits" && args.size() >= 3) {
+        const size_t steps = args.size() >= 4 ? static_cast<size_t>(std::stoul(Utf32ToUtf8(args[3]))) : 3;
+        const auto logits = normalizer.Logits(args[1], args[2], steps);
+        std::string out = "[";
+        for (size_t step = 0; step < logits.size(); ++step) {
+            out += step == 0 ? "[" : ",[";
+            for (size_t j = 0; j < logits[step].size(); ++j) {
+                char value[32];
+                std::snprintf(value, sizeof(value), "%s%.6f", j == 0 ? "" : ",", logits[step][j]);
+                out += value;
+            }
+            out += "]";
+        }
+        PrintUtf8(out + "]\n");
+        return 0;
+    }
+    double threshold = iroha::TypoNormalizer::kDefaultThreshold;
+    size_t minimumLength = 1;
+    size_t index = 0;
+    while (index + 1 < args.size() && args[index].rfind(U"--", 0) == 0) {
+        if (args[index] == U"--threshold") threshold = std::stod(Utf32ToUtf8(args[index + 1]));
+        if (args[index] == U"--min-length") minimumLength = std::stoul(Utf32ToUtf8(args[index + 1]));
+        index += 2;
+    }
+    char header[160];
+    std::snprintf(header, sizeof(header), "読み込み %.0fms  行列の計算: %s  θ=%.2f\n", loadMs,
+                  iroha::TypoNormalizer::KernelName(), threshold);
+    PrintUtf8(header);
+    for (; index < args.size(); ++index) {
+        const std::u32string& reading = args[index];
+        if (!normalizer.Supports(reading)) {
+            PrintUtf8(Utf32ToUtf8(reading) + "  対象外（長すぎる・語彙に無い文字）\n");
+            continue;
+        }
+        const auto generated = normalizer.Generate(reading);
+        const double margin = generated && *generated != reading
+                                  ? normalizer.LogProbability(*generated, reading) -
+                                        normalizer.LogProbability(reading, reading)
+                                  : 0.0;
+        const auto started = std::chrono::steady_clock::now();
+        const auto correction = normalizer.Correction(reading, threshold, minimumLength);
+        const double ms = MillisecondsSince(started);
+        char line[512];
+        std::snprintf(line, sizeof(line), "%s  生成 %s  margin %.3f  → %s  [%.1fms]\n", Utf32ToUtf8(reading).c_str(),
+                      Utf32ToUtf8(generated.value_or(U"(なし)")).c_str(), margin,
+                      correction ? Utf32ToUtf8(correction->corrected).c_str() : "（訂正なし）", ms);
+        PrintUtf8(line);
+    }
+    return 0;
+}
+
 // ---- symbols: 記号・顔文字・絵文字の表を引く ----
 
 std::filesystem::path ExecutableDirectoryPath() {
@@ -1013,6 +1212,8 @@ struct SessionKeyStroke {
     char32_t character = 0;
     bool shift = false;
     std::u32string label;
+    // <wait>: キーを送らず、ライブ変換・打ち間違いの訂正が届くまで待つ（--interval で続けて打つときの休止）
+    bool wait = false;
 };
 
 // キー列を読む。<...> は特別なキー、それ以外は1文字ずつ
@@ -1046,6 +1247,10 @@ bool ParseKeyStrokes(const std::u32string& text, std::vector<SessionKeyStroke>* 
             name = name.substr(2);
         }
         bool found = false;
+        if (name == U"wait") {
+            stroke.wait = true;
+            found = true;
+        }
         for (const auto& entry : kNames) {
             if (name == entry.first) {
                 stroke.key = entry.second;
@@ -1071,6 +1276,11 @@ void PrintSessionOutput(const std::u32string& label, const iroha::SessionOutput&
         if (output.segmenting && !selected) line += " ";
     }
     if (output.livePending) line += " …";
+    if (output.typoPending) line += " （訂正を確かめ中）";
+    if (output.typoFeedback) {
+        line += "  訂正: " + Utf32ToUtf8(output.typoFeedback->Original()) + " → " +
+                Utf32ToUtf8(output.typoFeedback->Corrected()) + "（⌫ で戻す）";
+    }
     if (output.candidatesVisible) {
         line += "  候補:";
         for (size_t i = 0; i < output.candidates.size(); ++i) {
@@ -1105,10 +1315,10 @@ int RunSession(const std::vector<SessionKeyStroke>& strokes, const std::u32strin
         }
         return true;
     };
-    // ライブ変換が届くまで問い合わせる（TIP のタイマーにあたる）。届くたびに表示する
+    // ライブ変換・打ち間違いの訂正が届くまで問い合わせる（TIP のタイマーにあたる）。届くたびに表示する
     const auto settle = [&](iroha::SessionOutput* output) {
         const auto start = std::chrono::steady_clock::now();
-        while (output->livePending && MillisecondsSince(start) < 10000) {
+        while ((output->livePending || output->typoPending) && MillisecondsSince(start) < 10000) {
             Sleep(5);
             iroha::ipc::SessionResponse response;
             if (!call(iroha::ipc::BuildSessionPollRequest(sessionId, output->revision), &response)) {
@@ -1124,6 +1334,10 @@ int RunSession(const std::vector<SessionKeyStroke>& strokes, const std::u32strin
     iroha::SessionOutput output;
     bool composing = false;
     for (const SessionKeyStroke& stroke : strokes) {
+        if (stroke.wait) {
+            if (!settle(&output)) return 1;
+            continue;
+        }
         const auto start = std::chrono::steady_clock::now();
         iroha::ipc::SessionResponse response;
         // 左文脈は、合成していないときのキーにだけ付ける（TIP と同じ）
@@ -1191,6 +1405,10 @@ int wmain(int argc, wchar_t** argv) {
 
     if (command == U"terms") {
         return RunTerms(std::vector<std::u32string>(args.begin() + 2, args.end()));
+    }
+
+    if (command == U"typo") {
+        return RunTypo(std::vector<std::u32string>(args.begin() + 2, args.end()));
     }
 
     if (command == U"symbols") {

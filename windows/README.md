@@ -211,7 +211,7 @@ windows\build\iroha-cli\iroha-cli.exe session --interval 120 "kyouhaiitenkidesun
 - 候補の数は設定画面の「入力」タブ（`config.json` の `candidateCount`、既定 8。macOS版と同じ）
 
 未対応（macOS版にあるもの）: 区切り記号で囲んだ英字入力・候補ウィンドウを表に広げる（Tab）・
-打ち間違いの訂正・AI の機能・「こえ」モード。
+AI の機能・「こえ」モード。
 変換サーバが止まっている間は、かな入力もできない（キーを受けても表示を決められない）
 
 ## 予測変換・変換ルール・プライベートモード・変換記録
@@ -233,6 +233,38 @@ macOS版の同じ機能を移した（2026-11-13）。ファイルの形式は m
   そのまま確定した 1 文字・打ち直した文節や学習しない候補を含む確定は残さない。「直した確定だけ」も選べる。
   確定の取り消し（Ctrl+Backspace）で取り消した確定は残さない（取り消せなくなったときに書く）
 - 設定画面を特定のタブで開く: `iroha-settings.exe --tab input|rules|learning`（ほかに model / dictionary / terms）
+
+## 打ち間違いの訂正
+
+macOS版の `TypoNormalizer`（ローマ字入力の打ち間違いを、かな漢字変換の手前で「読み → 読み」で直す文字単位の
+Transformer）を移した（2026-11-13）。既定 OFF。設定画面の「入力」タブで ON にしたときにモデル（標準は iroha-typo-v2、
+約 23MB、CC BY-SA 4.0）を取得する。カタログ（`models/typo-normalizer-format2.json`）・置き場所
+（`%LOCALAPPDATA%\iroha\models\typo-normalizer\`）・`installed.json` の形は macOS版と同じ
+
+- `iroha-core` の `typo_normalizer`: 重みの展開（float32・float16・q6）・エンコーダ／デコーダ・数字の扱い（`NumberMask`）・
+  文節への割り付け・小窓の割り付け。式は macOS版と同じ順で float32。行列の積だけは内積を AVX2（無ければ SSE2）で
+  まとめて足す。1 回の訂正は読み 10〜20 文字で 15〜60ms（iroha-typo-v2、このWindows機の CPU 1 スレッド）。
+  試験用の iroha-typo-v3（q6、46.2M）は 100〜180ms
+- 入力の流れは macOS版と同じ: 入力が止まって 500ms たったら読みを直し（`InputSession::ScheduleTypoCorrection`。
+  休止の判定と推論は変換サーバの裏のスレッドで、変換エンジンとは別に行う）、「打った読み → 直した読み」を
+  未確定文字列の下に出す。直した直後の Backspace で取り消し、取り消した読みは再び直さない。Space で文節変換したときは
+  読みを書き換えず、訂正を候補ウィンドウの 2 番目（変換ルールの後ろ）に出す（休止で同じ読みを確かめてあれば
+  その結果を使う）。差分が文節境界をまたぐときは、文全体を訂正した候補を出し、選んだら文節ごと置き換える。
+  末尾に足すだけの訂正は捨てる。訂正の候補を選んだ確定は学習しない
+- しきい値・待ち時間・最低文字数は `config.json` の `typoNormalizerThreshold`（2.5）・`typoNormalizerDelayMs`（500）・
+  `typoNormalizerMinLength`（4）。キーの名前は macOS版の設定と同じ
+- 照合: 書き出しに付いてくる parity.json があれば `iroha-cli typo parity --dir <書き出し>`（macOS版と同じ判定）。
+  2026-11-13 は parity.json が手元に無いので、numpy で同じモデルを組んでロジットを突き合わせた（iroha-typo-v2・v3 とも
+  最大差 4×10⁻⁶、macOS版の基準は 10⁻³）。macOS版のテストの期待値（「3じにかくいんしました」→「3じにかくにんしました」など）も
+  単体テストに入れてある（`IROHA_TYPO_MODEL` でモデルのフォルダを指したときだけ回る）
+
+```powershell
+# モデルの一覧と取得（設定画面と同じ経路）。訂正を試す（読みはかなのまま渡す）
+windows\build\iroha-cli\iroha-cli.exe typo catalog install
+windows\build\iroha-cli\iroha-cli.exe typo --threshold 2.0 をわぇてけいやくする とうじょうsじない
+# 変換サーバを通して、続けて打ったあとの休止での訂正と Backspace での取り消しを見る（<wait> で結果を待つ）
+windows\build\iroha-cli\iroha-cli.exe session --interval 90 "kakuinshimashita<wait><bs><wait>"
+```
 
 ## 記号・顔文字・絵文字の候補
 
@@ -338,6 +370,7 @@ windows\build\iroha-cli\iroha-cli.exe lattice goenseihaien
       TIP はキーを送って表示を反映するだけ）
 - [x] M7e-1: 記号・顔文字・絵文字の候補（Mozc のデータ、Windows で描けない絵文字を除く、候補ウィンドウを Direct2D で描く）
 - [x] M7e-2: 専門辞書（設定画面のタブ・辞書ラティスへの組み込み・候補の辞書名の印）
+- [x] M7h: 打ち間違いの訂正（TypoNormalizer の C++ 移植・休止での訂正と取り消し・文節の訂正候補・設定画面からの取得）
 - [x] M7g: macOS版のキーの扱い（表示形・英字入力・文節の打ち直し・確定の取り消し・句読点の切り替え）、
       予測変換・変換ルール・プライベートモード・変換記録と、設定画面の「入力」「変換ルール」「学習・記録」タブ
 - [ ] M5b: UIlessモード（ITfCandidateListUIElement。タスクバー検索ボックス等）

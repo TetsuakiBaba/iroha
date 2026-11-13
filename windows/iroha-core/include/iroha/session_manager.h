@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
@@ -75,6 +76,15 @@ public:
         // プライベートモードを切り替えた（設定に保存し、変換エンジンの学習・ユーザ辞書を止める）。エンジンを持たずに呼ぶ
         virtual void PrivateModeChanged(bool enabled) { (void)enabled; }
         virtual void RecordConversion(const ConversionLogEntry& entry) { (void)entry; }
+        // 打ち間違いの訂正（InputSession::Host と同じ。エンジンを持たずに呼ぶ。訂正のモデルは自分で直列化すること）
+        virtual bool TypoCorrectionAvailable() { return false; }
+        virtual std::optional<TypoCorrection> CorrectTypo(const std::u32string& reading, double threshold,
+                                                          size_t minimumLength) {
+            (void)reading;
+            (void)threshold;
+            (void)minimumLength;
+            return std::nullopt;
+        }
     };
 
     explicit SessionManager(Backend* backend);
@@ -127,6 +137,17 @@ private:
                  const std::u32string& context);
     void CancelJobs(uint64_t sessionId);
     void WorkerLoop();
+    // 打ち間違いの訂正の依頼（セッションごとに最新の 1 件。休止の時間が来たら裏のスレッドで行う）
+    struct TypoJob {
+        uint64_t generation = 0;
+        std::u32string reading;
+        double threshold = 0;
+        size_t minimumLength = 1;
+        std::chrono::steady_clock::time_point due;
+    };
+    void EnqueueTypo(uint64_t sessionId, TypoJob job);
+    void CancelTypo(uint64_t sessionId);
+    void TypoWorkerLoop();
 
     Backend* backend_;
 
@@ -157,6 +178,13 @@ private:
     std::atomic<bool> stoppingFlag_{false};
 
     std::thread worker_;
+
+    // 打ち間違いの訂正（typoMutex_ で守る）。ライブ変換とは別のスレッドで行う（変換エンジンを使わない）
+    std::mutex typoMutex_;
+    std::condition_variable typoCondition_;
+    std::map<uint64_t, TypoJob> typoJobs_;
+    bool typoStopping_ = false;
+    std::thread typoWorker_;
 };
 
 } // namespace iroha

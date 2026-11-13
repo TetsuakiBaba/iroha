@@ -60,6 +60,17 @@ struct SessionManager::Entry : InputSession::Host {
         manager->backend_->RecordInputHistory(reading, text);
     }
     void RecordConversion(const ConversionLogEntry& entry) override { manager->backend_->RecordConversion(entry); }
+    bool TypoCorrectionAvailable() override { return manager->backend_->TypoCorrectionAvailable(); }
+    void RequestTypoCorrection(uint64_t generation, const std::u32string& reading, int delayMs, double threshold,
+                               size_t minimumLength) override {
+        manager->EnqueueTypo(id, TypoJob{generation, reading, threshold, minimumLength,
+                                         std::chrono::steady_clock::now() + std::chrono::milliseconds(delayMs)});
+    }
+    void CancelTypoCorrection() override { manager->CancelTypo(id); }
+    std::optional<TypoCorrection> CorrectTypo(const std::u32string& reading, double threshold,
+                                              size_t minimumLength) override {
+        return manager->backend_->CorrectTypo(reading, threshold, minimumLength);
+    }
     // プライベートモードは、ほかのセッションにも効かせて設定に保存する（stateMutex_ を持った状態で呼ばれる）
     void PrivateModeChanged(bool enabled) override {
         manager->settings_.privateMode = enabled;
@@ -85,6 +96,7 @@ struct SessionManager::Entry : InputSession::Host {
 
 SessionManager::SessionManager(Backend* backend) : backend_(backend) {
     worker_ = std::thread([this] { WorkerLoop(); });
+    typoWorker_ = std::thread([this] { TypoWorkerLoop(); });
 }
 
 SessionManager::~SessionManager() {
@@ -96,6 +108,13 @@ SessionManager::~SessionManager() {
     stoppingFlag_ = true;
     jobCondition_.notify_all();
     if (worker_.joinable()) worker_.join();
+    {
+        std::lock_guard<std::mutex> lock(typoMutex_);
+        typoStopping_ = true;
+        typoJobs_.clear();
+    }
+    typoCondition_.notify_all();
+    if (typoWorker_.joinable()) typoWorker_.join();
 }
 
 SessionManager::Entry& SessionManager::EntryFor(uint64_t sessionId) {
@@ -106,6 +125,7 @@ SessionManager::Entry& SessionManager::EntryFor(uint64_t sessionId) {
                 sessions_.begin(), sessions_.end(),
                 [](const auto& a, const auto& b) { return a.second->lastUsed < b.second->lastUsed; });
             CancelJobs(oldest->first);
+            CancelTypo(oldest->first);
             oldest->second->session.Flush();
             sessions_.erase(oldest);
         }
@@ -141,6 +161,7 @@ bool SessionManager::Poll(uint64_t sessionId, uint64_t revision, SessionOutput* 
 void SessionManager::End(uint64_t sessionId) {
     std::lock_guard<std::mutex> lock(stateMutex_);
     CancelJobs(sessionId);
+    CancelTypo(sessionId);
     const auto found = sessions_.find(sessionId);
     if (found != sessions_.end()) {
         found->second->session.Flush();
@@ -215,6 +236,53 @@ void SessionManager::CancelJobs(uint64_t sessionId) {
     if (pendingJob_ && pendingJob_->sessionId == sessionId) pendingJob_.reset();
     if (runningSerial_ != 0 && runningSessionId_ == sessionId) {
         abortedSerial_ = std::max(abortedSerial_.load(), runningSerial_);
+    }
+}
+
+void SessionManager::EnqueueTypo(uint64_t sessionId, TypoJob job) {
+    {
+        std::lock_guard<std::mutex> lock(typoMutex_);
+        typoJobs_[sessionId] = std::move(job);
+    }
+    typoCondition_.notify_one();
+}
+
+void SessionManager::CancelTypo(uint64_t sessionId) {
+    std::lock_guard<std::mutex> lock(typoMutex_);
+    typoJobs_.erase(sessionId);
+}
+
+// 休止の時間が来た依頼から順に訂正する。訂正の最中は stateMutex_ を持たない
+// （結果を渡すときだけ取る。Space の訂正がモデルを待っている間に、この結果が届いても詰まらない）
+void SessionManager::TypoWorkerLoop() {
+    for (;;) {
+        uint64_t sessionId = 0;
+        TypoJob job;
+        {
+            std::unique_lock<std::mutex> lock(typoMutex_);
+            for (;;) {
+                if (typoStopping_) return;
+                if (typoJobs_.empty()) {
+                    typoCondition_.wait(lock);
+                    continue;
+                }
+                auto next = std::min_element(typoJobs_.begin(), typoJobs_.end(),
+                                             [](const auto& a, const auto& b) { return a.second.due < b.second.due; });
+                if (next->second.due <= std::chrono::steady_clock::now()) {
+                    sessionId = next->first;
+                    job = std::move(next->second);
+                    typoJobs_.erase(next);
+                    break;
+                }
+                typoCondition_.wait_until(lock, next->second.due);
+            }
+        }
+        const auto correction = backend_->CorrectTypo(job.reading, job.threshold, job.minimumLength);
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        const auto found = sessions_.find(sessionId);
+        if (found != sessions_.end()) {
+            found->second->session.CompleteTypoCorrection(job.generation, job.reading, correction);
+        }
     }
 }
 

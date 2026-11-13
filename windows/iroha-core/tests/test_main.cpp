@@ -348,6 +348,7 @@ void TestUnicodeRoundTrip() {
 #include "test_rewrite.h"
 #include "test_history.h"
 #include "test_conversion_log.h"
+#include "test_typo.h"
 
 int main() {
     TestBasicGojuon();
@@ -396,6 +397,7 @@ int main() {
     RunRewriteTests();
     RunHistoryTests();
     RunConversionLogTests();
+    RunTypoTests();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

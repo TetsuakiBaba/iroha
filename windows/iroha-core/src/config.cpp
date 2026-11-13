@@ -1,6 +1,8 @@
 #include "iroha/config.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 
@@ -8,6 +10,15 @@
 #include "iroha/unicode.h"
 
 namespace iroha {
+
+namespace {
+// 小数を短く書く（2.5 → "2.5"）
+std::string FormatNumber(double value) {
+    char text[32];
+    std::snprintf(text, sizeof(text), "%.6g", value);
+    return text;
+}
+} // namespace
 
 std::filesystem::path DefaultModelPath(const std::filesystem::path& modelsDirectory) {
     const std::filesystem::path current = modelsDirectory / kDefaultModelFileName;
@@ -55,6 +66,24 @@ Config LoadConfig(const std::filesystem::path& path) {
     if (const json::Value* scope = root.Find("conversionLogScope")) {
         config.conversionLogCorrectionsOnly = scope->AsString() == "corrections";
     }
+    if (const json::Value* typo = root.Find("typoNormalizer")) {
+        if (typo->type == json::Value::Type::Bool) config.typoCorrection = typo->boolean;
+    }
+    if (const json::Value* threshold = root.Find("typoNormalizerThreshold")) {
+        if (threshold->type == json::Value::Type::Number && std::isfinite(threshold->number)) {
+            config.typoThreshold = std::max(0.0, std::min(10.0, threshold->number));
+        }
+    }
+    if (const json::Value* delay = root.Find("typoNormalizerDelayMs")) {
+        if (delay->type == json::Value::Type::Number && delay->number != 0) {
+            config.typoDelayMs = std::max(100, std::min(2000, static_cast<int>(delay->number)));
+        }
+    }
+    if (const json::Value* length = root.Find("typoNormalizerMinLength")) {
+        if (length->type == json::Value::Type::Number) {
+            config.typoMinimumLength = std::max(1, std::min(20, static_cast<int>(length->number)));
+        }
+    }
     if (const json::Value* count = root.Find("candidateCount")) {
         if (count->type == json::Value::Type::Number) {
             config.candidateCount = std::max(3, std::min(16, static_cast<int>(count->number)));
@@ -74,6 +103,10 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                       ",\"privateMode\":" + (config.privateMode ? "true" : "false") +
                       ",\"conversionLogEnabled\":" + (config.conversionLog ? "true" : "false") +
                       ",\"conversionLogScope\":" + (config.conversionLogCorrectionsOnly ? "\"corrections\"" : "\"all\"") +
+                      ",\"typoNormalizer\":" + (config.typoCorrection ? "true" : "false") +
+                      ",\"typoNormalizerThreshold\":" + FormatNumber(config.typoThreshold) +
+                      ",\"typoNormalizerDelayMs\":" + std::to_string(config.typoDelayMs) +
+                      ",\"typoNormalizerMinLength\":" + std::to_string(config.typoMinimumLength) +
                       ",\"version\":1}";
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);

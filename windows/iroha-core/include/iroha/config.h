@@ -39,6 +39,13 @@ struct Config {
     // 直した確定だけを残すか（キーの名前は macOS版の設定と同じ）
     bool conversionLog = false;
     bool conversionLogCorrectionsOnly = false;
+    // 打ち間違いの訂正（既定 OFF。モデルは設定画面で ON にしたときに取得する）と、採用する margin のしきい値（0〜10）・
+    // 入力が止まってから確かめるまでの時間（100〜2000ms）・訂正する読みの最低文字数（1〜20）。
+    // キーの名前と既定値は macOS版の TypoNormalizerSettings と同じ
+    bool typoCorrection = false;
+    double typoThreshold = 2.5;
+    int typoDelayMs = 500;
+    int typoMinimumLength = 4;
 };
 
 Config LoadConfig(const std::filesystem::path& path);

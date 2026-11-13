@@ -21,10 +21,13 @@
 #include <vector>
 
 #include <memory>
+#include <mutex>
 
 #include "iroha/chunked_conversion_engine.h"
 #include "iroha/config.h"
 #include "iroha/conversion_log.h"
+#include "iroha/typo_normalizer.h"
+#include "iroha/typo_normalizer_catalog.h"
 #include "iroha/conversion_engine.h"
 #include "iroha/lattice_converter.h"
 #include "iroha/lattice_rescoring_engine.h"
@@ -144,6 +147,53 @@ struct ServerState {
     std::unique_ptr<iroha::InputHistoryStore> inputHistory;
     // 変換記録（学習用データ。<データフォルダ>/logs/conversions/。設定で ON のときだけ書く）
     std::unique_ptr<iroha::ConversionLog> conversionLog;
+    // 打ち間違いの訂正（設定で ON で、モデルが入っているときだけ。訂正の裏のスレッドからも使うので鍵で守る。
+    // 入れ直されたら（weights の SHA-256 が変わったら）作り直す）
+    std::mutex typoMutex;
+    std::shared_ptr<iroha::TypoNormalizer> typo;
+    std::string typoSignature;
+
+    std::shared_ptr<iroha::TypoNormalizer> Typo() {
+        std::lock_guard<std::mutex> lock(typoMutex);
+        return typo;
+    }
+
+    void LoadTypoNormalizer(bool enabled) {
+        std::filesystem::path directory = iroha::TypoNormalizerInstall::Directory(std::filesystem::path(DataDir()));
+        if (const wchar_t* env = _wgetenv(L"IROHA_TYPO_MODEL")) {
+            if (env[0] != 0) directory = std::filesystem::path(env);
+        }
+        std::shared_ptr<iroha::TypoNormalizer> next;
+        std::string signature;
+        if (enabled && iroha::TypoNormalizer::IsModelDirectory(directory)) {
+            // 入れ直されたかは weights.bin の大きさと更新日時で見る
+            std::error_code ignored;
+            const auto weights = directory / "weights.bin";
+            signature = directory.u8string() + "|" + std::to_string(std::filesystem::file_size(weights, ignored)) + "|" +
+                        std::to_string(std::filesystem::last_write_time(weights, ignored).time_since_epoch().count());
+            {
+                std::lock_guard<std::mutex> lock(typoMutex);
+                if (typo && signature == typoSignature) return;
+            }
+            next = std::make_shared<iroha::TypoNormalizer>(directory);
+            std::string error;
+            const auto start = GetTickCount64();
+            if (next->Load(&error)) {
+                char message[160];
+                std::snprintf(message, sizeof(message), "typo normalizer loaded (%llums, %s)", GetTickCount64() - start,
+                              iroha::TypoNormalizer::KernelName());
+                Log(message);
+            } else {
+                Log(("typo normalizer failed: " + error).c_str());
+                next = nullptr;
+            }
+        } else if (enabled) {
+            Log("typo normalizer not installed");
+        }
+        std::lock_guard<std::mutex> lock(typoMutex);
+        typo = std::move(next);
+        typoSignature = signature;
+    }
     // プライベートモードの間は、学習の差し替えとユーザ辞書を止める（変換のスレッドからも読む）
     std::atomic<bool> privateMode{false};
     // 変換ルール（設定画面が書き換えたら Reload で読み直す。初回は既定のルールを足す。macOS版と同じ）
@@ -200,6 +250,11 @@ struct ServerState {
         sessionSettings.predictive = config.predictive;
         sessionSettings.privateMode = config.privateMode;
         sessionSettings.conversionLog = config.conversionLog;
+        sessionSettings.typoCorrection = config.typoCorrection;
+        sessionSettings.typoThreshold = config.typoThreshold;
+        sessionSettings.typoDelayMs = config.typoDelayMs;
+        sessionSettings.typoMinimumLength = config.typoMinimumLength;
+        LoadTypoNormalizer(config.typoCorrection);
         sessionSettings.conversionLogScope = config.conversionLogCorrectionsOnly
                                                  ? iroha::ConversionLogScope::Corrections
                                                  : iroha::ConversionLogScope::All;
@@ -361,6 +416,18 @@ public:
 
     void RecordInputHistory(const std::u32string& reading, const std::u32string& text) override {
         if (state_->inputHistory) state_->inputHistory->Record(reading, text, iroha::InputHistoryStore::NowSeconds());
+    }
+
+    bool TypoCorrectionAvailable() override { return state_->Typo() != nullptr; }
+
+    std::optional<iroha::TypoCorrection> CorrectTypo(const std::u32string& reading, double threshold,
+                                                     size_t minimumLength) override {
+        const auto typo = state_->Typo();
+        if (!typo) return std::nullopt;
+        std::string error;
+        auto correction = typo->Correction(reading, threshold, minimumLength, &error);
+        if (!error.empty()) Log(("typo correction failed: " + error).c_str());
+        return correction;
     }
 
     // 確定を変換記録に書く（モデルの名前はファイル名から拡張子を除いたもの。macOS版と同じ）

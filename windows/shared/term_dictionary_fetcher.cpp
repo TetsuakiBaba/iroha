@@ -28,8 +28,10 @@ std::string FileName(const std::string& url) {
     return slash == std::string::npos ? url : url.substr(slash + 1);
 }
 
+} // namespace
+
 // url を path に落とす。前に落とした内容（Internet Explorer のキャッシュ）は使わない
-bool Download(const std::string& url, const std::filesystem::path& path, std::string* error) {
+bool TermDictionaryFetcher::Download(const std::string& url, const std::filesystem::path& path, std::string* error) {
     const std::wstring wideUrl = Wide(url);
     DeleteUrlCacheEntryW(wideUrl.c_str());
     const HRESULT hr = URLDownloadToFileW(nullptr, wideUrl.c_str(), path.c_str(), 0, nullptr);
@@ -41,6 +43,8 @@ bool Download(const std::string& url, const std::filesystem::path& path, std::st
     }
     return true;
 }
+
+namespace {
 
 bool ReadFile(const std::filesystem::path& path, std::string* out) {
     std::ifstream file(path, std::ios::binary);

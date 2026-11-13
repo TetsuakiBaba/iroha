@@ -227,6 +227,11 @@ cd macos && swift build --build-system native && swift test --build-system nativ
     （入れたときに設置記録にも写すのでオフラインでも出る）。文面は `dataset/iroha-typo-normalizer/LICENSES.md` の
     「attribution 方法」に合わせる。訂正モデルの行（入力タブ）には学習元を出さない
   ・訂正率 79%（θなし）は合成 typo 分布の数字で、実使用の数字ではない。UI で約束しない
+  ・Windows 版は `windows/iroha-core` の `typo_normalizer` に移してある（2026-11-13。行列の積は AVX2、無ければ SSE2）。
+    カタログ・置き場所・`installed.json` の形は同じ。休止の判定と推論は変換サーバの裏のスレッドで行う（`SessionManager`）。
+    **計算の順序・訂正の規則を変えたら Windows 側も合わせる**。照合は parity.json のある書き出しで `iroha-cli typo parity`
+    （Windows 版にもある）。2026-11-13 は parity.json が手元に無く、numpy で組んだ同じモデルとロジットを突き合わせた
+    （iroha-typo-v2・v3 とも最大差 4×10⁻⁶）
 - 記号・顔文字・絵文字の候補（`SymbolCandidateTable` / `SymbolCandidateMerger`、`macos/Sources/IrohaCore/SymbolCandidates/`、
   既定ON・切り替えは開発者モード・同期する。2026-10-16）は Mozc（BSD 3-Clause）の `src/data/` の 4 ファイルを
   `fetch-symbols.sh` がコミット固定で `vendor/mozc-data/` に取り、`make-bundle.sh` が `Contents/Resources/Symbols` へ

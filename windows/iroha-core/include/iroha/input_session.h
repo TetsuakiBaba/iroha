@@ -14,6 +14,7 @@
 #include "iroha/romaji_composer.h"
 #include "iroha/symbol_candidates.h"
 #include "iroha/term_dictionary.h"
+#include "iroha/typo_normalizer.h"
 #include "iroha/user_rewrite_rule.h"
 
 namespace iroha {
@@ -96,6 +97,10 @@ struct SessionOutput {
     bool privateMode = false;
     // カーソルの近くに少しのあいだ出す知らせ（句読点・プライベートモードの切り替え。無ければ空）
     std::u32string notice;
+    // 入力の休止で打ち間違いを確かめている最中か（TIP は結果が届くまで問い合わせる）
+    bool typoPending = false;
+    // 打ち間違いを直したときの「打った読み → 直した読み」（小窓に出す。出ている間は Backspace で戻せる）
+    std::optional<TypoCorrectionFeedback> typoFeedback;
 
     bool Composing() const { return !preedit.empty(); }
     // 未確定文字列をつなげたもの
@@ -119,6 +124,12 @@ struct SessionSettings {
     // 変換記録（学習用データ。既定 OFF）と、何を記録するか
     bool conversionLog = false;
     ConversionLogScope conversionLogScope = ConversionLogScope::All;
+    // 打ち間違いの訂正（既定 OFF。macOS版 TypoNormalizerSettings と同じ既定値）: 採用する margin のしきい値・
+    // 入力が止まってから確かめるまでの時間・訂正する読みの最低文字数
+    bool typoCorrection = false;
+    double typoThreshold = TypoNormalizer::kDefaultThreshold;
+    int typoDelayMs = 500;
+    int typoMinimumLength = 4;
 };
 
 // 入力の状態（読み・ライブ変換の結果・固定部分・英字入力・文節・候補）を持ち、キーごとに表示を決める。
@@ -187,6 +198,28 @@ public:
         virtual void PrivateModeChanged(bool enabled) { (void)enabled; }
         // 確定を変換記録に書く（モデルの名前は変換サーバが入れる）
         virtual void RecordConversion(const ConversionLogEntry& entry) { (void)entry; }
+        // 打ち間違いの訂正モデルが使えるか（入っているか）
+        virtual bool TypoCorrectionAvailable() { return false; }
+        // 入力の休止（delayMs）を待って、読みの訂正を裏で頼む。すぐ戻ること。結果は CompleteTypoCorrection に渡す。
+        // 同じセッションの前の依頼は捨ててよい
+        virtual void RequestTypoCorrection(uint64_t generation, const std::u32string& reading, int delayMs,
+                                           double threshold, size_t minimumLength) {
+            (void)generation;
+            (void)reading;
+            (void)delayMs;
+            (void)threshold;
+            (void)minimumLength;
+        }
+        // 頼んである訂正が要らなくなった
+        virtual void CancelTypoCorrection() {}
+        // その場で訂正する（Space で文節の候補を開くとき。戻るまで待ってよい）
+        virtual std::optional<TypoCorrection> CorrectTypo(const std::u32string& reading, double threshold,
+                                                          size_t minimumLength) {
+            (void)reading;
+            (void)threshold;
+            (void)minimumLength;
+            return std::nullopt;
+        }
     };
 
     explicit InputSession(Host* host);
@@ -204,6 +237,11 @@ public:
     // converted が nullptr なら変換できなかった（待ちだけを解く）
     bool CompleteLiveConversion(uint64_t generation, const std::u32string& reading,
                                 const std::u32string* converted);
+
+    // 裏で頼んだ打ち間違いの訂正の結果を受け取る（訂正が無ければ correction は無し）。表示が変わったら真。
+    // 読みが変わっていれば（入力が進んでいれば）使わない
+    bool CompleteTypoCorrection(uint64_t generation, const std::u32string& reading,
+                                const std::optional<TypoCorrection>& correction);
 
     // 今の表示（commit は空）
     SessionOutput Current() const;
@@ -340,6 +378,18 @@ private:
         bool contextFromDocument = false;
         // 左文脈（確定した文字列を足したもの）に、プライベートモード中に確定した文字列が入っているか
         bool contextHasPrivateText = false;
+        // 文節変換に入ったときの読み（打ち間違いの訂正候補を出す対象）と、その訂正（初めて候補を開くときに求める）
+        std::optional<std::u32string> typoReading;
+        bool typoResolved = false;
+        std::optional<TypoCorrection> typoSegmentCorrection;
+        // 差分が文節境界をまたぐ訂正: 文全体を訂正した候補を、訂正対象の先頭の文節に出してある。
+        // 選んだまま候補ウィンドウを閉じたら、その文節から後ろを置き換える（macOS版 typoWholeSentence）
+        struct TypoWholeSentence {
+            std::u32string candidate;
+            std::u32string reading;
+            size_t segmentOffset = 0;
+        };
+        std::optional<TypoWholeSentence> typoWholeSentence;
     };
 
     // 裏で頼んだ変換の種類
@@ -432,6 +482,21 @@ private:
     void RecordInputHistory(const std::optional<std::u32string>& composerText);
     bool PredictionActive() const { return settings_.predictive && !settings_.privateMode; }
 
+    // 打ち間違いの訂正（macOS版 scheduleTypoCorrection・applyTypoCorrection・undoTypoCorrection など）
+    void ScheduleTypoCorrection();
+    void ApplyTypoCorrection(const TypoCorrection& correction);
+    bool UndoTypoCorrection();
+    void EndTypoUndo();
+    void CancelTypoCheck();
+    void CancelTypoCorrection();
+    bool TypoAccepts(const std::u32string& reading) const;
+    std::optional<TypoCorrection> TypoCorrectionForSegments();
+    std::vector<std::u32string> TypoCandidates(size_t index);
+    bool IsSelectingTypoWholeSentence() const;
+    void ApplyTypoWholeSentenceIfSelected();
+    // 候補ウィンドウを閉じる（文全体を訂正した候補を選んでいれば、文節を置き換える）
+    void CloseCandidateList();
+
     // 確定と取り消し
     void LearnIfCorrected(const std::u32string& committed);
     // 変換記録（macOS版 logSegmentsCommit / logConversion）
@@ -472,6 +537,16 @@ private:
     std::optional<Prediction> prediction_;
     // このキーで出す知らせ
     std::u32string notice_;
+
+    // 打ち間違いの訂正: 休止を待っている依頼の番号・直した「打った読み → 直した読み」・直後の Backspace で戻せるか・
+    // ユーザが取り消した読み（再び直さない）・小窓に出す割り付け・休止で確かめた結果（Space の訂正候補に使い回す）
+    uint64_t typoGeneration_ = 0;
+    bool typoPending_ = false;
+    std::optional<std::pair<std::u32string, std::u32string>> lastTypoCorrection_;
+    bool typoUndoAvailable_ = false;
+    std::optional<std::u32string> typoRejectedReading_;
+    std::optional<TypoCorrectionFeedback> typoFeedback_;
+    std::optional<std::pair<std::u32string, std::optional<TypoCorrection>>> typoChecked_;
 };
 
 } // namespace iroha
