@@ -121,6 +121,20 @@ Config LoadConfig(const std::filesystem::path& path) {
             config.aiPresets[i].hotkey = value->string;
         }
     }
+    if (const json::Value* delimited = root.Find("delimitedAlphabet");
+        delimited && delimited->type == json::Value::Type::Bool) {
+        config.delimitedAlphabet = delimited->boolean;
+    }
+    text("delimitedAlphabetStart", &config.delimitedAlphabetStart);
+    text("delimitedAlphabetEnd", &config.delimitedAlphabetEnd);
+    if (const json::Value* fix = root.Find("aiFix"); fix && fix->type == json::Value::Type::Bool) {
+        config.aiFix = fix->boolean;
+    }
+    if (const json::Value* threshold = root.Find("aiFixThreshold");
+        threshold && threshold->type == json::Value::Type::Number && std::isfinite(threshold->number)) {
+        config.aiFixThreshold = std::max(0.0, std::min(20.0, threshold->number));
+    }
+    text("aiFixShortcut", &config.aiFixShortcut);
     if (const json::Value* count = root.Find("candidateCount")) {
         if (count->type == json::Value::Type::Number) {
             config.candidateCount = std::max(3, std::min(16, static_cast<int>(count->number)));
@@ -152,6 +166,12 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                       ",\"openAIEndpoint\":" + json::QuoteString(config.openAIEndpoint) +
                       ",\"openAIModel\":" + json::QuoteString(config.openAIModel) +
                       ",\"claudeModel\":" + json::QuoteString(config.claudeModel) + EncodePresets(config) +
+                      ",\"delimitedAlphabet\":" + (config.delimitedAlphabet ? "true" : "false") +
+                      ",\"delimitedAlphabetStart\":" + json::QuoteString(config.delimitedAlphabetStart) +
+                      ",\"delimitedAlphabetEnd\":" + json::QuoteString(config.delimitedAlphabetEnd) +
+                      ",\"aiFix\":" + (config.aiFix ? "true" : "false") +
+                      ",\"aiFixThreshold\":" + FormatNumber(config.aiFixThreshold) +
+                      ",\"aiFixShortcut\":" + json::QuoteString(config.aiFixShortcut) +
                       ",\"version\":1}";
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);

@@ -78,6 +78,24 @@ public:
         virtual void RecordConversion(const ConversionLogEntry& entry) { (void)entry; }
         // 打ち間違いの訂正（InputSession::Host と同じ。エンジンを持たずに呼ぶ。訂正のモデルは自分で直列化すること）
         virtual bool TypoCorrectionAvailable() { return false; }
+        // AIで直す: モデル単体で貪欲に変換し、文字ごとのマージンを返す（エンジンを持った状態で呼ぶ）。
+        // 求められなければ text が空
+        struct ScoredText {
+            std::u32string text;
+            std::vector<float> margins;
+        };
+        virtual ScoredText ScoreConversion(const std::u32string& reading, const std::u32string& context) {
+            (void)reading;
+            (void)context;
+            return {};
+        }
+        // AI に依頼する（AIで直す）。stallSeconds の間何も届かなければ打ち切る。エンジンを持たずに呼ぶ
+        virtual AIOutcome RunAIRequest(const AIRequest& request, int stallSeconds, CancelToken* cancel) {
+            (void)request;
+            (void)stallSeconds;
+            (void)cancel;
+            return {};
+        }
         // AI変換（preset 番目のプリセットで text を）。途中経過を onPartial に渡し、結果（失敗なら無し）を返す。
         // cancel が止められたら途中でも戻る。エンジンを持たずに呼ぶ
         virtual std::optional<std::u32string> RunAI(size_t preset, const std::u32string& text,
@@ -148,10 +166,14 @@ private:
                  const std::u32string& context);
     void CancelJobs(uint64_t sessionId);
     void WorkerLoop();
-    // 打ち間違いの訂正の依頼（セッションごとに最新の 1 件。休止の時間が来たら裏のスレッドで行う）
+    // 入力の休止を待って行う依頼（打ち間違いの訂正・AIで直すの判定。セッションと種類ごとに最新の 1 件。
+    // 休止の時間が来たら裏のスレッドで行う）
     struct TypoJob {
+        enum class Kind { Typo, AIFixCheck };
+        Kind kind = Kind::Typo;
         uint64_t generation = 0;
         std::u32string reading;
+        std::u32string context; // AIFixCheck: 変換の左文脈
         double threshold = 0;
         size_t minimumLength = 1;
         std::chrono::steady_clock::time_point due;
@@ -163,11 +185,13 @@ private:
         uint64_t generation = 0;
         size_t preset = 0;
         std::u32string text;
+        // AIで直すの依頼なら、その中身（AI変換なら無し）
+        std::optional<AIRequest> fix;
     };
     void EnqueueAI(AIJob job);
     void CancelAIJobs(uint64_t sessionId);
     void AIWorkerLoop();
-    void CancelTypo(uint64_t sessionId);
+    void CancelTypo(uint64_t sessionId, TypoJob::Kind kind = TypoJob::Kind::Typo);
     void TypoWorkerLoop();
 
     Backend* backend_;
@@ -203,7 +227,7 @@ private:
     // 打ち間違いの訂正（typoMutex_ で守る）。ライブ変換とは別のスレッドで行う（変換エンジンを使わない）
     std::mutex typoMutex_;
     std::condition_variable typoCondition_;
-    std::map<uint64_t, TypoJob> typoJobs_;
+    std::map<std::pair<uint64_t, TypoJob::Kind>, TypoJob> typoJobs_;
     bool typoStopping_ = false;
     std::thread typoWorker_;
 

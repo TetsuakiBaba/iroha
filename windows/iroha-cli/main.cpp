@@ -18,6 +18,7 @@
 //   iroha-cli model-selfcheck <同じ形式.jsonl> [--limit N]
 //                                                 : モデルの採点が生成と辻褄が合うかを確かめる（macOS版の出力は使わない）
 //   iroha-cli remote <読み>                        : 変換サーバ経由の変換（IPC検証用）
+//   iroha-cli confidence [--context 文脈] <読み>    : モデル単体の貪欲変換と文字ごとの自信度（AIで直すの判定に使う値）
 //   iroha-cli terms list | install <ID> | remove <ID> | lookup <読み> <候補>...
 //                                                 : 専門辞書の一覧・取得と設置・削除（IME本体と同じ経路）・辞書名の印を引く
 //   iroha-cli symbols [読み...]                     : 記号・顔文字・絵文字の表（Mozc のデータ）を引く。
@@ -37,7 +38,7 @@
 //                                                   <bs> <left> <right> <up> <down> <f6>〜<f10> <punct>（Ctrl+.）
 //                                                   <undo>（確定の取り消し）（Shift は <S-left> のように）と書く。
 //                                                   <wait> は、キーを送らずに変換・打ち間違いの訂正が届くまで待つ。
-//                                                   <ai0>〜<ai2> は AI変換（プリセットの番号）。
+//                                                   <ai0>〜<ai2> は AI変換（プリセットの番号）、<fix> は AIで直す。
 //                                                   既定ではキーごとにライブ変換の到着を待つ。--interval を付けると
 //                                                   待たずにその間隔で送る（変換が打鍵に追いつかないときの表示を見る）
 //   iroha-cli repl                                : 対話モード
@@ -1310,6 +1311,7 @@ bool ParseKeyStrokes(const std::u32string& text, std::vector<SessionKeyStroke>* 
         {U"f9", iroha::SessionKey::DisplayFullAlphanumeric},
         {U"f10", iroha::SessionKey::DisplayHalfAlphanumeric},
         {U"punct", iroha::SessionKey::TogglePunctuation}, {U"undo", iroha::SessionKey::UndoCommit},
+        {U"fix", iroha::SessionKey::AIFix},
     };
     for (size_t i = 0; i < text.size(); ++i) {
         if (text[i] != U'<') {
@@ -1367,6 +1369,12 @@ void PrintSessionOutput(const std::u32string& label, const iroha::SessionOutput&
         line += "  訂正: " + Utf32ToUtf8(output.typoFeedback->Original()) + " → " +
                 Utf32ToUtf8(output.typoFeedback->Corrected()) + "（⌫ で戻す）";
     }
+    if (output.aiFixPending) line += " （AIで直す: 結果待ち）";
+    if (!output.aiFixNotice.empty()) line += "  〔" + Utf32ToUtf8(output.aiFixNotice) + "〕";
+    if (output.aiFixFeedback) {
+        line += "  AI: " + Utf32ToUtf8(output.aiFixFeedback->Original()) + " → " +
+                Utf32ToUtf8(output.aiFixFeedback->Corrected()) + "（⌫ で戻す）";
+    }
     if (output.candidatesVisible) {
         line += "  候補:";
         for (size_t i = 0; i < output.candidates.size(); ++i) {
@@ -1404,7 +1412,8 @@ int RunSession(const std::vector<SessionKeyStroke>& strokes, const std::u32strin
     // ライブ変換・打ち間違いの訂正が届くまで問い合わせる（TIP のタイマーにあたる）。届くたびに表示する
     const auto settle = [&](iroha::SessionOutput* output) {
         const auto start = std::chrono::steady_clock::now();
-        while ((output->livePending || output->typoPending || output->aiPending) && MillisecondsSince(start) < 60000) {
+        while ((output->livePending || output->typoPending || output->aiPending || output->aiFixPending) &&
+               MillisecondsSince(start) < 60000) {
             Sleep(5);
             iroha::ipc::SessionResponse response;
             if (!call(iroha::ipc::BuildSessionPollRequest(sessionId, output->revision), &response)) {
@@ -1577,6 +1586,39 @@ int wmain(int argc, wchar_t** argv) {
             }
         }
         return RunModelParity(Utf32ToUtf16(args[2]), examples);
+    }
+
+    if (command == U"confidence" && args.size() >= 3) {
+        std::u32string context;
+        size_t index = 2;
+        if (args[index] == U"--context" && index + 2 < args.size()) {
+            context = args[index + 1];
+            index += 2;
+        }
+        const std::u32string reading = RomajiToKana(args[index]);
+        iroha::ZenzEngine zenz(DefaultModelPath(), ZenzOptions());
+        iroha::ZenzEngine::ScoredConversion scored;
+        std::string error;
+        if (!zenz.ConvertScored(reading, context, &scored, &error)) {
+            std::fprintf(stderr, "エラー: %s\n", error.c_str());
+            return 1;
+        }
+        PrintUtf8(Utf32ToUtf8(reading) + " → " + Utf32ToUtf8(scored.text) + "\n");
+        const auto characters = iroha::SplitGraphemes(scored.text);
+        float minimum = std::numeric_limits<float>::infinity();
+        for (size_t i = 0; i < characters.size() && i < scored.confidences.size(); ++i) {
+            const auto& confidence = scored.confidences[i];
+            minimum = std::min(minimum, confidence.margin);
+            char line[96];
+            std::snprintf(line, sizeof(line), "  %-4s logP %8.3f  margin %8.3f%s\n", Utf32ToUtf8(characters[i]).c_str(),
+                          confidence.logProb, confidence.margin, confidence.relaxed ? "  （読み制約を外した）" : "");
+            PrintUtf8(line);
+        }
+        char summary[64];
+        std::snprintf(summary, sizeof(summary), "最小の margin %.3f（文字 %zu・自信度 %zu）\n", minimum, characters.size(),
+                      scored.confidences.size());
+        PrintUtf8(summary);
+        return 0;
     }
 
     if (command == U"score" && args.size() >= 4) {

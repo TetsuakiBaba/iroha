@@ -65,6 +65,16 @@ struct Config {
         std::optional<std::string> hotkey;
     };
     std::array<AIPreset, 3> aiPresets;
+    // 区切り記号で囲んだ英字入力（macOS版では開発者モードの項目。既定 OFF）と、開始・終わりの記号
+    // （英字・数字以外の ASCII の記号 1 文字。使えない値なら「_」）
+    bool delimitedAlphabet = false;
+    std::string delimitedAlphabetStart = "_";
+    std::string delimitedAlphabetEnd = "_";
+    // AIで直す（macOS版では開発者モードの項目。既定 OFF）: 誤変換の疑いの閾値（文字ごとのマージンの最小値）と
+    // ショートカット（窓が出ていなくても、入力中なら AI に送る）
+    bool aiFix = false;
+    double aiFixThreshold = 1.0;
+    std::string aiFixShortcut = "Ctrl+Alt+A";
 };
 
 Config LoadConfig(const std::filesystem::path& path);

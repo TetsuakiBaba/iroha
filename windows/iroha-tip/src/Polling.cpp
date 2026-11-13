@@ -66,7 +66,8 @@ void TextService::DestroyPollWindow() {
 
 void TextService::OnPollTimer() {
     if (!polling_) return;
-    if (!composition_ || !compositionContext_ || (!shown_.livePending && !shown_.typoPending && !shown_.aiPending) ||
+    if (!composition_ || !compositionContext_ ||
+        (!shown_.livePending && !shown_.typoPending && !shown_.aiPending && !shown_.aiFixPending) ||
         GetTickCount() - pollStartedTick_ > (shown_.aiPending ? kAIPollLimitMs : kPollLimitMs)) {
         StopPolling();
         return;

@@ -7,6 +7,7 @@ project(iroha-core LANGUAGES CXX)
 add_library(iroha-core STATIC
     src/chunked_conversion_engine.cpp
     src/ai_conversion.cpp
+    src/ai_fix.cpp
     src/config.cpp
     src/input_history.cpp
     src/conversion_log.cpp

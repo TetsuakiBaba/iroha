@@ -55,12 +55,21 @@ public:
                  std::string* error) override;
 
     // 貪欲変換の第一候補と、その系列（終端まで）の対数確率
+    // 変換結果の 1 文字ぶんの自信度（macOS版 CharacterConfidence）。文字が複数トークンにまたがる・
+    // 1 トークンが複数文字を含む場合は、その文字に関わるトークンのうち最も低い値を採る
+    struct CharacterConfidence {
+        float logProb = 0;  // この文字を出したトークンの対数確率（nat）
+        float margin = 0;   // 読み制約を満たすトークンのうち 1 位と 2 位の対数確率の差（競合が無ければ +inf）
+        bool relaxed = false; // 読み制約を諦めて素の最尤トークンを選んだ
+    };
     struct ScoredConversion {
         std::u32string text;
         float logProb = 0;
+        // text の文字（書記素）と同じ数・同じ順
+        std::vector<CharacterConfidence> confidences;
     };
-    // 貪欲変換の第一候補を対数確率つきで返す（macOS版 convertWithConfidence から、文字ごとの
-    // 自信度を除いたもの）。何も生成できなければ読みをそのまま返し、対数確率は -inf
+    // 貪欲変換の第一候補を、対数確率と文字ごとの自信度つきで返す（macOS版 convertWithConfidence）。
+    // 何も生成できなければ読みをそのまま返し、対数確率は -inf（文字ごとの自信は無いものとする）
     bool ConvertScored(const std::u32string& reading, const std::u32string& leftContext,
                        ScoredConversion* result, std::string* error);
 

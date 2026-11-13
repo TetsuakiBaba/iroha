@@ -356,6 +356,14 @@ TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) co
     }
     // プライベートモードの切り替え（Ctrl+Alt+P。入力中かどうかによらず効く。macOS版の Ctrl+Option+P）
     if (control && alt && wParam == 'P') return session(iroha::SessionKey::TogglePrivateMode);
+    // AIで直すのキー（設定 aiFixShortcut。既定 Ctrl+Alt+A）。入力中だけ
+    if (composing && !segmenting && shown_.aiFixShortcut != 0) {
+        const iroha::KeyShortcut shortcut = iroha::KeyShortcut::Decode(shown_.aiFixShortcut);
+        if (shortcut.vk == wParam && shortcut.control == control && shortcut.alt == alt &&
+            shortcut.shift == decision.shift) {
+            return session(iroha::SessionKey::AIFix);
+        }
+    }
     // AI変換のキー（プリセットごとに設定で決める。既定は英訳の Alt+Enter）。入力中だけ
     if (composing) {
         for (size_t i = 0; i < shown_.aiShortcuts.size(); ++i) {
@@ -558,8 +566,8 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
         predictionWindow_.Hide();
     }
     UpdateTypoFeedback(context, output, synchronous);
-    // ライブ変換・打ち間違いの訂正・AI変換の結果待ちの間は問い合わせる
-    if (shown_.livePending || shown_.typoPending || shown_.aiPending) {
+    // ライブ変換・打ち間違いの訂正・AI変換・AIで直すの結果待ちの間は問い合わせる
+    if (shown_.livePending || shown_.typoPending || shown_.aiPending || shown_.aiFixPending) {
         StartPolling();
     } else {
         StopPolling();
@@ -642,15 +650,22 @@ bool TextService::CompositionRectIn(TfEditCookie ec, ITfContext* context, RECT* 
 // ライブ変換が ON だと画面に出るのは変換後の文字列なので、読みのどこが直ったかはここでしか見せられない。
 // 小窓が出ている間は Backspace で戻せる。出しっぱなしにしないよう 4 秒で閉じる（取り消しはそのまま効く）
 void TextService::UpdateTypoFeedback(ITfContext* context, const iroha::SessionOutput& output, bool synchronous) {
-    if (!output.typoFeedback) {
+    // 出すものの順: 打ち間違いの訂正 → AI の案（「今の変換 → AI の案」）→ AIで直すの窓・知らせ
+    std::u32string text;
+    if (output.typoFeedback) {
+        text = output.typoFeedback->Original() + U" → " + output.typoFeedback->Corrected() + U"　（⌫ で戻す）";
+    } else if (output.aiFixFeedback) {
+        text = output.aiFixFeedback->Original() + U" → " + output.aiFixFeedback->Corrected() + U"　（⌫ で戻す）";
+    } else {
+        text = output.aiFixNotice;
+    }
+    if (text.empty()) {
         if (!typoFeedbackShown_.empty()) {
             typoFeedbackShown_.clear();
             noticeWindow_.Hide();
         }
         return;
     }
-    const std::u32string text = output.typoFeedback->Original() + U" → " + output.typoFeedback->Corrected() +
-                                U"　（⌫ で戻す）";
     if (text == typoFeedbackShown_ || !EnsurePollWindow()) return;
     typoFeedbackShown_ = text;
     const auto show = [this, text](const RECT& rect, HWND owner) {

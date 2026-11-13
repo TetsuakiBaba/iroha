@@ -25,6 +25,12 @@ AIService ParseAIService(const std::string& value);
 const char* AIServiceKey(AIService service);
 std::u32string AIServiceDisplayName(AIService service);
 
+// AI に依頼した結果（失敗なら text が無く、error に理由）
+struct AIOutcome {
+    std::optional<std::u32string> text;
+    std::string error;
+};
+
 // AI への 1 回の依頼（指示 + 入力テキスト）
 struct AIRequest {
     std::u32string instructions;

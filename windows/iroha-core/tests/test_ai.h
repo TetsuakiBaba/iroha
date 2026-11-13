@@ -3,11 +3,13 @@
 // macOS版には対応するテストが無い（iroha 本体のターゲットはテストしていない）ので、Windows版で足したもの。
 // test_main.cpp からインクルードされる（テストマクロを共有するため）。
 
+#include <limits>
 #include <string>
 #include <vector>
 
 #include "../../shared/key_shortcut.h"
 #include "iroha/ai_conversion.h"
+#include "iroha/ai_fix.h"
 
 namespace {
 
@@ -89,7 +91,32 @@ void TestKeyShortcut() {
     EXPECT_TRUE(decoded.vk == 0x0D && decoded.control && decoded.alt && !decoded.shift);
 }
 
+// AIで直すの規則（macOS版 AIFixRule と同じ）
+void TestAIFixRule() {
+    const float inf = std::numeric_limits<float>::infinity();
+    EXPECT_TRUE(iroha::AIFixRule::MinimumMargin({3.0f, 0.4f, inf}) == 0.4f);
+    EXPECT_TRUE(iroha::AIFixRule::MinimumMargin({}) == inf);
+    // 表示がモデルの生成と同じで、最小のマージンが閾値より小さいときだけ疑う
+    EXPECT_TRUE(iroha::AIFixRule::IsSuspicious(U"記者", {0.5f, 3.0f}, U"記者", U"きしゃ", 1.0));
+    EXPECT_TRUE(!iroha::AIFixRule::IsSuspicious(U"記者", {1.5f, 3.0f}, U"記者", U"きしゃ", 1.0));
+    EXPECT_TRUE(!iroha::AIFixRule::IsSuspicious(U"記者", {0.5f, 3.0f}, U"汽車", U"きしゃ", 1.0)); // 学習で差し替わった
+    EXPECT_TRUE(!iroha::AIFixRule::IsSuspicious(U"記者", {}, U"記者", U"きしゃ", 1.0));
+    EXPECT_TRUE(!iroha::AIFixRule::IsSuspicious(U"あ", {0.1f}, U"あ", std::u32string(81, U'あ'), 1.0));
+    EXPECT_EQ(iroha::AIFixRule::Message(U"", U"きしゃ", U"記者"), U"前の文脈: （なし）\n読み: キシャ\n変換結果: 記者");
+    // 「今の変換 → AI の案」の割り付け
+    const auto feedback = iroha::AIFixRule::Feedback(U"記者が来た", U"汽車が来た");
+    EXPECT_TRUE(feedback && feedback->prefix.empty() && feedback->originalChanged == U"記者" &&
+                feedback->correctedChanged == U"汽車" && feedback->suffix == U"が来た");
+    EXPECT_TRUE(!iroha::AIFixRule::Feedback(U"同じ", U"同じ"));
+    // 答え: 複数行なら最後の空でない行。変換結果の 2 倍を超える長さは捨てる
+    EXPECT_TRUE(iroha::AIFixRule::Answer(U"確認しました。\n\n汽車が来た\n", U"記者が来た") ==
+                std::optional<std::u32string>(U"汽車が来た"));
+    EXPECT_TRUE(!iroha::AIFixRule::Answer(U"  \n", U"記者"));
+    EXPECT_TRUE(!iroha::AIFixRule::Answer(U"前の文脈も含めた長い長い答えです", U"記者"));
+}
+
 void RunAITests() {
+    TestAIFixRule();
     TestAIRequestBuild();
     TestAIResponseParsing();
     TestKeyShortcut();

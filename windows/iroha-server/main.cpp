@@ -309,6 +309,20 @@ struct ServerState {
         sessionSettings.typoMinimumLength = config.typoMinimumLength;
         LoadTypoNormalizer(config.typoCorrection);
         LoadAI(config);
+        // 区切り記号の英字入力。記号は英字・数字以外の ASCII の記号 1 文字（使えない値なら「_」。macOS版と同じ）
+        const auto symbol = [](const std::string& text) -> char32_t {
+            const bool valid = text.size() == 1 && text[0] >= 0x21 && text[0] <= 0x7E &&
+                               !std::isalnum(static_cast<unsigned char>(text[0]));
+            return valid ? static_cast<char32_t>(text[0]) : U'_';
+        };
+        sessionSettings.aiFix = config.aiFix;
+        sessionSettings.aiFixThreshold = config.aiFixThreshold;
+        const auto fixShortcut = iroha::KeyShortcut::Parse(config.aiFixShortcut);
+        sessionSettings.aiFixShortcut = fixShortcut ? fixShortcut->Encode() : 0;
+        sessionSettings.aiFixShortcutLabel = fixShortcut ? iroha::Utf8ToUtf32(config.aiFixShortcut) : U"";
+        sessionSettings.delimitedAlphabet = config.delimitedAlphabet;
+        sessionSettings.delimitedStart = symbol(config.delimitedAlphabetStart);
+        sessionSettings.delimitedEnd = symbol(config.delimitedAlphabetEnd);
         sessionSettings.conversionLogScope = config.conversionLogCorrectionsOnly
                                                  ? iroha::ConversionLogScope::Corrections
                                                  : iroha::ConversionLogScope::All;
@@ -473,6 +487,33 @@ public:
     }
 
     bool TypoCorrectionAvailable() override { return state_->Typo() != nullptr; }
+
+    // AIで直す: 学習・ユーザ辞書・辞書ラティスを通さない、モデル単体の貪欲変換（macOS版と同じ）
+    ScoredText ScoreConversion(const std::u32string& reading, const std::u32string& context) override {
+        ScoredText scored;
+        if (!state_->zenz) return scored;
+        iroha::ZenzEngine::ScoredConversion result;
+        std::string error;
+        if (!state_->zenz->ConvertScored(reading, context, &result, &error)) return scored;
+        scored.text = result.text;
+        for (const auto& confidence : result.confidences) scored.margins.push_back(confidence.margin);
+        return scored;
+    }
+
+    iroha::AIOutcome RunAIRequest(const iroha::AIRequest& request, int stallSeconds, iroha::CancelToken* cancel) override {
+        iroha::AIConnection connection;
+        {
+            std::lock_guard<std::mutex> lock(state_->aiMutex);
+            connection = state_->aiConnection;
+        }
+        const auto start = GetTickCount64();
+        const iroha::AIResult result = iroha::AIClient::Run(connection, request, nullptr, cancel, stallSeconds);
+        char message[512];
+        std::snprintf(message, sizeof(message), "ai fix %s (%llums)%s%s", iroha::AIServiceKey(connection.service),
+                      GetTickCount64() - start, result.text ? "" : ": ", result.text ? "" : result.error.c_str());
+        Log(message);
+        return iroha::AIOutcome{result.text, result.error};
+    }
 
     std::optional<std::u32string> RunAI(size_t preset, const std::u32string& text,
                                         const std::function<void(const std::u32string&)>& onPartial,

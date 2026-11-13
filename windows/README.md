@@ -209,12 +209,14 @@ windows\build\iroha-cli\iroha-cli.exe session --interval 120 "kyouhaiitenkidesun
   全角（`"fullWidthSpace": false` で半角）。合成中の矢印は握りつぶし、IME が扱わないキー（Tab・Ctrl+S など）は
   確定してからアプリに渡す（**TSF で OnKeyDown が「食わない」と返したキーがアプリに届くことは、実機で確かめる**）
 - 候補の数は設定画面の「入力」タブ（`config.json` の `candidateCount`、既定 8。macOS版と同じ）
+- 区切り記号で囲んだ英字入力（macOS版では開発者モードの項目。Windows版は `config.json` の `"delimitedAlphabet": true` で使う）:
+  かな入力のまま「_」から「_」までを打ったとおりの英字にする（「kyouha_iPhone_wo」→「今日はiPhoneを」）。Shift+Space で
+  英字の中にスペース、「__」で記号そのもの。記号は `delimitedAlphabetStart`・`delimitedAlphabetEnd` で変えられる
 - 候補ウィンドウは 9 件ずつの列で、候補が 1 列に収まらないときは Tab で列を横に並べた表に広げる（もう 1 度で 1 列に戻す）。
   表に広げている間だけ ←→ は隣の列へ移る（macOS版の `CandidateGrid` を `iroha-core` の `candidate_grid.h` に移した。
   テストは 1 対 1）
 
-未対応（macOS版にあるもの）: 区切り記号で囲んだ英字入力・
-AIで直す（誤変換の疑いの判定。文字ごとの自信度が未移植）・選択テキストのAI編集・「こえ」モード。
+未対応（macOS版にあるもの）: 選択テキストのAI編集・「こえ」モード。
 変換サーバが止まっている間は、かな入力もできない（キーを受けても表示を決められない）
 
 ## 予測変換・変換ルール・プライベートモード・変換記録
@@ -264,6 +266,21 @@ windows\build\iroha-cli\iroha-cli.exe ai models
 # 変換サーバを通して（<ai0> がプリセット 1 つ目のキー）
 windows\build\iroha-cli\iroha-cli.exe session --interval 60 "kyouhatenkigaiidesune<wait><ai0><wait>"
 ```
+
+### AIで直す
+
+macOS版で開発者モードにだけある「AIで直す」も移した（2026-11-13。`config.json` の `"aiFix": true` で使う。既定 OFF）。
+入力が止まって 500ms たったら、モデル単体でもう一度変換して文字ごとの自信度（読み制約を満たす 1 位と 2 位の
+トークンの対数確率の差。`ZenzEngine::ConvertScored` が返す）を求め、表示中の変換と同じで最小の差が閾値
+（`aiFixThreshold`、既定 1.0）より小さければ、カーソルの下に「AIで直す（Ctrl+Alt+A）」を出す。キー（`aiFixShortcut`）を押すと、
+前の文脈・読み・変換結果を AI変換と同じ接続先に送り、案を文節に区切って差し替え、「今の変換 → AI の案」を出す。
+直後の Backspace で元の変換に戻す。キーは窓が出ていなくても、入力中ならいつでも使える
+
+- 規則（疑いの判定・依頼の文面・答えの読み方）は `iroha-core` の `ai_fix`（macOS版の `AIFixRule` と同じ）。
+  判定はライブ変換が終わるのを待ってから変換エンジンを使う（ライブ変換を止めない）
+- macOS版の窓はクリックでも送れるが、Windows版はキーだけ（候補ウィンドウと同じく、フォーカスを取らない窓のため）
+- 確認（2026-11-13）: 「きしゃがきた」→「汽車が来た」は「汽」の差が 0.55 で窓が出た。この機械の LM Studio に送って
+  答えが同じときの知らせまで動いた（`iroha-cli confidence <読み>` で文字ごとの値を見られる）
 
 ## 打ち間違いの訂正
 
@@ -401,6 +418,7 @@ windows\build\iroha-cli\iroha-cli.exe lattice goenseihaien
       TIP はキーを送って表示を反映するだけ）
 - [x] M7e-1: 記号・顔文字・絵文字の候補（Mozc のデータ、Windows で描けない絵文字を除く、候補ウィンドウを Direct2D で描く）
 - [x] M7e-2: 専門辞書（設定画面のタブ・辞書ラティスへの組み込み・候補の辞書名の印）
+- [x] M7j: 候補ウィンドウを表に広げる（Tab）・区切り記号で囲んだ英字入力・AIで直す
 - [x] M7i: AI変換（Ollama・LM Studio・OpenAI互換・Claude、プリセット 3 つ、設定画面の「AI」タブ）
 - [x] M7h: 打ち間違いの訂正（TypoNormalizer の C++ 移植・休止での訂正と取り消し・文節の訂正候補・設定画面からの取得）
 - [x] M7g: macOS版のキーの扱い（表示形・英字入力・文節の打ち直し・確定の取り消し・句読点の切り替え）、
