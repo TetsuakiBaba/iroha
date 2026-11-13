@@ -48,7 +48,12 @@ powershell -ExecutionPolicy Bypass -File windows\scripts\build-llama.ps1 -Backen
 powershell -ExecutionPolicy Bypass -File windows\scripts\build-tip.ps1 -Vulkan
 # 注意: zenz-v3.1-small級の小型モデルでは内蔵GPU（Intel Iris Plus実測）だと
 # CPU AVX2より約2倍遅い（n=1: 71ms→157ms）。既定はCPUビルドとし、
-# VulkanはディスクリートGPU向けのオプション扱い
+# VulkanはディスクリートGPU向けのオプション扱い。
+# iroha-kkc-v1（T5）でも同じ（2026-11-13、Core i7-1065G7 / Iris Plus、IROHA_LATTICE=off）:
+#   eval.tsv 40件  CPU 56〜74ms → Vulkan 167〜171ms（出力は同じ 38/40）
+#   AJIMEE 200件   CPU 163ms（172/200）→ Vulkan 259ms（171/200）
+# 読みが長いほど差は縮むが、内蔵GPUでは逆転しない。ディスクリートGPUでは未計測。
+# Vulkanビルドのまま IROHA_GPU_LAYERS=0 でCPU推論にできる（eval.tsv 61ms。CPUビルドと同じ速さ）
 
 # エンジンの検証・評価（macOS版と同じeval.tsvで数値を突き合わせる）
 windows\build\iroha-cli\iroha-cli.exe convert kyouhaiitenki
