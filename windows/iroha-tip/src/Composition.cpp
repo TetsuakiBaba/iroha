@@ -34,6 +34,35 @@ HRESULT TextService::EnsureComposition(TfEditCookie ec, ITfContext* context) {
     return hr;
 }
 
+HRESULT TextService::StartCompositionBeforeCaret(TfEditCookie ec, ITfContext* context, LONG length) {
+    if (composition_) return S_OK;
+    TF_SELECTION selection = {};
+    ULONG fetched = 0;
+    HRESULT hr = context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
+    if (FAILED(hr) || fetched != 1 || !selection.range) return FAILED(hr) ? hr : E_FAIL;
+    ITfRange* range = nullptr;
+    hr = selection.range->Clone(&range);
+    selection.range->Release();
+    if (FAILED(hr) || !range) return FAILED(hr) ? hr : E_FAIL;
+    range->Collapse(ec, TF_ANCHOR_END);
+    LONG shifted = 0;
+    range->ShiftStart(ec, -length, &shifted, nullptr);
+    ITfContextComposition* contextComposition = nullptr;
+    hr = context->QueryInterface(IID_PPV_ARGS(&contextComposition));
+    if (SUCCEEDED(hr)) {
+        hr = contextComposition->StartComposition(
+            ec, range, static_cast<ITfCompositionSink*>(this), &composition_);
+        if (SUCCEEDED(hr) && !composition_) hr = E_FAIL;
+        contextComposition->Release();
+    }
+    range->Release();
+    if (SUCCEEDED(hr)) {
+        compositionContext_ = context;
+        compositionContext_->AddRef();
+    }
+    return hr;
+}
+
 namespace {
 
 // range の先頭から [start, end)（UTF-16単位）の範囲を切り出す

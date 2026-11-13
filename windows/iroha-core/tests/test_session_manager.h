@@ -47,10 +47,10 @@ public:
 
     void SetCancelCheck(std::function<bool()> check) override { cancelCheck_ = std::move(check); }
 
-    void RecordCommit(const std::u32string& reading, const std::u32string& baseline,
-                      const std::u32string& committed) override {
+    void RecordCommit(const std::u32string& reading, const std::u32string& engineBaseline,
+                      const std::u32string& baseline, const std::u32string& committed) override {
         std::lock_guard<std::mutex> lock(mutex);
-        commits.push_back(reading + U"/" + baseline + U"/" + committed);
+        commits.push_back(reading + U"/" + engineBaseline + U"/" + baseline + U"/" + committed);
     }
 
     struct Call {
@@ -178,24 +178,25 @@ void TestManagerKeyConversionPreemptsLive() {
     }
 }
 
-// 文節変換で確定すると学習に知らせる。WithEngine はライブ変換をやめさせて行う
+// 文節変換で候補を選んで確定すると、次のキーで学習に知らせる。WithEngine はライブ変換をやめさせて行う
 void TestManagerRecordsCommitAndRunsExclusiveWork() {
     FakeSessionBackend backend;
     backend.table[U"きしゃ"] = U"記者";
     {
         iroha::SessionManager manager(&backend);
         TypeKeys(manager, 1, U"kisha");
-        manager.HandleKey(1, iroha::SessionKey::Space, 0, false, nullptr);
+        manager.HandleKey(1, iroha::SessionKey::Space, 0, false, nullptr); // 候補ウィンドウを開く
+        manager.HandleKey(1, iroha::SessionKey::Space, 0, false, nullptr); // 次の候補（きしゃ）
         manager.HandleKey(1, iroha::SessionKey::Enter, 0, false, nullptr);
-        {
-            std::lock_guard<std::mutex> lock(backend.mutex);
-            EXPECT_TRUE(backend.commits.size() == 1);
-            if (backend.commits.size() == 1) EXPECT_EQ(backend.commits[0], U"きしゃ/記者/記者");
-        }
 
         backend.holdLive = true;
         const int startedBefore = backend.liveStarted.load();
         TypeKeys(manager, 1, U"ka");
+        {
+            std::lock_guard<std::mutex> lock(backend.mutex);
+            EXPECT_TRUE(backend.commits.size() == 1);
+            if (backend.commits.size() == 1) EXPECT_EQ(backend.commits[0], U"きしゃ/記者/記者/きしゃ");
+        }
         EXPECT_TRUE(WaitUntil([&] { return backend.liveStarted.load() > startedBefore; }));
         bool ran = false;
         manager.WithEngine([&] { ran = true; });

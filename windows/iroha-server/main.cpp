@@ -15,6 +15,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -129,7 +130,8 @@ struct ServerState {
     std::unique_ptr<iroha::LearningStore> learning;
     std::unique_ptr<iroha::UserDictionaryEngine> dictionaryEngine;
     std::unique_ptr<iroha::LearningEngine> engine;
-    bool liveConversion = true;
+    // セッションの設定（ライブ変換・句読点・全角スペース・候補数）
+    iroha::SessionSettings sessionSettings;
     // 記号・顔文字・絵文字の表（設定で切ってあれば nullptr。読み込みは初めて要るときに 1 回だけ）
     std::shared_ptr<const iroha::SymbolCandidateTable> symbols;
     std::shared_ptr<const iroha::SymbolCandidateTable> loadedSymbols;
@@ -170,7 +172,10 @@ struct ServerState {
     void Build() {
         const iroha::Config config =
             iroha::LoadConfig(std::filesystem::path(DataDir() + L"\\config.json"));
-        liveConversion = config.liveConversion;
+        sessionSettings.liveConversion = config.liveConversion;
+        sessionSettings.punctuation = config.punctuation;
+        sessionSettings.fullWidthSpace = config.fullWidthSpace;
+        sessionSettings.candidateCount = config.candidateCount;
         if (config.symbolCandidates && !symbolsLoaded) {
             symbolsLoaded = true;
             if (const auto directory =
@@ -244,11 +249,13 @@ struct ServerState {
 // （macOS版 IrohaInputController.learnIfCorrected と同じ規則）。
 // 覚えるのは入力の読み全体 → 確定文字列と、直す前にエンジンが出していた結果。
 // 学習が差し替えた結果を、ユーザがエンジンの結果に戻して確定したら、その学習を消す
+// engineBaseline が分からない（前の版の TIP からの Record）なら、エンジンに聞く
 void RecordCorrection(ServerState& state, const std::u32string& reading,
+                      const std::optional<std::u32string>& engineBaseline,
                       const std::u32string& baseline, const std::u32string& committed) {
     if (committed == baseline || committed.empty() || !state.engine) return;
     const std::u32string engineResult =
-        state.engine->EngineResult(reading, baseline).value_or(baseline);
+        engineBaseline ? *engineBaseline : state.engine->EngineResult(reading, baseline).value_or(baseline);
     if (committed == engineResult) {
         state.learning->Forget(reading, engineResult, baseline);
         Log("learning forgotten");
@@ -282,9 +289,31 @@ public:
         if (state_->zenz) state_->zenz->SetCancelCheck(std::move(check));
     }
 
-    void RecordCommit(const std::u32string& reading, const std::u32string& baseline,
-                      const std::u32string& committed) override {
-        RecordCorrection(*state_, reading, baseline, committed);
+    void RecordCommit(const std::u32string& reading, const std::u32string& engineBaseline,
+                      const std::u32string& baseline, const std::u32string& committed) override {
+        RecordCorrection(*state_, reading, engineBaseline, baseline, committed);
+    }
+
+    std::optional<std::u32string> EngineResult(const std::u32string& reading,
+                                               const std::u32string& shown) override {
+        if (!state_->engine) return std::nullopt;
+        return state_->engine->EngineResult(reading, shown);
+    }
+
+    void ForgetLearning(const std::u32string& reading, const std::u32string& engineResult,
+                        const std::u32string& shown) override {
+        if (!state_->learning) return;
+        state_->learning->Forget(reading, engineResult, shown);
+        Log("learning forgotten (display form chosen)");
+    }
+
+    // Ctrl+. で切り替えた句読点を設定に保存する（次に起動したときも同じにする。macOS版と同じ）
+    void PunctuationChanged(const std::u32string& punctuation) override {
+        const std::filesystem::path path(DataDir() + L"\\config.json");
+        iroha::Config config = iroha::LoadConfig(path);
+        config.punctuation = punctuation;
+        iroha::SaveConfig(path, config);
+        state_->sessionSettings.punctuation = punctuation;
     }
 
 private:
@@ -349,7 +378,7 @@ bool HandleRequest(ServerState& state, iroha::SessionManager& sessions,
         case iroha::ipc::MessageType::Reload: {
             Log("reload requested");
             sessions.WithEngine([&] { state.Build(); });
-            sessions.SetLiveConversionEnabled(state.liveConversion);
+            sessions.SetSettings(state.sessionSettings);
             sessions.SetSymbolTable(state.symbols);
             sessions.SetTermLookup(state.termLookup);
             *response = iroha::ipc::BuildOkResponse({});
@@ -366,8 +395,7 @@ bool HandleRequest(ServerState& state, iroha::SessionManager& sessions,
                 *response = iroha::ipc::BuildErrorResponse("プロトコルが不正です");
                 return true;
             }
-            if (key < static_cast<uint32_t>(iroha::SessionKey::Character) ||
-                key > static_cast<uint32_t>(iroha::SessionKey::Reset)) {
+            if (key < static_cast<uint32_t>(iroha::SessionKey::Character) || key > iroha::kMaxSessionKey) {
                 *response = iroha::ipc::BuildErrorResponse("未知のキーです");
                 return true;
             }
@@ -411,7 +439,7 @@ bool HandleRequest(ServerState& state, iroha::SessionManager& sessions,
                 return true;
             }
             sessions.WithEngine([&] {
-                RecordCorrection(state, iroha::Utf8ToUtf32(readingUtf8),
+                RecordCorrection(state, iroha::Utf8ToUtf32(readingUtf8), std::nullopt,
                                  iroha::Utf8ToUtf32(baselineUtf8),
                                  iroha::Utf8ToUtf32(committedUtf8));
             });
@@ -444,7 +472,7 @@ int wmain() {
     // セッションの表とライブ変換のスレッド（state より先に片付ける）
     ServerBackend backend(&state);
     iroha::SessionManager sessions(&backend);
-    sessions.SetLiveConversionEnabled(state.liveConversion);
+    sessions.SetSettings(state.sessionSettings);
     sessions.SetSymbolTable(state.symbols);
     sessions.SetTermLookup(state.termLookup);
 

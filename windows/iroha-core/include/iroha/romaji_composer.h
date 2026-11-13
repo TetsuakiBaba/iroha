@@ -27,6 +27,12 @@ public:
 
     void Clear();
 
+    // 確定済みかなの先頭に文字列を挿入する（固定表示を解除して読みに戻すときに使う）。
+    // 挿入したかなは打鍵列と対応しないので Raw は使えなくなる
+    void PrependText(const std::u32string& kana);
+    // 確定済みかなを丸ごと置き換える（文節の打ち直しを終えたときなど）。Raw は使えなくなる
+    void ReplaceText(const std::u32string& kana);
+
     // 画面表示用の未確定文字列（かな + 未解決ローマ字）
     std::u32string Display() const { return text_ + pending_; }
     bool Empty() const { return text_.empty() && pending_.empty(); }

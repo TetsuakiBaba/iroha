@@ -1,5 +1,6 @@
 #include "iroha/config.h"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -35,6 +36,18 @@ Config LoadConfig(const std::filesystem::path& path) {
     if (const json::Value* symbols = root.Find("symbolCandidates")) {
         if (symbols->type == json::Value::Type::Bool) config.symbolCandidates = symbols->boolean;
     }
+    if (const json::Value* punctuation = root.Find("punctuation")) {
+        const std::u32string value = Utf8ToUtf32(punctuation->AsString());
+        if (value == U"、。" || value == U"，．") config.punctuation = value;
+    }
+    if (const json::Value* space = root.Find("fullWidthSpace")) {
+        if (space->type == json::Value::Type::Bool) config.fullWidthSpace = space->boolean;
+    }
+    if (const json::Value* count = root.Find("candidateCount")) {
+        if (count->type == json::Value::Type::Number) {
+            config.candidateCount = std::max(3, std::min(16, static_cast<int>(count->number)));
+        }
+    }
     return config;
 }
 
@@ -42,6 +55,9 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
     std::string out = "{\"model\":" + json::QuoteString(Utf32ToUtf8(config.model)) +
                       ",\"liveConversion\":" + (config.liveConversion ? "true" : "false") +
                       ",\"symbolCandidates\":" + (config.symbolCandidates ? "true" : "false") +
+                      ",\"punctuation\":" + json::QuoteString(Utf32ToUtf8(config.punctuation)) +
+                      ",\"fullWidthSpace\":" + (config.fullWidthSpace ? "true" : "false") +
+                      ",\"candidateCount\":" + std::to_string(config.candidateCount) +
                       ",\"version\":1}";
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);

@@ -25,7 +25,8 @@
 //   iroha-cli session [--context 文脈] [--interval ミリ秒] <キー列>
 //                                                 : 変換サーバのセッションにキーを順に送り、TIP が画面に出す内容を見る。
 //                                                   キー列は打つ文字をそのまま並べ、特別なキーは <space> <enter> <esc>
-//                                                   <bs> <left> <right> <up> <down>（Shift は <S-left> のように）と書く。
+//                                                   <bs> <left> <right> <up> <down> <f6>〜<f10> <punct>（Ctrl+.）
+//                                                   <undo>（確定の取り消し）（Shift は <S-left> のように）と書く。
 //                                                   既定ではキーごとにライブ変換の到着を待つ。--interval を付けると
 //                                                   待たずにその間隔で送る（変換が打鍵に追いつかないときの表示を見る）
 //   iroha-cli repl                                : 対話モード
@@ -1022,10 +1023,17 @@ bool ParseKeyStrokes(const std::u32string& text, std::vector<SessionKeyStroke>* 
         {U"left", iroha::SessionKey::Left},   {U"right", iroha::SessionKey::Right},
         {U"up", iroha::SessionKey::Up},       {U"down", iroha::SessionKey::Down},
         {U"commit", iroha::SessionKey::CommitNow}, {U"reset", iroha::SessionKey::Reset},
+        {U"f6", iroha::SessionKey::DisplayHiragana}, {U"f7", iroha::SessionKey::DisplayKatakana},
+        {U"f8", iroha::SessionKey::DisplayHalfKatakana},
+        {U"f9", iroha::SessionKey::DisplayFullAlphanumeric},
+        {U"f10", iroha::SessionKey::DisplayHalfAlphanumeric},
+        {U"punct", iroha::SessionKey::TogglePunctuation}, {U"undo", iroha::SessionKey::UndoCommit},
     };
     for (size_t i = 0; i < text.size(); ++i) {
         if (text[i] != U'<') {
-            strokes->push_back({iroha::SessionKey::Character, text[i], false, std::u32string(1, text[i])});
+            // 大文字は Shift を押して打ったものとして送る（TIP と同じ）
+            const bool upper = text[i] >= U'A' && text[i] <= U'Z';
+            strokes->push_back({iroha::SessionKey::Character, text[i], upper, std::u32string(1, text[i])});
             continue;
         }
         const size_t close = text.find(U'>', i);

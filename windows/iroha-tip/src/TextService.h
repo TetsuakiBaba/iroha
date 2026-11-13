@@ -76,6 +76,8 @@ private:
         enum class Kind {
             None,             // 受けない（アプリに渡す）
             Session,          // 変換サーバのセッションに送る
+            CommitThenPass,   // 今の未確定文字列を確定してから、キーはアプリに渡す（Tab・Ctrl+S など）
+            UndoCommit,       // 直前の確定の取り消し（カーソルの手前が確定した文字列のままのときだけ）
             ToggleDirectMode, // かな⇔英数の切替（半角/全角キー等）
             SetKanaMode,      // ひらがなキー
             SetDirectMode,    // 無変換/英数キー
@@ -86,7 +88,10 @@ private:
         bool shift = false;
     };
     KeyDecision DecideKey(WPARAM wParam, LPARAM lParam) const;
-    HRESULT HandleKey(ITfContext* context, const KeyDecision& decision);
+    // キーを処理する。キーをアプリに渡すなら passToApp を真にする
+    HRESULT HandleKey(ITfContext* context, const KeyDecision& decision, bool* passToApp);
+    // カーソルの手前（選択なし）が text のままか
+    bool TextBeforeCaretIs(ITfContext* context, const std::u32string& text);
 
     // キーを変換サーバに送り、返ってきた表示を反映する
     HRESULT SendSessionKey(ITfContext* context, iroha::SessionKey key, char32_t character,
@@ -111,6 +116,8 @@ private:
 
     // コンポジション操作（Composition.cpp）
     HRESULT EnsureComposition(TfEditCookie ec, ITfContext* context);
+    // カーソルの手前 length 文字（UTF-16）を覆う合成を始める（確定の取り消し）
+    HRESULT StartCompositionBeforeCaret(TfEditCookie ec, ITfContext* context, LONG length);
     HRESULT SetPreedit(TfEditCookie ec, ITfContext* context, const iroha::SessionOutput& output);
     void EndCompositionInternal(TfEditCookie ec, ITfContext* context,
                                 const std::wstring& finalText);
@@ -133,6 +140,12 @@ private:
     // 候補ウィンドウの位置合わせ、ライブ変換の問い合わせ（revision）に使う
     iroha::SessionOutput shown_;
     CandidateWindow candidateWindow_;
+    // 合成していないときのキーの判断に使う、直近の返事の内容（合成が終わっても残す）:
+    // 取り消せる確定（Ctrl+Backspace を受けるか）と、Space を全角にするか
+    std::u32string idleUndoable_;
+    bool idleFullWidthSpace_ = true;
+    // 確定の取り消しで、未確定文字列に置き換えるカーソルの手前の長さ（UTF-16）
+    LONG replaceBeforeLength_ = 0;
 
     // ライブ変換の結果待ちの間だけ動かすタイマー（メッセージ専用ウィンドウに付ける）
     HWND pollWindow_ = nullptr;

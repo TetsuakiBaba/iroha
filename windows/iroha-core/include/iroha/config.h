@@ -25,6 +25,12 @@ struct Config {
     bool liveConversion = true;
     // 文節の候補ウィンドウに記号・顔文字・絵文字（Mozc のデータ）を足すか
     bool symbolCandidates = true;
+    // 句読点（「,」「.」キーで入れる文字の組。"、。" か "，．"。Ctrl+. で切り替えると保存する）
+    std::u32string punctuation = U"、。";
+    // 入力していないときの Space を全角スペースにするか（偽なら半角。Shift+Space は常に半角）
+    bool fullWidthSpace = true;
+    // 文節の候補として求める数（3〜16）
+    int candidateCount = 8;
 };
 
 Config LoadConfig(const std::filesystem::path& path);

@@ -21,8 +21,11 @@
 //                ok: u32 changed（0 なら以降なし）, u64 revision, string commit, u32 flags,
 //                    u32 spanCount, (u32 style, string text)×spanCount,
 //                    u32 candidateIndex, u32 candidateCount, string×candidateCount,
-//                    u32 annotationCount, string×annotationCount（候補の右に出す印。後から足したので、
-//                    無い返事も読めるようにしてある）
+//                    u32 annotationCount, string×annotationCount（候補の右に出す印）,
+//                    string undoableCommit（取り消せる確定）
+//                    （印と取り消せる確定は後から足したので、無い返事も読めるようにしてある）
+//                flags: 1 文節変換中 / 2 変換の結果待ち / 4 候補ウィンドウ / 8 入力していないときの Space は全角 /
+//                       16 確定した文字列を未確定文字列に置き換える（UndoCommit への返事）
 //                エラー: string message
 //
 // セッションのメッセージは、入力の状態（読み・ライブ変換・文節・候補）をサーバ側に持つためのもの
@@ -202,6 +205,8 @@ constexpr uint32_t kKeyFlagHasLeftContext = 2;
 constexpr uint32_t kOutputFlagSegmenting = 1;
 constexpr uint32_t kOutputFlagLivePending = 2;
 constexpr uint32_t kOutputFlagCandidatesVisible = 4;
+constexpr uint32_t kOutputFlagFullWidthSpace = 8;
+constexpr uint32_t kOutputFlagReplacesCommitted = 16;
 
 // leftContext は、合成していないときにカーソルより前から読んだ文書のテキスト（読めなければ nullptr）
 inline std::vector<char> BuildSessionKeyRequest(uint64_t sessionId, SessionKey key,
@@ -246,7 +251,9 @@ inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
     PutString(&buf, Utf32ToUtf8(output->commit));
     PutU32(&buf, (output->segmenting ? kOutputFlagSegmenting : 0) |
                      (output->livePending ? kOutputFlagLivePending : 0) |
-                     (output->candidatesVisible ? kOutputFlagCandidatesVisible : 0));
+                     (output->candidatesVisible ? kOutputFlagCandidatesVisible : 0) |
+                     (output->fullWidthSpace ? kOutputFlagFullWidthSpace : 0) |
+                     (output->replacesCommitted ? kOutputFlagReplacesCommitted : 0));
     PutU32(&buf, static_cast<uint32_t>(output->preedit.size()));
     for (const SessionOutput::Span& span : output->preedit) {
         PutU32(&buf, span.style);
@@ -281,6 +288,8 @@ inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
     }
     PutU32(&buf, static_cast<uint32_t>(annotationTexts.size()));
     for (const std::string& annotation : annotationTexts) PutString(&buf, annotation);
+    // 取り消せる確定（後から足した。無い返事も読める）
+    PutString(&buf, Utf32ToUtf8(output->undoableCommit));
     return buf;
 }
 
@@ -327,6 +336,8 @@ inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
     output.segmenting = (flags & kOutputFlagSegmenting) != 0;
     output.livePending = (flags & kOutputFlagLivePending) != 0;
     output.candidatesVisible = (flags & kOutputFlagCandidatesVisible) != 0;
+    output.fullWidthSpace = (flags & kOutputFlagFullWidthSpace) != 0;
+    output.replacesCommitted = (flags & kOutputFlagReplacesCommitted) != 0;
     for (uint32_t i = 0; i < spanCount; ++i) {
         uint32_t style = 0;
         std::string text;
@@ -363,6 +374,8 @@ inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
         if (output.candidateAnnotations.size() != output.candidates.size()) {
             output.candidateAnnotations.clear();
         }
+        std::string undoable;
+        if (reader.String(&undoable)) output.undoableCommit = Utf8ToUtf32(undoable);
     }
     if (output.candidateIndex >= output.candidates.size()) output.candidateIndex = 0;
     result.changed = true;

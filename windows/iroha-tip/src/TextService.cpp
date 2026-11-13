@@ -277,19 +277,31 @@ wchar_t CharFromKey(WPARAM wParam, LPARAM lParam) {
     return n == 1 ? buf[0] : 0;
 }
 
-bool IsComposerSymbol(wchar_t c) {
-    // RomajiComposerの記号テーブルにあるキー + n' 用のアポストロフィ
-    return c == L'-' || c == L',' || c == L'.' || c == L'/' || c == L'[' ||
-           c == L']' || c == L'!' || c == L'?' || c == L'~' || c == L'\'';
+// 修飾キー・ロックキー（単独では何もしない。合成を確定させない）
+bool IsModifierKey(WPARAM key) {
+    switch (key) {
+        case VK_SHIFT: case VK_LSHIFT: case VK_RSHIFT:
+        case VK_CONTROL: case VK_LCONTROL: case VK_RCONTROL:
+        case VK_MENU: case VK_LMENU: case VK_RMENU:
+        case VK_LWIN: case VK_RWIN: case VK_APPS:
+        case VK_CAPITAL: case VK_NUMLOCK: case VK_SCROLL:
+        case VK_PROCESSKEY: case VK_PACKET:
+            return true;
+        default:
+            return false;
+    }
 }
 
 } // namespace
 
 // キーコードを意味に読み替え、受けるかどうかを決める。
 // そのキーで何をするかは変換サーバのセッションが決めるが、受けるかどうかは
-// OnTestKeyDown ですぐ答える必要があるので、直近に受け取った表示（合成中か・文節変換中か）で決める:
-//   文字（英字・ローマ字かなの記号）は常に、数字と Enter / Esc / Backspace / Space は合成中だけ、
-//   矢印は文節変換中だけ受ける
+// OnTestKeyDown ですぐ答える必要があるので、直近に受け取った返事（合成中か・文節変換中か）で決める
+// （macOS版 IrohaInputController.handleKey と同じ扱い）:
+//   印字できる ASCII 文字は常に、Enter / Esc / Backspace / Space・矢印は合成中だけ
+//   （矢印は文節変換中は文節の移動、入力中は握りつぶす）。入力していないときの Space は設定で全角にする。
+//   F6〜F10・Ctrl+U/I/O/P/T は入力中（文節変換中でない）だけ、Ctrl+. は常に受ける。
+//   合成中に IME が扱わないキー（Tab・Ctrl+S・Alt の組み合わせなど）は、確定してからアプリに渡す
 TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) const {
     KeyDecision decision;
     const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
@@ -320,18 +332,48 @@ TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) co
     }
     // 英数モード中はキーを一切食わない
     if (directMode_) return decision;
-    // Ctrl/Altショートカットには介入しない
-    if ((GetKeyState(VK_CONTROL) & 0x8000) || alt) return decision;
 
     const bool composing = composition_ != nullptr;
     const bool segmenting = composing && shown_.segmenting;
+    const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     decision.shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     const auto session = [&decision](iroha::SessionKey key) {
         decision.kind = KeyDecision::Kind::Session;
         decision.key = key;
         return decision;
     };
+    const auto commitThenPass = [&decision, composing, wParam] {
+        if (composing && !IsModifierKey(wParam)) decision.kind = KeyDecision::Kind::CommitThenPass;
+        return decision;
+    };
+    if (alt) return commitThenPass();
+    if (control) {
+        if (wParam == VK_OEM_PERIOD) return session(iroha::SessionKey::TogglePunctuation);
+        if (composing && !segmenting) {
+            switch (wParam) {
+                case 'U': return session(iroha::SessionKey::DisplayHiragana);
+                case 'I': return session(iroha::SessionKey::DisplayKatakana);
+                case 'O': return session(iroha::SessionKey::DisplayHalfKatakana);
+                case 'P': return session(iroha::SessionKey::DisplayFullAlphanumeric);
+                case 'T': return session(iroha::SessionKey::DisplayHalfAlphanumeric);
+                default: break;
+            }
+        }
+        if (wParam == VK_BACK && !composing && !idleUndoable_.empty() && !decision.shift) {
+            decision.kind = KeyDecision::Kind::UndoCommit;
+            return decision;
+        }
+        return commitThenPass();
+    }
     switch (wParam) {
+        case VK_F6: case VK_F7: case VK_F8: case VK_F9: case VK_F10:
+            if (!composing) return decision;
+            if (segmenting) return commitThenPass();
+            return session(wParam == VK_F6   ? iroha::SessionKey::DisplayHiragana
+                           : wParam == VK_F7 ? iroha::SessionKey::DisplayKatakana
+                           : wParam == VK_F8 ? iroha::SessionKey::DisplayHalfKatakana
+                           : wParam == VK_F9 ? iroha::SessionKey::DisplayFullAlphanumeric
+                                             : iroha::SessionKey::DisplayHalfAlphanumeric);
         case VK_RETURN:
             return composing ? session(iroha::SessionKey::Enter) : decision;
         case VK_ESCAPE:
@@ -339,33 +381,50 @@ TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) co
         case VK_BACK:
             return composing ? session(iroha::SessionKey::Backspace) : decision;
         case VK_SPACE:
-            return composing ? session(iroha::SessionKey::Space) : decision;
+            // 入力していないときの Space は、設定で全角にしていて Shift を押していなければ受ける
+            if (composing || (idleFullWidthSpace_ && !decision.shift)) return session(iroha::SessionKey::Space);
+            return decision;
         case VK_DOWN:
-            return segmenting ? session(iroha::SessionKey::Down) : decision;
+            return composing ? session(iroha::SessionKey::Down) : decision;
         case VK_UP:
-            return segmenting ? session(iroha::SessionKey::Up) : decision;
+            return composing ? session(iroha::SessionKey::Up) : decision;
         case VK_LEFT:
-            return segmenting ? session(iroha::SessionKey::Left) : decision;
+            return composing ? session(iroha::SessionKey::Left) : decision;
         case VK_RIGHT:
-            return segmenting ? session(iroha::SessionKey::Right) : decision;
+            return composing ? session(iroha::SessionKey::Right) : decision;
         default:
             break;
     }
     const wchar_t c = CharFromKey(wParam, lParam);
-    if (c == 0) return decision;
-    const bool isLetter = (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z');
-    const bool isDigit = (c >= L'0' && c <= L'9');
-    if (isLetter || IsComposerSymbol(c) || (composing && isDigit)) {
+    if (c >= 0x21 && c <= 0x7E) {
         decision.character = static_cast<char32_t>(c);
         return session(iroha::SessionKey::Character);
     }
-    return decision;
+    return commitThenPass();
 }
 
-HRESULT TextService::HandleKey(ITfContext* context, const KeyDecision& decision) {
+HRESULT TextService::HandleKey(ITfContext* context, const KeyDecision& decision, bool* passToApp) {
+    *passToApp = false;
     switch (decision.kind) {
         case KeyDecision::Kind::Session:
             return SendSessionKey(context, decision.key, decision.character, decision.shift);
+        case KeyDecision::Kind::CommitThenPass:
+            *passToApp = true;
+            return composition_ ? SendSessionKey(context, iroha::SessionKey::CommitNow, 0, false) : S_OK;
+        case KeyDecision::Kind::UndoCommit: {
+            // カーソルの手前が確定した文字列のままのときだけ取り消す（カーソルが動いた・続けて何か入ったときは
+            // 取り消さず、キーはアプリに渡す。アプリでは Ctrl+Backspace で単語を消すことが多い）
+            const std::u32string text = idleUndoable_;
+            idleUndoable_.clear();
+            if (text.empty() || composition_ || !TextBeforeCaretIs(context, text)) {
+                *passToApp = true;
+                return S_OK;
+            }
+            replaceBeforeLength_ = static_cast<LONG>(iroha::Utf32ToUtf16(text).size());
+            const HRESULT hr = SendSessionKey(context, iroha::SessionKey::UndoCommit, 0, false);
+            replaceBeforeLength_ = 0;
+            return hr;
+        }
         case KeyDecision::Kind::ToggleDirectMode:
         case KeyDecision::Kind::SetKanaMode:
         case KeyDecision::Kind::SetDirectMode: {
@@ -407,6 +466,8 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
                                  bool synchronous) {
     shown_ = output;
     shown_.commit.clear();
+    idleUndoable_ = output.undoableCommit;
+    idleFullWidthSpace_ = output.fullWidthSpace;
 
     HRESULT hr = S_OK;
     if (synchronous) {
@@ -469,6 +530,11 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
 // 確定する文字列を文書に入れ、未確定文字列を表示する（無ければ合成を終える）
 HRESULT TextService::ApplyOutputInSession(TfEditCookie ec, ITfContext* context,
                                           const iroha::SessionOutput& output) {
+    // 確定の取り消し: カーソルの手前の確定した文字列を覆う合成を始め、それを未確定文字列に置き換える
+    if (output.replacesCommitted && !composition_ && replaceBeforeLength_ > 0 && !output.preedit.empty()) {
+        const HRESULT hr = StartCompositionBeforeCaret(ec, context, replaceBeforeLength_);
+        if (FAILED(hr)) return hr;
+    }
     if (!output.commit.empty()) {
         const HRESULT hr = EnsureComposition(ec, context);
         if (FAILED(hr)) return hr;
@@ -540,6 +606,41 @@ HRESULT TextService::UpdateCandidateWindow(ITfContext* context) {
         TF_ES_SYNC | TF_ES_READ);
 }
 
+// カーソルの手前（選択なし）が text のままか（確定の取り消しの前に確かめる）
+bool TextService::TextBeforeCaretIs(ITfContext* context, const std::u32string& text) {
+    const std::wstring expected = iroha::Utf32ToUtf16(text);
+    bool matches = false;
+    RequestSyncEditSession(
+        context, clientId_,
+        [context, &expected, &matches](TfEditCookie ec) -> HRESULT {
+            TF_SELECTION selection = {};
+            ULONG fetched = 0;
+            if (FAILED(context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched)) ||
+                fetched != 1 || !selection.range) {
+                return S_OK;
+            }
+            BOOL empty = FALSE;
+            ITfRange* before = nullptr;
+            if (SUCCEEDED(selection.range->IsEmpty(ec, &empty)) && empty &&
+                SUCCEEDED(selection.range->Clone(&before)) && before) {
+                LONG shifted = 0;
+                const LONG length = static_cast<LONG>(expected.size());
+                std::wstring buffer(expected.size() + 1, L'\0');
+                ULONG got = 0;
+                if (SUCCEEDED(before->ShiftStart(ec, -length, &shifted, nullptr)) && shifted == -length &&
+                    SUCCEEDED(before->GetText(ec, 0, buffer.data(), static_cast<ULONG>(buffer.size()), &got))) {
+                    buffer.resize(got);
+                    matches = buffer == expected;
+                }
+                before->Release();
+            }
+            selection.range->Release();
+            return S_OK;
+        },
+        TF_ES_SYNC | TF_ES_READ);
+    return matches;
+}
+
 // カーソルより前の文書のテキストを読む。変換サーバが、カーソルのある行だけ・末尾40文字に整える
 bool TextService::ReadLeftContext(ITfContext* context, std::u32string* text) {
     static constexpr LONG kLength = 64;
@@ -582,6 +683,8 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* context, WPARAM wParam,
     if (!eaten) return E_INVALIDARG;
     *eaten = (context != nullptr &&
               DecideKey(wParam, lParam).kind != KeyDecision::Kind::None);
+    // 受けないキーがアプリで何かをする（カーソルが動くなど）ので、直前の確定はもう取り消さない
+    if (!*eaten && !IsModifierKey(wParam)) idleUndoable_.clear();
     return S_OK;
 }
 
@@ -591,9 +694,14 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* context, WPARAM wParam, LPARAM l
     *eaten = FALSE;
     if (!context) return S_OK;
     const KeyDecision decision = DecideKey(wParam, lParam);
-    if (decision.kind == KeyDecision::Kind::None) return S_OK;
-    *eaten = TRUE;
-    const HRESULT hr = HandleKey(context, decision);
+    if (decision.kind == KeyDecision::Kind::None) {
+        if (!IsModifierKey(wParam)) idleUndoable_.clear();
+        return S_OK;
+    }
+    bool passToApp = false;
+    const HRESULT hr = HandleKey(context, decision, &passToApp);
+    // 確定してから渡すキー・取り消せなかった Ctrl+Backspace はアプリに渡す
+    *eaten = passToApp ? FALSE : TRUE;
     if (FAILED(hr)) {
         IrohaLog(L"HandleKey failed kind=%d key=%u hr=0x%08X", static_cast<int>(decision.kind),
                  static_cast<unsigned>(decision.key), hr);

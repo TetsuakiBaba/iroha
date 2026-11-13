@@ -39,9 +39,25 @@ public:
         // 変換を途中でやめるかの問い合わせ口を渡す（空の関数で外す）。
         // 渡されている間、Convert は区切りのよいところで呼んで確かめ、真なら失敗として戻る
         virtual void SetCancelCheck(std::function<bool()> check) = 0;
-        // 文節変換で確定した（学習に使う）
-        virtual void RecordCommit(const std::u32string& reading, const std::u32string& baseline,
-                                  const std::u32string& committed) = 0;
+        // 文節変換で確定した（学習に使う。引数は InputSession::Host::RecordCommit と同じ）
+        virtual void RecordCommit(const std::u32string& reading, const std::u32string& engineBaseline,
+                                  const std::u32string& baseline, const std::u32string& committed) = 0;
+        // 学習が差し替える前のエンジンの結果（InputSession::Host::EngineResult）
+        virtual std::optional<std::u32string> EngineResult(const std::u32string& reading,
+                                                           const std::u32string& shown) {
+            (void)reading;
+            (void)shown;
+            return std::nullopt;
+        }
+        // 学習を消す（InputSession::Host::ForgetLearning）
+        virtual void ForgetLearning(const std::u32string& reading, const std::u32string& engineResult,
+                                    const std::u32string& shown) {
+            (void)reading;
+            (void)engineResult;
+            (void)shown;
+        }
+        // 句読点の組を切り替えた（設定に保存する）。エンジンを持たずに呼ぶ
+        virtual void PunctuationChanged(const std::u32string& punctuation) { (void)punctuation; }
     };
 
     explicit SessionManager(Backend* backend);
@@ -61,7 +77,9 @@ public:
     // 設定の読み直しと、セッションを通さない変換に使う
     void WithEngine(const std::function<void()>& work);
 
-    // ライブ変換を使うか（今あるセッションと、これから作るセッションに効く）
+    // セッションの設定（今あるセッションと、これから作るセッションに効く）
+    void SetSettings(const SessionSettings& settings);
+    // ライブ変換を使うか（SetSettings の一部だけを変える）
     void SetLiveConversionEnabled(bool enabled);
     // 文節の候補に合流させる記号・顔文字・絵文字の表（nullptr なら合流させない。同じく全セッションに効く）
     void SetSymbolTable(std::shared_ptr<const SymbolCandidateTable> table);
@@ -97,7 +115,7 @@ private:
     std::mutex stateMutex_;
     std::map<uint64_t, std::unique_ptr<Entry>> sessions_;
     uint64_t useCounter_ = 0;
-    bool liveConversionEnabled_ = true;
+    SessionSettings settings_;
     std::shared_ptr<const SymbolCandidateTable> symbolTable_;
     std::shared_ptr<const TermDictionaryLookup> termLookup_;
 

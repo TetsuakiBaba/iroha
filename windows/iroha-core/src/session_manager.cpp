@@ -35,10 +35,28 @@ struct SessionManager::Entry : InputSession::Host {
         manager->Enqueue(id, generation, reading, context);
     }
     void CancelLiveConversion() override { manager->CancelJobs(id); }
-    void RecordCommit(const std::u32string& reading, const std::u32string& baseline,
-                      const std::u32string& committed) override {
+    void RecordCommit(const std::u32string& reading, const std::u32string& engineBaseline,
+                      const std::u32string& baseline, const std::u32string& committed) override {
         EngineLock lock(manager);
-        manager->backend_->RecordCommit(reading, baseline, committed);
+        manager->backend_->RecordCommit(reading, engineBaseline, baseline, committed);
+    }
+    std::optional<std::u32string> EngineResult(const std::u32string& reading,
+                                               const std::u32string& shown) override {
+        EngineLock lock(manager);
+        return manager->backend_->EngineResult(reading, shown);
+    }
+    void ForgetLearning(const std::u32string& reading, const std::u32string& engineResult,
+                        const std::u32string& shown) override {
+        EngineLock lock(manager);
+        manager->backend_->ForgetLearning(reading, engineResult, shown);
+    }
+    // 句読点の切り替えは、ほかのセッションにも効かせて設定に保存する（stateMutex_ を持った状態で呼ばれる）
+    void PunctuationChanged(const std::u32string& punctuation) override {
+        manager->settings_.punctuation = punctuation;
+        for (auto& item : manager->sessions_) {
+            if (item.first != id) item.second->session.SetSettings(manager->settings_);
+        }
+        manager->backend_->PunctuationChanged(punctuation);
     }
 
     SessionManager* manager;
@@ -70,10 +88,11 @@ SessionManager::Entry& SessionManager::EntryFor(uint64_t sessionId) {
                 sessions_.begin(), sessions_.end(),
                 [](const auto& a, const auto& b) { return a.second->lastUsed < b.second->lastUsed; });
             CancelJobs(oldest->first);
+            oldest->second->session.Flush();
             sessions_.erase(oldest);
         }
         auto entry = std::make_unique<Entry>(this, sessionId);
-        entry->session.SetLiveConversionEnabled(liveConversionEnabled_);
+        entry->session.SetSettings(settings_);
         entry->session.SetSymbolTable(symbolTable_);
         entry->session.SetTermLookup(termLookup_);
         found = sessions_.emplace(sessionId, std::move(entry)).first;
@@ -103,7 +122,11 @@ bool SessionManager::Poll(uint64_t sessionId, uint64_t revision, SessionOutput* 
 void SessionManager::End(uint64_t sessionId) {
     std::lock_guard<std::mutex> lock(stateMutex_);
     CancelJobs(sessionId);
-    sessions_.erase(sessionId);
+    const auto found = sessions_.find(sessionId);
+    if (found != sessions_.end()) {
+        found->second->session.Flush();
+        sessions_.erase(found);
+    }
 }
 
 void SessionManager::WithEngine(const std::function<void()>& work) {
@@ -111,10 +134,16 @@ void SessionManager::WithEngine(const std::function<void()>& work) {
     work();
 }
 
+void SessionManager::SetSettings(const SessionSettings& settings) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    settings_ = settings;
+    for (auto& item : sessions_) item.second->session.SetSettings(settings_);
+}
+
 void SessionManager::SetLiveConversionEnabled(bool enabled) {
     std::lock_guard<std::mutex> lock(stateMutex_);
-    liveConversionEnabled_ = enabled;
-    for (auto& item : sessions_) item.second->session.SetLiveConversionEnabled(enabled);
+    settings_.liveConversion = enabled;
+    for (auto& item : sessions_) item.second->session.SetSettings(settings_);
 }
 
 void SessionManager::SetSymbolTable(std::shared_ptr<const SymbolCandidateTable> table) {

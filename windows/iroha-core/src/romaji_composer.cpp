@@ -158,6 +158,19 @@ void RomajiComposer::Clear() {
     rawIsReliable_ = true;
 }
 
+void RomajiComposer::PrependText(const std::u32string& kana) {
+    if (kana.empty()) return;
+    text_ = kana + text_;
+    raw_.clear();
+    rawIsReliable_ = false;
+}
+
+void RomajiComposer::ReplaceText(const std::u32string& kana) {
+    text_ = kana;
+    raw_.clear();
+    rawIsReliable_ = false;
+}
+
 void RomajiComposer::Resolve() {
     while (!pending_.empty()) {
         const bool canExtend = Prefixes().count(pending_) > 0;
