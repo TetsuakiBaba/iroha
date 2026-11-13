@@ -366,6 +366,8 @@ struct App {
     GtkWidget* selPresetHotkey[iroha::SelectionSettingsDefaults::kCount] = {};
     GtkWidget* selPresetPrompt[iroha::SelectionSettingsDefaults::kCount] = {};
     GtkWidget* selExcluded = nullptr;
+    GtkWidget* selTrigger = nullptr;
+    GtkWidget* selCharacterCount = nullptr;
     GtkWidget* selStatus = nullptr;
 
     // 学習・記録
@@ -1333,7 +1335,7 @@ GtkWidget* App::BuildAIPage() {
 
     for (size_t i = 0; i < iroha::AICommitSettings::kCount; ++i) {
         aiPresetName[i] = Entry("名前", 10);
-        aiPresetHotkey[i] = Entry("Alt+Enter", 12);
+        aiPresetHotkey[i] = Entry("キーなし", 12);
         aiPresetPrompt[i] = gtk_text_view_new();
         gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(aiPresetPrompt[i]), GTK_WRAP_WORD_CHAR);
         gtk_text_view_set_left_margin(GTK_TEXT_VIEW(aiPresetPrompt[i]), 4);
@@ -1352,7 +1354,7 @@ GtkWidget* App::BuildAIPage() {
     }
     GtkWidget* save = gtk_button_new_with_label("保存");
     gtk_widget_set_halign(save, GTK_ALIGN_START);
-    GtkWidget* note = Label("入力中にプリセットのキー（既定は英訳の Alt+Enter）で、未確定文字列を AI に渡します。"
+    GtkWidget* note = Label("入力中にプリセットのキー（既定は英訳の Shift+Space）で、未確定文字列を AI に渡します。"
                             "英訳など日本語でない結果は確定し、日本語の結果は文節に区切って返します"
                             "（Enter で確定、Esc で取り消し）。"
                             "プロンプトに {text} を書くと、その位置に入力が入ります。"
@@ -1619,7 +1621,12 @@ GtkWidget* App::BuildSelectionPage() {
     selOnDemand = Entry(iroha::SelectionSettingsDefaults::kOnDemandHotkey, 14);
     GtkWidget* onDemandRow = Row();
     Append(onDemandRow, {Label("その場で指示するキー:"), selOnDemand});
-    Append(page, {selEnabled, onDemandRow, Label("プリセット（使う・名前・キー・プロンプト）:")});
+    // マウスで選んだときの出し方（macOS版の SelectionTriggerMode と同じ値・同じ並び）
+    selTrigger = DropDown({"オフ（ショートカットだけ）", "アイコンを表示（クリックでメニュー）", "すぐにメニューを表示",
+                           "Alt を押しながら選択でメニュー"});
+    GtkWidget* triggerRow = Row();
+    Append(triggerRow, {Label("マウスで選んだとき:"), selTrigger});
+    Append(page, {selEnabled, triggerRow, onDemandRow, Label("プリセット（使う・名前・キー・プロンプト）:")});
     for (size_t i = 0; i < iroha::SelectionSettingsDefaults::kCount; ++i) {
         selPresetEnabled[i] = gtk_check_button_new();
         selPresetName[i] = Entry("名前", 10);
@@ -1639,12 +1646,21 @@ GtkWidget* App::BuildSelectionPage() {
     selStatus = Label("");
     GtkWidget* saveRow = Row();
     Append(saveRow, {save, selStatus});
-    GtkWidget* note = Label("キーを押すと、選んでいる文章を AI に渡し、結果を小さな窓に出します。"
+    GtkWidget* note = Label("マウスで文章を選ぶ（ドラッグ・ダブルクリック）とアイコンを出し、クリックでプリセットの"
+                            "メニューを開きます。キーを押したときも、選んでいる文章を AI に渡し、結果を小さな窓に出します。"
                             "Enter で元の文章を置き換えます。選択が無ければ指示から文章を作ります。"
-                            "入力中（未確定文字列があるとき）は動きません。AI の接続先は「AI」タブの設定を使います。",
+                            "入力中（未確定文字列があるとき）は動きません。AI の接続先は「AI」タブの設定を使います。"
+                            "X11 のデスクトップだけで動きます（Wayland では動きません）。",
                             true);
     gtk_widget_add_css_class(note, "dim-label");
-    Append(page, {excludedRow, saveRow, note});
+    // AI編集とは別の機能（AI編集が OFF でも動く。macOS版と同じくこのタブに置く）
+    selCharacterCount = CheckButton("選択した文字数を表示する（マウスで選ぶと、マウスの近くに文字数を数秒出す）");
+    GtkWidget* countNote = Label("改行は数えず、空白があれば空白を除いた数も出します。かな・漢字を含まない英語の文では"
+                                 "「152 words (812 chars)」のように単語数と文字数を出します。AI編集の"
+                                 "アイコンを出すときはアイコンに添えます。キーボードでの選択には反応しません。",
+                                 true);
+    gtk_widget_add_css_class(countNote, "dim-label");
+    Append(page, {excludedRow, Label("選択した文字数の表示:"), selCharacterCount, countNote, saveRow, note});
     Connect(save, "clicked", [this] { OnSelectionSave(); });
     return scrolled;
 }
@@ -1663,6 +1679,9 @@ void App::RefreshSelectionPage() {
         SetEditableText(selPresetPrompt[i], U8(stored.prompt.value_or(fallback.prompt)));
     }
     SetEditableText(selExcluded, config.selectionExcludedApps);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(selTrigger),
+                               static_cast<guint>(iroha::settings::SelectionTriggerIndex(config.selectionTriggerMode)));
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(selCharacterCount), config.selectionCharacterCount);
     gtk_label_set_text(GTK_LABEL(selStatus), "");
 }
 
@@ -1684,6 +1703,8 @@ void App::OnSelectionSave() {
         preset.prompt = iroha::TrimWhitespace(U32(EditableText(selPresetPrompt[i])));
     }
     config.selectionExcludedApps = Trimmed(EditableText(selExcluded));
+    config.selectionTriggerMode = iroha::settings::SelectionTriggerValue(Selected(selTrigger));
+    config.selectionCharacterCount = Checked(selCharacterCount);
     if (!invalid.empty()) {
         ShowDialog("キーの書き方が読めません: " + invalid +
                    "\n「Ctrl+Alt+1」のように、Ctrl・Alt・Shift のどれかと 1 つのキーを + でつないで書きます。");

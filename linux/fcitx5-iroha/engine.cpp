@@ -90,6 +90,8 @@ public:
     bool directMode = false;
     std::u32string idleUndoable;
     bool idleFullWidthSpace = true;
+    // プライベートモードのキー（セッションの返事で受け取る。最初の返事までは既定の Ctrl+Alt+P）
+    uint32_t privateModeShortcut = ibus::KeyContext().privateModeShortcut;
     unsigned int replaceBeforeLength = 0;
     std::unique_ptr<fcitx::EventSourceTime> pollTimer;
     std::chrono::steady_clock::time_point pollStarted;
@@ -169,6 +171,7 @@ public:
             context.aiPending = state.shown.aiPending;
             context.aiFixShortcut = state.shown.aiFixShortcut;
             context.aiShortcuts = state.shown.aiShortcuts;
+            context.privateModeShortcut = state.privateModeShortcut;
             const ibus::KeyDecision decision =
                 ibus::DecideKey(static_cast<uint32_t>(key.sym()), static_cast<uint32_t>(key.states()), context);
             using Kind = ibus::KeyDecision::Kind;
@@ -283,6 +286,7 @@ private:
         state.shown.commit.clear();
         state.idleUndoable = output.undoableCommit;
         state.idleFullWidthSpace = output.fullWidthSpace;
+        state.privateModeShortcut = output.privateModeShortcut;
         // 確定の取り消し: カーソルの手前の確定した文字列を消し、未確定文字列に置き換える
         if (output.replacesCommitted && state.replaceBeforeLength > 0 && !output.preedit.empty()) {
             ic->deleteSurroundingText(-static_cast<int>(state.replaceBeforeLength), state.replaceBeforeLength);

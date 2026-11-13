@@ -108,7 +108,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build libibus-1.0-dev libglib2.0-dev libgtk-4-dev \
             libcurl4-openssl-dev libsecret-1-dev libfontconfig-dev libfreetype-dev libharfbuzz-dev \
-            libx11-dev libxtst-dev libfcitx5core-dev libfcitx5config-dev libfcitx5utils-dev fonts-noto-color-emoji
+            libx11-dev libxtst-dev libxi-dev libxfixes-dev libfcitx5core-dev libfcitx5config-dev libfcitx5utils-dev fonts-noto-color-emoji
 
       - name: Cache llama.cpp static libs
         id: llama-cache

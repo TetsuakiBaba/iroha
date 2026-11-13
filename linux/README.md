@@ -5,7 +5,9 @@ Linux の IME。方針（2026-11-13 決定）:
 - 変換エンジンは Windows版の C++ 実装（`windows/iroha-core`）を **コミット 2de5ee1 で写し、以後は Linux版として別に保つ**。
   `linux/` から `windows/` は参照しない。仕様の正は macOS版（`macos/Sources/IrohaCore/`）。
   2026-11-14 に、Windows版が 2de5ee1 のあとに足したコアの変更（AI変換・候補の表・区切り記号の英字入力・AIで直す・
-  選択テキストのAI編集の規則。c12af85 まで）を差分で取り込んだ。「こえ」モード（a5104ed）は取り込んでいない
+  選択テキストのAI編集の規則。c12af85 まで）を差分で取り込んだ。続けて b128439 までの変更（選んだ文字数の `CharacterCount`・
+  英訳の既定のキーを Shift+Space・`documentContext`・`learningEnabled`・`privateModeHotkey`・`modelAdapterPath`・
+  `selectionTriggerMode`・`selectionCharacterCount`）も取り込んだ。「こえ」モード（a5104ed）は取り込んでいない
 - フロントエンドは **IBus**（GNOME の標準）と **fcitx5**（KDE など）。どちらもキーをセッション（`InputSession`）に送り、
   返ってきた表示を反映するだけで、入力の判断と状態はセッションにある（Windows版の TIP と同じ）
 - IBus のエンジンは ibus-daemon が起動する別のプロセスなので、Windows版のように変換サーバとアプリ側の部品を分けず、
@@ -50,7 +52,7 @@ fcitx5 のエンジンは fcitx5 本体と同じ場所（`/usr/lib/x86_64-linux-
 ```sh
 # 要るパッケージ
 sudo apt install cmake ninja-build libibus-1.0-dev libglib2.0-dev libgtk-4-dev libcurl4-openssl-dev \
-    libsecret-1-dev libfontconfig-dev libfreetype-dev libharfbuzz-dev libx11-dev libxtst-dev
+    libsecret-1-dev libfontconfig-dev libfreetype-dev libharfbuzz-dev libx11-dev libxtst-dev libxi-dev libxfixes-dev
 # fcitx5 のエンジンも作るなら
 sudo apt install libfcitx5core-dev libfcitx5config-dev libfcitx5utils-dev
 
@@ -154,6 +156,19 @@ IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-
   元の窓を前面に戻して XTest で Ctrl+V を送り、1 秒後に前のクリップボードの文字列を戻す
 - 使わないアプリは、前面の窓の `_NET_WM_PID` の `/proc/<pid>/comm` と WM_CLASS で照らす
 - Wayland では何もしない（グローバルショートカットが取れない）。端末では Ctrl+V で貼れないので置き換えは効かない
+- マウスで選んだとき（ドラッグ・ダブルクリック。`selectionTriggerMode`、既定はアイコン）は、マウスの右下にアイコン
+  （と選んだ文字数）を出し、押すと「AIに指示…」とプリセットのメニューにする（macOS版の SelectionBubbleController・
+  SelectionMenuController）。「すぐにメニュー」「Alt を押しながら選んだときにメニュー」も選べる。選んだ文字数
+  （`selectionCharacterCount`、既定 OFF）は AI編集が OFF でも出す
+  - マウスは XInput2 の生のイベントで見る（つかまない）。**2.1 以上と名乗ること**（2.0 だと、押したアプリの暗黙のつかみの間の
+    イベントが届かず、離したことが分からなかった）。左ボタンの位置は届いたときに `XQueryPointer` で読む
+  - 選んだかは、押してから PRIMARY 選択の持ち主が変わったか（XFixes）で決める（窓を動かすドラッグでは変わらないので出さない）
+  - アイコンとメニューはウィンドウマネージャに扱わせない窓（override-redirect）にする。押しても元のアプリのフォーカスと
+    選択はそのまま。メニューで選んだら、選んでいた文章をショートカットのときと同じ流れで AI に渡す
+  - 確かめ方: Xvfb（`apt-get download xvfb xdotool libxdo3 x11-apps` を `dpkg -x` で展開すれば sudo は要らない）に
+    GTK4 の文章の窓と iroha-selection を出し、xdotool でドラッグ・ダブルクリックして xwd で画面を撮る。
+    D-Bus は `dbus-run-session --config-file`（サービスの起動先を書かない設定）で分け、環境変数は `env -i` で空にしてから渡す
+    （VS Code の snap の端末の GTK の環境変数が混ざると GTK のアプリが起動しない。portal が起動すると GTK の起動が 5 秒以上止まる）
 
 ## 確認したこと
 
@@ -161,7 +176,7 @@ IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-
 
 | 評価 | Linux版 | Windows版の記録 |
 |---|---|---|
-| 単体テスト | コア 1148・共有の部品 16・キーの読み替え 74・設定画面 74・選択テキスト 57 件、すべて通る | — |
+| 単体テスト | コア 1174・共有の部品 16・キーの読み替え 79・設定画面 82・選択テキスト 79 件、すべて通る | — |
 | 辞書ラティスの候補の並び（macOS版の出力との照合、AJIMEE 200 件） | n=10・n=30 とも 200/200 一致 | 200/200 一致 |
 | AJIMEE モデルのみ / ラティス再採点 | 171 (85.5%) / 170 (85.0%) | 171 (85.5%) / 171 (85.5%) |
 | eval.tsv 40 件 | 37 (92.5%) | 38 (95.0%) |
@@ -172,9 +187,12 @@ IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-
   動くこと。ユーザがデスクトップのアプリで使って動いた（2026-11-14）
 - CLI のセッション: 区切り記号の英字入力（kyouha_iPhone_wo → 今日はiPhoneを）・候補の表（Tab で広げて → で隣の列）
 - 配布物（make-bundle.sh）が作れること（14MB・3,410 ファイル）
+- 選択テキストのマウスの操作（Xvfb・ウィンドウマネージャなし。2026-11-14）: ドラッグで「✦ 18文字」のアイコン、英単語の
+  ダブルクリックで「1 word (4 chars)」、アイコンを押すとメニュー、メニューのプリセットで結果の窓（選択の文章つき）、
+  何も選ばないドラッグでは出ない、「すぐにメニュー」「Alt を押しながら」「文字数だけ（AI編集 OFF）」の出し分け
 
-**確かめていないこと**: AI変換・AIで直す・選択テキストのAI編集の実際の依頼と表示（接続先を設定していない）、設定画面と
-選択テキストの窓（画面を出していない）、libsecret での API キーの読み書き、設定画面からの読み直しが実際のエンジンに効くこと、
+**確かめていないこと**: AI変換・AIで直す・選択テキストのAI編集の実際の依頼と表示（接続先を設定していない）、設定画面
+（画面を出していない）、ウィンドウマネージャ（GNOME）のあるデスクトップでのアイコン・メニュー・結果の窓、libsecret での API キーの読み書き、設定画面からの読み直しが実際のエンジンに効くこと、
 fcitx5 で動かすこと、配布物の install.sh（sudo が要る）、Wayland、IBus の候補表に出る補助テキストの見え方。
 
 ## これからの段階

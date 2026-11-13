@@ -352,6 +352,7 @@ void TestUnicodeRoundTrip() {
 #include "test_linux.h"
 #include "test_ai.h"
 #include "test_candidate_grid.h"
+#include "test_character_count.h"
 
 int main() {
     TestBasicGojuon();
@@ -404,6 +405,7 @@ int main() {
     RunTypoTests();
     RunAITests();
     RunCandidateGridTests();
+    RunCharacterCountTests();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

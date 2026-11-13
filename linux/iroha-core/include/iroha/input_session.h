@@ -120,6 +120,8 @@ struct SessionOutput {
     uint32_t aiFixShortcut = 0;
     std::u32string aiFixNotice;
     std::optional<TypoCorrectionFeedback> aiFixFeedback;
+    // プライベートモードを切り替えるキー（KeyShortcut::Encode。0 なら割り当てなし）
+    uint32_t privateModeShortcut = 0;
 
     bool Composing() const { return !preedit.empty(); }
     // 未確定文字列をつなげたもの
@@ -163,6 +165,10 @@ struct SessionSettings {
     double aiFixThreshold = AIFixRule::kDefaultThreshold;
     uint32_t aiFixShortcut = 0;
     std::u32string aiFixShortcutLabel;
+    // アプリの文章（TIP が送る左文脈）を使うか（OFF なら直前に確定した文字列だけを文脈にする）
+    bool documentContext = true;
+    // プライベートモードを切り替えるキー（TIP に渡す。KeyShortcut::Encode。0 なら割り当てなし）
+    uint32_t privateModeShortcut = 0;
 };
 
 // 入力の状態（読み・ライブ変換の結果・固定部分・英字入力・文節・候補）を持ち、キーごとに表示を決める。
@@ -583,6 +589,7 @@ private:
 
     // AI変換（macOS版 handleAICommit・presentAIResultAsSegments・cancelTranslation）
     void StartAICommit(size_t preset, std::u32string* commit);
+    std::optional<size_t> ShiftSpaceAIPreset(SessionKey key, bool shift) const;
     // AIで直す（macOS版 scheduleAIFixCheck・handleAIFixKey・requestAIFix・finishAIFix・undoAIFix）
     struct AIFixOffer {
         std::u32string reading;

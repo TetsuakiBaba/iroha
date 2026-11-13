@@ -96,4 +96,9 @@ std::vector<LicenseGroup> Licenses(const std::filesystem::path& dataDirectory);
 // 1234567 → "1.2 MB"
 std::string FormatBytes(uint64_t bytes);
 
+// 選択テキストの「マウスで選んだとき」の値（config の selectionTriggerMode。macOS版と同じ値）と、設定画面の並びの番号。
+// 知らない値は既定の "bubble"
+int SelectionTriggerIndex(const std::string& value);
+std::string SelectionTriggerValue(int index);
+
 } // namespace iroha::settings

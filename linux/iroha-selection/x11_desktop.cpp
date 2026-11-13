@@ -3,7 +3,9 @@
 #include <X11/XKBlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/XInput2.h>
 #include <X11/extensions/XTest.h>
+#include <X11/extensions/Xfixes.h>
 #include <X11/keysym.h>
 #include <glib.h>
 
@@ -72,6 +74,26 @@ bool X11Desktop::Open() {
     int minor = 0;
     xtest_ = XTestQueryExtension(display_, &event, &error, &major, &minor) != 0;
     if (!xtest_) log_("XTest is not available (results can be copied but not pasted)");
+    // XInput2: マウスのボタンの生のイベントをルートの窓で受ける。2.1 以上と名乗る（2.0 のままだと、ボタンを押した
+    // アプリが持つ暗黙のつかみの間（押してから離すまで）の生のイベントが届かず、離したことが分からない）
+    int xiEvent = 0;
+    int xiError = 0;
+    if (XQueryExtension(display_, "XInputExtension", &xiOpcode_, &xiEvent, &xiError)) {
+        int xiMajor = 2;
+        int xiMinor = 2;
+        if (XIQueryVersion(display_, &xiMajor, &xiMinor) != Success || (xiMajor == 2 && xiMinor < 1)) xiOpcode_ = -1;
+    } else {
+        xiOpcode_ = -1;
+    }
+    if (xiOpcode_ < 0) log_("XInput2 is not available (selecting with the mouse is not watched)");
+    // XFixes: PRIMARY 選択の持ち主が変わったら知らせてもらう
+    int fixesError = 0;
+    if (XFixesQueryExtension(display_, &xfixesEventBase_, &fixesError)) {
+        xfixes_ = true;
+        XFixesSelectSelectionInput(display_, root_, XA_PRIMARY, XFixesSetSelectionOwnerNotifyMask);
+    } else {
+        log_("XFixes is not available (the selection is compared with the previous one instead)");
+    }
 
     static GSourceFuncs funcs = {
         // prepare: 既に読み込んであるイベントがあればすぐ配る
@@ -109,10 +131,70 @@ void X11Desktop::Dispatch() {
     while (display_ && XPending(display_) > 0) {
         XEvent event;
         XNextEvent(display_, &event);
+        if (xfixes_ && event.type == xfixesEventBase_ + XFixesSelectionNotify) {
+            ++primaryChanges_;
+            continue;
+        }
+        if (event.type == GenericEvent) {
+            DispatchGeneric(event);
+            continue;
+        }
         if (event.type != KeyPress) continue;
         const int id = FindHotkey(grabbed_, event.xkey.keycode, event.xkey.state, numLockMask_);
         if (id >= 0 && onHotkey_) onHotkey_(id, event.xkey.time);
     }
+}
+
+void X11Desktop::DispatchGeneric(XEvent& event) {
+    if (event.xcookie.extension != xiOpcode_ || !XGetEventData(display_, &event.xcookie)) return;
+    const int type = event.xcookie.evtype;
+    if (type == XI_RawButtonPress || type == XI_RawButtonRelease) {
+        const auto* raw = static_cast<const XIRawEvent*>(event.xcookie.data);
+        if (raw->detail == 1 && mouseWatched_ && onMouse_) {
+            // 生のイベントには位置が無いので、ポインタの位置と修飾キーの状態をここで読む
+            MouseEvent mouse;
+            mouse.press = type == XI_RawButtonPress;
+            mouse.time = raw->time;
+            Window rootReturn = 0;
+            Window child = 0;
+            int windowX = 0;
+            int windowY = 0;
+            unsigned mask = 0;
+            if (XQueryPointer(display_, root_, &rootReturn, &child, &mouse.x, &mouse.y, &windowX, &windowY, &mask)) {
+                mouse.alt = (mask & Mod1Mask) != 0;
+            }
+            if (!mouse.press) lastButtonTime_ = raw->time;
+            XFreeEventData(display_, &event.xcookie);
+            onMouse_(mouse);
+            return;
+        }
+        if (type == XI_RawButtonRelease) lastButtonTime_ = raw->time;
+    }
+    XFreeEventData(display_, &event.xcookie);
+}
+
+bool X11Desktop::WatchMouse(bool enabled, MouseHandler handler) {
+    if (!display_ || xiOpcode_ < 0) return false;
+    onMouse_ = std::move(handler);
+    if (enabled == mouseWatched_) return true;
+    unsigned char bits[XIMaskLen(XI_LASTEVENT)] = {};
+    if (enabled) {
+        XISetMask(bits, XI_RawButtonPress);
+        XISetMask(bits, XI_RawButtonRelease);
+    }
+    XIEventMask mask;
+    mask.deviceid = XIAllMasterDevices;
+    mask.mask_len = sizeof(bits);
+    mask.mask = bits;
+    XISelectEvents(display_, root_, &mask, 1);
+    const int error = SyncAndTakeError(display_);
+    if (error != 0) {
+        log_("cannot watch the mouse (X error " + std::to_string(error) + ")");
+        return false;
+    }
+    mouseWatched_ = enabled;
+    log_(enabled ? "selection: watching the mouse" : "selection: not watching the mouse");
+    return true;
 }
 
 unsigned X11Desktop::NumLockMask() {
@@ -193,6 +275,19 @@ Window X11Desktop::ActiveWindow() {
     const Atom active = XInternAtom(display_, "_NET_ACTIVE_WINDOW", False);
     const auto window = CardinalProperty(root_, active);
     return window ? static_cast<Window>(*window) : 0;
+}
+
+Window X11Desktop::WindowAtPointer() {
+    if (!display_) return 0;
+    Window rootReturn = 0;
+    Window child = 0;
+    int rootX = 0;
+    int rootY = 0;
+    int windowX = 0;
+    int windowY = 0;
+    unsigned mask = 0;
+    if (!XQueryPointer(display_, root_, &rootReturn, &child, &rootX, &rootY, &windowX, &windowY, &mask)) return 0;
+    return child;
 }
 
 AppIdentity X11Desktop::Identify(Window window) {
@@ -305,6 +400,39 @@ void X11Desktop::KeepAbove(Window window) {
     SendClientMessage(window, XInternAtom(display_, "_NET_WM_STATE", False), 1,
                       static_cast<long>(XInternAtom(display_, "_NET_WM_STATE_ABOVE", False)),
                       static_cast<long>(XInternAtom(display_, "_NET_WM_STATE_SKIP_TASKBAR", False)), 1);
+}
+
+void X11Desktop::MakeOverlay(Window window) {
+    if (!display_ || window == 0) return;
+    XSetWindowAttributes attributes = {};
+    attributes.override_redirect = True;
+    XChangeWindowAttributes(display_, window, CWOverrideRedirect, &attributes);
+    // 念のため、キーボードのフォーカスを受けない印も付ける
+    if (XWMHints* hints = XAllocWMHints()) {
+        hints->flags = InputHint;
+        hints->input = False;
+        XSetWMHints(display_, window, hints);
+        XFree(hints);
+    }
+    SyncAndTakeError(display_);
+}
+
+std::optional<X11Desktop::Rect> X11Desktop::WindowRect(Window window) {
+    if (!display_ || window == 0) return std::nullopt;
+    Window rootReturn = 0;
+    int x = 0;
+    int y = 0;
+    unsigned width = 0;
+    unsigned height = 0;
+    unsigned border = 0;
+    unsigned depth = 0;
+    const Status status = XGetGeometry(display_, window, &rootReturn, &x, &y, &width, &height, &border, &depth);
+    Window child = 0;
+    int rootX = 0;
+    int rootY = 0;
+    const bool translated = status && XTranslateCoordinates(display_, window, root_, 0, 0, &rootX, &rootY, &child);
+    if (SyncAndTakeError(display_) != 0 || !translated) return std::nullopt;
+    return Rect{rootX, rootY, static_cast<int>(width), static_cast<int>(height)};
 }
 
 } // namespace iroha::selection

@@ -158,6 +158,58 @@ void TestRequests() {
     EXPECT_TRUE(text && *text == U" 日本語 ");
 }
 
+// マウスで選んだときの出し方と文字数（既定はアイコン・文字数なし）
+void TestMouseSettings() {
+    Config config;
+    s::Settings settings = s::SettingsFromConfig(config);
+    EXPECT_TRUE(settings.trigger == s::Settings::Trigger::Bubble && !settings.characterCount);
+    // AI編集が OFF なら、文字数を出さない限りマウスを見ない
+    EXPECT_TRUE(!settings.WatchesMouse() && !settings.MouseTriggersAI(false));
+    config.selectionCharacterCount = true;
+    settings = s::SettingsFromConfig(config);
+    EXPECT_TRUE(settings.WatchesMouse() && !settings.MouseTriggersAI(false));
+    config.selectionEnabled = true;
+    config.selectionCharacterCount = false;
+    config.selectionTriggerMode = "optionMenu";
+    settings = s::SettingsFromConfig(config);
+    EXPECT_TRUE(settings.trigger == s::Settings::Trigger::AltMenu && settings.WatchesMouse());
+    EXPECT_TRUE(!settings.MouseTriggersAI(false) && settings.MouseTriggersAI(true));
+    config.selectionTriggerMode = "off";
+    settings = s::SettingsFromConfig(config);
+    EXPECT_TRUE(!settings.WatchesMouse() && !settings.MouseTriggersAI(true));
+    EXPECT_TRUE(s::ParseTrigger("immediateMenu") == s::Settings::Trigger::ImmediateMenu);
+    EXPECT_TRUE(s::ParseTrigger("unknown") == s::Settings::Trigger::Bubble);
+}
+
+// ドラッグ（4 ピクセル以上）とダブルクリック（400ms・5 ピクセル以内）。3 回目のクリックは数えない
+void TestGestures() {
+    s::GestureTracker tracker(4, 400, 5);
+    tracker.Press(100, 100);
+    EXPECT_TRUE(!tracker.Release(102, 101, 1000));  // ただのクリック
+    tracker.Press(102, 101);
+    EXPECT_TRUE(tracker.Release(102, 101, 1300));   // ダブルクリック
+    tracker.Press(102, 101);
+    EXPECT_TRUE(!tracker.Release(102, 101, 1450));  // 3 回目
+    tracker.Press(10, 10);
+    EXPECT_TRUE(tracker.Release(14, 10, 5000));     // ドラッグ
+    tracker.Press(14, 10);
+    EXPECT_TRUE(!tracker.Release(14, 10, 5100));    // ドラッグの直後のクリックはダブルクリックにしない
+    tracker.Press(14, 10);
+    EXPECT_TRUE(!tracker.Release(14, 10, 5600));    // 間隔が長い
+    tracker.Press(30, 10);
+    EXPECT_TRUE(!tracker.Release(30, 10, 5700));    // 離れた場所
+    EXPECT_TRUE(!tracker.Release(60, 60, 5800));    // 押していないのに離した
+}
+
+void TestMouseSelection() {
+    EXPECT_TRUE(s::ShouldUseMouseSelection(U"文章", true, true, U""));
+    EXPECT_TRUE(!s::ShouldUseMouseSelection(U"文章", true, false, U""));   // 持ち主が変わっていない
+    EXPECT_TRUE(!s::ShouldUseMouseSelection(U" \n", true, true, U""));    // 空白だけ
+    EXPECT_TRUE(!s::ShouldUseMouseSelection(std::nullopt, true, true, U""));
+    EXPECT_TRUE(s::ShouldUseMouseSelection(U"新しい", false, false, U"前の"));
+    EXPECT_TRUE(!s::ShouldUseMouseSelection(U"前の", false, false, U"前の"));
+}
+
 } // namespace
 
 int main() {
@@ -165,6 +217,9 @@ int main() {
     TestExcludedApps();
     TestHotkeys();
     TestRequests();
+    TestMouseSettings();
+    TestGestures();
+    TestMouseSelection();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

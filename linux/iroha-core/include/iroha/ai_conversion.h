@@ -63,7 +63,7 @@ extern const char32_t kTranslateInstructions[];
 struct Default {
     const char32_t* name;
     const char32_t* prompt;
-    const char* shortcut; // Windows の既定（macOS版の Option+Return にあたる Alt+Enter）
+    const char* shortcut; // Windows の既定（英訳は Shift+Space。macOS版は Option+Return。2026-11-14 ユーザの指定）
 };
 const std::vector<Default>& Defaults();
 } // namespace AICommitSettings

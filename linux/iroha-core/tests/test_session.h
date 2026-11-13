@@ -1323,6 +1323,48 @@ void TestSessionAICommitTranslation() {
     EXPECT_EQ(session.Handle(Key::AICommit, 0, false, nullptr).commit, U"今日は");
 }
 
+// AI変換のキーが Shift+Space（英訳の既定）: 入力中・文節変換中は AI変換。候補ウィンドウを開いていれば前の候補、
+// 区切り記号の英字入力中は英字の中のスペースのまま（TIP は Shift+Space を Space として送ってくる）
+void TestSessionAICommitShiftSpace() {
+    FakeSessionHost host;
+    iroha::InputSession session(&host);
+    iroha::SessionSettings settings = AISettings();
+    settings.aiShortcuts = {0x40020, 0, 0};
+    settings.delimitedAlphabet = true;
+    session.SetSettings(settings);
+    Type(session, U"kyouha");
+    CompleteLatest(session, host, U"今日は");
+    auto output = Press(session, Key::Space, true);
+    EXPECT_TRUE(output.aiPending && host.aiRequests.size() == 1 && host.aiRequests.back().preset == 0);
+    Press(session, Key::Escape);
+    Press(session, Key::Escape);
+    Press(session, Key::Reset);
+
+    // 候補ウィンドウを開いているときは前の候補
+    Type(session, U"kyouha");
+    CompleteLatest(session, host, U"今日は");
+    Press(session, Key::Space);
+    output = Press(session, Key::Space);
+    EXPECT_TRUE(!output.candidates.empty() && output.candidateIndex == 1);
+    const uint32_t index = output.candidateIndex;
+    output = Press(session, Key::Space, true);
+    EXPECT_TRUE(!output.aiPending && host.aiRequests.size() == 1);
+    EXPECT_TRUE(output.candidateIndex + 1 == index);
+    Press(session, Key::Reset);
+
+    // 区切り記号の英字入力中は英字の中のスペース
+    Type(session, U"_ab");
+    output = Press(session, Key::Space, true);
+    EXPECT_TRUE(!output.aiPending && host.aiRequests.size() == 1);
+    EXPECT_EQ(Type(session, U"c_").PreeditText(), U"ab c");
+
+    // Shift なしの Space は今までどおり文節変換
+    Press(session, Key::Reset);
+    Type(session, U"kyouha");
+    CompleteLatest(session, host, U"今日は");
+    EXPECT_TRUE(Press(session, Key::Space).segmenting && host.aiRequests.size() == 1);
+}
+
 // 日本語の結果（敬語・要約など）は確定せず、文節に区切った未確定文字列にする。学習・変換記録・入力履歴に残さない
 void TestSessionAICommitJapanese() {
     FakeSessionHost host;
@@ -1528,6 +1570,7 @@ void RunSessionTests() {
     TestSessionTypoSegmentCandidates();
     TestSessionTypoWholeSentence();
     TestSessionAICommitTranslation();
+    TestSessionAICommitShiftSpace();
     TestSessionAICommitJapanese();
     TestSessionCandidateGrid();
     TestSessionDelimitedAlphabet();

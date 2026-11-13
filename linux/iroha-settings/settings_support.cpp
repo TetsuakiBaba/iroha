@@ -281,4 +281,19 @@ std::string FormatBytes(uint64_t bytes) {
     return text;
 }
 
+namespace {
+const char* const kSelectionTriggers[] = {"off", "bubble", "immediateMenu", "optionMenu"};
+}
+
+int SelectionTriggerIndex(const std::string& value) {
+    for (int i = 0; i < 4; ++i) {
+        if (value == kSelectionTriggers[i]) return i;
+    }
+    return 1;
+}
+
+std::string SelectionTriggerValue(int index) {
+    return index >= 0 && index < 4 ? kSelectionTriggers[index] : "bubble";
+}
+
 } // namespace iroha::settings

@@ -28,7 +28,21 @@ struct Settings {
     std::vector<Preset> presets;
     std::string onDemandHotkey;            // その場で指示するキー（空なら割り当てなし）
     std::vector<std::string> excludedApps; // 使わないアプリの名前（小文字）
+    // マウスで選んだときの出し方（macOS版の SelectionTriggerMode。config の selectionTriggerMode。
+    // AltMenu は macOS版の optionMenu（⌥ の代わりに Alt））
+    enum class Trigger { Off, Bubble, ImmediateMenu, AltMenu };
+    Trigger trigger = Trigger::Bubble;
+    // 選んだ文字数をマウスの近くに出す（AI編集が OFF でも、文字数だけを出す）
+    bool characterCount = false;
+
+    // マウスで選んだときに AI編集のアイコン・メニューを出すか（alt: 選び終えたときに Alt を押していたか）
+    bool MouseTriggersAI(bool alt) const {
+        return enabled && trigger != Trigger::Off && (trigger != Trigger::AltMenu || alt);
+    }
+    // マウスの操作を見る必要があるか（AI編集のマウスのきっかけか、文字数の表示を使うとき）
+    bool WatchesMouse() const { return (enabled && trigger != Trigger::Off) || characterCount; }
 };
+Settings::Trigger ParseTrigger(const std::string& value);
 
 // config.json の selection* から作る（書いていない項目は SelectionSettingsDefaults）
 Settings SettingsFromConfig(const Config& config);
@@ -88,5 +102,35 @@ AIRequest PromptRequest(const std::u32string& instruction, const std::u32string&
 std::u32string SourceLine(const std::u32string& source, bool generation);
 // PRIMARY 選択から取れた文字列を選択として使うか（空白だけなら選択なしとみなす）
 std::optional<std::u32string> SelectionFromPrimary(const std::optional<std::string>& utf8);
+
+// マウスの左ボタンの押し離しから「文章を選んだらしい操作」（ドラッグかダブルクリック）を見分ける
+// （macOS版 MouseSelectionMonitor・Windows版のマウスのフックと同じ規則）。座標は画面のピクセル、時刻はミリ秒
+class GestureTracker {
+public:
+    // dragDistance: これ以上動かしたらドラッグ。doubleClickTime・doubleClickDistance: ダブルクリックとみなす間隔と距離
+    GestureTracker(int dragDistance, unsigned long doubleClickTime, int doubleClickDistance)
+        : dragDistance_(dragDistance), doubleClickTime_(doubleClickTime), doubleClickDistance_(doubleClickDistance) {}
+    void Press(int x, int y);
+    // 離した。選んだらしい操作なら真
+    bool Release(int x, int y, unsigned long time);
+
+private:
+    int dragDistance_;
+    unsigned long doubleClickTime_;
+    int doubleClickDistance_;
+    bool down_ = false;
+    int downX_ = 0;
+    int downY_ = 0;
+    bool hasLastUp_ = false;
+    unsigned long lastUpTime_ = 0;
+    int lastUpX_ = 0;
+    int lastUpY_ = 0;
+};
+
+// マウスで選んだあとに読んだ PRIMARY 選択を、アイコン・文字数に使うか。
+// 押してから選択の持ち主が変わっていれば使う（変わっていなければ、窓を動かしただけなどで、前からある選択）。
+// 持ち主の変化を見られないとき（XFixes が無い）は、前に使った文章と違えば使う
+bool ShouldUseMouseSelection(const std::optional<std::u32string>& text, bool canWatchOwner, bool ownerChanged,
+                             const std::u32string& previous);
 
 } // namespace iroha::selection

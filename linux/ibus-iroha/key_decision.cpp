@@ -125,18 +125,24 @@ KeyDecision DecideKey(uint32_t keyval, uint32_t modifiers, const KeyContext& con
         decision.character = 0;
         return session(SessionKey::Character);
     }
-    // プライベートモードの切り替え（Ctrl+Alt+P。入力中かどうかによらず効く。macOS版の Ctrl+Option+P）
-    if (control && alt && Lower(printable) == U'p') return session(SessionKey::TogglePrivateMode);
+    // プライベートモードの切り替え（設定のキー。既定 Ctrl+Alt+P。入力中かどうかによらず効く。macOS版の Ctrl+Option+P）
+    if (context.privateModeShortcut != 0 &&
+        KeyShortcut::Decode(context.privateModeShortcut).Matches(keyval, modifiers)) {
+        return session(SessionKey::TogglePrivateMode);
+    }
     // AIで直すのキー（設定 aiFixShortcut。既定 Ctrl+Alt+A）。入力中だけ
     if (composing && !segmenting && context.aiFixShortcut != 0 &&
         KeyShortcut::Decode(context.aiFixShortcut).Matches(keyval, modifiers)) {
         return session(SessionKey::AIFix);
     }
-    // AI変換のキー（プリセットごとに設定で決める。既定は英訳の Alt+Enter）。入力中だけ
+    // AI変換のキー（プリセットごとに設定で決める。既定は英訳の Shift+Space）。入力中だけ。
+    // Shift+Space は候補を戻す・英字の中のスペースにも使うので、Space として送りセッションに決めさせる
     if (composing) {
         for (size_t i = 0; i < context.aiShortcuts.size(); ++i) {
             if (context.aiShortcuts[i] == 0) continue;
-            if (KeyShortcut::Decode(context.aiShortcuts[i]).Matches(keyval, modifiers)) {
+            const KeyShortcut shortcut = KeyShortcut::Decode(context.aiShortcuts[i]);
+            if (shortcut.Keysym() == 0x20 && shortcut.shift && !shortcut.control && !shortcut.alt) continue;
+            if (shortcut.Matches(keyval, modifiers)) {
                 decision.character = static_cast<char32_t>(i);
                 return session(SessionKey::AICommit);
             }

@@ -96,8 +96,10 @@ void TestDisplayForms() {
 void TestShortcuts() {
     EXPECT_TRUE(IsSession(DecideKey('.', m::kControl, Idle()), SessionKey::TogglePunctuation));
     EXPECT_TRUE(IsSession(DecideKey('p', m::kControl | m::kAlt, Idle()), SessionKey::TogglePrivateMode));
-    EXPECT_TRUE(IsSession(DecideKey('P', m::kControl | m::kAlt | m::kShift, Composing()),
-                          SessionKey::TogglePrivateMode));
+    EXPECT_TRUE(IsSession(DecideKey('p', m::kControl | m::kAlt, Composing()), SessionKey::TogglePrivateMode));
+    // 設定のキーと修飾キーが全部一致したときだけ（Windows版と同じ。Shift を足すと別のキー）
+    EXPECT_TRUE(!IsSession(DecideKey('P', m::kControl | m::kAlt | m::kShift, Composing()),
+                           SessionKey::TogglePrivateMode));
     // 合成中のアプリのショートカット（Ctrl+S・Alt・Super）は確定してから渡す
     EXPECT_TRUE(DecideKey('s', m::kControl, Composing()).kind == Kind::CommitThenPass);
     EXPECT_TRUE(DecideKey('f', m::kAlt, Composing()).kind == Kind::CommitThenPass);
@@ -150,6 +152,18 @@ void TestAIKeys() {
     const auto swallowed = DecideKey('k', 0, waiting);
     EXPECT_TRUE(IsSession(swallowed, SessionKey::Character) && swallowed.character == 0);
     EXPECT_TRUE(DecideKey(0xffe1, 0, waiting).kind == Kind::Pass);
+    // 英訳の既定の Shift+Space は AI変換にせず Space（shift つき）として送る（セッションが決める）
+    KeyContext shiftSpace = Composing();
+    shiftSpace.aiShortcuts = {iroha::KeyShortcut::Parse("Shift+Space")->Encode(), 0, 0};
+    const auto space = DecideKey(0x20, m::kShift, shiftSpace);
+    EXPECT_TRUE(IsSession(space, SessionKey::Space) && space.shift);
+    // プライベートモードのキーは設定で変わる（0 なら割り当てなし）
+    KeyContext custom = Idle();
+    custom.privateModeShortcut = iroha::KeyShortcut::Parse("Ctrl+Shift+F9")->Encode();
+    EXPECT_TRUE(IsSession(DecideKey(0xffc6, m::kControl | m::kShift, custom), SessionKey::TogglePrivateMode));
+    EXPECT_TRUE(DecideKey('p', m::kControl | m::kAlt, custom).kind == Kind::Pass);
+    custom.privateModeShortcut = 0;
+    EXPECT_TRUE(DecideKey('p', m::kControl | m::kAlt, custom).kind == Kind::Pass);
     // 候補ウィンドウが出ていれば Tab で表に広げる
     KeyContext candidates = Segmenting();
     candidates.candidatesVisible = true;

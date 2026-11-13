@@ -62,5 +62,5 @@ restart_ibus
 if [ ! -e "${IROHA_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/iroha}/models/iroha-kkc-v1-Q5_K_M.gguf" ]; then
     echo "注意: 変換モデルがまだありません。./linux/scripts/fetch-model.sh で取ってください"
 fi
+start_selection "$PREFIX/lib/iroha/iroha-selection"
 echo "==> 完了（ibus engine iroha で切り替え。記録は ~/.local/share/iroha/logs/ibus-iroha-<ホスト名>.log）"
-echo "選択テキストのAI編集（iroha-selection）は次のログインから自動で起動します（設定で ON にしたときだけ動きます）"

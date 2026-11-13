@@ -71,7 +71,7 @@ const char32_t kTranslateInstructions[] =
 
 const std::vector<Default>& Defaults() {
     static const std::vector<Default> defaults = {
-        {U"英訳", kTranslateInstructions, "Alt+Enter"},
+        {U"英訳", kTranslateInstructions, "Shift+Space"},
         {U"敬語", U"次の日本語を、意味を変えずに丁寧なビジネス文体に書き直してください。", ""},
         {U"要約", U"次の日本語を、要点を保ったまま短く言い換えてください。", ""},
     };

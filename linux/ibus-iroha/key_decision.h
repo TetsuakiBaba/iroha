@@ -35,6 +35,7 @@ struct KeyContext {
     bool aiPending = false;          // AI変換の結果待ち（Esc 以外のキーを飲み込む）
     uint32_t aiFixShortcut = 0;              // AIで直すのキー（KeyShortcut::Encode。0 なら使わない）
     std::vector<uint32_t> aiShortcuts;       // AI変換のプリセットのキー（同じ形。0 なら割り当てなし）
+    uint32_t privateModeShortcut = 0x50 | (1u << 16) | (1u << 17); // プライベートモードのキー（既定 Ctrl+Alt+P。0 なら無し）
 };
 
 struct KeyDecision {

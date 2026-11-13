@@ -1,6 +1,7 @@
 #include "selection_rules.h"
 
 #include <algorithm>
+#include <cstdlib>
 
 #include "iroha/unicode.h"
 
@@ -18,7 +19,44 @@ Settings SettingsFromConfig(const Config& config) {
     }
     settings.onDemandHotkey = config.selectionOnDemandHotkey.value_or(SelectionSettingsDefaults::kOnDemandHotkey);
     settings.excludedApps = ParseExcludedApps(config.selectionExcludedApps);
+    settings.trigger = ParseTrigger(config.selectionTriggerMode);
+    settings.characterCount = config.selectionCharacterCount;
     return settings;
+}
+
+Settings::Trigger ParseTrigger(const std::string& value) {
+    if (value == "off") return Settings::Trigger::Off;
+    if (value == "immediateMenu") return Settings::Trigger::ImmediateMenu;
+    if (value == "optionMenu") return Settings::Trigger::AltMenu;
+    return Settings::Trigger::Bubble;
+}
+
+void GestureTracker::Press(int x, int y) {
+    down_ = true;
+    downX_ = x;
+    downY_ = y;
+}
+
+bool GestureTracker::Release(int x, int y, unsigned long time) {
+    const long dx = x - downX_;
+    const long dy = y - downY_;
+    const bool dragged = down_ && dx * dx + dy * dy >= static_cast<long>(dragDistance_) * dragDistance_;
+    const bool doubleClick = hasLastUp_ && time >= lastUpTime_ && time - lastUpTime_ <= doubleClickTime_ &&
+                             std::abs(x - lastUpX_) <= doubleClickDistance_ && std::abs(y - lastUpY_) <= doubleClickDistance_;
+    const bool gesture = down_ && (dragged || doubleClick);
+    // 3 回目のクリックを 2 回目と数えない（ダブルクリックのあとは数え直す）。ドラッグのあとも数え直す
+    hasLastUp_ = !(doubleClick || dragged);
+    lastUpTime_ = time;
+    lastUpX_ = x;
+    lastUpY_ = y;
+    down_ = false;
+    return gesture;
+}
+
+bool ShouldUseMouseSelection(const std::optional<std::u32string>& text, bool canWatchOwner, bool ownerChanged,
+                             const std::u32string& previous) {
+    if (!text || TrimWhitespace(*text).empty()) return false;
+    return canWatchOwner ? ownerChanged : *text != previous;
 }
 
 std::string Lower(std::string text) {

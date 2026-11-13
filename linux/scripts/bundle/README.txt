@@ -14,7 +14,7 @@ iroha（Linux版）
 
 要るもの
   Ubuntu 22.04 以降（x86_64）。ライブラリ: libibus-1.0-5 libgtk-4-1 libcurl4 libsecret-1-0
-  libfontconfig1 libharfbuzz0b libxtst6
+  libfontconfig1 libharfbuzz0b libxtst6 libxi6 libxfixes3
 
 設定
   上のバーの入力ソースのメニューの「設定…」、または /usr/local/lib/iroha/iroha-settings

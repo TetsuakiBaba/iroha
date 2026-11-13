@@ -8,7 +8,7 @@ project(iroha-selection LANGUAGES CXX)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
-pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11 xtst)
+pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11 xtst xi xfixes)
 
 # バージョンは git のタグから（CLAUDE.md: タグが唯一の情報源）
 execute_process(

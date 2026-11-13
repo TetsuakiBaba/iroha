@@ -198,6 +198,17 @@ void TestFormatBytes() {
     CHECK(iroha::settings::FormatBytes(81535360) == "77.8 MB");
 }
 
+// マウスで選んだときの出し方: 値と画面の並びの行き来。知らない値は既定のアイコン
+void TestSelectionTrigger() {
+    for (int i = 0; i < 4; ++i) {
+        CHECK(iroha::settings::SelectionTriggerIndex(iroha::settings::SelectionTriggerValue(i)) == i);
+    }
+    CHECK(iroha::settings::SelectionTriggerValue(0) == "off");
+    CHECK(iroha::settings::SelectionTriggerIndex("optionMenu") == 3);
+    CHECK(iroha::settings::SelectionTriggerIndex("") == 1);
+    CHECK(iroha::settings::SelectionTriggerValue(-1) == "bubble");
+}
+
 } // namespace
 
 int main() {
@@ -214,6 +225,7 @@ int main() {
     TestDownload(work);
     TestLicenses(data);
     TestFormatBytes();
+    TestSelectionTrigger();
 
     std::filesystem::remove_all(work);
     std::printf("%d 件中 %d 件失敗\n", g_checks, g_failures);

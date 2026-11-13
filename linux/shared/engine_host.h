@@ -118,6 +118,7 @@ private:
 
     Options options_;
     std::string modelPath_;
+    std::string adapterPath_;
     std::unique_ptr<ZenzEngine> zenz_;
     std::unique_ptr<LatticeConverter> lattice_;
     std::unique_ptr<LatticeRescoringEngine> rescoring_;
@@ -135,6 +136,8 @@ private:
     std::string typoSignature_;
     // プライベートモードの間は、学習の差し替えとユーザ辞書を止める（変換のスレッドからも読む）
     std::atomic<bool> privateMode_{false};
+    // 変換の学習を使うか（設定 learningEnabled。OFF なら記録も適用もしない）
+    std::atomic<bool> learningEnabled_{true};
     std::unique_ptr<UserRewriteRuleStore> rewriteRules_;
     std::shared_ptr<const UserRewriteRuleSet> rewriteRuleSet_;
     std::unique_ptr<UserDictionaryEngine> dictionaryEngine_;

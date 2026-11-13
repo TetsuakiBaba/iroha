@@ -13,7 +13,7 @@ missing="$(ldd root/usr/local/lib/iroha/* 2>/dev/null | grep 'not found' | sort 
 if [ -n "$missing" ]; then
     echo "error: 次のライブラリが見つかりません:" >&2
     echo "$missing" >&2
-    echo "Ubuntu なら: sudo apt install libibus-1.0-5 libgtk-4-1 libcurl4 libsecret-1-0 libfontconfig1 libharfbuzz0b libxtst6" >&2
+    echo "Ubuntu なら: sudo apt install libibus-1.0-5 libgtk-4-1 libcurl4 libsecret-1-0 libfontconfig1 libharfbuzz0b libxtst6 libxi6 libxfixes3" >&2
     exit 1
 fi
 
@@ -27,6 +27,7 @@ pkill -x -u "$(id -u)" ibus-engine-iro 2>/dev/null || true
 echo "==> IBus に読み直させる"
 ibus write-cache 2>/dev/null || true
 restart_ibus
+start_selection /usr/local/lib/iroha/iroha-selection
 
 if [ ! -e "${XDG_DATA_HOME:-$HOME/.local/share}/iroha/models/iroha-kkc-v1-Q5_K_M.gguf" ]; then
     echo "変換モデルを取ります（約82MB。設定画面のモデルのタブからも取れます）"

@@ -208,6 +208,10 @@ void EngineHost::Build() {
     sessionSettings_.candidateCount = config.candidateCount;
     sessionSettings_.predictive = config.predictive;
     sessionSettings_.privateMode = config.privateMode;
+    sessionSettings_.documentContext = config.documentContext;
+    const auto privateShortcut = KeyShortcut::Parse(config.privateModeHotkey);
+    sessionSettings_.privateModeShortcut = privateShortcut ? privateShortcut->Encode() : 0;
+    learningEnabled_ = config.learningEnabled;
     sessionSettings_.conversionLog = config.conversionLog;
     sessionSettings_.typoCorrection = config.typoCorrection;
     sessionSettings_.typoThreshold = config.typoThreshold;
@@ -245,9 +249,19 @@ void EngineHost::Build() {
     }
     symbols_ = config.symbolCandidates ? loadedSymbols_ : nullptr;
     const std::string newModelPath = platform::ResolveModelPath();
-    if (!zenz_ || newModelPath != modelPath_) {
-        zenz_ = std::make_unique<ZenzEngine>(newModelPath);
+    // 追加学習した LoRA アダプタ（ファイルが無ければ使わない）
+    std::string newAdapterPath = config.modelAdapterPath;
+    if (!newAdapterPath.empty() && !std::filesystem::exists(PathFromUtf8(newAdapterPath))) {
+        Log("adapter not found: " + newAdapterPath);
+        newAdapterPath.clear();
+    }
+    if (!zenz_ || newModelPath != modelPath_ || newAdapterPath != adapterPath_) {
+        ZenzEngine::Options zenzOptions;
+        zenzOptions.adapterPath = newAdapterPath;
+        zenz_ = std::make_unique<ZenzEngine>(newModelPath, zenzOptions);
         modelPath_ = newModelPath;
+        adapterPath_ = newAdapterPath;
+        if (!adapterPath_.empty()) Log("adapter: " + adapterPath_);
         std::string error;
         if (zenz_->Prewarm(&error)) {
             Log("model loaded: " + newModelPath);
@@ -292,7 +306,7 @@ void EngineHost::Build() {
     dictionaryEngine_ = std::make_unique<UserDictionaryEngine>(
         core, [this] { return privateMode_ ? UserDictionary() : userDictionary_->Current(); }, lattice_.get());
     engine_ = std::make_unique<LearningEngine>(
-        dictionaryEngine_.get(), [this] { return privateMode_ ? LearningDictionary() : learning_->Current(); });
+        dictionaryEngine_.get(), [this] { return privateMode_ || !learningEnabled_ ? LearningDictionary() : learning_->Current(); });
 }
 
 void EngineHost::ApplyTo(SessionManager& sessions) {
@@ -304,7 +318,7 @@ void EngineHost::ApplyTo(SessionManager& sessions) {
 
 void EngineHost::RecordCorrection(const std::u32string& reading, const std::optional<std::u32string>& engineBaseline,
                                   const std::u32string& baseline, const std::u32string& committed) {
-    if (committed == baseline || committed.empty() || !engine_) return;
+    if (committed == baseline || committed.empty() || !engine_ || !learningEnabled_) return;
     const std::u32string engineResult =
         engineBaseline ? *engineBaseline : engine_->EngineResult(reading, baseline).value_or(baseline);
     if (committed == engineResult) {

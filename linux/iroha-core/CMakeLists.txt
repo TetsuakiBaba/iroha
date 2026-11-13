@@ -9,6 +9,7 @@ project(iroha-core LANGUAGES CXX)
 set(IROHA_WARNINGS -Wall -Wextra -Wno-missing-field-initializers)
 
 add_library(iroha-core STATIC
+    src/character_count.cpp
     src/chunked_conversion_engine.cpp
     src/ai_conversion.cpp
     src/ai_fix.cpp

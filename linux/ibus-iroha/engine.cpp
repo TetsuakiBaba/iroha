@@ -54,6 +54,8 @@ struct State {
     bool directMode = false;
     std::u32string idleUndoable;
     bool idleFullWidthSpace = true;
+    // プライベートモードのキー（セッションの返事で受け取る。最初の返事までは既定の Ctrl+Alt+P）
+    uint32_t privateModeShortcut = iroha::ibus::KeyContext().privateModeShortcut;
     bool privateMode = false;
     // 確定の取り消しで、カーソルの手前から消す文字数
     guint replaceBeforeLength = 0;
@@ -245,6 +247,7 @@ bool ApplyOutput(IBusEngine* engine, const iroha::SessionOutput& output, bool fr
     state.shown.commit.clear();
     state.idleUndoable = output.undoableCommit;
     state.idleFullWidthSpace = output.fullWidthSpace;
+    state.privateModeShortcut = output.privateModeShortcut;
     if (state.privateMode != output.privateMode) {
         state.privateMode = output.privateMode;
         UpdateProperties(engine);
@@ -386,6 +389,7 @@ gboolean ProcessKeyEvent(IBusEngine* engine, guint keyval, guint keycode, guint 
         context.aiPending = state.shown.aiPending;
         context.aiFixShortcut = state.shown.aiFixShortcut;
         context.aiShortcuts = state.shown.aiShortcuts;
+        context.privateModeShortcut = state.privateModeShortcut;
         const iroha::ibus::KeyDecision decision = iroha::ibus::DecideKey(keyval, modifiers, context);
         using Kind = iroha::ibus::KeyDecision::Kind;
         switch (decision.kind) {

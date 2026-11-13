@@ -3,6 +3,7 @@
 // iroha のヘッダは X のヘッダより先に読む（X は None・Status などをマクロにしていて、AIService::None と重なる）
 #include "ai_client.h"
 #include "iroha/ai_conversion.h"
+#include "iroha/character_count.h"
 #include "iroha/config.h"
 #include "iroha/platform.h"
 #include "iroha/unicode.h"
@@ -14,6 +15,7 @@
 
 #include <algorithm>
 #include <csignal>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <thread>
@@ -39,6 +41,22 @@ constexpr gint64 kKeyReleaseWaitUs = 1500 * 1000;
 // 貼ってから前のクリップボードの文字列を戻すまでの時間。X の選択は貼る側が読みに来たときに渡すので、
 // 早く戻すと戻した文字列が貼られる（Windows版の 300ms より長くする）
 constexpr guint kRestoreDelayMs = 1000;
+// マウスで選んでから PRIMARY 選択を読むまでの待ち（macOS版・Windows版と同じ 160ms）
+constexpr guint kMouseCaptureDelayMs = 160;
+// アイコン（文字数）を出しておく時間・メニューを出しておく上限（Windows版のアイコンと同じ 4 秒）
+constexpr guint kBubbleDurationMs = 4000;
+constexpr guint kMenuDurationMs = 20000;
+// 同じ選択を続けて拾わない間隔（macOS版と同じ 0.75 秒）
+constexpr gint64 kSameSelectionUs = 750 * 1000;
+// ドラッグとみなす距離（macOS版・Windows版と同じ 4 ピクセル）
+constexpr int kDragDistance = 4;
+
+constexpr char kBubbleCss[] =
+    "window.iroha-bubble { border: 1px solid alpha(currentColor, 0.28); }"
+    ".iroha-bubble-icon { color: #4f5bd5; font-size: 18px; }"
+    ".iroha-bubble-label { font-weight: 600; }"
+    ".iroha-menu-heading { font-size: smaller; }"
+    "button.iroha-menu-item { padding: 4px 14px; border-radius: 0; }";
 
 std::string Utf8(const std::u32string& text) { return Utf32ToUtf8(text); }
 
@@ -92,6 +110,18 @@ private:
         g_application_hold(G_APPLICATION(app_)); // 窓を出していないときも常駐する
         g_unix_signal_add(SIGTERM, &App::OnSignal, this);
         g_unix_signal_add(SIGINT, &App::OnSignal, this);
+        GtkCssProvider* css = gtk_css_provider_new();
+        gtk_css_provider_load_from_data(css, kBubbleCss, -1);
+        gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(css),
+                                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+        g_object_unref(css);
+        // ダブルクリックの間隔と距離はデスクトップの設定に合わせる
+        int doubleClickTime = 400;
+        int doubleClickDistance = 5;
+        g_object_get(gtk_settings_get_default(), "gtk-double-click-time", &doubleClickTime, "gtk-double-click-distance",
+                     &doubleClickDistance, nullptr);
+        gestures_.emplace(kDragDistance, static_cast<unsigned long>(std::max(1, doubleClickTime)),
+                          std::max(1, doubleClickDistance));
         WatchSettings();
         LoadSettings();
     }
@@ -103,6 +133,9 @@ private:
 
     void Shutdown() {
         if (!running_) return;
+        HideBubble();
+        if (captureTimer_) g_source_remove(captureTimer_);
+        captureTimer_ = 0;
         HidePanel();
         StopWorker();
         if (reloadTimer_) g_source_remove(reloadTimer_);
@@ -162,6 +195,11 @@ private:
         settings_ = SettingsFromConfig(config_);
         const std::vector<HotkeyBinding> bindings = PlanHotkeys(settings_);
         const size_t grabbed = x11_ ? x11_->Grab(bindings) : 0;
+        // マウスで選んだとき（AI編集のアイコン・メニューか、文字数を出すときだけ見る）
+        if (x11_) {
+            x11_->WatchMouse(settings_.WatchesMouse(), [this](const X11Desktop::MouseEvent& event) { OnMouse(event); });
+        }
+        if (!settings_.WatchesMouse()) HideBubble();
         if (!settings_.enabled) {
             log_("selection: disabled");
         } else {
@@ -173,6 +211,7 @@ private:
 
     void OnHotkey(int id, unsigned long time) {
         if (!settings_.enabled || phase_ != Phase::Hidden || capturing_ || pasting_) return;
+        HideBubble();
         // 入力中（未確定文字列がある）は使わない（macOS版と同じ）
         if (platform::IsComposing()) {
             log_("hotkey ignored while composing");
@@ -194,10 +233,15 @@ private:
 
     // 選択している文章を PRIMARY 選択から読む（Ctrl+C を送らない。クリップボードを書き換えない）
     void ReadSelection() {
+        ReadPrimary([this](const std::optional<std::string>& text) { OnSelectionRead(text); });
+    }
+
+    // PRIMARY 選択を読んで done に渡す（持ち主が答えなければ無し）
+    void ReadPrimary(std::function<void(const std::optional<std::string>&)> done) {
         GdkClipboard* primary = gdk_display_get_primary_clipboard(gdk_display_get_default());
         // 自分の窓（結果の窓の入力欄など）で選んだものは、ほかのアプリの選択ではない
         if (gdk_clipboard_is_local(primary)) {
-            OnSelectionRead(std::nullopt);
+            done(std::nullopt);
             return;
         }
         capturing_ = true;
@@ -211,8 +255,9 @@ private:
             App* app;
             GCancellable* cancellable;
             guint timeout;
+            std::function<void(const std::optional<std::string>&)> done;
         };
-        auto* read = new Read{this, cancellable, timeout};
+        auto* read = new Read{this, cancellable, timeout, std::move(done)};
         gdk_clipboard_read_text_async(
             primary, cancellable,
             +[](GObject* source, GAsyncResult* result, gpointer data) {
@@ -228,7 +273,7 @@ private:
                 }
                 if (error) g_error_free(error);
                 read->app->capturing_ = false;
-                if (read->app->running_) read->app->OnSelectionRead(value);
+                if (read->app->running_) read->done(value);
             },
             read);
     }
@@ -249,6 +294,255 @@ private:
         const std::u32string heading = PresetHeading(preset, index);
         ShowPanel(heading, Phase::Processing);
         StartRequest(heading, PresetRequest(preset, index, sourceText_));
+    }
+
+    // ---- マウスで選んだとき（macOS版 MouseSelectionMonitor・SelectionBubbleController・SelectionMenuController） ----
+
+    void OnMouse(const X11Desktop::MouseEvent& event) {
+        if (!gestures_) return;
+        if (event.press) {
+            // 押した: 読みかけの選択は捨て、アイコン・メニューの外を押したら閉じる
+            ++captureSerial_;
+            if (captureTimer_) g_source_remove(captureTimer_);
+            captureTimer_ = 0;
+            ownerChangesAtPress_ = x11_->PrimaryOwnerChanges();
+            gestures_->Press(event.x, event.y);
+            if (!InsideBubble(event.x, event.y)) HideBubble();
+            return;
+        }
+        if (gestures_->Release(event.x, event.y, event.time)) OnGesture(event.x, event.y, event.alt);
+    }
+
+    // ドラッグかダブルクリックで選んだ。選択が落ち着くまで少し待ってから読む
+    void OnGesture(int x, int y, bool alt) {
+        if (phase_ != Phase::Hidden || capturing_ || pasting_ || InsideBubble(x, y)) return;
+        if (!settings_.MouseTriggersAI(alt) && !settings_.characterCount) return;
+        gestureX_ = x;
+        gestureY_ = y;
+        gestureAlt_ = alt;
+        const uint64_t serial = captureSerial_;
+        if (captureTimer_) g_source_remove(captureTimer_);
+        struct Wait {
+            App* app;
+            uint64_t serial;
+        };
+        captureTimer_ = g_timeout_add_full(
+            G_PRIORITY_DEFAULT, kMouseCaptureDelayMs,
+            +[](gpointer data) -> gboolean {
+                auto* wait = static_cast<Wait*>(data);
+                wait->app->captureTimer_ = 0;
+                wait->app->CaptureMouseSelection(wait->serial);
+                return G_SOURCE_REMOVE;
+            },
+            new Wait{this, serial}, +[](gpointer data) { delete static_cast<Wait*>(data); });
+    }
+
+    void CaptureMouseSelection(uint64_t serial) {
+        if (serial != captureSerial_ || phase_ != Phase::Hidden || capturing_ || pasting_) return;
+        // 入力中（未確定文字列がある）は出さない（macOS版と同じ）
+        if (platform::IsComposing()) return;
+        Window window = x11_->ActiveWindow();
+        if (window == 0) window = x11_->WindowAtPointer();
+        const AppIdentity identity = x11_->Identify(window);
+        if (IsExcluded(settings_.excludedApps, identity)) return;
+        ReadPrimary([this, serial, window, identity](const std::optional<std::string>& utf8) {
+            if (serial != captureSerial_ || phase_ != Phase::Hidden) return;
+            std::optional<std::u32string> text;
+            if (utf8) text = Utf8ToUtf32(*utf8);
+            const bool changed = x11_->PrimaryOwnerChanges() != ownerChangesAtPress_;
+            if (!ShouldUseMouseSelection(text, x11_->CanWatchSelectionOwner(), changed, lastMouseText_)) return;
+            lastMouseText_ = *text;
+            const std::u32string fingerprint = Utf8ToUtf32(identity.command + "|" + identity.classInstance) + U"|" + *text;
+            const gint64 now = g_get_monotonic_time();
+            if (fingerprint == lastFingerprint_ && now - lastFingerprintTime_ < kSameSelectionUs) return;
+            lastFingerprint_ = fingerprint;
+            lastFingerprintTime_ = now;
+            OnMouseSelection(MouseCapture{window, *text, gestureX_, gestureY_});
+        });
+    }
+
+    struct MouseCapture {
+        Window window = 0;
+        std::u32string text;
+        int x = 0;
+        int y = 0;
+    };
+
+    void OnMouseSelection(const MouseCapture& capture) {
+        const bool ai = settings_.MouseTriggersAI(gestureAlt_);
+        const std::u32string label = settings_.characterCount ? CharacterCount(capture.text).Summary() : U"";
+        bubbleCapture_ = capture;
+        if (!ai) {
+            if (!label.empty()) ShowBubble(label, /*clickable=*/false);
+            return;
+        }
+        if (settings_.trigger == Settings::Trigger::Bubble) {
+            ShowBubble(label, /*clickable=*/true);
+            return;
+        }
+        // すぐにメニューを出す（文字数はメニューの上に添える）
+        ShowMenu(label);
+    }
+
+    // アイコン・メニューの窓（ウィンドウマネージャに扱わせない窓。押しても元のアプリのフォーカスと選択はそのまま）
+    void EnsureBubble() {
+        if (bubble_) return;
+        bubble_ = gtk_window_new();
+        gtk_window_set_application(GTK_WINDOW(bubble_), app_);
+        gtk_window_set_decorated(GTK_WINDOW(bubble_), FALSE);
+        gtk_window_set_resizable(GTK_WINDOW(bubble_), FALSE);
+        gtk_window_set_title(GTK_WINDOW(bubble_), "iroha");
+        gtk_widget_add_css_class(bubble_, "iroha-bubble");
+        gtk_widget_realize(bubble_);
+        GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(bubble_));
+        if (surface && GDK_IS_X11_SURFACE(surface)) {
+            bubbleXid_ = gdk_x11_surface_get_xid(surface);
+            x11_->MakeOverlay(bubbleXid_);
+        }
+        // アイコンを押したらメニューを開く
+        GtkGesture* click = gtk_gesture_click_new();
+        g_signal_connect(click, "released", G_CALLBACK(+[](GtkGestureClick*, int, double, double, gpointer self) {
+                             auto* app = static_cast<App*>(self);
+                             if (app->bubbleClickable_ && !app->bubbleIsMenu_) app->ShowMenu(app->bubbleLabel_);
+                         }),
+                         this);
+        gtk_widget_add_controller(bubble_, GTK_EVENT_CONTROLLER(click));
+    }
+
+    // アイコン（clickable）か文字数だけを、マウスの右下に出す
+    void ShowBubble(const std::u32string& label, bool clickable) {
+        EnsureBubble();
+        bubbleClickable_ = clickable;
+        bubbleIsMenu_ = false;
+        bubbleLabel_ = label;
+        GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        gtk_widget_set_margin_start(box, 10);
+        gtk_widget_set_margin_end(box, 10);
+        gtk_widget_set_margin_top(box, 5);
+        gtk_widget_set_margin_bottom(box, 5);
+        if (clickable) {
+            // macOS版の sparkles・Windows版の ✦ にあたる記号
+            GtkWidget* icon = gtk_label_new("\u2726");
+            gtk_widget_add_css_class(icon, "iroha-bubble-icon");
+            gtk_box_append(GTK_BOX(box), icon);
+            gtk_widget_set_tooltip_text(bubble_, "iroha: クリックでメニュー");
+        } else {
+            gtk_widget_set_tooltip_text(bubble_, nullptr);
+        }
+        if (!label.empty()) {
+            GtkWidget* text = gtk_label_new(Utf8(label).c_str());
+            gtk_widget_add_css_class(text, "iroha-bubble-label");
+            gtk_box_append(GTK_BOX(box), text);
+        }
+        PresentBubble(box, 10, 14, kBubbleDurationMs);
+    }
+
+    // プリセットのメニュー（「AIに指示…」と有効なプリセット）。heading は文字数（無ければ空）
+    void ShowMenu(const std::u32string& heading) {
+        if (!bubbleCapture_) return;
+        EnsureBubble();
+        bubbleIsMenu_ = true;
+        GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        gtk_widget_set_margin_top(box, 4);
+        gtk_widget_set_margin_bottom(box, 4);
+        GtkWidget* title = gtk_label_new(heading.empty() ? "iroha" : ("iroha・" + Utf8(heading)).c_str());
+        gtk_label_set_xalign(GTK_LABEL(title), 0);
+        gtk_widget_set_margin_start(title, 14);
+        gtk_widget_set_margin_end(title, 14);
+        gtk_widget_set_margin_bottom(title, 2);
+        gtk_widget_add_css_class(title, "dim-label");
+        gtk_widget_add_css_class(title, "iroha-menu-heading");
+        gtk_box_append(GTK_BOX(box), title);
+        gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+        AppendMenuItem(box, "AIに指示…", kOnDemandId);
+        bool separated = false;
+        for (size_t i = 0; i < settings_.presets.size(); ++i) {
+            const auto& preset = settings_.presets[i];
+            if (!preset.enabled) continue;
+            if (!separated) gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+            separated = true;
+            std::u32string name = PresetHeading(preset, i);
+            std::replace(name.begin(), name.end(), U'\n', U' ');
+            if (name.size() > 42) name = name.substr(0, 42) + U"…";
+            AppendMenuItem(box, Utf8(name), static_cast<int>(i));
+        }
+        gtk_widget_set_tooltip_text(bubble_, nullptr);
+        PresentBubble(box, 4, 10, kMenuDurationMs);
+    }
+
+    void AppendMenuItem(GtkWidget* box, const std::string& text, int id) {
+        GtkWidget* button = gtk_button_new();
+        GtkWidget* label = gtk_label_new(text.c_str());
+        gtk_label_set_xalign(GTK_LABEL(label), 0);
+        gtk_button_set_child(GTK_BUTTON(button), label);
+        gtk_widget_add_css_class(button, "flat");
+        gtk_widget_add_css_class(button, "iroha-menu-item");
+        gtk_widget_set_focusable(button, FALSE);
+        g_object_set_data(G_OBJECT(button), "iroha-id", GINT_TO_POINTER(id + 1));
+        g_signal_connect(button, "clicked", G_CALLBACK(+[](GtkButton* button, gpointer self) {
+                             const int id = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "iroha-id")) - 1;
+                             static_cast<App*>(self)->OnMenuChoice(id);
+                         }),
+                         this);
+        gtk_box_append(GTK_BOX(box), button);
+    }
+
+    // 中身を差し替えて、選んだ位置の右下（dx, dy は論理ピクセル）に出す。画面の作業領域からはみ出さないようにする
+    void PresentBubble(GtkWidget* content, int dx, int dy, guint durationMs) {
+        gtk_widget_set_visible(bubble_, FALSE);
+        gtk_window_set_child(GTK_WINDOW(bubble_), content);
+        int width = 0;
+        int height = 0;
+        gtk_widget_measure(bubble_, GTK_ORIENTATION_HORIZONTAL, -1, nullptr, &width, nullptr, nullptr);
+        gtk_widget_measure(bubble_, GTK_ORIENTATION_VERTICAL, width, nullptr, &height, nullptr, nullptr);
+        gtk_window_set_default_size(GTK_WINDOW(bubble_), width, height);
+        const int px = bubbleCapture_ ? bubbleCapture_->x : 0;
+        const int py = bubbleCapture_ ? bubbleCapture_->y : 0;
+        const auto [scale, area] = WorkArea(px, py);
+        int x = px + dx * scale;
+        int y = py + dy * scale;
+        if (area.width > 0) {
+            x = std::max(area.x, std::min(x, area.x + area.width - width * scale));
+            y = std::max(area.y, std::min(y, area.y + area.height - height * scale));
+        }
+        if (bubbleXid_) x11_->PlaceWindow(bubbleXid_, x, y);
+        gtk_widget_set_visible(bubble_, TRUE);
+        if (bubbleXid_) x11_->PlaceWindow(bubbleXid_, x, y);
+        if (bubbleTimer_) g_source_remove(bubbleTimer_);
+        bubbleTimer_ = g_timeout_add(durationMs, +[](gpointer self) -> gboolean {
+            auto* app = static_cast<App*>(self);
+            app->bubbleTimer_ = 0;
+            app->HideBubble();
+            return G_SOURCE_REMOVE;
+        }, this);
+    }
+
+    bool BubbleVisible() const { return bubble_ && gtk_widget_get_visible(bubble_); }
+
+    bool InsideBubble(int x, int y) {
+        if (!BubbleVisible() || !bubbleXid_) return false;
+        const auto rect = x11_->WindowRect(bubbleXid_);
+        return rect && rect->Contains(x, y);
+    }
+
+    void HideBubble() {
+        if (bubbleTimer_) g_source_remove(bubbleTimer_);
+        bubbleTimer_ = 0;
+        bubbleIsMenu_ = false;
+        if (bubble_) gtk_widget_set_visible(bubble_, FALSE);
+    }
+
+    // メニューで選んだ: 選んでいた文章をプリセット（か、その場の指示）で AI に渡す
+    void OnMenuChoice(int id) {
+        if (!bubbleCapture_) return;
+        const MouseCapture capture = *bubbleCapture_;
+        HideBubble();
+        if (phase_ != Phase::Hidden || pasting_) return;
+        target_ = capture.window != 0 ? capture.window : x11_->ActiveWindow();
+        // メニューを押したクリックの時刻（ウィンドウマネージャが結果の窓へフォーカスを移すのを断らないように）
+        hotkeyTime_ = x11_->LastButtonTime();
+        pendingId_ = id;
+        OnSelectionRead(Utf8(capture.text));
     }
 
     // ---- 結果の窓 ----
@@ -395,6 +689,20 @@ private:
         }
         const int px = pointer->first;
         const int py = pointer->second;
+        const auto [scale, area] = WorkArea(px, py);
+        const int width = kPanelWidth * scale;
+        const int height = kPanelHeight * scale;
+        int x = px + 12 * scale;
+        int y = py + 16 * scale;
+        if (area.width > 0) {
+            x = std::max(area.x, std::min(x, area.x + area.width - width));
+            y = std::max(area.y, std::min(y, area.y + area.height - height));
+        }
+        panelPosition_ = std::make_pair(x, y);
+    }
+
+    // (px, py)（X の座標）を含む画面の倍率と作業領域（X の座標）。見つからなければ倍率 1・幅 0
+    static std::pair<int, GdkRectangle> WorkArea(int px, int py) {
         int scale = 1;
         GdkRectangle area = {px, py, 0, 0};
         GListModel* monitors = gdk_display_get_monitors(gdk_display_get_default());
@@ -414,15 +722,7 @@ private:
             g_object_unref(monitor);
             if (contains) break;
         }
-        const int width = kPanelWidth * scale;
-        const int height = kPanelHeight * scale;
-        int x = px + 12 * scale;
-        int y = py + 16 * scale;
-        if (area.width > 0) {
-            x = std::max(area.x, std::min(x, area.x + area.width - width));
-            y = std::max(area.y, std::min(y, area.y + area.height - height));
-        }
-        panelPosition_ = std::make_pair(x, y);
+        return {scale, area};
     }
 
     void PlacePanel() {
@@ -691,6 +991,25 @@ private:
     uint64_t requestNumber_ = 0;
     std::shared_ptr<CancelToken> cancel_;
     std::thread worker_;
+
+    // マウスで選んだとき
+    std::optional<GestureTracker> gestures_;
+    uint64_t captureSerial_ = 0;
+    guint captureTimer_ = 0;
+    uint64_t ownerChangesAtPress_ = 0;
+    int gestureX_ = 0;
+    int gestureY_ = 0;
+    bool gestureAlt_ = false;
+    std::u32string lastMouseText_;    // 前に使った文章（XFixes が無いときの比較用）
+    std::u32string lastFingerprint_;  // 同じ選択を続けて拾わないための印と時刻
+    gint64 lastFingerprintTime_ = 0;
+    std::optional<MouseCapture> bubbleCapture_;
+    GtkWidget* bubble_ = nullptr;
+    Window bubbleXid_ = 0;
+    bool bubbleClickable_ = false;
+    bool bubbleIsMenu_ = false;
+    std::u32string bubbleLabel_;
+    guint bubbleTimer_ = 0;
 
     // 貼り付け
     bool pasting_ = false;
