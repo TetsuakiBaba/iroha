@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "iroha/candidate_grid.h"
 #include "iroha/kana.h"
 #include "iroha/reading_aligner.h"
 #include "iroha/unicode.h"
@@ -900,6 +901,14 @@ void InputSession::HandleSegmenting(SessionKey key, char32_t character, bool shi
     case SessionKey::Up:
         if (s.candidateListOpen) CycleCandidate(-1);
         break;
+    case SessionKey::Tab:
+        // 候補が 1 列に収まらないときだけ、列を横に並べた表に広げる・1 列に戻す
+        if (s.candidateListOpen && s.currentSegment < s.segments.size()) {
+            CandidateGrid grid(s.segments[s.currentSegment].candidates.size(),
+                               s.segments[s.currentSegment].candidateIndex, s.candidatesExpanded);
+            if (grid.ToggleExpanded()) s.candidatesExpanded = grid.IsExpanded();
+        }
+        break;
     case SessionKey::Enter:
         // 候補ウィンドウが開いていても全文節を確定する（選んだ候補は反映済み）
         CommitSegments(commit);
@@ -912,19 +921,23 @@ void InputSession::HandleSegmenting(SessionKey key, char32_t character, bool shi
         }
         break;
     case SessionKey::Left:
+    case SessionKey::Right: {
+        const int delta = key == SessionKey::Left ? -1 : +1;
         if (shift) {
-            ResizeSegment(-1);
+            ResizeSegment(delta);
+        } else if (s.candidateListOpen && s.candidatesExpanded && s.currentSegment < s.segments.size()) {
+            // 表に広げている間だけ ←→ は隣の列の候補へ移る（文節は動かさない）
+            Segment& segment = s.segments[s.currentSegment];
+            CandidateGrid grid(segment.candidates.size(), segment.candidateIndex, true);
+            if (grid.MoveColumn(delta)) {
+                segment.candidateIndex = grid.Selected();
+                segment.result = segment.candidates[segment.candidateIndex];
+            }
         } else {
-            MoveSegment(-1);
+            MoveSegment(delta);
         }
         break;
-    case SessionKey::Right:
-        if (shift) {
-            ResizeSegment(+1);
-        } else {
-            MoveSegment(+1);
-        }
-        break;
+    }
     case SessionKey::Backspace:
         // 選んでいる文節の読みを後ろから 1 文字消す（かな入力に戻すのは Esc）
         CloseCandidateList();
@@ -969,6 +982,7 @@ void InputSession::ExitSegmentModeToKana() {
     s.segments.clear();
     s.currentSegment = 0;
     s.candidateListOpen = false;
+    s.candidatesExpanded = false;
     s.segmentBaseline.reset();
     s.segmentEngineBaseline.reset();
     s.segmentEdit.reset();
@@ -1789,6 +1803,7 @@ void InputSession::ApplyTypoWholeSentenceIfSelected() {
 void InputSession::CloseCandidateList() {
     ApplyTypoWholeSentenceIfSelected();
     state_.candidateListOpen = false;
+    state_.candidatesExpanded = false;
 }
 
 // ---- 確定と取り消し ----
@@ -1890,6 +1905,7 @@ SessionOutput InputSession::Current() const {
             output.candidates = segment.candidates;
             output.candidateAnnotations = segment.annotations;
             output.candidateIndex = static_cast<uint32_t>(segment.candidateIndex);
+            output.candidatesExpanded = s.candidatesExpanded;
         }
         // 空の文節（打ち直しで消した途中）は出さない
         output.preedit.erase(std::remove_if(output.preedit.begin(), output.preedit.end(),

@@ -30,7 +30,7 @@
 //                    （印と取り消せる確定から後は後から足したので、無い返事も読めるようにしてある）
 //                flags: 1 文節変換中 / 2 変換の結果待ち / 4 候補ウィンドウ / 8 入力していないときの Space は全角 /
 //                       16 確定した文字列を未確定文字列に置き換える（UndoCommit への返事） / 32 プライベートモード /
-//                       64 打ち間違いの訂正の結果待ち / 128 AI変換の結果待ち
+//                       64 打ち間違いの訂正の結果待ち / 128 AI変換の結果待ち / 256 候補ウィンドウを表に広げる
 //                エラー: string message
 //
 // セッションのメッセージは、入力の状態（読み・ライブ変換・文節・候補）をサーバ側に持つためのもの
@@ -215,6 +215,7 @@ constexpr uint32_t kOutputFlagReplacesCommitted = 16;
 constexpr uint32_t kOutputFlagPrivateMode = 32;
 constexpr uint32_t kOutputFlagTypoPending = 64;
 constexpr uint32_t kOutputFlagAIPending = 128;
+constexpr uint32_t kOutputFlagCandidatesExpanded = 256;
 
 // leftContext は、合成していないときにカーソルより前から読んだ文書のテキスト（読めなければ nullptr）
 inline std::vector<char> BuildSessionKeyRequest(uint64_t sessionId, SessionKey key,
@@ -264,7 +265,8 @@ inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
                      (output->replacesCommitted ? kOutputFlagReplacesCommitted : 0) |
                      (output->privateMode ? kOutputFlagPrivateMode : 0) |
                      (output->typoPending ? kOutputFlagTypoPending : 0) |
-                     (output->aiPending ? kOutputFlagAIPending : 0));
+                     (output->aiPending ? kOutputFlagAIPending : 0) |
+                     (output->candidatesExpanded ? kOutputFlagCandidatesExpanded : 0));
     PutU32(&buf, static_cast<uint32_t>(output->preedit.size()));
     for (const SessionOutput::Span& span : output->preedit) {
         PutU32(&buf, span.style);
@@ -370,6 +372,7 @@ inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
     output.privateMode = (flags & kOutputFlagPrivateMode) != 0;
     output.typoPending = (flags & kOutputFlagTypoPending) != 0;
     output.aiPending = (flags & kOutputFlagAIPending) != 0;
+    output.candidatesExpanded = (flags & kOutputFlagCandidatesExpanded) != 0;
     for (uint32_t i = 0; i < spanCount; ++i) {
         uint32_t style = 0;
         std::string text;

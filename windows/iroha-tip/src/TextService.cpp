@@ -397,8 +397,10 @@ TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) co
                            : wParam == VK_F9 ? iroha::SessionKey::DisplayFullAlphanumeric
                                              : iroha::SessionKey::DisplayHalfAlphanumeric);
         case VK_TAB:
-            // 予測変換の候補が出ていれば Tab で選ぶ（Shift+Tab は前の候補）
+            // 予測変換の候補が出ていれば Tab で選ぶ（Shift+Tab は前の候補）。
+            // 候補ウィンドウが出ていれば、表に広げる・1 列に戻す（タブ文字はアプリに渡さない）
             if (composing && !segmenting && !shown_.predictions.empty()) return session(iroha::SessionKey::Tab);
+            if (segmenting && shown_.candidatesVisible) return session(iroha::SessionKey::Tab);
             return commitThenPass();
         case VK_RETURN:
             return composing ? session(iroha::SessionKey::Enter) : decision;
@@ -738,8 +740,8 @@ HRESULT TextService::UpdateCandidateWindow(ITfContext* context) {
                     RECT rect = {};
                     BOOL clipped = FALSE;
                     if (SUCCEEDED(view->GetTextExt(ec, segmentRange, &rect, &clipped))) {
-                        candidateWindow_.Show(owner, rect, shown_.candidates,
-                                              shown_.candidateAnnotations, shown_.candidateIndex);
+                        candidateWindow_.Show(owner, rect, shown_.candidates, shown_.candidateAnnotations,
+                                              shown_.candidateIndex, /*numbered=*/true, shown_.candidatesExpanded);
                     }
                     segmentRange->Release();
                 }

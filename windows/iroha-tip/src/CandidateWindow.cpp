@@ -211,7 +211,7 @@ void CandidateWindow::BuildLayouts() {
     if (!footer_.empty()) {
         if (FAILED(dwriteFactory_->CreateTextLayout(footer_.c_str(),
                                                     static_cast<UINT32>(footer_.size()),
-                                                    footerFormat_, 100.0f, height, &footerLayout_))) {
+                                                    footerFormat_, 10000.0f, height, &footerLayout_))) {
             footerLayout_ = nullptr;
         }
     }
@@ -222,7 +222,14 @@ SIZE CandidateWindow::MeasureContent() {
     const bool directWrite = !rows_.empty() && rows_.front().layout != nullptr;
     HDC dc = directWrite ? nullptr : GetDC(hwnd_);
     HGDIOBJ oldFont = dc ? SelectObject(dc, font_) : nullptr;
-    LONG annotationWidth = 0;
+    size_t columnCount = 0;
+    lines_ = 0;
+    for (const Row& row : rows_) {
+        columnCount = (std::max)(columnCount, row.column + 1);
+        lines_ = (std::max)(lines_, row.line + 1);
+    }
+    std::vector<LONG> textWidths(columnCount, 0);
+    std::vector<LONG> annotationWidths(columnCount, 0);
     for (const Row& row : rows_) {
         LONG width = 0;
         LONG annotation = 0;
@@ -243,32 +250,66 @@ SIZE CandidateWindow::MeasureContent() {
                 annotation = size.cx;
             }
         }
-        content.cx = (std::max)(content.cx, width);
-        annotationWidth = (std::max)(annotationWidth, annotation);
+        textWidths[row.column] = (std::max)(textWidths[row.column], width);
+        annotationWidths[row.column] = (std::max)(annotationWidths[row.column], annotation);
     }
     if (dc) {
         SelectObject(dc, oldFont);
         ReleaseDC(hwnd_, dc);
     }
-    // 印は候補の列の右に、そろえて出す
-    annotationX_ = 0;
-    if (annotationWidth > 0) {
-        annotationX_ = padding_ + content.cx + padding_ * 3;
-        content.cx += padding_ * 3 + annotationWidth;
+    // 列を左から並べる。印は候補の右に、列の中でそろえて出す
+    columns_.assign(columnCount, Column());
+    int x = 0;
+    for (size_t c = 0; c < columnCount; ++c) {
+        Column& column = columns_[c];
+        column.x = x;
+        column.width = padding_ + textWidths[c];
+        if (annotationWidths[c] > 0) {
+            column.annotationX = x + column.width + padding_ * 3;
+            column.width += padding_ * 3 + annotationWidths[c];
+        }
+        column.width += padding_ * 3;
+        x += column.width;
     }
-    content.cx += padding_ * 4;
-    const size_t rows = rows_.size() + (footer_.empty() ? 0 : 1);
+    content.cx = x + padding_;
+    // 右下の文（ページと Tab の案内）が収まる幅にする
+    if (!footer_.empty()) {
+        LONG footerWidth = 0;
+        DWRITE_TEXT_METRICS metrics = {};
+        if (footerLayout_ && SUCCEEDED(footerLayout_->GetMetrics(&metrics))) {
+            footerWidth = static_cast<LONG>(std::ceil(metrics.width));
+        } else if (HDC measure = GetDC(hwnd_)) {
+            HGDIOBJ previous = SelectObject(measure, font_);
+            SIZE size = {};
+            GetTextExtentPoint32W(measure, footer_.c_str(), static_cast<int>(footer_.size()), &size);
+            footerWidth = size.cx;
+            SelectObject(measure, previous);
+            ReleaseDC(hwnd_, measure);
+        }
+        content.cx = (std::max)(content.cx, footerWidth + padding_ * 3);
+    }
+    const size_t rows = lines_ + (footer_.empty() ? 0 : 1);
     content.cy = static_cast<LONG>(rows) * rowHeight_ + padding_ * 2;
     return content;
+}
+
+RECT CandidateWindow::RowRect(size_t index) const {
+    const Row& row = rows_[index];
+    const Column& column = row.column < columns_.size() ? columns_[row.column] : Column();
+    const LONG top = padding_ + static_cast<LONG>(row.line) * rowHeight_;
+    return RECT{column.x, top, column.x + column.width, top + rowHeight_};
 }
 
 void CandidateWindow::Paint(HDC dc, const RECT& client) {
     // 背景と選んでいる行の帯は GDI で塗り、文字だけを Direct2D で重ねる
     FillRect(dc, &client, GetSysColorBrush(COLOR_WINDOW));
     if (selected_ < rows_.size()) {
-        const RECT highlight = {0, padding_ + static_cast<LONG>(selected_) * rowHeight_,
-                                client.right,
-                                padding_ + static_cast<LONG>(selected_ + 1) * rowHeight_};
+        RECT highlight = RowRect(selected_);
+        // 1 列のときは窓の幅いっぱいに塗る
+        if (columns_.size() <= 1) {
+            highlight.left = 0;
+            highlight.right = client.right;
+        }
         FillRect(dc, &highlight, GetSysColorBrush(COLOR_HIGHLIGHT));
     }
     const bool hasLayouts = !rows_.empty() && rows_.front().layout != nullptr;
@@ -284,17 +325,16 @@ void CandidateWindow::Paint(HDC dc, const RECT& client) {
     renderTarget_->BeginDraw();
     for (size_t i = 0; i < rows_.size(); ++i) {
         if (!rows_[i].layout) continue;
+        const RECT row = RowRect(i);
+        const int annotationX = rows_[i].column < columns_.size() ? columns_[rows_[i].column].annotationX : 0;
         brush->SetColor(SystemColor(i == selected_ ? COLOR_HIGHLIGHTTEXT : COLOR_WINDOWTEXT));
         renderTarget_->DrawTextLayout(
-            D2D1::Point2F(static_cast<float>(padding_),
-                          static_cast<float>(padding_ + static_cast<LONG>(i) * rowHeight_)),
-            rows_[i].layout, brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
-        if (rows_[i].annotationLayout && annotationX_ > 0) {
+            D2D1::Point2F(static_cast<float>(row.left + padding_), static_cast<float>(row.top)), rows_[i].layout,
+            brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+        if (rows_[i].annotationLayout && annotationX > 0) {
             brush->SetColor(SystemColor(i == selected_ ? COLOR_HIGHLIGHTTEXT : COLOR_GRAYTEXT));
-            renderTarget_->DrawTextLayout(
-                D2D1::Point2F(static_cast<float>(annotationX_),
-                              static_cast<float>(padding_ + static_cast<LONG>(i) * rowHeight_)),
-                rows_[i].annotationLayout, brush, D2D1_DRAW_TEXT_OPTIONS_NONE);
+            renderTarget_->DrawTextLayout(D2D1::Point2F(static_cast<float>(annotationX), static_cast<float>(row.top)),
+                                          rows_[i].annotationLayout, brush, D2D1_DRAW_TEXT_OPTIONS_NONE);
         }
     }
     if (footerLayout_) {
@@ -304,8 +344,7 @@ void CandidateWindow::Paint(HDC dc, const RECT& client) {
         footerLayout_->SetMaxWidth(width);
         renderTarget_->DrawTextLayout(
             D2D1::Point2F(static_cast<float>(padding_),
-                          static_cast<float>(padding_ +
-                                             static_cast<LONG>(rows_.size()) * rowHeight_)),
+                          static_cast<float>(padding_ + static_cast<LONG>(lines_) * rowHeight_)),
             footerLayout_, brush, D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
     const HRESULT hr = renderTarget_->EndDraw();
@@ -318,25 +357,24 @@ void CandidateWindow::PaintWithGdi(HDC dc, const RECT& client) const {
     HGDIOBJ oldFont = SelectObject(dc, font_);
     SetBkMode(dc, TRANSPARENT);
     for (size_t i = 0; i < rows_.size(); ++i) {
-        RECT row = {padding_, padding_ + static_cast<LONG>(i) * rowHeight_,
-                    client.right - padding_,
-                    padding_ + static_cast<LONG>(i + 1) * rowHeight_};
+        RECT row = RowRect(i);
+        row.left += padding_;
+        const int annotationX = rows_[i].column < columns_.size() ? columns_[rows_[i].column].annotationX : 0;
         SetTextColor(dc, GetSysColor(i == selected_ ? COLOR_HIGHLIGHTTEXT : COLOR_WINDOWTEXT));
         const std::wstring text = rows_[i].label + rows_[i].text;
         DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &row,
                   DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX);
-        if (!rows_[i].annotation.empty() && annotationX_ > 0) {
+        if (!rows_[i].annotation.empty() && annotationX > 0) {
             RECT annotation = row;
-            annotation.left = annotationX_;
+            annotation.left = annotationX;
             SetTextColor(dc, GetSysColor(i == selected_ ? COLOR_HIGHLIGHTTEXT : COLOR_GRAYTEXT));
             DrawTextW(dc, rows_[i].annotation.c_str(), static_cast<int>(rows_[i].annotation.size()),
                       &annotation, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX);
         }
     }
     if (!footer_.empty()) {
-        RECT row = {padding_, padding_ + static_cast<LONG>(rows_.size()) * rowHeight_,
-                    client.right - padding_,
-                    padding_ + static_cast<LONG>(rows_.size() + 1) * rowHeight_};
+        RECT row = {padding_, padding_ + static_cast<LONG>(lines_) * rowHeight_, client.right - padding_,
+                    padding_ + static_cast<LONG>(lines_ + 1) * rowHeight_};
         SetTextColor(dc, GetSysColor(COLOR_GRAYTEXT));
         DrawTextW(dc, footer_.c_str(), static_cast<int>(footer_.size()), &row,
                   DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
@@ -347,30 +385,34 @@ void CandidateWindow::PaintWithGdi(HDC dc, const RECT& client) const {
 void CandidateWindow::Show(HWND owner, const RECT& anchor,
                            const std::vector<std::u32string>& candidates,
                            const std::vector<std::u32string>& annotations, size_t selectedIndex,
-                           bool numbered) {
+                           bool numbered, bool expanded) {
     EnsureWindow(owner);
     if (!hwnd_) return;
     UpdateFont();
 
-    // 選んでいる候補のあるページだけを出す（数字キーはページの中の番号）
+    // 選んでいる候補のあるページだけを出す（数字キーはページの中の番号）。
+    // 表に広げているときは、全部のページを列として横に並べる
     const bool hasSelection = selectedIndex < candidates.size();
     const size_t page = hasSelection ? selectedIndex / kPageSize : 0;
-    const size_t first = page * kPageSize;
-    const size_t last = (std::min)(first + kPageSize, candidates.size());
+    const size_t pageCount = (candidates.size() + kPageSize - 1) / kPageSize;
+    const bool grid = expanded && pageCount > 1;
+    const size_t first = grid ? 0 : page * kPageSize;
+    const size_t last = grid ? candidates.size() : (std::min)(first + kPageSize, candidates.size());
     ReleaseLayouts();
     rows_.clear();
     for (size_t i = first; i < last; ++i) {
         Row row;
-        if (numbered) row.label = std::to_wstring(i - first + 1) + L"  ";
+        if (numbered) row.label = std::to_wstring((i - first) % kPageSize + 1) + L"  ";
         row.text = iroha::Utf32ToUtf16(candidates[i]);
         if (annotations.size() == candidates.size()) row.annotation = iroha::Utf32ToUtf16(annotations[i]);
+        row.column = grid ? (i - first) / kPageSize : 0;
+        row.line = (i - first) % kPageSize;
         rows_.push_back(std::move(row));
     }
     selected_ = hasSelection ? selectedIndex - first : SIZE_MAX;
-    const size_t pageCount = (candidates.size() + kPageSize - 1) / kPageSize;
-    footer_ = pageCount > 1
-                  ? std::to_wstring(page + 1) + L"/" + std::to_wstring(pageCount)
-                  : std::wstring();
+    // 1 列のときは、いまのページ（例: 2/7）と、表に広げられることを右下に出す
+    footer_ = pageCount > 1 && !grid ? std::to_wstring(page + 1) + L"/" + std::to_wstring(pageCount) + L"  Tab で一覧"
+                                     : std::wstring();
     BuildLayouts();
 
     const SIZE content = MeasureContent();

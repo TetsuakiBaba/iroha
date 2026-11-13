@@ -1326,6 +1326,31 @@ void TestSessionAICommitJapanese() {
     EXPECT_TRUE(host.commits.empty() && host.conversions.empty() && host.recordedHistory.empty());
 }
 
+// 候補ウィンドウを Tab で表に広げる。広げている間の ←→ は隣の列の候補へ移り、閉じると 1 列に戻る
+void TestSessionCandidateGrid() {
+    FakeSessionHost host;
+    std::vector<std::u32string> many;
+    for (int i = 0; i < 20; ++i) many.push_back(U"候補" + iroha::Utf8ToUtf32(std::to_string(i)));
+    host.candidateTable[U"きしゃ"] = many;
+    iroha::InputSession session(&host);
+    Type(session, U"kisha");
+    CompleteLatest(session, host, U"候補0");
+    auto output = Press(session, Key::Space);
+    EXPECT_TRUE(output.candidatesVisible && !output.candidatesExpanded);
+    output = Press(session, Key::Tab);
+    EXPECT_TRUE(output.candidatesVisible && output.candidatesExpanded);
+    output = Press(session, Key::Right);
+    EXPECT_TRUE(output.candidateIndex == 9 && output.candidatesVisible);
+    EXPECT_EQ(output.PreeditText(), output.candidates[9]);
+    output = Press(session, Key::Tab); // 1 列に戻すと ←→ は文節の移動に戻る
+    EXPECT_TRUE(!output.candidatesExpanded && output.candidateIndex == 9);
+    Press(session, Key::Tab);
+    output = Press(session, Key::Escape); // 閉じると 1 列に戻る
+    EXPECT_TRUE(!output.candidatesVisible && !output.candidatesExpanded);
+    output = Press(session, Key::Space);
+    EXPECT_TRUE(output.candidatesVisible && !output.candidatesExpanded);
+}
+
 void RunSessionTests() {
     TestSessionLiveConversionReplacesKana();
     TestSessionKeepsPreviousConversionAsPrefix();
@@ -1370,6 +1395,7 @@ void RunSessionTests() {
     TestSessionTypoWholeSentence();
     TestSessionAICommitTranslation();
     TestSessionAICommitJapanese();
+    TestSessionCandidateGrid();
 }
 
 } // namespace

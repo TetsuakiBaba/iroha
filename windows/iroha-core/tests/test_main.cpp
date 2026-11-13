@@ -350,6 +350,7 @@ void TestUnicodeRoundTrip() {
 #include "test_conversion_log.h"
 #include "test_typo.h"
 #include "test_ai.h"
+#include "test_candidate_grid.h"
 
 int main() {
     TestBasicGojuon();
@@ -400,6 +401,7 @@ int main() {
     RunConversionLogTests();
     RunTypoTests();
     RunAITests();
+    RunCandidateGridTests();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

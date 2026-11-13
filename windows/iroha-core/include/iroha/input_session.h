@@ -86,6 +86,8 @@ struct SessionOutput {
     uint32_t candidateIndex = 0;
     // 候補の右に小さく出す印（専門辞書の名前。候補と同じ数か空。印の無い候補は空文字列）
     std::vector<std::u32string> candidateAnnotations;
+    // 候補ウィンドウを、9 件ずつの列を横に並べた表に広げているか（Tab。macOS版の CandidateGrid）
+    bool candidatesExpanded = false;
     // 直前の確定で、まだ取り消せるもの（無ければ空）。TIP は Ctrl+Backspace のとき、カーソルの手前が
     // この文字列のままなら UndoCommit を送る
     std::u32string undoableCommit;
@@ -393,6 +395,8 @@ private:
         std::vector<Segment> segments;
         size_t currentSegment = 0;
         bool candidateListOpen = false;
+        // 候補ウィンドウを表に広げているか（閉じたら 1 列に戻す）
+        bool candidatesExpanded = false;
         // 文節変換に入ったときの全体の変換結果と、そのうち学習が差し替える前のエンジンの結果
         std::optional<std::u32string> segmentBaseline;
         std::optional<std::u32string> segmentEngineBaseline;

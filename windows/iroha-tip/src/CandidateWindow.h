@@ -28,10 +28,11 @@ public:
     // anchor: コンポジションのスクリーン座標矩形。直下（入らなければ直上）に出す。
     // candidates は全候補。selectedIndex のあるページだけを表示する。
     // annotations は候補の右に小さく出す印（専門辞書の名前。候補と同じ数か空）
-    // numbered が偽なら番号を付けない（予測変換の候補・知らせ）。selectedIndex が候補の数以上なら何も選ばない
+    // numbered が偽なら番号を付けない（予測変換の候補・知らせ）。selectedIndex が候補の数以上なら何も選ばない。
+    // expanded なら、ページ（9 件ずつの列）を全部横に並べた表にする（Tab。番号は列の中で数える）
     void Show(HWND owner, const RECT& anchor, const std::vector<std::u32string>& candidates,
               const std::vector<std::u32string>& annotations, size_t selectedIndex,
-              bool numbered = true);
+              bool numbered = true, bool expanded = false);
     void Hide();
 
     // 絵文字として描く候補か（絵文字のフォントで描く）
@@ -44,7 +45,17 @@ private:
         std::wstring annotation; // 候補の右に出す印（無ければ空）
         IDWriteTextLayout* layout = nullptr;
         IDWriteTextLayout* annotationLayout = nullptr;
+        size_t column = 0; // 表に広げたときの列（1 列なら 0）
+        size_t line = 0;   // 列の中の行
     };
+    // 列の左端・幅・印の左端（印が無ければ 0）
+    struct Column {
+        int x = 0;
+        int width = 0;
+        int annotationX = 0;
+    };
+    // 行 i の矩形（帯・文字の位置）
+    RECT RowRect(size_t index) const;
 
     static LRESULT CALLBACK WndProcThunk(HWND hwnd, UINT message, WPARAM wParam,
                                          LPARAM lParam);
@@ -70,8 +81,9 @@ private:
     IDWriteTextLayout* footerLayout_ = nullptr;
     int rowHeight_ = 0;
     int padding_ = 0;
-    // 印の列の左端（候補の列の幅 + 間）。印が無ければ 0
-    int annotationX_ = 0;
+    // 列ごとの位置（1 列なら 1 つ）
+    std::vector<Column> columns_;
+    size_t lines_ = 0; // 列の中の行の数（いちばん長い列）
 
     // Direct2D・DirectWrite（初めて表示するときに作る。作れなければ GDI で描く）
     bool directWriteTried_ = false;

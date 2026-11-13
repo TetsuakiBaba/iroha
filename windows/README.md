@@ -209,8 +209,11 @@ windows\build\iroha-cli\iroha-cli.exe session --interval 120 "kyouhaiitenkidesun
   全角（`"fullWidthSpace": false` で半角）。合成中の矢印は握りつぶし、IME が扱わないキー（Tab・Ctrl+S など）は
   確定してからアプリに渡す（**TSF で OnKeyDown が「食わない」と返したキーがアプリに届くことは、実機で確かめる**）
 - 候補の数は設定画面の「入力」タブ（`config.json` の `candidateCount`、既定 8。macOS版と同じ）
+- 候補ウィンドウは 9 件ずつの列で、候補が 1 列に収まらないときは Tab で列を横に並べた表に広げる（もう 1 度で 1 列に戻す）。
+  表に広げている間だけ ←→ は隣の列へ移る（macOS版の `CandidateGrid` を `iroha-core` の `candidate_grid.h` に移した。
+  テストは 1 対 1）
 
-未対応（macOS版にあるもの）: 区切り記号で囲んだ英字入力・候補ウィンドウを表に広げる（Tab）・
+未対応（macOS版にあるもの）: 区切り記号で囲んだ英字入力・
 AIで直す（誤変換の疑いの判定。文字ごとの自信度が未移植）・選択テキストのAI編集・「こえ」モード。
 変換サーバが止まっている間は、かな入力もできない（キーを受けても表示を決められない）
 
