@@ -213,7 +213,9 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
                                             : U"プライベートモード: オフ";
             break;
         default:
-            if (state_.mode == Mode::Segmenting) {
+            if (const auto preset = ShiftSpaceAIPreset(key, shift)) {
+                StartAICommit(*preset, &commit);
+            } else if (state_.mode == Mode::Segmenting) {
                 HandleSegmenting(key, character, shift, &commit);
             } else {
                 HandleComposing(key, character, shift, &commit);
@@ -1646,6 +1648,20 @@ void InputSession::SyncCompositionWithRetypedSegment(size_t index, bool removed)
 }
 
 // ---- AI変換 ----
+
+// AI変換のキーが Shift+Space のプリセット。TIP は Shift+Space を AICommit にせず Space として送ってくるので、ここで決める。
+// 候補ウィンドウを開いているとき（前の候補）と、区切り記号の英字入力中（英字の中のスペース）は Shift+Space の元の働きにする
+std::optional<size_t> InputSession::ShiftSpaceAIPreset(SessionKey key, bool shift) const {
+    constexpr uint32_t kShiftSpace = 0x20 | (1u << 18); // KeyShortcut::Encode の Shift+Space
+    if (key != SessionKey::Space || !shift || !IsComposing() || state_.candidateListOpen ||
+        (state_.alphabetRunDelimited && state_.alphabetRun)) {
+        return std::nullopt;
+    }
+    for (size_t i = 0; i < settings_.aiShortcuts.size(); ++i) {
+        if (settings_.aiShortcuts[i] == kShiftSpace) return i;
+    }
+    return std::nullopt;
+}
 
 // 今の未確定文字列を、プリセットのプロンプトで AI に渡す（macOS版 handleAICommit）。
 // 合成の状態は捨てずに結果を待つ（Esc で元に戻れる）。AI が使えなければ普通に確定する

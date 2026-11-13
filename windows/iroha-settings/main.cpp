@@ -929,7 +929,7 @@ void App::BuildAIPage() {
     model->visible = [this] { return iroha::ParseAIService(config.aiService) != iroha::AIService::None; };
 
     page->AddHeader(L"AI変換",
-                    L"入力中にプリセットのキー（既定は英訳の Alt+Enter）で、未確定文字列を AI に渡します。結果が日本語なら"
+                    L"入力中にプリセットのキー（既定は英訳の Shift+Space）で、未確定文字列を AI に渡します。結果が日本語なら"
                     L"文節に区切った未確定文字列で返し、もう一度 Enter で確定します。英訳など日本語を含まない結果はそのまま"
                     L"確定します。Esc で取り消します。ショートカットは「Alt+Enter」「Ctrl+Shift+T」のように、Ctrl・Alt・Shift と"
                     L"キーを + でつないで書きます。プロンプトに {text} と書くとその位置に未確定文字列が入ります。");

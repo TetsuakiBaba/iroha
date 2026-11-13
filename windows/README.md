@@ -269,8 +269,10 @@ macOS版の AI変換（入力中にプリセットのキーで、未確定文字
   （ほかのキーは飲み込む）。英訳など日本語でない結果は確定し、日本語の結果は文節に区切って返す（Enter で確定、Space・矢印で
   文節ごとに直せる）。失敗したら日本語のまま確定する。AI の結果は学習・変換記録・入力履歴に残さない
 - プリセットは 3 つ（英訳・敬語・要約。名前・プロンプト・キーを変えられる）。キーは「Alt+Enter」「Ctrl+Shift+T」の形で書き、
-  英訳の既定は Alt+Enter（macOS版の Option+Return にあたる）。変換サーバがキーを解釈して TIP に渡す
-  （TIP は設定ファイルを読めないアプリの中でも動くため）
+  英訳の既定は Shift+Space（2026-11-14 にユーザの指定で Alt+Enter から変更。macOS版は Option+Return）、敬語・要約は空。
+  変換サーバがキーを解釈して TIP に渡す（TIP は設定ファイルを読めないアプリの中でも動くため）。
+  Shift+Space だけは TIP が Space として送り、`InputSession` が決める: 候補ウィンドウを開いているときは前の候補、
+  区切り記号の英字入力中は英字の中のスペースのままにし、それ以外の入力中・文節変換中は AI変換にする
 - API キー（OpenAI互換・Claude）は config.json に書かず、Windows の資格情報マネージャー（汎用資格情報 `iroha/openAIAPIKey`・
   `iroha/anthropicAPIKey`）に置く。Claude の既定のモデルは claude-haiku-5-5（macOS版と同じ）
 - 確認（2026-11-13、この機械の LM Studio・google/gemma-3n-e4b）: 英訳・敬語・要約が途中経過つきで返り、変換サーバを通して

@@ -378,11 +378,13 @@ TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) co
             return session(iroha::SessionKey::AIFix);
         }
     }
-    // AI変換のキー（プリセットごとに設定で決める。既定は英訳の Alt+Enter）。入力中だけ
+    // AI変換のキー（プリセットごとに設定で決める。既定は英訳の Shift+Space）。入力中だけ。
+    // Shift+Space は候補を戻す・英字の中のスペースにも使うので、Space として送り変換サーバに決めさせる
     if (composing) {
         for (size_t i = 0; i < shown_.aiShortcuts.size(); ++i) {
             if (shown_.aiShortcuts[i] == 0) continue;
             const iroha::KeyShortcut shortcut = iroha::KeyShortcut::Decode(shown_.aiShortcuts[i]);
+            if (shortcut.vk == VK_SPACE && shortcut.shift && !shortcut.control && !shortcut.alt) continue;
             if (shortcut.vk == wParam && shortcut.control == control && shortcut.alt == alt &&
                 shortcut.shift == decision.shift) {
                 decision.character = static_cast<char32_t>(i);

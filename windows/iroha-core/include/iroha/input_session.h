@@ -633,6 +633,7 @@ private:
 
     // AI変換（macOS版 handleAICommit・presentAIResultAsSegments・cancelTranslation）
     void StartAICommit(size_t preset, std::u32string* commit);
+    std::optional<size_t> ShiftSpaceAIPreset(SessionKey key, bool shift) const;
     // AIで直す（macOS版 scheduleAIFixCheck・handleAIFixKey・requestAIFix・finishAIFix・undoAIFix）
     struct AIFixOffer {
         std::u32string reading;
