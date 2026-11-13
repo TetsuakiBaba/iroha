@@ -17,6 +17,7 @@
 #include <uxtheme.h>
 #include <vssym32.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <initializer_list>
 #include <memory>
@@ -25,6 +26,8 @@
 #include <vector>
 
 #include "ipc_protocol.h"
+#include "ai_client.h"
+#include "iroha/ai_conversion.h"
 #include "iroha/config.h"
 #include "iroha/conversion_log.h"
 #include "iroha/input_history.h"
@@ -34,6 +37,8 @@
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_store.h"
 #include "iroha/user_rewrite_rule.h"
+#include "key_shortcut.h"
+#include "secret_store.h"
 #include "term_dictionary_fetcher.h"
 #include "typo_normalizer_fetcher.h"
 
@@ -49,6 +54,8 @@ constexpr UINT WM_APP_DOWNLOAD_DONE = WM_APP + 1;
 constexpr UINT WM_APP_TERM_DONE = WM_APP + 2;
 // 打ち間違い訂正のモデルの取得が終わった（lParam は TypoTaskResult*。受け取った側が消す）
 constexpr UINT WM_APP_TYPO_DONE = WM_APP + 3;
+// AI のモデルの一覧の取得が終わった（lParam は AIModelsResult*。受け取った側が消す）
+constexpr UINT WM_APP_AI_MODELS = WM_APP + 4;
 
 struct KnownModel {
     const wchar_t* label;
@@ -107,6 +114,17 @@ enum {
     kIdLogScope,
     kIdLogOpen,
     kIdLogReset,
+    kIdAIService,
+    kIdAIEndpoint,
+    kIdAIModel,
+    kIdAIModels,
+    kIdAIKey,
+    kIdAIKeyClear,
+    kIdAISave,
+    kIdAIPresetName0,
+    kIdAIPresetHotkey0 = kIdAIPresetName0 + 3,
+    kIdAIPresetPrompt0 = kIdAIPresetHotkey0 + 3,
+    kIdAIEnd = kIdAIPresetPrompt0 + 3,
 };
 
 // タブの並び
@@ -116,6 +134,7 @@ enum TabIndex {
     kTabUserDictionary,
     kTabTermDictionary,
     kTabRewriteRules,
+    kTabAI,
     kTabLearning,
     kTabCount,
 };
@@ -168,6 +187,16 @@ struct TermRow {
     const iroha::TermDictionaryCatalog::Dictionary* catalogEntry = nullptr;
     bool installed = false;
     bool needsUpdate = false;
+};
+
+// AI の接続先の並び（設定画面のコンボボックスの順）
+const iroha::AIService kAIServices[] = {iroha::AIService::None, iroha::AIService::Ollama, iroha::AIService::LMStudio,
+                                        iroha::AIService::OpenAI, iroha::AIService::Claude};
+
+// 裏のスレッドで取った AI のモデルの一覧
+struct AIModelsResult {
+    std::vector<std::string> models;
+    std::wstring error;
 };
 
 // 裏のスレッドでした打ち間違い訂正のモデルの取得の結果
@@ -234,6 +263,25 @@ struct App {
     HWND ruleNote = nullptr;
     std::vector<iroha::UserRewriteRule> rules; // 一覧の行と同じ並び
     bool ruleRefreshing = false;               // 一覧を作り直している間はチェックの変化を無視する
+    // AI変換
+    HWND aiServiceLabel = nullptr;
+    HWND aiServiceCombo = nullptr;
+    HWND aiEndpointLabel = nullptr;
+    HWND aiEndpoint = nullptr;
+    HWND aiModelLabel = nullptr;
+    HWND aiModelCombo = nullptr;
+    HWND aiModels = nullptr;
+    HWND aiKeyLabel = nullptr;
+    HWND aiKey = nullptr;
+    HWND aiKeyClear = nullptr;
+    HWND aiStatus = nullptr;
+    HWND aiPresetHeader = nullptr;
+    HWND aiPresetName[3] = {};
+    HWND aiPresetHotkey[3] = {};
+    HWND aiPresetPrompt[3] = {};
+    HWND aiSave = nullptr;
+    HWND aiNote = nullptr;
+    int aiShownService = -1; // URL・モデルの欄に出している接続先（切り替えたときに書き戻す先）
     // 学習・記録
     HWND learnStatus = nullptr;
     HWND learnReset = nullptr;
@@ -287,6 +335,15 @@ struct App {
     void OnTypoTaskDone(TypoTaskResult* result);
     void OnTypoLicense();
     void OnTypoRemove();
+    void RefreshAIPage();
+    void ShowAIServiceFields(int index, const iroha::Config& config);
+    void StoreAIServiceFields(int index, iroha::Config* config);
+    void OnAIServiceChanged();
+    void OnAISave();
+    void OnAIListModels();
+    void OnAIModelsDone(AIModelsResult* result);
+    void OnAIKeyClear();
+    void RefreshAIKeyStatus(iroha::AIService service);
     void RefreshRuleList();
     void OnRuleAdd();
     void OnRuleRemove();
@@ -346,8 +403,8 @@ void App::CreateControls() {
     pageBrush = CreateSolidBrush(pageColor);
     TCITEMW item = {};
     item.mask = TCIF_TEXT;
-    const wchar_t* const titles[kTabCount] = {L"モデル",   L"入力",     L"ユーザ辞書",
-                                              L"専門辞書", L"変換ルール", L"学習・記録"};
+    const wchar_t* const titles[kTabCount] = {L"モデル",     L"入力", L"ユーザ辞書", L"専門辞書",
+                                              L"変換ルール", L"AI",   L"学習・記録"};
     for (int i = 0; i < kTabCount; ++i) {
         item.pszText = const_cast<wchar_t*>(titles[i]);
         TabCtrl_InsertItem(tab, i, &item);
@@ -478,6 +535,40 @@ void App::CreateControls() {
     AddToPage(kTabRewriteRules, {ruleList, ruleLabelTrigger, ruleTrigger, ruleLabelOutput, ruleOutput, ruleAdd,
                                  ruleRemove, ruleNote});
 
+    // ---- AI ----
+    aiServiceLabel = CreateChild(WC_STATICW, L"接続先:", 0, 0);
+    aiServiceCombo = CreateChild(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_TABSTOP, kIdAIService);
+    for (iroha::AIService service : kAIServices) {
+        const std::wstring name = iroha::Utf32ToUtf16(iroha::AIServiceDisplayName(service));
+        SendMessageW(aiServiceCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(name.c_str()));
+    }
+    aiEndpointLabel = CreateChild(WC_STATICW, L"URL（空なら既定）:", 0, 0);
+    aiEndpoint = CreateChild(WC_EDITW, L"", WS_TABSTOP | ES_AUTOHSCROLL, kIdAIEndpoint, WS_EX_CLIENTEDGE);
+    aiModelLabel = CreateChild(WC_STATICW, L"モデル:", 0, 0);
+    aiModelCombo = CreateChild(WC_COMBOBOXW, L"", CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_TABSTOP | WS_VSCROLL, kIdAIModel);
+    aiModels = CreateChild(WC_BUTTONW, L"一覧を取得", WS_TABSTOP, kIdAIModels);
+    aiKeyLabel = CreateChild(WC_STATICW, L"API キー:", 0, 0);
+    aiKey = CreateChild(WC_EDITW, L"", WS_TABSTOP | ES_AUTOHSCROLL | ES_PASSWORD, kIdAIKey, WS_EX_CLIENTEDGE);
+    aiKeyClear = CreateChild(WC_BUTTONW, L"キーを消す", WS_TABSTOP, kIdAIKeyClear);
+    aiStatus = CreateChild(WC_STATICW, L"", 0, 0);
+    aiPresetHeader = CreateChild(WC_STATICW, L"プリセット（名前・キー・プロンプト）:", 0, 0);
+    for (int i = 0; i < 3; ++i) {
+        aiPresetName[i] = CreateChild(WC_EDITW, L"", WS_TABSTOP | ES_AUTOHSCROLL, kIdAIPresetName0 + i, WS_EX_CLIENTEDGE);
+        aiPresetHotkey[i] =
+            CreateChild(WC_EDITW, L"", WS_TABSTOP | ES_AUTOHSCROLL, kIdAIPresetHotkey0 + i, WS_EX_CLIENTEDGE);
+        aiPresetPrompt[i] = CreateChild(WC_EDITW, L"", WS_TABSTOP | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL,
+                                        kIdAIPresetPrompt0 + i, WS_EX_CLIENTEDGE);
+    }
+    aiSave = CreateChild(WC_BUTTONW, L"保存", WS_TABSTOP, kIdAISave);
+    aiNote = CreateChild(WC_STATICW,
+                         L"入力中にプリセットのキー（既定は英訳の Alt+Enter）で、未確定文字列を AI に渡します。"
+                         L"英訳など日本語でない結果は確定し、日本語の結果は文節に区切って返します（Enter で確定、Esc で取り消し）。"
+                         L"プロンプトに {text} を書くと、その位置に入力が入ります。OpenAI互換・Claude では入力が外部に送られます。",
+                         0, 0);
+    AddToPage(kTabAI, {aiServiceLabel, aiServiceCombo, aiEndpointLabel, aiEndpoint, aiModelLabel, aiModelCombo, aiModels,
+                       aiKeyLabel, aiKey, aiKeyClear, aiStatus, aiPresetHeader, aiSave, aiNote});
+    for (int i = 0; i < 3; ++i) AddToPage(kTabAI, {aiPresetName[i], aiPresetHotkey[i], aiPresetPrompt[i]});
+
     // ---- 学習・記録 ----
     learnStatus = CreateChild(WC_STATICW, L"", 0, kIdLearnStatus);
     learnReset = CreateChild(WC_BUTTONW, L"学習をリセット", WS_TABSTOP, kIdLearnReset);
@@ -572,6 +663,38 @@ void App::LayoutControls() {
     MoveWindow(ruleRemove, x, ruleRowY + Scale(34), Scale(110), Scale(26), TRUE);
     MoveWindow(ruleNote, x, ruleRowY + Scale(66), width, noteHeight, TRUE);
 
+    // AI
+    {
+        const int label = Scale(130);
+        int aiY = y;
+        MoveWindow(aiServiceLabel, x, aiY + Scale(4), label, Scale(20), TRUE);
+        MoveWindow(aiServiceCombo, x + label, aiY, Scale(180), Scale(200), TRUE);
+        aiY += Scale(32);
+        MoveWindow(aiEndpointLabel, x, aiY + Scale(4), label, Scale(20), TRUE);
+        MoveWindow(aiEndpoint, x + label, aiY, width - label, Scale(24), TRUE);
+        aiY += Scale(32);
+        MoveWindow(aiModelLabel, x, aiY + Scale(4), label, Scale(20), TRUE);
+        MoveWindow(aiModelCombo, x + label, aiY, width - label - Scale(110), Scale(240), TRUE);
+        MoveWindow(aiModels, x + width - Scale(102), aiY, Scale(102), Scale(26), TRUE);
+        aiY += Scale(32);
+        MoveWindow(aiKeyLabel, x, aiY + Scale(4), label, Scale(20), TRUE);
+        MoveWindow(aiKey, x + label, aiY, width - label - Scale(110), Scale(24), TRUE);
+        MoveWindow(aiKeyClear, x + width - Scale(102), aiY, Scale(102), Scale(26), TRUE);
+        aiY += Scale(30);
+        MoveWindow(aiStatus, x, aiY, width, Scale(20), TRUE);
+        aiY += Scale(26);
+        MoveWindow(aiPresetHeader, x, aiY, width, Scale(20), TRUE);
+        aiY += Scale(22);
+        for (int i = 0; i < 3; ++i) {
+            MoveWindow(aiPresetName[i], x, aiY, Scale(110), Scale(24), TRUE);
+            MoveWindow(aiPresetHotkey[i], x + Scale(116), aiY, Scale(120), Scale(24), TRUE);
+            MoveWindow(aiPresetPrompt[i], x + Scale(242), aiY, width - Scale(242), Scale(44), TRUE);
+            aiY += Scale(50);
+        }
+        MoveWindow(aiSave, x, aiY + Scale(2), Scale(90), Scale(28), TRUE);
+        MoveWindow(aiNote, x + Scale(100), aiY, width - Scale(100), page.bottom - aiY - Scale(8), TRUE);
+    }
+
     // 学習・記録
     MoveWindow(learnStatus, x, y, width, Scale(20), TRUE);
     MoveWindow(learnReset, x, y + Scale(26), Scale(140), Scale(28), TRUE);
@@ -595,6 +718,7 @@ void App::ShowTab(int index) {
     // 件数は、ほかのところ（変換サーバ）で増えるので、タブを開くたびに数え直す
     if (index == kTabLearning) RefreshLearningPage();
     if (index == kTabInput) RefreshInputPage();
+    if (index == kTabAI) RefreshAIPage();
     // 専門辞書の一覧は、タブを初めて開いたときに取りにいく（入れてある辞書が作り直されていれば入れ直す）
     if (term && !termCatalogRequested) {
         termCatalogRequested = true;
@@ -832,6 +956,250 @@ void App::OnTypoRemove() {
         MessageBoxW(window, L"モデルを削除できませんでした", L"iroha", MB_ICONERROR);
     }
     RefreshTypoStatus();
+}
+
+// ---- AI変換 ----
+
+int AIServiceIndex(iroha::AIService service) {
+    for (int i = 0; i < static_cast<int>(ARRAYSIZE(kAIServices)); ++i) {
+        if (kAIServices[i] == service) return i;
+    }
+    return 0;
+}
+
+void App::RefreshAIPage() {
+    const iroha::Config config = iroha::LoadConfig(ConfigPath());
+    const int index = AIServiceIndex(iroha::ParseAIService(config.aiService));
+    SendMessageW(aiServiceCombo, CB_SETCURSEL, index, 0);
+    ShowAIServiceFields(index, config);
+    for (size_t i = 0; i < 3; ++i) {
+        const auto& stored = config.aiPresets[i];
+        const auto& fallback = iroha::AICommitSettings::Defaults()[i];
+        SetWindowTextW(aiPresetName[i], iroha::Utf32ToUtf16(stored.name.value_or(fallback.name)).c_str());
+        SetWindowTextW(aiPresetHotkey[i], iroha::Utf32ToUtf16(iroha::Utf8ToUtf32(stored.hotkey.value_or(fallback.shortcut))).c_str());
+        std::wstring prompt = iroha::Utf32ToUtf16(stored.prompt.value_or(fallback.prompt));
+        // 複数行の入力欄は改行を CRLF で受ける
+        for (size_t at = prompt.find(L'\n'); at != std::wstring::npos; at = prompt.find(L'\n', at + 2)) {
+            if (at == 0 || prompt[at - 1] != L'\r') prompt.insert(at, L"\r");
+        }
+        SetWindowTextW(aiPresetPrompt[i], prompt.c_str());
+    }
+}
+
+// 接続先ごとの URL・モデル・API キーの欄を出し分ける
+void App::ShowAIServiceFields(int index, const iroha::Config& config) {
+    aiShownService = index;
+    const iroha::AIService service = kAIServices[index];
+    std::string endpoint;
+    std::string model;
+    switch (service) {
+    case iroha::AIService::Ollama:
+        endpoint = config.ollamaEndpoint;
+        model = config.ollamaModel;
+        break;
+    case iroha::AIService::LMStudio:
+        endpoint = config.lmStudioEndpoint;
+        model = config.lmStudioModel;
+        break;
+    case iroha::AIService::OpenAI:
+        endpoint = config.openAIEndpoint;
+        model = config.openAIModel;
+        break;
+    case iroha::AIService::Claude:
+        model = config.claudeModel;
+        break;
+    default:
+        break;
+    }
+    SetWindowTextW(aiEndpoint, Wide(endpoint).c_str());
+    SendMessageW(aiModelCombo, CB_RESETCONTENT, 0, 0);
+    SetWindowTextW(aiModelCombo, Wide(model).c_str());
+    const bool none = service == iroha::AIService::None;
+    const bool hasEndpoint = service == iroha::AIService::Ollama || service == iroha::AIService::LMStudio ||
+                             service == iroha::AIService::OpenAI;
+    const bool hasKey = service == iroha::AIService::OpenAI || service == iroha::AIService::Claude;
+    EnableWindow(aiEndpoint, hasEndpoint);
+    SendMessageW(aiEndpoint, EM_SETCUEBANNER, TRUE,
+                 reinterpret_cast<LPARAM>(Wide(iroha::AIClient::DefaultEndpoint(service)).c_str()));
+    EnableWindow(aiModelCombo, !none);
+    EnableWindow(aiModels, !none);
+    EnableWindow(aiKey, hasKey);
+    EnableWindow(aiKeyClear, hasKey);
+    SetWindowTextW(aiKey, L"");
+    SendMessageW(aiModelCombo, CB_SETCUEBANNER, 0,
+                 reinterpret_cast<LPARAM>(service == iroha::AIService::Claude ? Wide(iroha::AIClient::kClaudeDefaultModel).c_str()
+                                                                               : L""));
+    RefreshAIKeyStatus(service);
+}
+
+void App::RefreshAIKeyStatus(iroha::AIService service) {
+    std::wstring text;
+    if (service == iroha::AIService::OpenAI || service == iroha::AIService::Claude) {
+        std::string key;
+        const bool stored = iroha::SecretStore::Get(
+            service == iroha::AIService::Claude ? iroha::AIClient::kClaudeKeyAccount : iroha::AIClient::kOpenAIKeyAccount, &key) &&
+                            !key.empty();
+        text = stored ? L"API キー: 保存してあります（資格情報マネージャー）" : L"API キー: まだありません";
+        if (service == iroha::AIService::OpenAI && !stored) text += L"（ローカルの互換サーバなら無くてもよい）";
+    } else if (service == iroha::AIService::None) {
+        text = L"AI変換を使わない（AI変換のキーでは普通に確定します）";
+    }
+    SetWindowTextW(aiStatus, text.c_str());
+}
+
+// URL・モデルの欄の値を、その接続先の設定に書き戻す
+void App::StoreAIServiceFields(int index, iroha::Config* config) {
+    if (index < 0) return;
+    wchar_t buffer[1024];
+    GetWindowTextW(aiEndpoint, buffer, ARRAYSIZE(buffer));
+    const std::string endpoint = iroha::Utf32ToUtf8(iroha::TrimWhitespace(iroha::Utf16ToUtf32(buffer)));
+    GetWindowTextW(aiModelCombo, buffer, ARRAYSIZE(buffer));
+    const std::string model = iroha::Utf32ToUtf8(iroha::TrimWhitespace(iroha::Utf16ToUtf32(buffer)));
+    switch (kAIServices[index]) {
+    case iroha::AIService::Ollama:
+        config->ollamaEndpoint = endpoint;
+        config->ollamaModel = model;
+        break;
+    case iroha::AIService::LMStudio:
+        config->lmStudioEndpoint = endpoint;
+        config->lmStudioModel = model;
+        break;
+    case iroha::AIService::OpenAI:
+        config->openAIEndpoint = endpoint;
+        config->openAIModel = model;
+        break;
+    case iroha::AIService::Claude:
+        config->claudeModel = model;
+        break;
+    default:
+        break;
+    }
+}
+
+void App::OnAIServiceChanged() {
+    iroha::Config config = iroha::LoadConfig(ConfigPath());
+    // 前の接続先の欄の値は、その接続先の設定として残す
+    StoreAIServiceFields(aiShownService, &config);
+    const int index = static_cast<int>(SendMessageW(aiServiceCombo, CB_GETCURSEL, 0, 0));
+    if (index < 0) return;
+    config.aiService = iroha::AIServiceKey(kAIServices[index]);
+    iroha::SaveConfig(ConfigPath(), config);
+    ShowAIServiceFields(index, config);
+    RequestServerReload();
+}
+
+void App::OnAISave() {
+    iroha::Config config = iroha::LoadConfig(ConfigPath());
+    StoreAIServiceFields(aiShownService, &config);
+    // プリセット: キーの書き方が読めなければ保存しない
+    std::wstring invalid;
+    for (size_t i = 0; i < 3; ++i) {
+        wchar_t buffer[4096];
+        GetWindowTextW(aiPresetName[i], buffer, ARRAYSIZE(buffer));
+        config.aiPresets[i].name = iroha::TrimWhitespace(iroha::Utf16ToUtf32(buffer));
+        GetWindowTextW(aiPresetHotkey[i], buffer, ARRAYSIZE(buffer));
+        const std::string hotkey = iroha::Utf32ToUtf8(iroha::TrimWhitespace(iroha::Utf16ToUtf32(buffer)));
+        if (!hotkey.empty() && !iroha::KeyShortcut::Parse(hotkey)) invalid += L"「" + Wide(hotkey) + L"」";
+        config.aiPresets[i].hotkey = hotkey;
+        GetWindowTextW(aiPresetPrompt[i], buffer, ARRAYSIZE(buffer));
+        std::u32string prompt = iroha::Utf16ToUtf32(buffer);
+        prompt.erase(std::remove(prompt.begin(), prompt.end(), U'\r'), prompt.end());
+        config.aiPresets[i].prompt = iroha::TrimWhitespace(prompt);
+    }
+    if (!invalid.empty()) {
+        const std::wstring message = L"キーの書き方が読めません: " + invalid +
+                                     L"\n「Alt+Enter」「Ctrl+Shift+T」のように、Ctrl・Alt・Shift のどれかと 1 つのキーを + でつないで書きます。";
+        MessageBoxW(window, message.c_str(), L"iroha", MB_ICONWARNING);
+        return;
+    }
+    // API キー（入力したときだけ置き換える）
+    const int index = static_cast<int>(SendMessageW(aiServiceCombo, CB_GETCURSEL, 0, 0));
+    const iroha::AIService service = index >= 0 ? kAIServices[index] : iroha::AIService::None;
+    wchar_t key[1024];
+    GetWindowTextW(aiKey, key, ARRAYSIZE(key));
+    const std::string keyText = iroha::Utf32ToUtf8(iroha::TrimWhitespace(iroha::Utf16ToUtf32(key)));
+    if (!keyText.empty() && (service == iroha::AIService::OpenAI || service == iroha::AIService::Claude)) {
+        iroha::SecretStore::Set(
+            service == iroha::AIService::Claude ? iroha::AIClient::kClaudeKeyAccount : iroha::AIClient::kOpenAIKeyAccount, keyText);
+        SetWindowTextW(aiKey, L"");
+    }
+    if (!iroha::SaveConfig(ConfigPath(), config)) {
+        MessageBoxW(window, L"設定の保存に失敗しました", L"iroha", MB_ICONERROR);
+        return;
+    }
+    RequestServerReload();
+    RefreshAIKeyStatus(service);
+    SetWindowTextW(aiStatus, L"保存しました");
+}
+
+void App::OnAIKeyClear() {
+    const int index = static_cast<int>(SendMessageW(aiServiceCombo, CB_GETCURSEL, 0, 0));
+    if (index < 0) return;
+    const iroha::AIService service = kAIServices[index];
+    if (service != iroha::AIService::OpenAI && service != iroha::AIService::Claude) return;
+    iroha::SecretStore::Set(
+        service == iroha::AIService::Claude ? iroha::AIClient::kClaudeKeyAccount : iroha::AIClient::kOpenAIKeyAccount, "");
+    RequestServerReload();
+    RefreshAIKeyStatus(service);
+}
+
+// 今の欄の接続先で、使えるモデルの一覧を取る（裏のスレッド）
+void App::OnAIListModels() {
+    const int index = static_cast<int>(SendMessageW(aiServiceCombo, CB_GETCURSEL, 0, 0));
+    if (index < 0) return;
+    iroha::AIConnection connection;
+    connection.service = kAIServices[index];
+    wchar_t buffer[1024];
+    GetWindowTextW(aiEndpoint, buffer, ARRAYSIZE(buffer));
+    connection.endpoint = iroha::Utf32ToUtf8(iroha::TrimWhitespace(iroha::Utf16ToUtf32(buffer)));
+    GetWindowTextW(aiKey, buffer, ARRAYSIZE(buffer));
+    connection.apiKey = iroha::Utf32ToUtf8(iroha::TrimWhitespace(iroha::Utf16ToUtf32(buffer)));
+    if (connection.apiKey.empty()) {
+        iroha::SecretStore::Get(connection.service == iroha::AIService::Claude ? iroha::AIClient::kClaudeKeyAccount
+                                                                               : iroha::AIClient::kOpenAIKeyAccount,
+                                &connection.apiKey);
+    }
+    EnableWindow(aiModels, FALSE);
+    SetWindowTextW(aiStatus, L"モデルの一覧を取得しています…");
+    struct Task {
+        HWND window;
+        iroha::AIConnection connection;
+    };
+    auto* task = new Task{window, connection};
+    const auto run = [](LPVOID param) -> DWORD {
+        std::unique_ptr<Task> task(static_cast<Task*>(param));
+        auto* result = new AIModelsResult();
+        std::string error;
+        if (!iroha::AIClient::ListModels(task->connection, &result->models, &error)) result->error = Wide(error);
+        PostMessageW(task->window, WM_APP_AI_MODELS, 0, reinterpret_cast<LPARAM>(result));
+        return 0;
+    };
+    HANDLE thread = CreateThread(nullptr, 0, run, task, 0, nullptr);
+    if (thread) {
+        CloseHandle(thread);
+    } else {
+        delete task;
+        EnableWindow(aiModels, TRUE);
+    }
+}
+
+void App::OnAIModelsDone(AIModelsResult* result) {
+    EnableWindow(aiModels, TRUE);
+    if (!result->error.empty()) {
+        SetWindowTextW(aiStatus, (L"モデルの一覧を取得できませんでした: " + result->error).c_str());
+    } else {
+        wchar_t current[1024];
+        GetWindowTextW(aiModelCombo, current, ARRAYSIZE(current));
+        SendMessageW(aiModelCombo, CB_RESETCONTENT, 0, 0);
+        for (const std::string& model : result->models) {
+            SendMessageW(aiModelCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(Wide(model).c_str()));
+        }
+        SetWindowTextW(aiModelCombo, current);
+        if (current[0] == 0 && !result->models.empty()) SendMessageW(aiModelCombo, CB_SETCURSEL, 0, 0);
+        SendMessageW(aiModelCombo, CB_SHOWDROPDOWN, TRUE, 0);
+        SetWindowTextW(aiStatus, (std::to_wstring(result->models.size()) + L" 個のモデルがあります。選んで「保存」を押します").c_str());
+    }
+    delete result;
 }
 
 // ---- 変換ルールのページ ----
@@ -1324,6 +1692,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case kIdTypo:
                     if (HIWORD(wParam) == BN_CLICKED) g_app.OnTypoToggled();
                     return 0;
+                case kIdAIService:
+                    if (HIWORD(wParam) == CBN_SELCHANGE) g_app.OnAIServiceChanged();
+                    return 0;
+                case kIdAISave:
+                    g_app.OnAISave();
+                    return 0;
+                case kIdAIModels:
+                    g_app.OnAIListModels();
+                    return 0;
+                case kIdAIKeyClear:
+                    g_app.OnAIKeyClear();
+                    return 0;
                 case kIdTypoLicense:
                     g_app.OnTypoLicense();
                     return 0;
@@ -1371,6 +1751,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         case WM_APP_TERM_DONE:
             g_app.OnTermTaskDone(reinterpret_cast<TermTaskResult*>(lParam));
+            return 0;
+        case WM_APP_AI_MODELS:
+            g_app.OnAIModelsDone(reinterpret_cast<AIModelsResult*>(lParam));
             return 0;
         case WM_APP_TYPO_DONE:
             g_app.OnTypoTaskDone(reinterpret_cast<TypoTaskResult*>(lParam));
@@ -1425,7 +1808,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     if (!window) return 1;
     // --tab <名前> で開くタブを選ぶ（model / input / dictionary / terms / rules / learning）
     const std::wstring arguments = commandLine ? commandLine : L"";
-    const wchar_t* const tabNames[kTabCount] = {L"model", L"input", L"dictionary", L"terms", L"rules", L"learning"};
+    const wchar_t* const tabNames[kTabCount] = {L"model", L"input", L"dictionary", L"terms",
+                                                L"rules", L"ai",    L"learning"};
     if (const size_t option = arguments.find(L"--tab "); option != std::wstring::npos) {
         const std::wstring name = arguments.substr(option + 6, arguments.find(L' ', option + 6) - option - 6);
         for (int i = 0; i < kTabCount; ++i) {

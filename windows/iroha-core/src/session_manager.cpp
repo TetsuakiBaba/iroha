@@ -61,6 +61,10 @@ struct SessionManager::Entry : InputSession::Host {
     }
     void RecordConversion(const ConversionLogEntry& entry) override { manager->backend_->RecordConversion(entry); }
     bool TypoCorrectionAvailable() override { return manager->backend_->TypoCorrectionAvailable(); }
+    void RequestAI(uint64_t generation, size_t preset, const std::u32string& text) override {
+        manager->EnqueueAI(AIJob{id, generation, preset, text});
+    }
+    void CancelAI() override { manager->CancelAIJobs(id); }
     void RequestTypoCorrection(uint64_t generation, const std::u32string& reading, int delayMs, double threshold,
                                size_t minimumLength) override {
         manager->EnqueueTypo(id, TypoJob{generation, reading, threshold, minimumLength,
@@ -97,6 +101,7 @@ struct SessionManager::Entry : InputSession::Host {
 SessionManager::SessionManager(Backend* backend) : backend_(backend) {
     worker_ = std::thread([this] { WorkerLoop(); });
     typoWorker_ = std::thread([this] { TypoWorkerLoop(); });
+    aiWorker_ = std::thread([this] { AIWorkerLoop(); });
 }
 
 SessionManager::~SessionManager() {
@@ -115,6 +120,14 @@ SessionManager::~SessionManager() {
     }
     typoCondition_.notify_all();
     if (typoWorker_.joinable()) typoWorker_.join();
+    {
+        std::lock_guard<std::mutex> lock(aiMutex_);
+        aiStopping_ = true;
+        aiJobs_.clear();
+        if (aiCancel_) aiCancel_->Cancel();
+    }
+    aiCondition_.notify_all();
+    if (aiWorker_.joinable()) aiWorker_.join();
 }
 
 SessionManager::Entry& SessionManager::EntryFor(uint64_t sessionId) {
@@ -126,6 +139,7 @@ SessionManager::Entry& SessionManager::EntryFor(uint64_t sessionId) {
                 [](const auto& a, const auto& b) { return a.second->lastUsed < b.second->lastUsed; });
             CancelJobs(oldest->first);
             CancelTypo(oldest->first);
+            CancelAIJobs(oldest->first);
             oldest->second->session.Flush();
             sessions_.erase(oldest);
         }
@@ -154,7 +168,7 @@ bool SessionManager::Poll(uint64_t sessionId, uint64_t revision, SessionOutput* 
     if (found == sessions_.end()) return false;
     found->second->lastUsed = ++useCounter_;
     if (found->second->session.Revision() == revision) return false;
-    if (output) *output = found->second->session.Current();
+    if (output) *output = found->second->session.TakePolledOutput();
     return true;
 }
 
@@ -162,6 +176,7 @@ void SessionManager::End(uint64_t sessionId) {
     std::lock_guard<std::mutex> lock(stateMutex_);
     CancelJobs(sessionId);
     CancelTypo(sessionId);
+    CancelAIJobs(sessionId);
     const auto found = sessions_.find(sessionId);
     if (found != sessions_.end()) {
         found->second->session.Flush();
@@ -283,6 +298,58 @@ void SessionManager::TypoWorkerLoop() {
         if (found != sessions_.end()) {
             found->second->session.CompleteTypoCorrection(job.generation, job.reading, correction);
         }
+    }
+}
+
+void SessionManager::EnqueueAI(AIJob job) {
+    {
+        std::lock_guard<std::mutex> lock(aiMutex_);
+        aiJobs_.erase(std::remove_if(aiJobs_.begin(), aiJobs_.end(),
+                                     [&job](const AIJob& queued) { return queued.sessionId == job.sessionId; }),
+                      aiJobs_.end());
+        aiJobs_.push_back(std::move(job));
+    }
+    aiCondition_.notify_one();
+}
+
+void SessionManager::CancelAIJobs(uint64_t sessionId) {
+    std::lock_guard<std::mutex> lock(aiMutex_);
+    aiJobs_.erase(std::remove_if(aiJobs_.begin(), aiJobs_.end(),
+                                 [sessionId](const AIJob& queued) { return queued.sessionId == sessionId; }),
+                  aiJobs_.end());
+    if (aiRunning_ && aiRunning_->sessionId == sessionId && aiCancel_) aiCancel_->Cancel();
+}
+
+// AI変換を 1 件ずつ行う。途中経過と結果を渡すときだけ stateMutex_ を取る
+void SessionManager::AIWorkerLoop() {
+    for (;;) {
+        AIJob job;
+        std::shared_ptr<CancelToken> cancel;
+        {
+            std::unique_lock<std::mutex> lock(aiMutex_);
+            aiCondition_.wait(lock, [this] { return aiStopping_ || !aiJobs_.empty(); });
+            if (aiStopping_) return;
+            job = aiJobs_.front();
+            aiJobs_.erase(aiJobs_.begin());
+            aiRunning_ = job;
+            cancel = std::make_shared<CancelToken>();
+            aiCancel_ = cancel;
+        }
+        const auto onPartial = [this, &job](const std::u32string& partial) {
+            std::lock_guard<std::mutex> lock(stateMutex_);
+            const auto found = sessions_.find(job.sessionId);
+            if (found != sessions_.end()) found->second->session.UpdateAIPartial(job.generation, partial);
+        };
+        const auto output = backend_->RunAI(job.preset, job.text, onPartial, cancel.get());
+        {
+            std::lock_guard<std::mutex> lock(aiMutex_);
+            aiRunning_.reset();
+            aiCancel_.reset();
+        }
+        if (cancel->Cancelled()) continue;
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        const auto found = sessions_.find(job.sessionId);
+        if (found != sessions_.end()) found->second->session.CompleteAI(job.generation, output);
     }
 }
 

@@ -3,8 +3,9 @@ cmake_minimum_required(VERSION 3.21)
 project(iroha-cli LANGUAGES CXX)
 
 add_executable(iroha-cli main.cpp ../shared/emoji_renderability.cpp
-    ../shared/term_dictionary_fetcher.cpp ../shared/typo_normalizer_fetcher.cpp)
-target_link_libraries(iroha-cli PRIVATE iroha-engine dwrite urlmon wininet bcrypt)
+    ../shared/term_dictionary_fetcher.cpp ../shared/typo_normalizer_fetcher.cpp
+    ../shared/ai_client.cpp ../shared/secret_store.cpp)
+target_link_libraries(iroha-cli PRIVATE iroha-engine dwrite urlmon wininet bcrypt winhttp advapi32)
 target_include_directories(iroha-cli PRIVATE ../shared)
 if(MSVC)
     target_compile_options(iroha-cli PRIVATE /utf-8 /W4 /EHsc)

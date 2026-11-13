@@ -11,8 +11,10 @@ namespace {
 
 // 問い合わせの間隔。Windows のタイマーの刻み（約 15.6ms）と同じにしてある
 constexpr UINT kPollIntervalMs = 15;
-// 結果が届かないまま問い合わせ続ける上限（変換サーバが止まったときに回り続けないように）
+// 結果が届かないまま問い合わせ続ける上限（変換サーバが止まったときに回り続けないように）。
+// AI変換は、変換サーバが 30 秒応答の無い依頼を打ち切るので、それより長く待つ
 constexpr DWORD kPollLimitMs = 10000;
+constexpr DWORD kAIPollLimitMs = 120000;
 // 続けてこの回数つながらなければやめる
 constexpr int kPollFailureLimit = 5;
 
@@ -64,8 +66,8 @@ void TextService::DestroyPollWindow() {
 
 void TextService::OnPollTimer() {
     if (!polling_) return;
-    if (!composition_ || !compositionContext_ || (!shown_.livePending && !shown_.typoPending) ||
-        GetTickCount() - pollStartedTick_ > kPollLimitMs) {
+    if (!composition_ || !compositionContext_ || (!shown_.livePending && !shown_.typoPending && !shown_.aiPending) ||
+        GetTickCount() - pollStartedTick_ > (shown_.aiPending ? kAIPollLimitMs : kPollLimitMs)) {
         StopPolling();
         return;
     }

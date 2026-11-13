@@ -1,5 +1,7 @@
 #pragma once
+#include <array>
 #include <filesystem>
+#include <optional>
 #include <string>
 
 namespace iroha {
@@ -46,6 +48,23 @@ struct Config {
     double typoThreshold = 2.5;
     int typoDelayMs = 500;
     int typoMinimumLength = 4;
+    // AI変換（キーの名前は macOS版の設定と同じ）: 接続先（"ollama" / "lmstudio" / "openai" / "claude"。空なら使わない）と、
+    // 接続先ごとの URL（空なら既定）・モデル。API キーは config.json に書かず、資格情報マネージャーに置く
+    std::string aiService;
+    std::string ollamaEndpoint;
+    std::string ollamaModel;
+    std::string lmStudioEndpoint;
+    std::string lmStudioModel;
+    std::string openAIEndpoint;
+    std::string openAIModel;
+    std::string claudeModel;
+    // プリセット 3 つ（名前・プロンプト・ショートカット）。書いていなければ既定（AICommitSettings::Defaults）
+    struct AIPreset {
+        std::optional<std::u32string> name;
+        std::optional<std::u32string> prompt;
+        std::optional<std::string> hotkey;
+    };
+    std::array<AIPreset, 3> aiPresets;
 };
 
 Config LoadConfig(const std::filesystem::path& path);

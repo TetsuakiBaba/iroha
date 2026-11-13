@@ -211,7 +211,7 @@ windows\build\iroha-cli\iroha-cli.exe session --interval 120 "kyouhaiitenkidesun
 - 候補の数は設定画面の「入力」タブ（`config.json` の `candidateCount`、既定 8。macOS版と同じ）
 
 未対応（macOS版にあるもの）: 区切り記号で囲んだ英字入力・候補ウィンドウを表に広げる（Tab）・
-AI の機能・「こえ」モード。
+AIで直す（誤変換の疑いの判定。文字ごとの自信度が未移植）・選択テキストのAI編集・「こえ」モード。
 変換サーバが止まっている間は、かな入力もできない（キーを受けても表示を決められない）
 
 ## 予測変換・変換ルール・プライベートモード・変換記録
@@ -233,6 +233,34 @@ macOS版の同じ機能を移した（2026-11-13）。ファイルの形式は m
   そのまま確定した 1 文字・打ち直した文節や学習しない候補を含む確定は残さない。「直した確定だけ」も選べる。
   確定の取り消し（Ctrl+Backspace）で取り消した確定は残さない（取り消せなくなったときに書く）
 - 設定画面を特定のタブで開く: `iroha-settings.exe --tab input|rules|learning`（ほかに model / dictionary / terms）
+
+## AI変換
+
+macOS版の AI変換（入力中にプリセットのキーで、未確定文字列をプロンプトといっしょに AI に渡す）を移した（2026-11-13）。
+接続先は Ollama・LM Studio・OpenAI互換・Claude（Apple Intelligence は macOS 専用）。設定画面の「AI」タブで選ぶ
+
+- 依頼の組み立て（`{text}` の差し込み・出力の念押し）・プリセットの既定・応答の読み方（OpenAI互換の SSE・Ollama の JSONL・
+  Claude の Messages API のストリーム・`<think>` の除去）は `iroha-core` の `ai_conversion`、通信は `shared/ai_client`（WinHTTP）。
+  送る中身と思考を止める指定は macOS版の `RemoteTranslator` と同じ。30 秒何も届かなければ打ち切る（macOS版と同じ）
+- 入力の流れは macOS版と同じ: 結果待ちの間は「日本語 ⇢ 途中までの結果 …」を出し、Esc で取り消して元の未確定文字列に戻る
+  （ほかのキーは飲み込む）。英訳など日本語でない結果は確定し、日本語の結果は文節に区切って返す（Enter で確定、Space・矢印で
+  文節ごとに直せる）。失敗したら日本語のまま確定する。AI の結果は学習・変換記録・入力履歴に残さない
+- プリセットは 3 つ（英訳・敬語・要約。名前・プロンプト・キーを変えられる）。キーは「Alt+Enter」「Ctrl+Shift+T」の形で書き、
+  英訳の既定は Alt+Enter（macOS版の Option+Return にあたる）。変換サーバがキーを解釈して TIP に渡す
+  （TIP は設定ファイルを読めないアプリの中でも動くため）
+- API キー（OpenAI互換・Claude）は config.json に書かず、Windows の資格情報マネージャー（汎用資格情報 `iroha/openAIAPIKey`・
+  `iroha/anthropicAPIKey`）に置く。Claude の既定のモデルは claude-haiku-5-5（macOS版と同じ）
+- 確認（2026-11-13、この機械の LM Studio・google/gemma-3n-e4b）: 英訳・敬語・要約が途中経過つきで返り、変換サーバを通して
+  英訳の確定・日本語の結果の文節化・Esc での取り消しが動いた。Claude・OpenAI・Ollama の実際の接続は試していない
+
+```powershell
+# 設定画面の接続先で 1 回依頼する（途中経過も出す）・モデルの一覧
+windows\build\iroha-cli\iroha-cli.exe ai "今日は天気がいいですね"
+windows\build\iroha-cli\iroha-cli.exe ai --preset 1 "明日の会議、出られないかも"
+windows\build\iroha-cli\iroha-cli.exe ai models
+# 変換サーバを通して（<ai0> がプリセット 1 つ目のキー）
+windows\build\iroha-cli\iroha-cli.exe session --interval 60 "kyouhatenkigaiidesune<wait><ai0><wait>"
+```
 
 ## 打ち間違いの訂正
 
@@ -370,6 +398,7 @@ windows\build\iroha-cli\iroha-cli.exe lattice goenseihaien
       TIP はキーを送って表示を反映するだけ）
 - [x] M7e-1: 記号・顔文字・絵文字の候補（Mozc のデータ、Windows で描けない絵文字を除く、候補ウィンドウを Direct2D で描く）
 - [x] M7e-2: 専門辞書（設定画面のタブ・辞書ラティスへの組み込み・候補の辞書名の印）
+- [x] M7i: AI変換（Ollama・LM Studio・OpenAI互換・Claude、プリセット 3 つ、設定画面の「AI」タブ）
 - [x] M7h: 打ち間違いの訂正（TypoNormalizer の C++ 移植・休止での訂正と取り消し・文節の訂正候補・設定画面からの取得）
 - [x] M7g: macOS版のキーの扱い（表示形・英字入力・文節の打ち直し・確定の取り消し・句読点の切り替え）、
       予測変換・変換ルール・プライベートモード・変換記録と、設定画面の「入力」「変換ルール」「学習・記録」タブ

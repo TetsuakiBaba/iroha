@@ -27,6 +27,8 @@
 //   iroha-cli typo catalog [install [ID]]         : 訂正モデルの一覧・取得と設置（IME本体と同じ経路。ID が無ければ先頭）
 //   iroha-cli typo logits <入力の読み> <正しい読み> [ステップ数]
 //                                                 : teacher forcing のロジットを JSON で出す（照合用）
+//   iroha-cli ai [--preset 0〜2] <テキスト>        : AI変換を 1 回依頼する（設定画面の接続先・プリセット。途中経過も出す）
+//   iroha-cli ai models                           : 設定画面の接続先で使えるモデルの一覧
 //   iroha-cli typo parity [--dir DIR]             : 書き出しに付いてくる parity.json と突き合わせる（macOS版と同じ判定）
 //                                                   モデルの場所は IROHA_TYPO_MODEL か <データフォルダ>/models/typo-normalizer
 //   iroha-cli session [--context 文脈] [--interval ミリ秒] <キー列>
@@ -35,6 +37,7 @@
 //                                                   <bs> <left> <right> <up> <down> <f6>〜<f10> <punct>（Ctrl+.）
 //                                                   <undo>（確定の取り消し）（Shift は <S-left> のように）と書く。
 //                                                   <wait> は、キーを送らずに変換・打ち間違いの訂正が届くまで待つ。
+//                                                   <ai0>〜<ai2> は AI変換（プリセットの番号）。
 //                                                   既定ではキーごとにライブ変換の到着を待つ。--interval を付けると
 //                                                   待たずにその間隔で送る（変換が打鍵に追いつかないときの表示を見る）
 //   iroha-cli repl                                : 対話モード
@@ -83,6 +86,8 @@
 #include "iroha/typo_normalizer.h"
 #include "iroha/typo_normalizer_catalog.h"
 #include "term_dictionary_fetcher.h"
+#include "ai_client.h"
+#include "secret_store.h"
 #include "typo_normalizer_fetcher.h"
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_engine.h"
@@ -950,6 +955,82 @@ int RunTerms(const std::vector<std::u32string>& args) {
     return 0;
 }
 
+// ---- ai: AI変換 ----
+
+// 変換サーバと同じく、config.json と資格情報マネージャーから接続先を作る
+iroha::AIConnection AIConnectionFromConfig(const iroha::Config& config) {
+    iroha::AIConnection connection;
+    connection.service = iroha::ParseAIService(config.aiService);
+    switch (connection.service) {
+    case iroha::AIService::Ollama:
+        connection.endpoint = config.ollamaEndpoint;
+        connection.model = config.ollamaModel;
+        break;
+    case iroha::AIService::LMStudio:
+        connection.endpoint = config.lmStudioEndpoint;
+        connection.model = config.lmStudioModel;
+        break;
+    case iroha::AIService::OpenAI:
+        connection.endpoint = config.openAIEndpoint;
+        connection.model = config.openAIModel;
+        iroha::SecretStore::Get(iroha::AIClient::kOpenAIKeyAccount, &connection.apiKey);
+        break;
+    case iroha::AIService::Claude:
+        connection.model = config.claudeModel;
+        iroha::SecretStore::Get(iroha::AIClient::kClaudeKeyAccount, &connection.apiKey);
+        break;
+    default:
+        break;
+    }
+    return connection;
+}
+
+int RunAI(const std::vector<std::u32string>& args) {
+    const iroha::Config config = iroha::LoadConfig(std::filesystem::path(DataDir()) / "config.json");
+    const iroha::AIConnection connection = AIConnectionFromConfig(config);
+    PrintUtf8("接続先: " + Utf32ToUtf8(iroha::AIServiceDisplayName(connection.service)) + "  モデル: " +
+              (connection.model.empty() ? std::string("（既定）") : connection.model) + "\n");
+    if (!args.empty() && args[0] == U"models") {
+        std::vector<std::string> models;
+        std::string error;
+        if (!iroha::AIClient::ListModels(connection, &models, &error)) {
+            std::fprintf(stderr, "モデルの一覧を取れません: %s\n", error.c_str());
+            return 1;
+        }
+        for (const std::string& model : models) PrintUtf8("  " + model + "\n");
+        return 0;
+    }
+    size_t preset = 0;
+    size_t index = 0;
+    if (args.size() >= 2 && args[0] == U"--preset") {
+        preset = std::min<size_t>(std::stoul(Utf32ToUtf8(args[1])), iroha::AICommitSettings::kCount - 1);
+        index = 2;
+    }
+    if (index >= args.size()) return 1;
+    iroha::AICommitPreset settings;
+    const auto& stored = config.aiPresets[preset];
+    const auto& fallback = iroha::AICommitSettings::Defaults()[preset];
+    settings.name = stored.name.value_or(fallback.name);
+    settings.prompt = stored.prompt.value_or(fallback.prompt);
+    const auto start = std::chrono::steady_clock::now();
+    const iroha::AIResult result = iroha::AIClient::Run(
+        connection, settings.Request(preset, args[index]),
+        [&start](const std::u32string& partial) {
+            char timing[32];
+            std::snprintf(timing, sizeof(timing), "  [%.0fms] ", MillisecondsSince(start));
+            PrintUtf8(timing + Utf32ToUtf8(partial) + "\n");
+        },
+        nullptr);
+    if (!result.text) {
+        std::fprintf(stderr, "失敗: %s\n", result.error.c_str());
+        return 1;
+    }
+    char timing[32];
+    std::snprintf(timing, sizeof(timing), "%.0fms", MillisecondsSince(start));
+    PrintUtf8(Utf32ToUtf8(settings.DisplayName(preset)) + ": " + Utf32ToUtf8(*result.text) + "  [" + timing + "]\n");
+    return 0;
+}
+
 // ---- typo: 打ち間違いの訂正 ----
 
 std::filesystem::path TypoModelDirectory() {
@@ -1251,6 +1332,11 @@ bool ParseKeyStrokes(const std::u32string& text, std::vector<SessionKeyStroke>* 
             stroke.wait = true;
             found = true;
         }
+        if (name.size() == 3 && name.compare(0, 2, U"ai") == 0 && name[2] >= U'0' && name[2] <= U'2') {
+            stroke.key = iroha::SessionKey::AICommit;
+            stroke.character = name[2] - U'0';
+            found = true;
+        }
         for (const auto& entry : kNames) {
             if (name == entry.first) {
                 stroke.key = entry.second;
@@ -1318,7 +1404,7 @@ int RunSession(const std::vector<SessionKeyStroke>& strokes, const std::u32strin
     // ライブ変換・打ち間違いの訂正が届くまで問い合わせる（TIP のタイマーにあたる）。届くたびに表示する
     const auto settle = [&](iroha::SessionOutput* output) {
         const auto start = std::chrono::steady_clock::now();
-        while ((output->livePending || output->typoPending) && MillisecondsSince(start) < 10000) {
+        while ((output->livePending || output->typoPending || output->aiPending) && MillisecondsSince(start) < 60000) {
             Sleep(5);
             iroha::ipc::SessionResponse response;
             if (!call(iroha::ipc::BuildSessionPollRequest(sessionId, output->revision), &response)) {
@@ -1405,6 +1491,10 @@ int wmain(int argc, wchar_t** argv) {
 
     if (command == U"terms") {
         return RunTerms(std::vector<std::u32string>(args.begin() + 2, args.end()));
+    }
+
+    if (command == U"ai") {
+        return RunAI(std::vector<std::u32string>(args.begin() + 2, args.end()));
     }
 
     if (command == U"typo") {

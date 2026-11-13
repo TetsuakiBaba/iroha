@@ -18,6 +18,18 @@ std::string FormatNumber(double value) {
     std::snprintf(text, sizeof(text), "%.6g", value);
     return text;
 }
+// AI変換のプリセット（書いてある項目だけ）
+std::string EncodePresets(const Config& config) {
+    std::string out;
+    for (size_t i = 0; i < config.aiPresets.size(); ++i) {
+        const std::string prefix = ",\"aiPreset" + std::to_string(i);
+        const Config::AIPreset& preset = config.aiPresets[i];
+        if (preset.name) out += prefix + "Name\":" + json::QuoteString(Utf32ToUtf8(*preset.name));
+        if (preset.prompt) out += prefix + "Prompt\":" + json::QuoteString(Utf32ToUtf8(*preset.prompt));
+        if (preset.hotkey) out += prefix + "Hotkey\":" + json::QuoteString(*preset.hotkey);
+    }
+    return out;
+}
 } // namespace
 
 std::filesystem::path DefaultModelPath(const std::filesystem::path& modelsDirectory) {
@@ -84,6 +96,31 @@ Config LoadConfig(const std::filesystem::path& path) {
             config.typoMinimumLength = std::max(1, std::min(20, static_cast<int>(length->number)));
         }
     }
+    const auto text = [&root](const char* key, std::string* out) {
+        if (const json::Value* value = root.Find(key); value && value->type == json::Value::Type::String) {
+            *out = value->string;
+        }
+    };
+    text("translationService", &config.aiService);
+    text("ollamaEndpoint", &config.ollamaEndpoint);
+    text("ollamaModel", &config.ollamaModel);
+    text("lmStudioEndpoint", &config.lmStudioEndpoint);
+    text("lmStudioModel", &config.lmStudioModel);
+    text("openAIEndpoint", &config.openAIEndpoint);
+    text("openAIModel", &config.openAIModel);
+    text("claudeModel", &config.claudeModel);
+    for (size_t i = 0; i < config.aiPresets.size(); ++i) {
+        const std::string prefix = "aiPreset" + std::to_string(i);
+        if (const json::Value* value = root.Find(prefix + "Name"); value && value->type == json::Value::Type::String) {
+            config.aiPresets[i].name = Utf8ToUtf32(value->string);
+        }
+        if (const json::Value* value = root.Find(prefix + "Prompt"); value && value->type == json::Value::Type::String) {
+            config.aiPresets[i].prompt = Utf8ToUtf32(value->string);
+        }
+        if (const json::Value* value = root.Find(prefix + "Hotkey"); value && value->type == json::Value::Type::String) {
+            config.aiPresets[i].hotkey = value->string;
+        }
+    }
     if (const json::Value* count = root.Find("candidateCount")) {
         if (count->type == json::Value::Type::Number) {
             config.candidateCount = std::max(3, std::min(16, static_cast<int>(count->number)));
@@ -107,6 +144,14 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                       ",\"typoNormalizerThreshold\":" + FormatNumber(config.typoThreshold) +
                       ",\"typoNormalizerDelayMs\":" + std::to_string(config.typoDelayMs) +
                       ",\"typoNormalizerMinLength\":" + std::to_string(config.typoMinimumLength) +
+                      ",\"translationService\":" + json::QuoteString(config.aiService) +
+                      ",\"ollamaEndpoint\":" + json::QuoteString(config.ollamaEndpoint) +
+                      ",\"ollamaModel\":" + json::QuoteString(config.ollamaModel) +
+                      ",\"lmStudioEndpoint\":" + json::QuoteString(config.lmStudioEndpoint) +
+                      ",\"lmStudioModel\":" + json::QuoteString(config.lmStudioModel) +
+                      ",\"openAIEndpoint\":" + json::QuoteString(config.openAIEndpoint) +
+                      ",\"openAIModel\":" + json::QuoteString(config.openAIModel) +
+                      ",\"claudeModel\":" + json::QuoteString(config.claudeModel) + EncodePresets(config) +
                       ",\"version\":1}";
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);

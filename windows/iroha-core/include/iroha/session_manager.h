@@ -78,6 +78,17 @@ public:
         virtual void RecordConversion(const ConversionLogEntry& entry) { (void)entry; }
         // 打ち間違いの訂正（InputSession::Host と同じ。エンジンを持たずに呼ぶ。訂正のモデルは自分で直列化すること）
         virtual bool TypoCorrectionAvailable() { return false; }
+        // AI変換（preset 番目のプリセットで text を）。途中経過を onPartial に渡し、結果（失敗なら無し）を返す。
+        // cancel が止められたら途中でも戻る。エンジンを持たずに呼ぶ
+        virtual std::optional<std::u32string> RunAI(size_t preset, const std::u32string& text,
+                                                    const std::function<void(const std::u32string&)>& onPartial,
+                                                    CancelToken* cancel) {
+            (void)preset;
+            (void)text;
+            (void)onPartial;
+            (void)cancel;
+            return std::nullopt;
+        }
         virtual std::optional<TypoCorrection> CorrectTypo(const std::u32string& reading, double threshold,
                                                           size_t minimumLength) {
             (void)reading;
@@ -146,6 +157,16 @@ private:
         std::chrono::steady_clock::time_point due;
     };
     void EnqueueTypo(uint64_t sessionId, TypoJob job);
+    // AI変換の依頼（セッションごとに最新の 1 件。裏のスレッドで 1 件ずつ行う）
+    struct AIJob {
+        uint64_t sessionId = 0;
+        uint64_t generation = 0;
+        size_t preset = 0;
+        std::u32string text;
+    };
+    void EnqueueAI(AIJob job);
+    void CancelAIJobs(uint64_t sessionId);
+    void AIWorkerLoop();
     void CancelTypo(uint64_t sessionId);
     void TypoWorkerLoop();
 
@@ -185,6 +206,15 @@ private:
     std::map<uint64_t, TypoJob> typoJobs_;
     bool typoStopping_ = false;
     std::thread typoWorker_;
+
+    // AI変換（aiMutex_ で守る）。行っている依頼は止められるようにしておく
+    std::mutex aiMutex_;
+    std::condition_variable aiCondition_;
+    std::vector<AIJob> aiJobs_;
+    std::optional<AIJob> aiRunning_;
+    std::shared_ptr<CancelToken> aiCancel_;
+    bool aiStopping_ = false;
+    std::thread aiWorker_;
 };
 
 } // namespace iroha

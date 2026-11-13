@@ -4,6 +4,7 @@
 
 #include "iroha/kana.h"
 #include "iroha/reading_aligner.h"
+#include "iroha/unicode.h"
 
 namespace iroha {
 
@@ -99,6 +100,26 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
     notice_.clear();
     // 打ち間違いの自動訂正を取り消せるのは「直した直後の Backspace」だけ。ほかのキーでその窓は閉じる
     if (key != SessionKey::Backspace) EndTypoUndo();
+    // AI変換の結果待ち: Esc で取り消して元の未確定文字列に戻す。それ以外のキーは飲み込む
+    // （フォーカスが移るなど確定を求められたら、元の日本語のまま確定する）
+    if (translation_) {
+        std::u32string commit;
+        if (key == SessionKey::Escape) {
+            CancelTranslation();
+        } else if (key == SessionKey::Reset) {
+            CancelTranslation();
+            ResetState();
+        } else if (key == SessionKey::CommitNow) {
+            const std::u32string japanese = translation_->japanese;
+            CancelTranslation();
+            CommitText(japanese, &commit);
+        }
+        ++revision_;
+        SessionOutput output = Current();
+        output.commit = pendingCommit_ + commit;
+        pendingCommit_.clear();
+        return output;
+    }
     if (!IsComposing()) {
         state_.contextFromDocument = leftContext != nullptr;
         if (leftContext) {
@@ -149,6 +170,9 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
             if (!IsComposing()) state_.composer = MakeComposer();
             notice_ = U"句読点: " + settings_.punctuation;
             break;
+        case SessionKey::AICommit:
+            if (IsComposing()) StartAICommit(static_cast<size_t>(character), &commit);
+            break;
         case SessionKey::TogglePrivateMode:
             settings_.privateMode = !settings_.privateMode;
             host_->PrivateModeChanged(settings_.privateMode);
@@ -168,8 +192,16 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
     RefreshPrediction();
     ++revision_;
     SessionOutput output = Current();
-    output.commit = std::move(commit);
+    output.commit = pendingCommit_ + commit;
+    pendingCommit_.clear();
     output.replacesCommitted = replacesCommitted_;
+    return output;
+}
+
+SessionOutput InputSession::TakePolledOutput() {
+    SessionOutput output = Current();
+    output.commit = std::move(pendingCommit_);
+    pendingCommit_.clear();
     return output;
 }
 
@@ -254,6 +286,7 @@ void InputSession::RecordInputHistory(const std::optional<std::u32string>& compo
     const State& s = state_;
     std::vector<std::pair<std::u32string, std::u32string>> pieces;
     if (s.mode == Mode::Segmenting) {
+        if (s.segmentsFromAI) return;
         for (const Segment& segment : s.segments) {
             if (segment.unlearnable.count(segment.result) == 0) pieces.push_back({segment.reading, segment.result});
         }
@@ -520,7 +553,7 @@ std::u32string InputSession::KanaDisplay() const {
 // 確定で文書に入る文字列（表示と同じ規則。未解決ローマ字は確定する: "n" → "ん"）。
 // macOS版は、文字を消した直後でも変換済みの読みと一致すれば変換結果を確定するが、
 // ここでは表示（かな）のとおりに確定する
-std::optional<std::u32string> InputSession::ResolveCommitText() {
+std::optional<std::u32string> InputSession::ResolveCommitText(bool logging) {
     State& s = state_;
     if (s.mode == Mode::Segmenting) {
         const std::u32string text = JoinedResults();
@@ -533,7 +566,7 @@ std::optional<std::u32string> InputSession::ResolveCommitText() {
         // 表示形の指定で Flush 済みなので composer.Text() がこの部分の読み。
         // ライブ変換が同じ読みを変換していれば、それを退けて表示形を選んだ記録になる
         const std::u32string& reading = s.composer.Text();
-        LogConversion(ConversionLogEntry::Mode::FunctionKey, s.context + prefix, reading,
+        if (logging) LogConversion(ConversionLogEntry::Mode::FunctionKey, s.context + prefix, reading,
                       s.lastConversion && s.lastConversion->first == reading
                           ? std::optional<std::u32string>(s.lastConversion->second)
                           : std::nullopt,
@@ -548,7 +581,7 @@ std::optional<std::u32string> InputSession::ResolveCommitText() {
         if (reading == readingBeforeFlush) {
             // ライブ変換の表示をそのまま確定（修正なしの例）。Flush で増えたかなは読みにも結果にも付く
             const std::u32string text = s.lastConversion->second + flushedSuffix;
-            LogConversion(ConversionLogEntry::Mode::Live, s.context + prefix, s.composer.Text(), text, text);
+            if (logging) LogConversion(ConversionLogEntry::Mode::Live, s.context + prefix, s.composer.Text(), text, text);
             return prefix + text;
         }
         if (StartsWith(readingBeforeFlush, reading)) {
@@ -824,6 +857,7 @@ void InputSession::EnterSegmentMode() {
     s.mode = Mode::Segmenting;
     s.segmentEdit.reset();
     s.segmentsRetyped = false;
+    s.segmentsFromAI = false;
     s.segmentFixedCount = fixedSegments.size();
     s.showsKanaOnly = false;
     s.segments = fixedSegments;
@@ -939,6 +973,7 @@ void InputSession::ExitSegmentModeToKana() {
     s.segmentEngineBaseline.reset();
     s.segmentEdit.reset();
     s.segmentsRetyped = false;
+    s.segmentsFromAI = false;
     s.showsKanaOnly = true;
     s.typoReading.reset();
     s.typoResolved = false;
@@ -962,7 +997,7 @@ void InputSession::CommitSegments(std::u32string* commit) {
 // 候補ウィンドウ専用の語・記号）を含む確定は残さない（毎回変わる日付や、読みと対応しない語は学習例にならない）
 void InputSession::LogSegmentsCommit(const std::u32string& committed) {
     const State& s = state_;
-    if (s.segmentsRetyped || s.segments.empty() || committed.empty()) return;
+    if (s.segmentsFromAI || s.segmentsRetyped || s.segments.empty() || committed.empty()) return;
     std::u32string reading;
     std::vector<ConversionLogEntry::Segment> segments;
     for (const Segment& segment : s.segments) {
@@ -998,7 +1033,8 @@ void InputSession::LogConversion(ConversionLogEntry::Mode mode, const std::u32st
 // 記号・顔文字・絵文字を選んだ文節を含む確定と、打ち直した文節を含む確定は学習しない
 void InputSession::LearnIfCorrected(const std::u32string& committed) {
     const State& s = state_;
-    if (settings_.privateMode || s.segmentsRetyped || s.segments.empty() || committed.empty() || !s.segmentBaseline ||
+    if (settings_.privateMode || s.segmentsFromAI || s.segmentsRetyped || s.segments.empty() || committed.empty() ||
+        !s.segmentBaseline ||
         committed == *s.segmentBaseline) {
         return;
     }
@@ -1213,7 +1249,7 @@ void InputSession::StartSegmentEdit(std::optional<char32_t> character) {
     CancelLiveConversion();
     const size_t index = s.currentSegment;
     // 読みから変換した文節なら、読みから変換した文節の全部を変換し直す
-    const bool whole = index >= s.segmentFixedCount;
+    const bool whole = !s.segmentsFromAI && index >= s.segmentFixedCount;
     const size_t scopeStart = whole ? std::min(s.segmentFixedCount, index) : index;
     const size_t scopeEnd = whole ? s.segments.size() : index + 1;
     SegmentEdit edit;
@@ -1492,6 +1528,91 @@ void InputSession::SyncCompositionWithRetypedSegment(size_t index, bool removed)
     if (!chunk) --s.segmentFixedCount;
 }
 
+// ---- AI変換 ----
+
+// 今の未確定文字列を、プリセットのプロンプトで AI に渡す（macOS版 handleAICommit）。
+// 合成の状態は捨てずに結果を待つ（Esc で元に戻れる）。AI が使えなければ普通に確定する
+void InputSession::StartAICommit(size_t preset, std::u32string* commit) {
+    State& s = state_;
+    if (s.mode == Mode::Segmenting) CloseCandidateList();
+    const auto japanese = ResolveCommitText(/*logging=*/false);
+    if (!japanese || japanese->empty()) return;
+    // 結果を文節に区切るための読み（ResolveCommitText が未解決のローマ字を確定したあとの値）
+    std::u32string reading;
+    if (s.mode == Mode::Segmenting) {
+        for (const Segment& segment : s.segments) reading += segment.reading;
+    } else {
+        for (const FixedChunk& chunk : s.fixedChunks) reading += chunk.reading;
+        reading += s.composer.Text() + s.alphabetRun.value_or(U"");
+    }
+    if (!settings_.aiAvailable || preset >= settings_.aiPresetNames.size()) {
+        CommitText(*japanese, commit);
+        return;
+    }
+    CancelLiveConversion();
+    CancelTypoCorrection();
+    prediction_.reset();
+    translation_ = Translation{++aiGeneration_, *japanese, settings_.aiPresetNames[preset], U"", reading};
+    host_->RequestAI(aiGeneration_, preset, *japanese);
+}
+
+bool InputSession::UpdateAIPartial(uint64_t generation, const std::u32string& partial) {
+    if (!translation_ || translation_->generation != generation) return false;
+    translation_->partial = TrimWhitespace(partial);
+    ++revision_;
+    return true;
+}
+
+bool InputSession::CompleteAI(uint64_t generation, const std::optional<std::u32string>& output) {
+    if (!translation_ || translation_->generation != generation) return false;
+    const Translation translation = *translation_;
+    translation_.reset();
+    if (output && ContainsJapanese(*output)) {
+        PresentAIResultAsSegments(*output, translation.reading);
+    } else {
+        // 英訳など日本語でない結果はそのまま確定する。失敗・打ち切りのときは日本語のまま確定する（テキストを失わない）
+        std::u32string commit;
+        CommitText(output.value_or(translation.japanese), &commit);
+        pendingCommit_ += commit;
+    }
+    ++revision_;
+    return true;
+}
+
+// AI の結果（日本語）を、確定せずに文節に区切った未確定文字列として出す（Enter で確定、Space・矢印で文節ごとに直せる）。
+// 読みとの対応は ReadingAligner で取る（対応が取れなければ全体で 1 文節）
+void InputSession::PresentAIResultAsSegments(const std::u32string& output, const std::u32string& reading) {
+    State& s = state_;
+    CancelLiveConversion();
+    s.mode = Mode::Segmenting;
+    s.segments = SegmentsFor(reading, output);
+    if (s.segments.empty()) {
+        Segment segment;
+        segment.reading = reading;
+        segment.result = output;
+        s.segments.push_back(std::move(segment));
+    }
+    s.segmentBaseline = output;
+    s.segmentEngineBaseline = output;
+    s.segmentsFromAI = true;
+    s.segmentEdit.reset();
+    s.segmentsRetyped = false;
+    s.segmentFixedCount = 0;
+    s.currentSegment = 0;
+    s.candidateListOpen = false;
+    s.typoReading.reset();
+    s.typoResolved = false;
+    s.typoSegmentCorrection.reset();
+    s.typoWholeSentence.reset();
+}
+
+// AI変換の結果待ちを取り消す（合成の状態はそのまま）
+void InputSession::CancelTranslation() {
+    if (!translation_) return;
+    translation_.reset();
+    host_->CancelAI();
+}
+
 // ---- 打ち間違いの訂正 ----
 
 bool InputSession::TypoAccepts(const std::u32string& reading) const {
@@ -1718,6 +1839,7 @@ void InputSession::ResetState() {
     const bool contextHasPrivateText = state_.contextHasPrivateText;
     CancelLiveConversion();
     CancelTypoCorrection();
+    CancelTranslation();
     typoChecked_.reset();
     state_ = State();
     state_.composer = MakeComposer();
@@ -1737,6 +1859,16 @@ SessionOutput InputSession::Current() const {
     output.privateMode = settings_.privateMode;
     output.notice = notice_;
     output.typoPending = typoPending_;
+    output.aiShortcuts = settings_.aiShortcuts;
+    if (translation_) {
+        // 結果待ちの表示: 「日本語 ⇢ プリセットの名前（届いたら途中までの結果） …」
+        output.aiPending = true;
+        output.preedit.push_back({translation_->japanese + U" ⇢ " +
+                                      (translation_->partial.empty() ? translation_->label : translation_->partial) +
+                                      U" …",
+                                  SessionOutput::kInput});
+        return output;
+    }
     if (typoUndoAvailable_ && s.mode == Mode::Composing) output.typoFeedback = typoFeedback_;
     if (commitUndo_) output.undoableCommit = commitUndo_->text;
     if (prediction_ && s.mode == Mode::Composing) {

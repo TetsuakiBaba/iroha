@@ -25,11 +25,12 @@
 //                    string undoableCommit（取り消せる確定）,
 //                    u32 predictionCount, string×predictionCount, u32 predictionIndex, string notice,
 //                    u32 typoFeedbackCount（0 か 4）, string×typoFeedbackCount（打ち間違いの訂正の小窓。
-//                    前の部分・打った読みの変わった部分・直した読みの変わった部分・後の部分）
+//                    前の部分・打った読みの変わった部分・直した読みの変わった部分・後の部分）,
+//                    u32 aiShortcutCount, u32×aiShortcutCount（AI変換のプリセットのキー）
 //                    （印と取り消せる確定から後は後から足したので、無い返事も読めるようにしてある）
 //                flags: 1 文節変換中 / 2 変換の結果待ち / 4 候補ウィンドウ / 8 入力していないときの Space は全角 /
 //                       16 確定した文字列を未確定文字列に置き換える（UndoCommit への返事） / 32 プライベートモード /
-//                       64 打ち間違いの訂正の結果待ち
+//                       64 打ち間違いの訂正の結果待ち / 128 AI変換の結果待ち
 //                エラー: string message
 //
 // セッションのメッセージは、入力の状態（読み・ライブ変換・文節・候補）をサーバ側に持つためのもの
@@ -213,6 +214,7 @@ constexpr uint32_t kOutputFlagFullWidthSpace = 8;
 constexpr uint32_t kOutputFlagReplacesCommitted = 16;
 constexpr uint32_t kOutputFlagPrivateMode = 32;
 constexpr uint32_t kOutputFlagTypoPending = 64;
+constexpr uint32_t kOutputFlagAIPending = 128;
 
 // leftContext は、合成していないときにカーソルより前から読んだ文書のテキスト（読めなければ nullptr）
 inline std::vector<char> BuildSessionKeyRequest(uint64_t sessionId, SessionKey key,
@@ -261,7 +263,8 @@ inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
                      (output->fullWidthSpace ? kOutputFlagFullWidthSpace : 0) |
                      (output->replacesCommitted ? kOutputFlagReplacesCommitted : 0) |
                      (output->privateMode ? kOutputFlagPrivateMode : 0) |
-                     (output->typoPending ? kOutputFlagTypoPending : 0));
+                     (output->typoPending ? kOutputFlagTypoPending : 0) |
+                     (output->aiPending ? kOutputFlagAIPending : 0));
     PutU32(&buf, static_cast<uint32_t>(output->preedit.size()));
     for (const SessionOutput::Span& span : output->preedit) {
         PutU32(&buf, span.style);
@@ -313,6 +316,9 @@ inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
     } else {
         PutU32(&buf, 0);
     }
+    // AI変換のキー（後から足した。無い返事も読める）
+    PutU32(&buf, static_cast<uint32_t>(output->aiShortcuts.size()));
+    for (uint32_t shortcut : output->aiShortcuts) PutU32(&buf, shortcut);
     return buf;
 }
 
@@ -363,6 +369,7 @@ inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
     output.replacesCommitted = (flags & kOutputFlagReplacesCommitted) != 0;
     output.privateMode = (flags & kOutputFlagPrivateMode) != 0;
     output.typoPending = (flags & kOutputFlagTypoPending) != 0;
+    output.aiPending = (flags & kOutputFlagAIPending) != 0;
     for (uint32_t i = 0; i < spanCount; ++i) {
         uint32_t style = 0;
         std::string text;
@@ -421,6 +428,14 @@ inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
                     reader.String(&parts[3])) {
                     output.typoFeedback = TypoCorrectionFeedback{Utf8ToUtf32(parts[0]), Utf8ToUtf32(parts[1]),
                                                                  Utf8ToUtf32(parts[2]), Utf8ToUtf32(parts[3])};
+                }
+            }
+            uint32_t shortcutCount = 0;
+            if (reader.U32(&shortcutCount)) {
+                for (uint32_t i = 0; i < shortcutCount && i < 16; ++i) {
+                    uint32_t shortcut = 0;
+                    if (!reader.U32(&shortcut)) break;
+                    output.aiShortcuts.push_back(shortcut);
                 }
             }
         }

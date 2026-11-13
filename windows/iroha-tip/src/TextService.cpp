@@ -8,6 +8,7 @@
 #include "DisplayAttribute.h"
 #include "EditSession.h"
 #include "LangBarButton.h"
+#include "key_shortcut.h"
 #include "iroha/unicode.h"
 
 TextService::TextService() : refCount_(1) { DllAddRef(); }
@@ -346,8 +347,27 @@ TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) co
         if (composing && !IsModifierKey(wParam)) decision.kind = KeyDecision::Kind::CommitThenPass;
         return decision;
     };
+    // AI変換の結果待ち: Esc は取り消し、それ以外のキーは変換サーバに送って飲み込んでもらう
+    if (composing && shown_.aiPending) {
+        if (IsModifierKey(wParam)) return decision;
+        if (wParam == VK_ESCAPE) return session(iroha::SessionKey::Escape);
+        decision.character = 0;
+        return session(iroha::SessionKey::Character);
+    }
     // プライベートモードの切り替え（Ctrl+Alt+P。入力中かどうかによらず効く。macOS版の Ctrl+Option+P）
     if (control && alt && wParam == 'P') return session(iroha::SessionKey::TogglePrivateMode);
+    // AI変換のキー（プリセットごとに設定で決める。既定は英訳の Alt+Enter）。入力中だけ
+    if (composing) {
+        for (size_t i = 0; i < shown_.aiShortcuts.size(); ++i) {
+            if (shown_.aiShortcuts[i] == 0) continue;
+            const iroha::KeyShortcut shortcut = iroha::KeyShortcut::Decode(shown_.aiShortcuts[i]);
+            if (shortcut.vk == wParam && shortcut.control == control && shortcut.alt == alt &&
+                shortcut.shift == decision.shift) {
+                decision.character = static_cast<char32_t>(i);
+                return session(iroha::SessionKey::AICommit);
+            }
+        }
+    }
     if (alt) return commitThenPass();
     if (control) {
         if (wParam == VK_OEM_PERIOD) return session(iroha::SessionKey::TogglePunctuation);
@@ -536,8 +556,8 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
         predictionWindow_.Hide();
     }
     UpdateTypoFeedback(context, output, synchronous);
-    // ライブ変換・打ち間違いの訂正の結果待ちの間は問い合わせる
-    if (shown_.livePending || shown_.typoPending) {
+    // ライブ変換・打ち間違いの訂正・AI変換の結果待ちの間は問い合わせる
+    if (shown_.livePending || shown_.typoPending || shown_.aiPending) {
         StartPolling();
     } else {
         StopPolling();

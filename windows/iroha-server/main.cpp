@@ -21,11 +21,16 @@
 #include <vector>
 
 #include <memory>
+#include <array>
 #include <mutex>
 
 #include "iroha/chunked_conversion_engine.h"
 #include "iroha/config.h"
+#include "ai_client.h"
+#include "iroha/ai_conversion.h"
 #include "iroha/conversion_log.h"
+#include "key_shortcut.h"
+#include "secret_store.h"
 #include "iroha/typo_normalizer.h"
 #include "iroha/typo_normalizer_catalog.h"
 #include "iroha/conversion_engine.h"
@@ -158,6 +163,54 @@ struct ServerState {
         return typo;
     }
 
+    // AI変換の接続先とプリセット（裏のスレッドから読むので鍵で守る）
+    std::mutex aiMutex;
+    iroha::AIConnection aiConnection;
+    std::array<iroha::AICommitPreset, iroha::AICommitSettings::kCount> aiPresets;
+
+    void LoadAI(const iroha::Config& config) {
+        iroha::AIConnection connection;
+        connection.service = iroha::ParseAIService(config.aiService);
+        switch (connection.service) {
+        case iroha::AIService::Ollama:
+            connection.endpoint = config.ollamaEndpoint;
+            connection.model = config.ollamaModel;
+            break;
+        case iroha::AIService::LMStudio:
+            connection.endpoint = config.lmStudioEndpoint;
+            connection.model = config.lmStudioModel;
+            break;
+        case iroha::AIService::OpenAI:
+            connection.endpoint = config.openAIEndpoint;
+            connection.model = config.openAIModel;
+            iroha::SecretStore::Get(iroha::AIClient::kOpenAIKeyAccount, &connection.apiKey);
+            break;
+        case iroha::AIService::Claude:
+            connection.model = config.claudeModel;
+            iroha::SecretStore::Get(iroha::AIClient::kClaudeKeyAccount, &connection.apiKey);
+            break;
+        default:
+            break;
+        }
+        std::array<iroha::AICommitPreset, iroha::AICommitSettings::kCount> presets;
+        sessionSettings.aiPresetNames.clear();
+        sessionSettings.aiShortcuts.clear();
+        for (size_t i = 0; i < presets.size(); ++i) {
+            const auto& stored = config.aiPresets[i];
+            const auto& fallback = iroha::AICommitSettings::Defaults()[i];
+            presets[i].name = stored.name.value_or(fallback.name);
+            presets[i].prompt = stored.prompt.value_or(fallback.prompt);
+            presets[i].shortcut = stored.hotkey.value_or(fallback.shortcut);
+            sessionSettings.aiPresetNames.push_back(presets[i].DisplayName(i));
+            const auto shortcut = iroha::KeyShortcut::Parse(presets[i].shortcut);
+            sessionSettings.aiShortcuts.push_back(shortcut ? shortcut->Encode() : 0);
+        }
+        sessionSettings.aiAvailable = iroha::AIClient::IsConfigured(connection);
+        std::lock_guard<std::mutex> lock(aiMutex);
+        aiConnection = std::move(connection);
+        aiPresets = std::move(presets);
+    }
+
     void LoadTypoNormalizer(bool enabled) {
         std::filesystem::path directory = iroha::TypoNormalizerInstall::Directory(std::filesystem::path(DataDir()));
         if (const wchar_t* env = _wgetenv(L"IROHA_TYPO_MODEL")) {
@@ -255,6 +308,7 @@ struct ServerState {
         sessionSettings.typoDelayMs = config.typoDelayMs;
         sessionSettings.typoMinimumLength = config.typoMinimumLength;
         LoadTypoNormalizer(config.typoCorrection);
+        LoadAI(config);
         sessionSettings.conversionLogScope = config.conversionLogCorrectionsOnly
                                                  ? iroha::ConversionLogScope::Corrections
                                                  : iroha::ConversionLogScope::All;
@@ -419,6 +473,27 @@ public:
     }
 
     bool TypoCorrectionAvailable() override { return state_->Typo() != nullptr; }
+
+    std::optional<std::u32string> RunAI(size_t preset, const std::u32string& text,
+                                        const std::function<void(const std::u32string&)>& onPartial,
+                                        iroha::CancelToken* cancel) override {
+        iroha::AIConnection connection;
+        iroha::AICommitPreset settings;
+        {
+            std::lock_guard<std::mutex> lock(state_->aiMutex);
+            if (preset >= state_->aiPresets.size()) return std::nullopt;
+            connection = state_->aiConnection;
+            settings = state_->aiPresets[preset];
+        }
+        const auto start = GetTickCount64();
+        const iroha::AIResult result =
+            iroha::AIClient::Run(connection, settings.Request(preset, text), onPartial, cancel);
+        char message[512];
+        std::snprintf(message, sizeof(message), "ai %s (%llums)%s%s", iroha::AIServiceKey(connection.service),
+                      GetTickCount64() - start, result.text ? "" : ": ", result.text ? "" : result.error.c_str());
+        Log(message);
+        return result.text;
+    }
 
     std::optional<iroha::TypoCorrection> CorrectTypo(const std::u32string& reading, double threshold,
                                                      size_t minimumLength) override {
