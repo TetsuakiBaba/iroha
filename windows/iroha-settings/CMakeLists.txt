@@ -6,9 +6,10 @@ cmake_minimum_required(VERSION 3.21)
 project(iroha-settings LANGUAGES CXX)
 
 add_executable(iroha-settings WIN32 main.cpp ../shared/term_dictionary_fetcher.cpp
-    ../shared/typo_normalizer_fetcher.cpp ../shared/ai_client.cpp ../shared/secret_store.cpp)
+    ../shared/typo_normalizer_fetcher.cpp ../shared/ai_client.cpp ../shared/secret_store.cpp
+    ../shared/voice_recognizer.cpp)
 target_link_libraries(iroha-settings PRIVATE
-    iroha-core comctl32 uxtheme urlmon winhttp wininet bcrypt ole32 shell32 user32 gdi32 advapi32)
+    iroha-core comctl32 uxtheme urlmon winhttp wininet bcrypt ole32 shell32 user32 gdi32 advapi32 sapi winmm)
 target_include_directories(iroha-settings PRIVATE ../shared)
 target_compile_features(iroha-settings PRIVATE cxx_std_17)
 if(MSVC)

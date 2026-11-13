@@ -84,6 +84,28 @@ struct SessionManager::Entry : InputSession::Host {
                                               size_t minimumLength) override {
         return manager->backend_->CorrectTypo(reading, threshold, minimumLength);
     }
+    // 「こえ」モード（stateMutex_ を持った状態で呼ばれる。知らせは裏のスレッドから届くので、渡すときに鍵を取る）
+    std::u32string RequestVoiceStart(uint64_t generation) override {
+        SessionManager* owner = manager;
+        const uint64_t sessionId = id;
+        const std::u32string error =
+            manager->backend_->StartVoice([owner, sessionId, generation](const InputSession::VoiceEvent& event) {
+                std::lock_guard<std::mutex> lock(owner->stateMutex_);
+                const auto found = owner->sessions_.find(sessionId);
+                if (found != owner->sessions_.end()) found->second->session.HandleVoiceEvent(generation, event);
+            });
+        if (error.empty()) manager->voiceSessionId_ = id;
+        return error;
+    }
+    void RequestVoiceStop(uint64_t generation) override {
+        (void)generation;
+        if (manager->voiceSessionId_ == id) manager->backend_->StopVoice();
+    }
+    void CancelVoice() override {
+        if (manager->voiceSessionId_ != id) return;
+        manager->voiceSessionId_ = 0;
+        manager->backend_->CancelVoice();
+    }
     // プライベートモードは、ほかのセッションにも効かせて設定に保存する（stateMutex_ を持った状態で呼ばれる）
     void PrivateModeChanged(bool enabled) override {
         manager->settings_.privateMode = enabled;
@@ -150,6 +172,10 @@ SessionManager::Entry& SessionManager::EntryFor(uint64_t sessionId) {
             CancelTypo(oldest->first);
             CancelTypo(oldest->first, TypoJob::Kind::AIFixCheck);
             CancelAIJobs(oldest->first);
+            if (voiceSessionId_ == oldest->first) {
+                voiceSessionId_ = 0;
+                backend_->CancelVoice();
+            }
             oldest->second->session.Flush();
             sessions_.erase(oldest);
         }
@@ -188,6 +214,10 @@ void SessionManager::End(uint64_t sessionId) {
     CancelTypo(sessionId);
     CancelTypo(sessionId, TypoJob::Kind::AIFixCheck);
     CancelAIJobs(sessionId);
+    if (voiceSessionId_ == sessionId) {
+        voiceSessionId_ = 0;
+        backend_->CancelVoice();
+    }
     const auto found = sessions_.find(sessionId);
     if (found != sessions_.end()) {
         found->second->session.Flush();

@@ -183,6 +183,18 @@ public:
     };
     std::vector<AIFixCheck> aiFixChecks;
     std::vector<AIFixRequest> aiFixRequests;
+
+    // 「こえ」モード: 頼まれた録音の番号・やめた回数・取り消し・始められないときの理由
+    std::u32string RequestVoiceStart(uint64_t generation) override {
+        voiceStarts.push_back(generation);
+        return voiceStartError;
+    }
+    void RequestVoiceStop(uint64_t generation) override { voiceStops.push_back(generation); }
+    void CancelVoice() override { ++voiceCancels; }
+    std::vector<uint64_t> voiceStarts;
+    std::vector<uint64_t> voiceStops;
+    int voiceCancels = 0;
+    std::u32string voiceStartError;
 };
 
 using Key = iroha::SessionKey;
@@ -1485,6 +1497,160 @@ void TestSessionAIFix() {
     EXPECT_TRUE(Type(session, U"a").aiFixNotice.empty());
 }
 
+iroha::InputSession::VoiceEvent VoiceEventOf(iroha::InputSession::VoiceEvent::Kind kind, const std::u32string& text = U"",
+                                            std::vector<iroha::ReadingToken> tokens = {}) {
+    iroha::InputSession::VoiceEvent event;
+    event.kind = kind;
+    event.text = text;
+    event.tokens = std::move(tokens);
+    return event;
+}
+
+// 「こえ」モード: 押す → 録音を始めた → 途中結果を未確定文字列に出す → 離す → 読みに戻して入れる（確定はしない）。
+// 声で入れた合成は、学習・変換記録・入力履歴に残さない
+void TestSessionVoiceInput() {
+    using Kind = iroha::InputSession::VoiceEvent::Kind;
+    FakeSessionHost host;
+    host.table[U"あしたのかいぎは"] = U"明日の会議は";
+    iroha::InputSession session(&host);
+    iroha::SessionSettings settings;
+    settings.voiceInput = true;
+    settings.voiceKey = 0xA3;
+    settings.predictive = true;
+    settings.conversionLog = true;
+    session.SetSettings(settings);
+
+    const std::u32string document = U"前の行\n会議の件";
+    auto output = session.Handle(Key::VoiceStart, 0, false, &document);
+    EXPECT_TRUE(output.voicePending && output.voiceKey == 0xA3 && output.preedit.empty() && host.voiceStarts.size() == 1);
+    const uint64_t generation = host.voiceStarts.back();
+    EXPECT_TRUE(session.HandleVoiceEvent(generation, VoiceEventOf(Kind::Started)));
+    EXPECT_EQ(session.Current().voiceNotice, U"● 聞いています");
+    // 途中結果は未確定文字列に出す（合成の状態には入れない）
+    EXPECT_TRUE(session.HandleVoiceEvent(generation, VoiceEventOf(Kind::Partial, U"明日の 会議")));
+    output = session.Current();
+    EXPECT_EQ(output.PreeditText(), U"明日の会議");
+    EXPECT_TRUE(output.voiceNotice.empty());
+    output = session.Handle(Key::VoiceStop, 0, false, nullptr);
+    EXPECT_TRUE(output.voicePending && host.voiceStops.size() == 1);
+    EXPECT_EQ(output.PreeditText(), U"明日の会議");
+    // 結果: 読みの部分はライブ変換に任せ、数字の入った語は表記のまま固定する（その前の読みは、そこで変換して固定する）
+    EXPECT_TRUE(session.HandleVoiceEvent(
+        generation, VoiceEventOf(Kind::Finished, U"", {{U"明日", U"あした"}, {U"の", U"の"}, {U"会議", U"かいぎ"},
+                                                        {U"は", U"は"}, {U"3人", std::nullopt}, {U"で", U"で"}})));
+    output = session.Current();
+    EXPECT_TRUE(!output.voicePending);
+    // 変換が届くまでは、認識結果の表記を見せる（かなに戻さない）
+    EXPECT_EQ(output.PreeditText(), U"明日の会議は3人で");
+    EXPECT_TRUE(!host.liveRequests.empty() && host.liveRequests.back().reading == U"で" &&
+                host.liveRequests.back().context == U"会議の件明日の会議は3人");
+    CompleteLatest(session, host, U"で");
+    // 音声認識の表記と変換結果を比べた知らせ
+    EXPECT_EQ(session.Current().voiceNotice, U"音声認識と同じ");
+    output = Press(session, Key::Enter);
+    EXPECT_EQ(output.commit, U"明日の会議は3人で");
+    Type(session, U"a");
+    EXPECT_TRUE(host.recordedHistory.empty() && host.conversions.empty() && host.commits.empty());
+    Press(session, Key::Reset);
+
+    // 録音中にほかのキー: ショートカットに使っているので捨てる（キーはいつもどおり処理する）
+    session.Handle(Key::VoiceStart, 0, false, nullptr);
+    session.HandleVoiceEvent(host.voiceStarts.back(), VoiceEventOf(Kind::Started));
+    output = Type(session, U"a");
+    EXPECT_TRUE(!output.voicePending && host.voiceCancels == 1);
+    EXPECT_EQ(output.PreeditText(), U"あ");
+    // 取り消したあとに届いた知らせは使わない
+    EXPECT_TRUE(!session.HandleVoiceEvent(host.voiceStarts.back(), VoiceEventOf(Kind::Finished, U"", {{U"い", U"い"}})));
+    Press(session, Key::Reset);
+
+    // 短すぎた（変換サーバが捨てた）: 何も入れない。聞き取れなかった・始められなかったときは知らせる
+    session.Handle(Key::VoiceStart, 0, false, nullptr);
+    session.Handle(Key::VoiceStop, 0, false, nullptr);
+    session.HandleVoiceEvent(host.voiceStarts.back(), VoiceEventOf(Kind::Discarded));
+    output = session.Current();
+    EXPECT_TRUE(!output.voicePending && output.preedit.empty() && output.voiceNotice.empty());
+    session.Handle(Key::VoiceStart, 0, false, nullptr);
+    session.Handle(Key::VoiceStop, 0, false, nullptr);
+    session.HandleVoiceEvent(host.voiceStarts.back(), VoiceEventOf(Kind::Finished));
+    EXPECT_EQ(session.Current().voiceNotice, U"こえ: 聞き取れませんでした");
+    host.voiceStartError = U"日本語の音声認識エンジンが見つかりません";
+    output = session.Handle(Key::VoiceStart, 0, false, nullptr);
+    EXPECT_TRUE(!output.voicePending);
+    EXPECT_EQ(output.voiceNotice, U"こえ: 日本語の音声認識エンジンが見つかりません");
+
+    // 設定が OFF なら何もしない
+    host.voiceStartError.clear();
+    settings.voiceInput = false;
+    session.SetSettings(settings);
+    const size_t starts = host.voiceStarts.size();
+    output = session.Handle(Key::VoiceStart, 0, false, nullptr);
+    EXPECT_TRUE(!output.voicePending && output.voiceKey == 0 && host.voiceStarts.size() == starts);
+}
+
+// 入力中に声で入れると、打った読みの続きになる。文節変換中なら、そこまでを確定してから入れる
+void TestSessionVoiceAppendsToComposition() {
+    using Kind = iroha::InputSession::VoiceEvent::Kind;
+    FakeSessionHost host;
+    iroha::InputSession session(&host);
+    iroha::SessionSettings settings;
+    settings.voiceInput = true;
+    settings.voiceKey = 0xA3;
+    session.SetSettings(settings);
+    Type(session, U"kyouha");
+    CompleteLatest(session, host, U"今日は");
+    session.Handle(Key::VoiceStart, 0, false, nullptr);
+    session.HandleVoiceEvent(host.voiceStarts.back(), VoiceEventOf(Kind::Started));
+    session.HandleVoiceEvent(host.voiceStarts.back(), VoiceEventOf(Kind::Partial, U"晴れ"));
+    EXPECT_EQ(session.Current().PreeditText(), U"今日は晴れ");
+    session.Handle(Key::VoiceStop, 0, false, nullptr);
+    session.HandleVoiceEvent(host.voiceStarts.back(), VoiceEventOf(Kind::Finished, U"", {{U"晴れ", U"はれ"}}));
+    EXPECT_TRUE(!host.liveRequests.empty() && host.liveRequests.back().reading == U"きょうははれ");
+    // 打った読みに続けたときは、前の変換結果 + 増えたかな
+    EXPECT_EQ(session.Current().PreeditText(), U"今日ははれ");
+    // 打った読みに続けたときは比べない
+    CompleteLatest(session, host, U"今日は晴れ");
+    EXPECT_TRUE(session.Current().voiceNotice.empty());
+
+    Press(session, Key::Space);
+    EXPECT_TRUE(session.Current().segmenting);
+    session.Handle(Key::VoiceStart, 0, false, nullptr);
+    session.HandleVoiceEvent(host.voiceStarts.back(), VoiceEventOf(Kind::Started));
+    // 文節変換中は途中結果を小窓に出す
+    session.HandleVoiceEvent(host.voiceStarts.back(), VoiceEventOf(Kind::Partial, U"です"));
+    EXPECT_EQ(session.Current().voiceNotice, U"● です");
+    session.Handle(Key::VoiceStop, 0, false, nullptr);
+    session.HandleVoiceEvent(host.voiceStarts.back(), VoiceEventOf(Kind::Finished, U"", {{U"です", U"です"}}));
+    const auto output = session.TakePolledOutput();
+    EXPECT_EQ(output.commit, U"今日は晴れ");
+    EXPECT_TRUE(!output.segmenting);
+    EXPECT_EQ(output.PreeditText(), U"です");
+}
+
+// 声で入れた直後は認識結果の表記を見せ、変換が届いたら置き換える。音声認識との比べは、数字に置き換えた後の認識結果と行う
+void TestSessionVoiceShowsRecognizedSurface() {
+    using Kind = iroha::InputSession::VoiceEvent::Kind;
+    FakeSessionHost host;
+    iroha::InputSession session(&host);
+    iroha::SessionSettings settings;
+    settings.voiceInput = true;
+    session.SetSettings(settings);
+    session.Handle(Key::VoiceStart, 0, false, nullptr);
+    session.Handle(Key::VoiceStop, 0, false, nullptr);
+    session.HandleVoiceEvent(host.voiceStarts.back(),
+                             VoiceEventOf(Kind::Finished, U"3人で", {{U"三", U"さん"}, {U"人", U"にん"}, {U"で", U"で"}}));
+    EXPECT_EQ(session.Current().PreeditText(), U"三人で");
+    EXPECT_TRUE(session.Current().voiceNotice.empty());
+    CompleteLatest(session, host, U"3人で");
+    EXPECT_EQ(session.Current().PreeditText(), U"3人で");
+    EXPECT_EQ(session.Current().voiceNotice, U"音声認識と同じ");
+    // 読みが変わったら（続けて打った）、認識結果の表記は使わない
+    auto output = Type(session, U"a");
+    EXPECT_EQ(output.PreeditText(), U"3人であ");
+    // 消したあとは、読みが声で入れたときと同じでも、かなで見せる（打った読みと同じ扱い）
+    output = Press(session, Key::Backspace);
+    EXPECT_EQ(output.PreeditText(), U"さんにんで");
+}
+
 void RunSessionTests() {
     TestSessionLiveConversionReplacesKana();
     TestSessionKeepsPreviousConversionAsPrefix();
@@ -1532,6 +1698,9 @@ void RunSessionTests() {
     TestSessionCandidateGrid();
     TestSessionDelimitedAlphabet();
     TestSessionAIFix();
+    TestSessionVoiceInput();
+    TestSessionVoiceAppendsToComposition();
+    TestSessionVoiceShowsRecognizedSurface();
 }
 
 } // namespace

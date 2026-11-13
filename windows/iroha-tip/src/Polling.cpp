@@ -66,9 +66,17 @@ void TextService::DestroyPollWindow() {
 
 void TextService::OnPollTimer() {
     if (!polling_) return;
-    if (!composition_ || !compositionContext_ ||
-        (!shown_.livePending && !shown_.typoPending && !shown_.aiPending && !shown_.aiFixPending) ||
-        GetTickCount() - pollStartedTick_ > (shown_.aiPending ? kAIPollLimitMs : kPollLimitMs)) {
+    // 「こえ」モードのキーを離したことが届かなかった（押している間に入力先が変わったなど）
+    if (voiceHeld_ && (GetAsyncKeyState(static_cast<int>(voiceKey_)) & 0x8000) == 0) {
+        voiceHeld_ = false;
+        SendVoiceKeyAsync(iroha::SessionKey::VoiceStop);
+    }
+    // 問い合わせる文書: 合成中ならその文書、声の結果を待っている間は録音を始めた文書（合成が無くてもよい）
+    ITfContext* context = composition_ ? compositionContext_ : (shown_.voicePending ? voiceContext_ : nullptr);
+    const bool pending = shown_.livePending || shown_.typoPending || shown_.aiPending || shown_.aiFixPending ||
+                         shown_.voicePending;
+    const DWORD limit = shown_.aiPending || shown_.voicePending ? kAIPollLimitMs : kPollLimitMs;
+    if (!context || !pending || GetTickCount() - pollStartedTick_ > limit) {
         StopPolling();
         return;
     }
@@ -81,7 +89,6 @@ void TextService::OnPollTimer() {
     pollFailures_ = 0;
     if (!changed) return;
     // ApplyOutput の中で合成が終わることがあるので、文書の参照を持っておく
-    ITfContext* context = compositionContext_;
     context->AddRef();
     ApplyOutput(context, output, /*synchronous=*/false);
     context->Release();

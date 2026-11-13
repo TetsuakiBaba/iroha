@@ -121,7 +121,8 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
         pendingCommit_.clear();
         return output;
     }
-    if (!IsComposing()) {
+    // 声の途中結果を見せている間は合成中と同じ扱い（TIP は左文脈を付けてこない。録音を始めたときに読んである）
+    if (!IsComposing() && !voicePartial_) {
         state_.contextFromDocument = leftContext != nullptr;
         if (leftContext) {
             state_.context = NormalizeLeftContext(*leftContext);
@@ -132,6 +133,26 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
             state_.contextHasPrivateText = false;
         }
     }
+
+    // 「こえ」モードのキー
+    if (IsVoiceKey(key)) {
+        HandleVoiceKey(key);
+        ++revision_;
+        SessionOutput output = Current();
+        output.commit = pendingCommit_;
+        pendingCommit_.clear();
+        return output;
+    }
+    // 押している間にほかのキーが来た: ショートカットに使っている（録音を捨てる）。合成を終えるキーなら認識も捨てる。
+    // 認識の結果を待っている間に打ち始めたら、途中結果の表示だけ消す（結果は届いたら続きに入れる）
+    if (voicePhase_ == VoicePhase::Waiting || voicePhase_ == VoicePhase::Recording || key == SessionKey::Reset ||
+        key == SessionKey::CommitNow) {
+        if (voicePhase_ != VoicePhase::Idle) CancelVoiceInput();
+    } else {
+        voicePartial_.reset();
+    }
+    voiceMessage_.clear();
+    voiceCompare_.reset();
 
     // AIで直す: 窓・差し替えの取り消しのキー（ほかのキーなら窓を閉じて、処理を続ける）
     if (HandleAIFixKey(key, shift)) {
@@ -294,6 +315,7 @@ void InputSession::UndoLastPrediction() {
 void InputSession::RecordInputHistory(const std::optional<std::u32string>& composerText) {
     if (!PredictionActive()) return;
     const State& s = state_;
+    if (s.compositionHasVoice) return;
     std::vector<std::pair<std::u32string, std::u32string>> pieces;
     if (s.mode == Mode::Segmenting) {
         if (s.segmentsFromAI) return;
@@ -523,6 +545,7 @@ bool InputSession::CompleteLiveConversion(uint64_t generation, const std::u32str
             if (s.mode == Mode::Composing && StartsWith(s.composer.Text(), reading)) {
                 s.lastConversion.emplace(reading, *converted);
                 changed = true;
+                TryVoiceComparison();
             }
         } else if (s.mode == Mode::Segmenting && s.segmentEdit &&
                    s.segmentEdit->scopeStart == request.scopeStart &&
@@ -572,6 +595,11 @@ std::u32string InputSession::CompositionDisplay() const {
         if (StartsWith(text, reading)) {
             return prefix + s.lastConversion->second + text.substr(reading.size()) + s.composer.Pending();
         }
+    }
+    // 声で入れた直後（ライブ変換が届く前）は、認識結果の表記を見せる
+    if (s.voiceSurface && !s.showsKanaOnly && s.voiceSurface->first == s.composer.Text() &&
+        s.composer.Pending().empty()) {
+        return prefix + s.voiceSurface->second;
     }
     return prefix + s.composer.Display();
 }
@@ -1103,8 +1131,8 @@ void InputSession::LogConversion(ConversionLogEntry::Mode mode, const std::u32st
                                  const std::u32string& committed,
                                  std::optional<std::vector<ConversionLogEntry::Segment>> segments) {
     if (!settings_.conversionLog || settings_.privateMode || reading.empty() || committed.empty()) return;
-    // プライベートモード中に確定した文字列が左文脈に入っている
-    if (state_.contextHasPrivateText) return;
+    // プライベートモード中に確定した文字列が左文脈に入っている・声で入れた読みを含む
+    if (state_.contextHasPrivateText || state_.compositionHasVoice) return;
     const auto source = state_.contextFromDocument ? ConversionLogEntry::ContextSource::Document
                         : state_.context.empty()   ? ConversionLogEntry::ContextSource::None
                                                    : ConversionLogEntry::ContextSource::Committed;
@@ -1120,8 +1148,8 @@ void InputSession::LogConversion(ConversionLogEntry::Mode mode, const std::u32st
 // 記号・顔文字・絵文字を選んだ文節を含む確定と、打ち直した文節を含む確定は学習しない
 void InputSession::LearnIfCorrected(const std::u32string& committed) {
     const State& s = state_;
-    if (settings_.privateMode || s.segmentsFromAI || s.segmentsRetyped || s.segments.empty() || committed.empty() ||
-        !s.segmentBaseline ||
+    if (settings_.privateMode || s.segmentsFromAI || s.segmentsRetyped || s.compositionHasVoice || s.segments.empty() ||
+        committed.empty() || !s.segmentBaseline ||
         committed == *s.segmentBaseline) {
         return;
     }
@@ -1700,6 +1728,230 @@ void InputSession::CancelTranslation() {
     host_->CancelAI();
 }
 
+// ---- 「こえ」モード ----
+
+// 押した: 録音を始めてもらう（変換サーバが少し待ってからマイクを開く）。離した: そこまでの音声の認識を終えてもらう。
+// 押している間にほかのキーが来た（TIP が送る）: ショートカットに使っているので捨てる
+void InputSession::HandleVoiceKey(SessionKey key) {
+    switch (key) {
+    case SessionKey::VoiceStart: {
+        if (!settings_.voiceInput || translation_ || voicePhase_ == VoicePhase::Finishing) return;
+        // 録音中にまた押された（離したことが届かなかった）: 前の回は捨てて始め直す
+        if (voicePhase_ != VoicePhase::Idle) CancelVoiceInput();
+        ++voiceGeneration_;
+        voicePhase_ = VoicePhase::Waiting;
+        voicePartial_.reset();
+        voiceMessage_.clear();
+        voiceCompare_.reset();
+        const std::u32string error = host_->RequestVoiceStart(voiceGeneration_);
+        if (!error.empty()) {
+            EndVoice();
+            voiceMessage_ = U"こえ: " + error;
+        }
+        return;
+    }
+    case SessionKey::VoiceStop:
+        if (voicePhase_ != VoicePhase::Waiting && voicePhase_ != VoicePhase::Recording) return;
+        // 録音を始める前に離した（キーを単独で軽く押しただけ）なら、変換サーバが Discarded を返す
+        if (voicePhase_ == VoicePhase::Recording && !voicePartial_) voiceMessage_ = U"… 認識しています";
+        voicePhase_ = VoicePhase::Finishing;
+        host_->RequestVoiceStop(voiceGeneration_);
+        return;
+    case SessionKey::VoiceCancel:
+        if (voicePhase_ == VoicePhase::Waiting || voicePhase_ == VoicePhase::Recording) CancelVoiceInput();
+        return;
+    default:
+        return;
+    }
+}
+
+void InputSession::CancelVoiceInput() {
+    host_->CancelVoice();
+    ++voiceGeneration_;
+    EndVoice();
+}
+
+void InputSession::EndVoice() {
+    voicePhase_ = VoicePhase::Idle;
+    voicePartial_.reset();
+    voiceMessage_.clear();
+}
+
+bool InputSession::HandleVoiceEvent(uint64_t generation, const VoiceEvent& event) {
+    if (generation != voiceGeneration_ || voicePhase_ == VoicePhase::Idle) return false;
+    switch (event.kind) {
+    case VoiceEvent::Kind::Started:
+        if (voicePhase_ == VoicePhase::Waiting) voicePhase_ = VoicePhase::Recording;
+        if (voicePhase_ == VoicePhase::Recording && !voicePartial_) voiceMessage_ = U"● 聞いています";
+        break;
+    case VoiceEvent::Kind::Partial:
+        ShowVoicePartial(event.text);
+        break;
+    case VoiceEvent::Kind::Discarded:
+        EndVoice();
+        break;
+    case VoiceEvent::Kind::Failed:
+        EndVoice();
+        voiceMessage_ = U"こえ: " + event.text;
+        break;
+    case VoiceEvent::Kind::Finished:
+        EndVoice();
+        InsertVoiceTranscript(event.tokens, event.text);
+        break;
+    }
+    ++revision_;
+    return true;
+}
+
+// 話している間の途中結果を、未確定文字列の末尾に足して見せる（macOS版 showVoicePartial）。
+// 文節変換中・AI変換の結果待ちは見せられないので、末尾を小窓に出す
+void InputSession::ShowVoicePartial(const std::u32string& text) {
+    std::u32string surface;
+    for (char32_t c : text) {
+        if (c != U' ' && c != 0x3000 && c != U'\t' && c != U'\r' && c != U'\n') surface += c;
+    }
+    if (surface.empty()) return;
+    if (state_.mode == Mode::Composing && !translation_) {
+        if (!voicePartial_) {
+            CloseCommitUndo();
+            prediction_.reset();
+            EndTypoUndo();
+        }
+        voicePartial_ = surface;
+        voiceMessage_.clear();
+        return;
+    }
+    // 小窓に出す途中結果の長さ（末尾から。macOS版 partialLength）
+    constexpr size_t kPartialLength = 28;
+    std::vector<std::u32string> graphemes = SplitGraphemes(surface);
+    std::u32string shown;
+    if (graphemes.size() > kPartialLength) {
+        shown = U"…";
+        graphemes.erase(graphemes.begin(), graphemes.end() - kPartialLength);
+    }
+    for (const std::u32string& g : graphemes) shown += g;
+    voiceMessage_ = (voicePhase_ == VoicePhase::Recording ? U"● " : U"… ") + shown;
+}
+
+// 認識結果を読みに戻して合成の末尾に入れる（確定はしない。macOS版 insertVoiceTranscript・applyVoiceTranscript）。
+// 読みの部分は今の読みに続けてライブ変換に任せ、英字・数字など読みに戻さない部分は表記のまま固定部分にする。
+// 固定部分の前にある読みは、その時点の左文脈で変換して固定する（固定部分の後ろの変換の文脈にするため）
+void InputSession::InsertVoiceTranscript(const std::vector<ReadingToken>& tokens, const std::u32string& recognizedText) {
+    const std::u32string& style = settings_.punctuation;
+    const VoiceTranscript transcript(tokens, style.size() >= 1 ? style.substr(0, 1) : U"、",
+                                     style.size() >= 2 ? style.substr(1, 1) : U"。");
+    if (transcript.Empty()) {
+        voiceMessage_ = U"こえ: 聞き取れませんでした";
+        return;
+    }
+    if (translation_) return;
+    State& s = state_;
+    // 文節変換中なら、そこまでを確定してから続きとして入れる
+    if (s.mode == Mode::Segmenting) {
+        std::u32string commit;
+        CommitSegments(&commit);
+        pendingCommit_ += commit;
+    }
+    CloseCommitUndo();
+    EndAIFix();
+    prediction_.reset();
+    EndTypoUndo();
+    // 合成が空のところへ入れたときだけ、あとで音声認識の表記と変換結果を比べる
+    // （打った読みに続けたときは、どこからが声の分かを表示から切り分けられない）
+    const bool compares = !StateComposing();
+    // 次の 1 文字を打ったときと同じ準備: 英字入力を閉じ、F6 等の表示形を固定する
+    FinishAlphabetRun();
+    LockDisplayOverride();
+    for (const VoiceTranscript::Part& part : transcript.parts) {
+        s.composer.Flush();
+        if (part.kind == VoiceTranscript::Part::Kind::Reading) {
+            s.composer.ReplaceText(s.composer.Text() + part.text);
+            continue;
+        }
+        const std::u32string reading = s.composer.Text();
+        if (!reading.empty()) {
+            std::u32string text = reading;
+            if (s.lastConversion && s.lastConversion->first == reading && !s.showsKanaOnly) {
+                text = s.lastConversion->second;
+            } else {
+                std::vector<std::u32string> results;
+                std::string error;
+                if (host_->Convert(reading, s.context + FixedText(), 1, &results, &error) && !results.empty() &&
+                    !results.front().empty()) {
+                    text = results.front();
+                }
+            }
+            FixedChunk chunk;
+            chunk.reading = reading;
+            chunk.text = text;
+            chunk.kind = FixedChunk::Kind::LiveConversion;
+            s.fixedChunks.push_back(std::move(chunk));
+            s.composer = MakeComposer();
+            CancelLiveConversion();
+            s.lastConversion.reset();
+        }
+        FixedChunk fixed;
+        fixed.reading = part.text;
+        fixed.text = part.text;
+        fixed.kind = FixedChunk::Kind::Alphabet;
+        s.fixedChunks.push_back(std::move(fixed));
+    }
+    s.compositionHasVoice = true;
+    s.showsKanaOnly = false;
+    // 最後の固定部分より後ろの読みが合成の読みのすべてなら、変換が届くまでその認識結果の表記を見せる
+    {
+        std::u32string trailingReading;
+        std::u32string trailingSurface;
+        for (const VoiceTranscript::Part& part : transcript.parts) {
+            if (part.kind == VoiceTranscript::Part::Kind::Fixed) {
+                trailingReading.clear();
+                trailingSurface.clear();
+            } else {
+                trailingReading += part.text;
+                trailingSurface += part.surface;
+            }
+        }
+        if (!trailingReading.empty() && s.composer.Text() == trailingReading) {
+            s.voiceSurface.emplace(trailingReading, trailingSurface);
+        }
+    }
+    // 声で入れた読みは打ち間違いの訂正に通さない（打鍵の誤りを直すモデルで、認識の誤りは対象外）
+    CancelTypoCorrection();
+    typoRejectedReading_ = s.composer.Text();
+    if (compares) {
+        // 句読点は設定の組で読みに入れているので、比べる側もそろえる。空白は除く
+        std::u32string recognized;
+        for (char32_t c : recognizedText.empty() ? transcript.Surface() : recognizedText) {
+            if (c != U' ' && c != 0x3000) recognized += c;
+        }
+        for (char32_t& c : recognized) {
+            if (c == U'、' && style.size() >= 1) c = style[0];
+            if (c == U'。' && style.size() >= 2) c = style[1];
+        }
+        voiceCompare_ = VoiceCompare{recognized, s.composer.Text()};
+    }
+    ComposerDidChange();
+    TryVoiceComparison();
+}
+
+// 入れた発話の変換結果が出そろっていれば、音声認識の表記との違いを知らせに出す（macOS版 showVoiceComparison。
+// 試作の間の確認用。変換結果はライブ変換の結果を使う）
+void InputSession::TryVoiceComparison() {
+    if (!voiceCompare_) return;
+    const State& s = state_;
+    if (s.mode != Mode::Composing || s.composer.Text() != voiceCompare_->reading) {
+        voiceCompare_.reset();
+        return;
+    }
+    std::u32string converted;
+    if (!voiceCompare_->reading.empty()) {
+        if (!s.lastConversion || s.lastConversion->first != voiceCompare_->reading) return; // まだ届いていない
+        converted = s.lastConversion->second;
+    }
+    voiceMessage_ = VoiceComparison::Summary(voiceCompare_->recognized, FixedText() + converted);
+    voiceCompare_.reset();
+}
+
 // ---- AIで直す ----
 
 // 入力の休止を待って、表示しているライブ変換に誤変換の疑いがあるかを調べてもらう（macOS版 scheduleAIFixCheck）。
@@ -2122,6 +2374,9 @@ SessionOutput InputSession::Current() const {
     output.notice = notice_;
     output.typoPending = typoPending_;
     output.aiShortcuts = settings_.aiShortcuts;
+    output.voicePending = voicePhase_ != VoicePhase::Idle;
+    output.voiceKey = settings_.voiceInput ? settings_.voiceKey : 0;
+    output.voiceNotice = voiceMessage_;
     output.aiFixShortcut = settings_.aiFix ? settings_.aiFixShortcut : 0;
     output.aiFixPending = aiFixCheckPending_ || aiFixRequestPending_;
     if (aiFixOffer_ && s.mode == Mode::Composing) {
@@ -2167,8 +2422,9 @@ SessionOutput InputSession::Current() const {
         output.preedit.erase(std::remove_if(output.preedit.begin(), output.preedit.end(),
                                             [](const SessionOutput::Span& span) { return span.text.empty(); }),
                              output.preedit.end());
-    } else if (StateComposing()) {
-        const std::u32string display = CompositionDisplay();
+    } else if (StateComposing() || voicePartial_) {
+        // 声の途中結果は、合成の表示の末尾に足して見せる
+        const std::u32string display = (StateComposing() ? CompositionDisplay() : U"") + voicePartial_.value_or(U"");
         if (!display.empty()) output.preedit.push_back({display, SessionOutput::kInput});
     }
     return output;

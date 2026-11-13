@@ -40,6 +40,7 @@ add_library(iroha-core STATIC
     src/user_dictionary_store.cpp
     src/user_rewrite_rule.cpp
     src/variant_kanji_engine.cpp
+    src/voice_transcript.cpp
 )
 target_compile_features(iroha-core PUBLIC cxx_std_17)
 target_include_directories(iroha-core PUBLIC include)

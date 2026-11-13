@@ -117,6 +117,16 @@ private:
     // 手元の表示の控えを捨てる（合成が終わった）
     void ClearShown();
 
+    // 「こえ」モード: 決めたキー（右 Ctrl か右 Shift）の押下・解放を変換サーバに送る。
+    // 押している間にほかのキーが来たら取り消しを送る（ショートカットに使っている）
+    bool IsVoiceKeyEvent(WPARAM wParam, LPARAM lParam) const;
+    bool OtherModifiersDown() const;
+    // キーの処理の外から送る（取り消し・取りこぼした解放）。返事は非同期で反映する
+    void SendVoiceKeyAsync(iroha::SessionKey key);
+    void SetVoiceContext(ITfContext* context);
+    // 設定ファイルから、押している間録音するキーを読む（変換サーバの返事が届く前に使う）
+    void LoadVoiceKeyFromConfig();
+
     // ライブ変換の結果待ちの間の問い合わせ（Polling.cpp）
     void StartPolling();
     void StopPolling();
@@ -157,6 +167,11 @@ private:
     std::u32string idleUndoable_;
     bool idleFullWidthSpace_ = true;
     bool privateMode_ = false;
+    // 「こえ」モード: 押している間録音するキー（仮想キーコード。0 なら使わない）・押しているか・
+    // 録音を始めた文書（合成が無くても、結果が届くまで問い合わせて反映する先）
+    uint32_t voiceKey_ = 0;
+    bool voiceHeld_ = false;
+    ITfContext* voiceContext_ = nullptr;
     // 予測変換の候補の小窓と、知らせの小窓
     CandidateWindow predictionWindow_;
     CandidateWindow noticeWindow_;

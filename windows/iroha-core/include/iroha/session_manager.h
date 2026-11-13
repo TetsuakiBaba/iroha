@@ -114,6 +114,18 @@ public:
             (void)minimumLength;
             return std::nullopt;
         }
+        // 「こえ」モード: 録音と認識を始める（すぐ戻ること。同時に 1 つだけで、行っている回があればそれは捨てる）。
+        // onEvent は裏のスレッドから呼ぶ。1 回につき、終わりの知らせ（Finished・Failed・Discarded）を必ず 1 回渡す。
+        // 始められなければ理由を返す（空なら始めた。onEvent は呼ばない）。
+        // SessionManager を壊す前に、onEvent の呼び出しが終わっていること
+        virtual std::u32string StartVoice(std::function<void(const InputSession::VoiceEvent&)> onEvent) {
+            (void)onEvent;
+            return U"音声認識を使えません";
+        }
+        // 録音をやめて、そこまでの音声の認識を終える
+        virtual void StopVoice() {}
+        // 録音と認識をやめる（終わりの知らせは Discarded）
+        virtual void CancelVoice() {}
     };
 
     explicit SessionManager(Backend* backend);
@@ -197,6 +209,8 @@ private:
     void TypoWorkerLoop();
 
     Backend* backend_;
+    // 「こえ」モードで録音・認識しているセッション（0 なら無し。stateMutex_ で守る）
+    uint64_t voiceSessionId_ = 0;
 
     // セッションの表（stateMutex_ で守る）
     std::mutex stateMutex_;

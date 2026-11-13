@@ -39,8 +39,16 @@
 //                                                   <undo>（確定の取り消し）（Shift は <S-left> のように）と書く。
 //                                                   <wait> は、キーを送らずに変換・打ち間違いの訂正が届くまで待つ。
 //                                                   <ai0>〜<ai2> は AI変換（プリセットの番号）、<fix> は AIで直す。
+//                                                   <vstart> <vstop> <vcancel> は「こえ」モードのキーを押す・離す・ほかのキー、
+//                                                   <pause1500> はキーを送らずにその時間（ミリ秒）だけ届いた表示を出す
+//                                                   （変換サーバを IROHA_VOICE_FILE=<WAV> で起動すると、マイクの代わりにそれを流す）。
 //                                                   既定ではキーごとにライブ変換の到着を待つ。--interval を付けると
 //                                                   待たずにその間隔で送る（変換が打鍵に追いつかないときの表示を見る）
+//   iroha-cli voice [--stream] [--say 文] <音声.wav>...
+//                                                 : 「こえ」モードの認識（SAPI の日本語の認識エンジン）。途中結果と届いた時刻・
+//                                                   語ごとの表記と読み・読みに戻した結果を出す。--stream はマイクと同じく
+//                                                   実時間の速さで流す。--say は先に日本語の音声合成で文を読み上げて WAV に書く
+//   iroha-cli voice --mic <秒>                    : マイクから決めた秒数だけ録音して認識する（変換サーバと同じ経路）
 //   iroha-cli repl                                : 対話モード
 //   環境変数 IROHA_MODEL でモデルパス、IROHA_LORA で追加学習した LoRA アダプタ（GGUF）、
 //   IROHA_USER_DICT でユーザ辞書、IROHA_LEARNING で学習結果のファイルを上書き可能。
@@ -58,6 +66,7 @@
 
 #define NOMINMAX
 #include <windows.h>
+#include <sapi.h>
 
 #include <algorithm>
 #include <chrono>
@@ -90,6 +99,7 @@
 #include "ai_client.h"
 #include "secret_store.h"
 #include "typo_normalizer_fetcher.h"
+#include "voice_recognizer.h"
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_engine.h"
 #include "iroha/user_dictionary_store.h"
@@ -1296,6 +1306,7 @@ struct SessionKeyStroke {
     std::u32string label;
     // <wait>: キーを送らず、ライブ変換・打ち間違いの訂正が届くまで待つ（--interval で続けて打つときの休止）
     bool wait = false;
+    int pauseMs = 0;
 };
 
 // キー列を読む。<...> は特別なキー、それ以外は1文字ずつ
@@ -1312,6 +1323,8 @@ bool ParseKeyStrokes(const std::u32string& text, std::vector<SessionKeyStroke>* 
         {U"f10", iroha::SessionKey::DisplayHalfAlphanumeric},
         {U"punct", iroha::SessionKey::TogglePunctuation}, {U"undo", iroha::SessionKey::UndoCommit},
         {U"fix", iroha::SessionKey::AIFix},
+        {U"vstart", iroha::SessionKey::VoiceStart}, {U"vstop", iroha::SessionKey::VoiceStop},
+        {U"vcancel", iroha::SessionKey::VoiceCancel},
     };
     for (size_t i = 0; i < text.size(); ++i) {
         if (text[i] != U'<') {
@@ -1333,6 +1346,11 @@ bool ParseKeyStrokes(const std::u32string& text, std::vector<SessionKeyStroke>* 
         if (name == U"wait") {
             stroke.wait = true;
             found = true;
+        }
+        // <pause1500>: キーを送らず、その時間だけ届いた表示を出す（「こえ」モードで話している間）
+        if (name.size() > 5 && name.compare(0, 5, U"pause") == 0) {
+            stroke.pauseMs = std::atoi(Utf32ToUtf8(name.substr(5)).c_str());
+            found = stroke.pauseMs > 0;
         }
         if (name.size() == 3 && name.compare(0, 2, U"ai") == 0 && name[2] >= U'0' && name[2] <= U'2') {
             stroke.key = iroha::SessionKey::AICommit;
@@ -1371,6 +1389,8 @@ void PrintSessionOutput(const std::u32string& label, const iroha::SessionOutput&
     }
     if (output.aiFixPending) line += " （AIで直す: 結果待ち）";
     if (!output.aiFixNotice.empty()) line += "  〔" + Utf32ToUtf8(output.aiFixNotice) + "〕";
+    if (output.voicePending) line += " （こえ: 録音・認識中）";
+    if (!output.voiceNotice.empty()) line += "  〔" + Utf32ToUtf8(output.voiceNotice) + "〕";
     if (output.aiFixFeedback) {
         line += "  AI: " + Utf32ToUtf8(output.aiFixFeedback->Original()) + " → " +
                 Utf32ToUtf8(output.aiFixFeedback->Corrected()) + "（⌫ で戻す）";
@@ -1412,7 +1432,8 @@ int RunSession(const std::vector<SessionKeyStroke>& strokes, const std::u32strin
     // ライブ変換・打ち間違いの訂正が届くまで問い合わせる（TIP のタイマーにあたる）。届くたびに表示する
     const auto settle = [&](iroha::SessionOutput* output) {
         const auto start = std::chrono::steady_clock::now();
-        while ((output->livePending || output->typoPending || output->aiPending || output->aiFixPending) &&
+        while ((output->livePending || output->typoPending || output->aiPending || output->aiFixPending ||
+                output->voicePending) &&
                MillisecondsSince(start) < 60000) {
             Sleep(5);
             iroha::ipc::SessionResponse response;
@@ -1433,6 +1454,19 @@ int RunSession(const std::vector<SessionKeyStroke>& strokes, const std::u32strin
             if (!settle(&output)) return 1;
             continue;
         }
+        if (stroke.pauseMs > 0) {
+            // 決めた時間だけ問い合わせて、届いた表示を出す
+            const auto start = std::chrono::steady_clock::now();
+            while (MillisecondsSince(start) < stroke.pauseMs) {
+                Sleep(20);
+                iroha::ipc::SessionResponse response;
+                if (!call(iroha::ipc::BuildSessionPollRequest(sessionId, output.revision), &response)) return 1;
+                if (!response.changed) continue;
+                output = response.output;
+                PrintSessionOutput(U"  (届く)", output, MillisecondsSince(start));
+            }
+            continue;
+        }
         const auto start = std::chrono::steady_clock::now();
         iroha::ipc::SessionResponse response;
         // 左文脈は、合成していないときのキーにだけ付ける（TIP と同じ）
@@ -1444,6 +1478,8 @@ int RunSession(const std::vector<SessionKeyStroke>& strokes, const std::u32strin
         output = response.output;
         composing = output.Composing();
         PrintSessionOutput(stroke.label, output, MillisecondsSince(start));
+        // 録音を始めたキーのあとは待たない（離すまで終わらない）
+        if (stroke.key == iroha::SessionKey::VoiceStart) continue;
         if (intervalMs < 0) {
             if (!settle(&output)) return 1;
         } else {
@@ -1454,6 +1490,138 @@ int RunSession(const std::vector<SessionKeyStroke>& strokes, const std::u32strin
     std::vector<char> ignored;
     iroha::ipc::Call(iroha::ipc::BuildSessionEndRequest(sessionId), &ignored, 2000);
     return 0;
+}
+
+// 「こえ」モードの知らせを、届いた時刻つきで出す。終わったら語ごとの表記と読み・読みに戻した結果を出す
+void PrintVoiceEvent(const iroha::InputSession::VoiceEvent& event, std::chrono::steady_clock::time_point start) {
+    using Kind = iroha::InputSession::VoiceEvent::Kind;
+    char timing[32];
+    std::snprintf(timing, sizeof(timing), "[%6.0fms] ", MillisecondsSince(start));
+    switch (event.kind) {
+    case Kind::Started:
+        PrintUtf8(std::string(timing) + "録音を始めた\n");
+        break;
+    case Kind::Partial:
+        PrintUtf8(std::string(timing) + "途中: " + Utf32ToUtf8(event.text) + "\n");
+        break;
+    case Kind::Failed:
+        PrintUtf8(std::string(timing) + "失敗: " + Utf32ToUtf8(event.text) + "\n");
+        break;
+    case Kind::Discarded:
+        PrintUtf8(std::string(timing) + "捨てた\n");
+        break;
+    case Kind::Finished: {
+        PrintUtf8(std::string(timing) + "結果: " + Utf32ToUtf8(event.text) + "\n");
+        std::string words = "  語:";
+        for (const iroha::ReadingToken& token : event.tokens) {
+            words += " " + Utf32ToUtf8(token.surface) + (token.reading ? "/" + Utf32ToUtf8(*token.reading) : "/-");
+        }
+        PrintUtf8(words + "\n");
+        const iroha::VoiceTranscript transcript(event.tokens);
+        std::string parts = "  分けた結果:";
+        for (const auto& part : transcript.parts) {
+            parts += part.kind == iroha::VoiceTranscript::Part::Kind::Reading
+                         ? " [" + Utf32ToUtf8(part.text) + "]"
+                         : " {" + Utf32ToUtf8(part.text) + "}";
+        }
+        PrintUtf8(parts + "\n  読み: " + Utf32ToUtf8(transcript.ReadingText()) + "\n");
+        break;
+    }
+    }
+}
+
+// 日本語の音声合成（SAPI）で文を読み上げて WAV（16kHz・モノラル・16 ビット）に書く（確認用の音声を作る）
+bool SynthesizeSpeech(const std::wstring& path, const std::wstring& text) {
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    bool ok = false;
+    ISpVoice* voice = nullptr;
+    ISpStream* stream = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_SpVoice, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&voice)))) {
+        ISpObjectTokenCategory* category = nullptr;
+        if (SUCCEEDED(CoCreateInstance(CLSID_SpObjectTokenCategory, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&category)))) {
+            IEnumSpObjectTokens* tokens = nullptr;
+            ISpObjectToken* token = nullptr;
+            ULONG fetched = 0;
+            if (SUCCEEDED(category->SetId(SPCAT_VOICES, FALSE)) &&
+                SUCCEEDED(category->EnumTokens(L"Language=411", nullptr, &tokens)) && tokens &&
+                SUCCEEDED(tokens->Next(1, &token, &fetched)) && token) {
+                voice->SetVoice(token);
+                token->Release();
+            }
+            if (tokens) tokens->Release();
+            category->Release();
+        }
+        WAVEFORMATEX format = {WAVE_FORMAT_PCM, 1, 16000, 32000, 2, 16, 0};
+        if (SUCCEEDED(CoCreateInstance(CLSID_SpStream, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&stream))) &&
+            SUCCEEDED(stream->BindToFile(path.c_str(), SPFM_CREATE_ALWAYS, &SPDFID_WaveFormatEx, &format, 0)) &&
+            SUCCEEDED(voice->SetOutput(stream, TRUE))) {
+            ok = SUCCEEDED(voice->Speak(text.c_str(), SPF_DEFAULT, nullptr));
+            stream->Close();
+        }
+    }
+    if (stream) stream->Release();
+    if (voice) voice->Release();
+    if (SUCCEEDED(initialized)) CoUninitialize();
+    return ok;
+}
+
+int RunVoice(const std::vector<std::u32string>& args) {
+    std::u32string engineName;
+    if (!iroha::VoiceRecognizer::Available(&engineName)) {
+        std::fprintf(stderr, "日本語の音声認識エンジンが見つかりません\n");
+        return 1;
+    }
+    PrintUtf8("認識エンジン: " + Utf32ToUtf8(engineName) + "\n");
+    bool stream = false;
+    std::u32string say;
+    size_t index = 0;
+    if (args.size() >= 2 && args[0] == U"--mic") {
+        const int seconds = std::max(1, std::atoi(Utf32ToUtf8(args[1]).c_str()));
+        iroha::VoiceRecognizer recognizer;
+        const auto start = std::chrono::steady_clock::now();
+        recognizer.Start([start](const iroha::InputSession::VoiceEvent& event) { PrintVoiceEvent(event, start); });
+        Sleep(static_cast<DWORD>(seconds * 1000));
+        PrintUtf8("（録音をやめる）\n");
+        recognizer.Stop();
+        recognizer.Wait();
+        return 0;
+    }
+    while (index < args.size() && args[index].rfind(U"--", 0) == 0) {
+        if (args[index] == U"--stream") {
+            stream = true;
+            ++index;
+        } else if (args[index] == U"--say" && index + 1 < args.size()) {
+            say = args[index + 1];
+            index += 2;
+        } else {
+            std::fprintf(stderr, "不明な引数: %s\n", Utf32ToUtf8(args[index]).c_str());
+            return 2;
+        }
+    }
+    if (index >= args.size()) {
+        std::fprintf(stderr, "使い方: iroha-cli voice [--stream] [--say 文] <音声.wav>... | --mic <秒>\n");
+        return 2;
+    }
+    int status = 0;
+    for (; index < args.size(); ++index) {
+        const std::wstring path = Utf32ToUtf16(args[index]);
+        if (!say.empty()) {
+            if (!SynthesizeSpeech(path, Utf32ToUtf16(say))) {
+                std::fprintf(stderr, "音声合成に失敗しました\n");
+                return 1;
+            }
+        }
+        PrintUtf8("== " + Utf32ToUtf8(args[index]) + "\n");
+        const auto start = std::chrono::steady_clock::now();
+        std::string error;
+        if (!iroha::VoiceRecognizer::RecognizeFile(
+                path, stream, [start](const iroha::InputSession::VoiceEvent& event) { PrintVoiceEvent(event, start); },
+                &error)) {
+            std::fprintf(stderr, "%s\n", error.c_str());
+            status = 1;
+        }
+    }
+    return status;
 }
 
 } // namespace
@@ -1508,6 +1676,10 @@ int wmain(int argc, wchar_t** argv) {
 
     if (command == U"typo") {
         return RunTypo(std::vector<std::u32string>(args.begin() + 2, args.end()));
+    }
+
+    if (command == U"voice") {
+        return RunVoice(std::vector<std::u32string>(args.begin() + 2, args.end()));
     }
 
     if (command == U"symbols") {

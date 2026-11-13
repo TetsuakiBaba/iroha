@@ -87,6 +87,10 @@ struct Config {
     std::array<SelectionPreset, 5> selectionPresets;
     std::optional<std::string> selectionOnDemandHotkey;
     std::string selectionExcludedApps;
+    // 「こえ」モード（既定 OFF。macOS版と同じキーの名前）: 押している間録音するキー
+    // （"rightControl"（既定）か "rightShift"。macOS版は "rightCommand" / "rightOption"）
+    bool voiceInput = false;
+    std::string voiceInputHoldKey = "rightControl";
 };
 
 Config LoadConfig(const std::filesystem::path& path);

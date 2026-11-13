@@ -32,6 +32,7 @@
 #include "key_shortcut.h"
 #include "secret_store.h"
 #include "selection_assistant.h"
+#include "voice_recognizer.h"
 #include "iroha/typo_normalizer.h"
 #include "iroha/typo_normalizer_catalog.h"
 #include "iroha/conversion_engine.h"
@@ -163,6 +164,9 @@ struct ServerState {
         std::lock_guard<std::mutex> lock(typoMutex);
         return typo;
     }
+
+    // 「こえ」モードの録音と認識（main で作る。sessions より先に片付ける）
+    iroha::VoiceRecognizer* voice = nullptr;
 
     // 選択テキストのAI編集（main で作って、設定を読み直すたびに渡す）
     iroha::SelectionAssistant* selection = nullptr;
@@ -355,6 +359,9 @@ struct ServerState {
         const auto fixShortcut = iroha::KeyShortcut::Parse(config.aiFixShortcut);
         sessionSettings.aiFixShortcut = fixShortcut ? fixShortcut->Encode() : 0;
         sessionSettings.aiFixShortcutLabel = fixShortcut ? iroha::Utf8ToUtf32(config.aiFixShortcut) : U"";
+        // 「こえ」モード: 押している間録音するキー（TIP に渡す仮想キーコード。右 Ctrl か右 Shift）
+        sessionSettings.voiceInput = config.voiceInput;
+        sessionSettings.voiceKey = config.voiceInputHoldKey == "rightShift" ? VK_RSHIFT : VK_RCONTROL;
         sessionSettings.delimitedAlphabet = config.delimitedAlphabet;
         sessionSettings.delimitedStart = symbol(config.delimitedAlphabetStart);
         sessionSettings.delimitedEnd = symbol(config.delimitedAlphabetEnd);
@@ -608,6 +615,30 @@ public:
         Log("learning forgotten (display form chosen)");
     }
 
+    // 「こえ」モード。知らせはそのまま渡し、ログには種類だけを書く（話した内容は書かない）
+    std::u32string StartVoice(std::function<void(const iroha::InputSession::VoiceEvent&)> onEvent) override {
+        if (!state_->voice) return U"音声認識を使えません";
+        const auto start = GetTickCount64();
+        return state_->voice->Start([onEvent, start](const iroha::InputSession::VoiceEvent& event) {
+            using Kind = iroha::InputSession::VoiceEvent::Kind;
+            if (event.kind == Kind::Finished || event.kind == Kind::Failed || event.kind == Kind::Discarded) {
+                char message[160];
+                std::snprintf(message, sizeof(message), "voice %s (%llums, %zu words)%s%s",
+                              event.kind == Kind::Finished ? "finished" : event.kind == Kind::Failed ? "failed" : "discarded",
+                              GetTickCount64() - start, event.tokens.size(), event.kind == Kind::Failed ? ": " : "",
+                              event.kind == Kind::Failed ? iroha::Utf32ToUtf8(event.text).c_str() : "");
+                Log(message);
+            }
+            onEvent(event);
+        });
+    }
+    void StopVoice() override {
+        if (state_->voice) state_->voice->Stop();
+    }
+    void CancelVoice() override {
+        if (state_->voice) state_->voice->Cancel();
+    }
+
     // Ctrl+. で切り替えた句読点を設定に保存する（次に起動したときも同じにする。macOS版と同じ）
     void PunctuationChanged(const std::u32string& punctuation) override {
         const std::filesystem::path path(DataDir() + L"\\config.json");
@@ -798,6 +829,17 @@ int wmain() {
         [&sessions] { return sessions.AnyComposing(); }, [](const std::string& message) { Log(message.c_str()); });
     state.selection = &selection;
     selection.Configure(state.selectionSettings);
+    // 「こえ」モードの録音と認識（裏のスレッドから sessions に知らせるので、sessions より先に片付ける）
+    iroha::VoiceRecognizer voice;
+    state.voice = &voice;
+    // 確かめる用: マイクの代わりに音声ファイルを流す
+    if (const wchar_t* file = _wgetenv(L"IROHA_VOICE_FILE"); file && *file) voice.SetFileSource(file);
+    {
+        std::u32string engineName;
+        Log(iroha::VoiceRecognizer::Available(&engineName)
+                ? ("voice recognizer: " + iroha::Utf32ToUtf8(engineName)).c_str()
+                : "voice recognizer: no Japanese engine");
+    }
 
     const std::wstring pipeName = iroha::ipc::PipeName();
     PSECURITY_DESCRIPTOR pipeSecurity = CreatePipeSecurityDescriptor();

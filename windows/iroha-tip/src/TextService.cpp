@@ -1,6 +1,7 @@
 #include "TextService.h"
 
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <new>
 
@@ -9,6 +10,7 @@
 #include "EditSession.h"
 #include "LangBarButton.h"
 #include "key_shortcut.h"
+#include "iroha/config.h"
 #include "iroha/unicode.h"
 
 TextService::TextService() : refCount_(1) { DllAddRef(); }
@@ -69,6 +71,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* threadMgr, TfClientId clientI
     threadMgr_->AddRef();
     clientId_ = clientId;
     activateFlags_ = flags;
+    LoadVoiceKeyFromConfig();
 
     // キーイベントシンク（foreground=TRUE: このTIP選択中のキーを受ける）
     ITfKeystrokeMgr* keystrokeMgr = nullptr;
@@ -255,6 +258,12 @@ STDMETHODIMP TextService::Deactivate() {
     ReleaseComposition();
     ClearShown();
     DestroyPollWindow();
+    if (voiceHeld_ && sessionId_ != 0) {
+        iroha::SessionOutput ignored;
+        ConvertClient::SendKey(sessionId_, iroha::SessionKey::VoiceCancel, 0, false, nullptr, &ignored);
+    }
+    voiceHeld_ = false;
+    SetVoiceContext(nullptr);
     if (sessionId_ != 0) {
         ConvertClient::EndSession(sessionId_);
         sessionId_ = 0;
@@ -504,6 +513,7 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
     shown_.commit.clear();
     idleUndoable_ = output.undoableCommit;
     idleFullWidthSpace_ = output.fullWidthSpace;
+    voiceKey_ = output.voiceKey;
     if (privateMode_ != output.privateMode) {
         privateMode_ = output.privateMode;
         if (langBarButton_) langBarButton_->NotifyUpdate();
@@ -535,7 +545,9 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
         const HRESULT requested = RequestEditSession(
             context, clientId_,
             [this, keep, output](TfEditCookie ec) -> HRESULT {
-                if (!composition_ || output.revision != shown_.revision) return S_OK;
+                if (output.revision != shown_.revision) return S_OK;
+                // 合成が無いところへ入れるのは、声を入れた文書だけ（ほかの文書では合成が終わったあとの古い表示）
+                if (!composition_ && keep->context != voiceContext_) return S_OK;
                 return ApplyOutputInSession(ec, keep->context, output);
             },
             TF_ES_ASYNCDONTCARE | TF_ES_READWRITE);
@@ -551,7 +563,22 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
     }
 
     if (synchronous && !output.notice.empty()) ShowNotice(context, output.notice);
-    if (!composition_) {
+    // 合成の無い文書へ、非同期のエディットセッションで表示を入れる（声の途中結果・認識結果）
+    const bool startsLater = !synchronous && !composition_ && context == voiceContext_ &&
+                             (!output.preedit.empty() || !output.commit.empty());
+    if (!composition_ && !startsLater) {
+        if (output.voicePending || !output.voiceNotice.empty()) {
+            // 合成は無いが、録音・認識の最中か、その知らせがある（結果が届くまで問い合わせる）
+            candidateWindow_.Hide();
+            predictionWindow_.Hide();
+            UpdateTypoFeedback(context, output, synchronous);
+            if (output.voicePending) {
+                StartPolling();
+            } else {
+                StopPolling();
+            }
+            return S_OK;
+        }
         ClearShown();
         return S_OK;
     }
@@ -566,8 +593,8 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
         predictionWindow_.Hide();
     }
     UpdateTypoFeedback(context, output, synchronous);
-    // ライブ変換・打ち間違いの訂正・AI変換・AIで直すの結果待ちの間は問い合わせる
-    if (shown_.livePending || shown_.typoPending || shown_.aiPending || shown_.aiFixPending) {
+    // ライブ変換・打ち間違いの訂正・AI変換・AIで直す・「こえ」モードの結果待ちの間は問い合わせる
+    if (shown_.livePending || shown_.typoPending || shown_.aiPending || shown_.aiFixPending || shown_.voicePending) {
         StartPolling();
     } else {
         StopPolling();
@@ -656,8 +683,15 @@ void TextService::UpdateTypoFeedback(ITfContext* context, const iroha::SessionOu
         text = output.typoFeedback->Original() + U" → " + output.typoFeedback->Corrected() + U"　（⌫ で戻す）";
     } else if (output.aiFixFeedback) {
         text = output.aiFixFeedback->Original() + U" → " + output.aiFixFeedback->Corrected() + U"　（⌫ で戻す）";
-    } else {
+    } else if (!output.aiFixNotice.empty()) {
         text = output.aiFixNotice;
+    } else {
+        text = output.voiceNotice;
+    }
+    // 出しておく時間: 録音・認識の最中の知らせは終わるまで、音声認識との比べ（macOS版と同じ 1.5 秒・6 秒）、ほかは 4 秒
+    UINT duration = 4000;
+    if (!text.empty() && text == output.voiceNotice) {
+        duration = output.voicePending ? 70000 : text == U"音声認識と同じ" ? 1500 : 6000;
     }
     if (text.empty()) {
         if (!typoFeedbackShown_.empty()) {
@@ -668,9 +702,9 @@ void TextService::UpdateTypoFeedback(ITfContext* context, const iroha::SessionOu
     }
     if (text == typoFeedbackShown_ || !EnsurePollWindow()) return;
     typoFeedbackShown_ = text;
-    const auto show = [this, text](const RECT& rect, HWND owner) {
+    const auto show = [this, text, duration](const RECT& rect, HWND owner) {
         noticeWindow_.Show(owner, rect, {text}, {}, SIZE_MAX, /*numbered=*/false);
-        SetTimer(pollWindow_, reinterpret_cast<UINT_PTR>(this) + 1, 4000, &TextService::NoticeTimerProc);
+        SetTimer(pollWindow_, reinterpret_cast<UINT_PTR>(this) + 1, duration, &TextService::NoticeTimerProc);
     };
     if (synchronous) {
         RECT rect = {};
@@ -686,7 +720,7 @@ void TextService::UpdateTypoFeedback(ITfContext* context, const iroha::SessionOu
         [this, context, show](TfEditCookie ec) -> HRESULT {
             RECT rect = {};
             HWND owner = nullptr;
-            if (composition_ && CompositionRectIn(ec, context, &rect, &owner)) show(rect, owner);
+            if (CompositionRectIn(ec, context, &rect, &owner)) show(rect, owner);
             context->Release();
             Release();
             return S_OK;
@@ -836,13 +870,69 @@ bool TextService::ReadLeftContext(ITfContext* context, std::u32string* text) {
     return succeeded;
 }
 
-STDMETHODIMP TextService::OnSetFocus(BOOL) {
+STDMETHODIMP TextService::OnSetFocus(BOOL foreground) {
+    // 設定画面で変えた「こえ」モードのキーを、変換サーバの返事が届く前から効かせる
+    if (foreground) LoadVoiceKeyFromConfig();
     return S_OK;
+}
+
+// ---- 「こえ」モード ----
+
+// 決めたキー（右 Ctrl・右 Shift）か。右 Ctrl は拡張キーの印、右 Shift はスキャンコード（0x36）で見分ける
+bool TextService::IsVoiceKeyEvent(WPARAM wParam, LPARAM lParam) const {
+    if (voiceKey_ == 0 || directMode_) return false;
+    if (voiceKey_ == VK_RCONTROL) return (wParam == VK_CONTROL || wParam == VK_RCONTROL) && (lParam & (1 << 24)) != 0;
+    if (voiceKey_ == VK_RSHIFT) return (wParam == VK_SHIFT || wParam == VK_RSHIFT) && ((lParam >> 16) & 0xFF) == 0x36;
+    return false;
+}
+
+// 決めたキー以外の修飾キーが押されているか（一緒に押したときはショートカットなので録音しない）
+bool TextService::OtherModifiersDown() const {
+    const auto down = [](int key) { return (GetKeyState(key) & 0x8000) != 0; };
+    const bool otherControl = voiceKey_ == VK_RCONTROL ? down(VK_LCONTROL) : down(VK_CONTROL);
+    const bool otherShift = voiceKey_ == VK_RSHIFT ? down(VK_LSHIFT) : down(VK_SHIFT);
+    return otherControl || otherShift || down(VK_MENU) || down(VK_LWIN) || down(VK_RWIN);
+}
+
+void TextService::SetVoiceContext(ITfContext* context) {
+    if (context) context->AddRef();
+    if (voiceContext_) voiceContext_->Release();
+    voiceContext_ = context;
+}
+
+void TextService::SendVoiceKeyAsync(iroha::SessionKey key) {
+    ITfContext* context = composition_ ? compositionContext_ : voiceContext_;
+    if (!context || sessionId_ == 0) return;
+    iroha::SessionOutput output;
+    if (!ConvertClient::SendKey(sessionId_, key, 0, false, nullptr, &output)) return;
+    context->AddRef();
+    ApplyOutput(context, output, /*synchronous=*/false);
+    context->Release();
+}
+
+void TextService::LoadVoiceKeyFromConfig() {
+    wchar_t* localAppData = nullptr;
+    size_t length = 0;
+    if (_wdupenv_s(&localAppData, &length, L"LOCALAPPDATA") != 0 || !localAppData) return;
+    const std::wstring path = std::wstring(localAppData) + L"\\iroha\\config.json";
+    free(localAppData);
+    const iroha::Config config = iroha::LoadConfig(std::filesystem::path(path));
+    voiceKey_ = !config.voiceInput ? 0 : config.voiceInputHoldKey == "rightShift" ? VK_RSHIFT : VK_RCONTROL;
 }
 
 STDMETHODIMP TextService::OnTestKeyDown(ITfContext* context, WPARAM wParam,
                                         LPARAM lParam, BOOL* eaten) {
     if (!eaten) return E_INVALIDARG;
+    // 「こえ」モードのキー: 押した最初の 1 回だけ受けて OnKeyDown で送る（キーはアプリにも渡す）
+    if (IsVoiceKeyEvent(wParam, lParam)) {
+        *eaten = context != nullptr && !voiceHeld_ && (lParam & (1 << 30)) == 0 && !OtherModifiersDown();
+        return S_OK;
+    }
+    // 押している間にほかのキーが来た: ショートカットに使っている（録音を捨てる）
+    if (voiceHeld_) {
+        voiceHeld_ = false;
+        SendVoiceKeyAsync(iroha::SessionKey::VoiceCancel);
+    }
     *eaten = (context != nullptr &&
               DecideKey(wParam, lParam).kind != KeyDecision::Kind::None);
     // 受けないキーがアプリで何かをする（カーソルが動くなど）ので、直前の確定はもう取り消さない
@@ -855,6 +945,15 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* context, WPARAM wParam, LPARAM l
     if (!eaten) return E_INVALIDARG;
     *eaten = FALSE;
     if (!context) return S_OK;
+    if (IsVoiceKeyEvent(wParam, lParam)) {
+        if (!voiceHeld_ && (lParam & (1 << 30)) == 0 && !OtherModifiersDown()) {
+            voiceHeld_ = true;
+            SetVoiceContext(context);
+            const HRESULT hr = SendSessionKey(context, iroha::SessionKey::VoiceStart, 0, false);
+            if (FAILED(hr)) voiceHeld_ = false;
+        }
+        return S_OK;
+    }
     const KeyDecision decision = DecideKey(wParam, lParam);
     if (decision.kind == KeyDecision::Kind::None) {
         if (!IsModifierKey(wParam)) idleUndoable_.clear();
@@ -871,15 +970,20 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* context, WPARAM wParam, LPARAM l
     return S_OK;
 }
 
-STDMETHODIMP TextService::OnTestKeyUp(ITfContext*, WPARAM, LPARAM, BOOL* eaten) {
+// 「こえ」モードのキーを離した: OnKeyUp で送る（キーはアプリにも渡す）
+STDMETHODIMP TextService::OnTestKeyUp(ITfContext* context, WPARAM wParam, LPARAM lParam, BOOL* eaten) {
     if (!eaten) return E_INVALIDARG;
-    *eaten = FALSE;
+    *eaten = context != nullptr && voiceHeld_ && IsVoiceKeyEvent(wParam, lParam);
     return S_OK;
 }
 
-STDMETHODIMP TextService::OnKeyUp(ITfContext*, WPARAM, LPARAM, BOOL* eaten) {
+STDMETHODIMP TextService::OnKeyUp(ITfContext* context, WPARAM wParam, LPARAM lParam, BOOL* eaten) {
     if (!eaten) return E_INVALIDARG;
     *eaten = FALSE;
+    if (context && voiceHeld_ && IsVoiceKeyEvent(wParam, lParam)) {
+        voiceHeld_ = false;
+        SendSessionKey(context, iroha::SessionKey::VoiceStop, 0, false);
+    }
     return S_OK;
 }
 

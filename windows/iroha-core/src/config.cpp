@@ -158,6 +158,10 @@ Config LoadConfig(const std::filesystem::path& path) {
         config.selectionOnDemandHotkey = hotkey->string;
     }
     text("selectionExcludedApps", &config.selectionExcludedApps);
+    if (const json::Value* voice = root.Find("voiceInputEnabled"); voice && voice->type == json::Value::Type::Bool) {
+        config.voiceInput = voice->boolean;
+    }
+    text("voiceInputHoldKey", &config.voiceInputHoldKey);
     for (size_t i = 0; i < config.selectionPresets.size(); ++i) {
         const std::string prefix = "selPreset" + std::to_string(i);
         auto& preset = config.selectionPresets[i];
@@ -217,6 +221,8 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                            : std::string()) +
                       ",\"selectionExcludedApps\":" + json::QuoteString(config.selectionExcludedApps) +
                       EncodeSelectionPresets(config) +
+                      ",\"voiceInputEnabled\":" + (config.voiceInput ? "true" : "false") +
+                      ",\"voiceInputHoldKey\":" + json::QuoteString(config.voiceInputHoldKey) +
                       ",\"version\":1}";
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);

@@ -41,6 +41,7 @@
 #include "secret_store.h"
 #include "term_dictionary_fetcher.h"
 #include "typo_normalizer_fetcher.h"
+#include "voice_recognizer.h"
 
 #pragma comment(linker, \
     "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' " \
@@ -101,6 +102,8 @@ enum {
     kIdPunctuation,
     kIdCandidateCount,
     kIdPrivateMode,
+    kIdVoice,
+    kIdVoiceKey,
     kIdTypo,
     kIdTypoLicense,
     kIdTypoRemove,
@@ -255,6 +258,12 @@ struct App {
     HWND countCombo = nullptr;
     HWND privateCheck = nullptr;
     HWND inputNote = nullptr;
+    // 「こえ」モード
+    HWND voiceCheck = nullptr;
+    HWND voiceKeyLabel = nullptr;
+    HWND voiceKeyCombo = nullptr;
+    HWND voiceStatus = nullptr;
+    bool voiceEngineChecked = false;
     // 打ち間違いの訂正
     HWND typoCheck = nullptr;
     HWND typoStatus = nullptr;
@@ -472,13 +481,21 @@ void App::CreateControls() {
     typoStatus = CreateChild(WC_STATICW, L"", 0, 0);
     typoLicense = CreateChild(WC_BUTTONW, L"学習元とライセンス", WS_TABSTOP, kIdTypoLicense);
     typoRemove = CreateChild(WC_BUTTONW, L"モデルを削除", WS_TABSTOP, kIdTypoRemove);
+    voiceCheck = CreateChild(WC_BUTTONW, L"「こえ」モード（キーを押している間に話した言葉を、読みに戻して入力中の文に入れる。試作）",
+                             check, kIdVoice);
+    voiceKeyLabel = CreateChild(WC_STATICW, L"押している間録音するキー:", 0, 0);
+    voiceKeyCombo = CreateChild(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_TABSTOP, kIdVoiceKey);
+    for (const wchar_t* key : {L"右 Ctrl", L"右 Shift"}) {
+        SendMessageW(voiceKeyCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(key));
+    }
+    voiceStatus = CreateChild(WC_STATICW, L"", 0, 0);
     inputNote = CreateChild(WC_STATICW,
                             L"プライベートモードの間は、学習・入力履歴・予測変換・変換記録・ユーザ辞書を止めます。\n"
                             L"変更はすぐに反映されます。",
                             0, 0);
     AddToPage(kTabInput, {liveCheck, predictiveCheck, symbolsCheck, spaceCheck, punctuationLabel, punctuationCombo,
                           countLabel, countCombo, privateCheck, typoCheck, typoStatus, typoLicense, typoRemove,
-                          inputNote});
+                          voiceCheck, voiceKeyLabel, voiceKeyCombo, voiceStatus, inputNote});
 
     // ---- 辞書 ----
     dictList = CreateChild(WC_LISTVIEWW, L"",
@@ -677,7 +694,12 @@ void App::LayoutControls() {
         MoveWindow(typoStatus, x + Scale(20), rowY + Scale(28), width - Scale(20), Scale(20), TRUE);
         MoveWindow(typoLicense, x + Scale(20), rowY + Scale(54), Scale(150), Scale(28), TRUE);
         MoveWindow(typoRemove, x + Scale(178), rowY + Scale(54), Scale(120), Scale(28), TRUE);
-        MoveWindow(inputNote, x, rowY + Scale(96), width, Scale(48), TRUE);
+        rowY += Scale(94);
+        MoveWindow(voiceCheck, x, rowY, width, Scale(24), TRUE);
+        MoveWindow(voiceKeyLabel, x + Scale(20), rowY + Scale(32), Scale(210), Scale(20), TRUE);
+        MoveWindow(voiceKeyCombo, x + Scale(236), rowY + Scale(28), Scale(90), Scale(200), TRUE);
+        MoveWindow(voiceStatus, x + Scale(20), rowY + Scale(60), width - Scale(20), Scale(40), TRUE);
+        MoveWindow(inputNote, x, rowY + Scale(106), width, Scale(48), TRUE);
     }
 
     // 辞書
@@ -887,6 +909,19 @@ void App::RefreshInputPage() {
     SendMessageW(punctuationCombo, CB_SETCURSEL, iroha::Utf32ToUtf16(config.punctuation) == kPunctuations[1] ? 1 : 0,
                  0);
     SendMessageW(countCombo, CB_SETCURSEL, config.candidateCount - kMinCandidateCount, 0);
+    setCheck(voiceCheck, config.voiceInput);
+    SendMessageW(voiceKeyCombo, CB_SETCURSEL, config.voiceInputHoldKey == "rightShift" ? 1 : 0, 0);
+    // 日本語の認識エンジンがあるか（開いたときに 1 回だけ調べる）
+    if (!voiceEngineChecked) {
+        voiceEngineChecked = true;
+        std::u32string name;
+        const std::wstring text =
+            iroha::VoiceRecognizer::Available(&name)
+                ? L"認識は Windows の音声認識（" + iroha::Utf32ToUtf16(name) +
+                      L"）が端末内で行います。マイクの使用は Windows の設定（プライバシーとセキュリティ > マイク）に従います。"
+                : L"日本語の音声認識エンジンが見つかりません（Windows の日本語の言語パックの音声認識が要ります）。";
+        SetWindowTextW(voiceStatus, text.c_str());
+    }
 }
 
 // 入力のページの値を設定に書いて、変換サーバに読み直してもらう（ほかの項目は今の設定のまま）
@@ -903,6 +938,8 @@ void App::SaveInputPage() {
     config.punctuation = iroha::Utf16ToUtf32(kPunctuations[punctuation == 1 ? 1 : 0]);
     const LRESULT count = SendMessageW(countCombo, CB_GETCURSEL, 0, 0);
     if (count >= 0) config.candidateCount = kMinCandidateCount + static_cast<int>(count);
+    config.voiceInput = checked(voiceCheck);
+    config.voiceInputHoldKey = SendMessageW(voiceKeyCombo, CB_GETCURSEL, 0, 0) == 1 ? "rightShift" : "rightControl";
     if (!iroha::SaveConfig(ConfigPath(), config)) {
         MessageBoxW(window, L"設定の保存に失敗しました", L"iroha", MB_ICONERROR);
         return;
@@ -1821,6 +1858,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case kIdSymbols:
                 case kIdFullWidthSpace:
                 case kIdPrivateMode:
+                case kIdVoice:
                     if (HIWORD(wParam) == BN_CLICKED) g_app.SaveInputPage();
                     return 0;
                 case kIdTypo:
@@ -1849,6 +1887,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     return 0;
                 case kIdPunctuation:
                 case kIdCandidateCount:
+                case kIdVoiceKey:
                     if (HIWORD(wParam) == CBN_SELCHANGE) g_app.SaveInputPage();
                     return 0;
                 case kIdRuleAdd:

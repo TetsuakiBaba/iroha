@@ -18,6 +18,7 @@
 #include "iroha/term_dictionary.h"
 #include "iroha/typo_normalizer.h"
 #include "iroha/user_rewrite_rule.h"
+#include "iroha/voice_transcript.h"
 
 namespace iroha {
 
@@ -56,8 +57,12 @@ enum class SessionKey : uint32_t {
     AICommit = 21,
     // AIで直す（今の変換を AI に確かめさせる。TIP は SessionOutput::aiFixShortcut のキーで送る）
     AIFix = 22,
+    // 「こえ」モード: 決めた修飾キーを押した・離した・押している間にほかのキーが来た（TIP は SessionOutput::voiceKey のキーで送る）
+    VoiceStart = 23,
+    VoiceStop = 24,
+    VoiceCancel = 25,
 };
-constexpr uint32_t kMaxSessionKey = static_cast<uint32_t>(SessionKey::AIFix);
+constexpr uint32_t kMaxSessionKey = static_cast<uint32_t>(SessionKey::VoiceCancel);
 
 // キー 1 つを処理したあと（またはライブ変換が届いたあと）に TIP が画面へ反映する内容
 struct SessionOutput {
@@ -120,6 +125,11 @@ struct SessionOutput {
     uint32_t aiFixShortcut = 0;
     std::u32string aiFixNotice;
     std::optional<TypoCorrectionFeedback> aiFixFeedback;
+    // 「こえ」モード: 録音・認識の最中か（TIP は終わるまで問い合わせる。合成が無くても）・押している間録音するキー
+    // （仮想キーコード。0 なら使わない）・カーソルの近くに出す文（「● 聞いています」・音声認識との違いなど。無ければ空）
+    bool voicePending = false;
+    uint32_t voiceKey = 0;
+    std::u32string voiceNotice;
 
     bool Composing() const { return !preedit.empty(); }
     // 未確定文字列をつなげたもの
@@ -163,6 +173,9 @@ struct SessionSettings {
     double aiFixThreshold = AIFixRule::kDefaultThreshold;
     uint32_t aiFixShortcut = 0;
     std::u32string aiFixShortcutLabel;
+    // 「こえ」モード（macOS版の VoiceInputSettings。既定 OFF）: 押している間録音するキー（仮想キーコード。TIP に渡す）
+    bool voiceInput = false;
+    uint32_t voiceKey = 0;
 };
 
 // 入力の状態（読み・ライブ変換の結果・固定部分・英字入力・文節・候補）を持ち、キーごとに表示を決める。
@@ -269,6 +282,16 @@ public:
             (void)generation;
             (void)request;
         }
+        // 「こえ」モード: 録音と認識を始める（すぐ戻ること）。経過と結果は HandleVoiceEvent に渡す（終わりの知らせ
+        // Finished・Failed・Discarded のどれかを必ず 1 回）。始められなければ理由を返す（空なら始めた）
+        virtual std::u32string RequestVoiceStart(uint64_t generation) {
+            (void)generation;
+            return U"音声認識を使えません";
+        }
+        // 録音をやめて、そこまでの音声の認識を終える
+        virtual void RequestVoiceStop(uint64_t generation) { (void)generation; }
+        // 録音と認識をやめる（結果は要らない）
+        virtual void CancelVoice() {}
         // その場で訂正する（Space で文節の候補を開くとき。戻るまで待ってよい）
         virtual std::optional<TypoCorrection> CorrectTypo(const std::u32string& reading, double threshold,
                                                           size_t minimumLength) {
@@ -310,6 +333,22 @@ public:
     bool CompleteAIFixCheck(uint64_t generation, const std::u32string& reading, const std::u32string& text,
                             const std::vector<float>& margins);
     bool CompleteAIFix(uint64_t generation, const AIOutcome& outcome);
+
+    // 「こえ」モードの経過と結果（Host::RequestVoiceStart で頼んだもの）
+    struct VoiceEvent {
+        enum class Kind {
+            Started,   // マイクを開いて録音を始めた
+            Partial,   // 途中結果（text に、ここまでの認識結果の表記）
+            Finished,  // 認識が終わった（tokens に語ごとの表記と読み。空なら聞き取れなかった）
+            Failed,    // 失敗した（text に理由）
+            Discarded, // 押していた時間が短すぎた・取り消された（何も入れない）
+        };
+        Kind kind = Kind::Finished;
+        std::u32string text;
+        std::vector<ReadingToken> tokens;
+    };
+    // 表示が変わったら真。認識結果は読みに戻して未確定文字列の末尾に入れる（確定はしない）
+    bool HandleVoiceEvent(uint64_t generation, const VoiceEvent& event);
 
     // 問い合わせへの返事（今の表示と、キーの外で確定した文字列。確定した文字列は 1 回だけ渡す）
     SessionOutput TakePolledOutput();
@@ -451,6 +490,11 @@ private:
         bool segmentsRetyped = false;
         // 文節列が AI変換の結果から作ったものか（学習にも変換記録にも入力履歴にも残さない。読みと対応しないため）
         bool segmentsFromAI = false;
+        // 声で入れた読みを含むか（学習・変換記録・入力履歴に残さない。読みは認識結果から求め直したもので、打ったものではない）
+        bool compositionHasVoice = false;
+        // 声で入れた直後の読みと、その認識結果の表記。ライブ変換が届くまで、かなではなくこれを見せる（漢字 → かな → 漢字と
+        // 表示が揺れないように）。読みが変わったら使わない
+        std::optional<std::pair<std::u32string, std::u32string>> voiceSurface;
         std::optional<SegmentEdit> segmentEdit;
         // 合成を始めたときの左文脈と、それをアプリの文書から読んだか（変換記録の contextSource）
         std::u32string context;
@@ -600,6 +644,18 @@ private:
     void PresentAIResultAsSegments(const std::u32string& output, const std::u32string& reading);
     void CancelTranslation();
 
+    // 「こえ」モード（macOS版 VoiceInput・insertVoiceTranscript・showVoicePartial・showVoiceComparison）
+    static bool IsVoiceKey(SessionKey key) {
+        return key == SessionKey::VoiceStart || key == SessionKey::VoiceStop || key == SessionKey::VoiceCancel;
+    }
+    void HandleVoiceKey(SessionKey key);
+    void CancelVoiceInput();
+    void EndVoice();
+    void ShowVoicePartial(const std::u32string& text);
+    // recognized は認識結果の表記（数字への置き換えの後。音声認識との違いを比べる相手。空なら語の表記をつなげたもの）
+    void InsertVoiceTranscript(const std::vector<ReadingToken>& tokens, const std::u32string& recognized);
+    void TryVoiceComparison();
+
     // 確定と取り消し
     void LearnIfCorrected(const std::u32string& committed);
     // 変換記録（macOS版 logSegmentsCommit / logConversion）
@@ -675,6 +731,20 @@ private:
     std::optional<std::u32string> aiFixRejectedReading_;
     std::u32string aiFixMessage_;
     std::optional<TypoCorrectionFeedback> aiFixFeedback_;
+
+    // 「こえ」モード: キーを押してから録音を始めるまで（Waiting）・録音中・離して認識の結果を待っている間。
+    // 番号は押すたびに進める（古い回の知らせを捨てる）。途中結果は未確定文字列の末尾に足して見せる（合成の状態には入れない）。
+    // 入れたあと、音声認識の表記と変換結果を比べるために、比べる表記と読みを持っておく（ライブ変換が届いたら比べる）
+    enum class VoicePhase { Idle, Waiting, Recording, Finishing };
+    VoicePhase voicePhase_ = VoicePhase::Idle;
+    uint64_t voiceGeneration_ = 0;
+    std::optional<std::u32string> voicePartial_;
+    std::u32string voiceMessage_;
+    struct VoiceCompare {
+        std::u32string recognized;
+        std::u32string reading;
+    };
+    std::optional<VoiceCompare> voiceCompare_;
 };
 
 } // namespace iroha
