@@ -8,6 +8,13 @@ add_library(iroha-core STATIC
     src/config.cpp
     src/json.cpp
     src/kana.cpp
+    src/lattice_converter.cpp
+    src/lattice/dicdata.cpp
+    src/lattice/dicdata_store.cpp
+    src/lattice/kana_kanji_converter.cpp
+    src/lattice/louds.cpp
+    src/lattice/number.cpp
+    src/lattice/special_candidates.cpp
     src/learning_dictionary.cpp
     src/learning_engine.cpp
     src/learning_store.cpp
@@ -21,6 +28,8 @@ add_library(iroha-core STATIC
 )
 target_compile_features(iroha-core PUBLIC cxx_std_17)
 target_include_directories(iroha-core PUBLIC include)
+# src/lattice/ の内部ヘッダ（"lattice/…" で参照する。外には公開しない）
+target_include_directories(iroha-core PRIVATE src)
 if(MSVC)
     target_compile_options(iroha-core PRIVATE /utf-8 /W4 /EHsc)
 endif()
@@ -67,6 +76,8 @@ endif()
 
 add_executable(iroha-core-tests tests/test_main.cpp)
 target_link_libraries(iroha-core-tests PRIVATE iroha-core)
+# 辞書ラティスの部品（src/lattice/ の内部ヘッダ）を直接テストする
+target_include_directories(iroha-core-tests PRIVATE src)
 if(MSVC)
     target_compile_options(iroha-core-tests PRIVATE /utf-8 /W4 /EHsc)
 endif()

@@ -70,6 +70,14 @@ jobs:
             exit 1
           }
 
+      # 辞書ラティス用のazooKey辞書（約35MB、コミット固定）。単体テストの辞書ラティスの部分が読む
+      # （無いとその部分だけスキップされる）
+      - name: Fetch azooKey dictionary
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File windows/scripts/fetch-dictionary.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       # iroha-core/engine/cli/server/tip のビルドと単体テスト
       - name: Build and test
         shell: pwsh

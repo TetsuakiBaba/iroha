@@ -307,6 +307,8 @@ void TestUnicodeRoundTrip() {
 
 // 学習・ユーザ辞書のテスト（EXPECTマクロを共有するためここで取り込む）
 #include "test_dictionaries.h"
+// 辞書ラティスのテスト
+#include "test_lattice.h"
 
 int main() {
     TestBasicGojuon();
@@ -343,6 +345,7 @@ int main() {
     TestKatakanaToHiragana();
 
     RunDictionaryTests();
+    RunLatticeTests();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

@@ -148,6 +148,71 @@ std::u32string TrimWhitespace(const std::u32string& s) {
     return s.substr(begin, end - begin);
 }
 
+namespace {
+
+// 直前の文字に付く文字（結合文字・異体字セレクタ・肌の色の修飾・タグ）
+bool IsGraphemeExtend(char32_t c) {
+    return (c >= 0x0300 && c <= 0x036F) || (c >= 0x1AB0 && c <= 0x1AFF) ||
+           (c >= 0x1DC0 && c <= 0x1DFF) || (c >= 0x20D0 && c <= 0x20FF) ||
+           c == 0x200C || (c >= 0x302A && c <= 0x302F) ||
+           (c >= 0x3099 && c <= 0x309A) || (c >= 0xFE00 && c <= 0xFE0F) ||
+           (c >= 0xFE20 && c <= 0xFE2F) || (c >= 0xFF9E && c <= 0xFF9F) ||
+           (c >= 0x1F3FB && c <= 0x1F3FF) || (c >= 0xE0020 && c <= 0xE007F) ||
+           (c >= 0xE0100 && c <= 0xE01EF);
+}
+
+bool IsRegionalIndicator(char32_t c) { return c >= 0x1F1E6 && c <= 0x1F1FF; }
+
+// 絵文字として描かれる文字（ZWJで次の絵文字とつながる側）のおおよその範囲
+bool IsExtendedPictographic(char32_t c) {
+    if (IsRegionalIndicator(c) || (c >= 0x1F3FB && c <= 0x1F3FF)) return false;
+    return c == 0x00A9 || c == 0x00AE || c == 0x203C || c == 0x2049 || c == 0x2122 ||
+           c == 0x2139 || (c >= 0x2194 && c <= 0x21AA) || (c >= 0x231A && c <= 0x23FF) ||
+           c == 0x24C2 || (c >= 0x25AA && c <= 0x25FE) || (c >= 0x2600 && c <= 0x27BF) ||
+           (c >= 0x2934 && c <= 0x2935) || (c >= 0x2B05 && c <= 0x2B55) || c == 0x3030 ||
+           c == 0x303D || c == 0x3297 || c == 0x3299 || (c >= 0x1F000 && c <= 0x1FAFF);
+}
+
+constexpr char32_t kZeroWidthJoiner = 0x200D;
+
+// s[begin] から始まる書記素クラスタの終わり（次のクラスタの先頭）
+size_t GraphemeEnd(const std::u32string& s, size_t begin) {
+    size_t end = begin + 1;
+    if (s[begin] == U'\r' && end < s.size() && s[end] == U'\n') return end + 1;
+    if (IsRegionalIndicator(s[begin]) && end < s.size() && IsRegionalIndicator(s[end])) ++end;
+    const bool pictographic = IsExtendedPictographic(s[begin]);
+    while (end < s.size()) {
+        if (IsGraphemeExtend(s[end])) {
+            ++end;
+        } else if (s[end] == kZeroWidthJoiner) {
+            ++end;
+            if (pictographic && end < s.size() && IsExtendedPictographic(s[end])) ++end;
+        } else {
+            break;
+        }
+    }
+    return end;
+}
+
+} // namespace
+
+std::vector<std::u32string> SplitGraphemes(const std::u32string& s) {
+    std::vector<std::u32string> clusters;
+    clusters.reserve(s.size());
+    for (size_t begin = 0; begin < s.size();) {
+        const size_t end = GraphemeEnd(s, begin);
+        clusters.push_back(s.substr(begin, end - begin));
+        begin = end;
+    }
+    return clusters;
+}
+
+size_t GraphemeCount(const std::u32string& s) {
+    size_t count = 0;
+    for (size_t begin = 0; begin < s.size(); begin = GraphemeEnd(s, begin)) ++count;
+    return count;
+}
+
 std::optional<std::u32string> Utf8ToUtf32Strict(std::string_view s) {
     std::u32string out;
     out.reserve(s.size());
