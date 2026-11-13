@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "iroha/kana.h"
 #include "iroha/reading_aligner.h"
 
 namespace iroha {
@@ -314,17 +315,24 @@ void InputSession::HandleSegmenting(SessionKey key, char32_t character, bool shi
     }
 }
 
-// 全文節の変換結果を結合して確定する
+// 全文節の変換結果を結合して確定する。
+// 記号・顔文字・絵文字を選んだ文節を含む確定は学習しない（覚えると「わらい」だけを打ったときに
+// ライブ変換が絵文字になる。macOS版 learnIfCorrected と同じ）
 std::u32string InputSession::CommitSegments() {
     const std::u32string committed = JoinedResults();
-    if (!conversionReading_.empty() && !committed.empty()) {
+    const bool learnable = std::none_of(segments_.begin(), segments_.end(), [](const Segment& s) {
+        return s.unlearnable.count(s.result) != 0;
+    });
+    if (learnable && !conversionReading_.empty() && !committed.empty()) {
         host_->RecordCommit(conversionReading_, conversionBaseline_, committed);
     }
     ResetState();
     return committed;
 }
 
-// 文節の候補は「選択中の文節の読み + 左側の変換結果を文脈」で求める
+// 文節の候補は「選択中の文節の読み + 左側の変換結果を文脈」で求める。
+// 並びは macOS版（IrohaInputController の候補ウィンドウを開く処理）と同じ:
+// 今の表示 → エンジンの候補（絵文字は 7 番目に合流）→ 顔文字・記号 → ひらがな・カタカナ
 bool InputSession::EnsureSegmentCandidates(size_t index) {
     if (index >= segments_.size()) return false;
     Segment& segment = segments_[index];
@@ -336,13 +344,25 @@ bool InputSession::EnsureSegmentCandidates(size_t index) {
         candidates.empty()) {
         return false;
     }
-    // 現在の結果（全体変換由来）が一覧に無ければ先頭に足す
-    auto it = std::find(candidates.begin(), candidates.end(), segment.result);
-    if (it == candidates.end()) {
+    // 今表示している変換結果を先頭に置く（エンジンの並びが確率順で変わっても、
+    // 候補ウィンドウを開いた瞬間に表示が変わらないように）
+    if (!segment.result.empty()) {
+        candidates.erase(std::remove(candidates.begin(), candidates.end(), segment.result),
+                         candidates.end());
         candidates.insert(candidates.begin(), segment.result);
-        it = candidates.begin();
     }
-    segment.candidateIndex = static_cast<size_t>(it - candidates.begin());
+    // 記号・顔文字・絵文字（Mozc のデータ）。今の表示は動かさない
+    SymbolCandidates symbols;
+    if (symbolTable_) symbols = symbolTable_->Candidates(segment.reading);
+    candidates = SymbolCandidateMerger::Merge(candidates, symbols, std::min<size_t>(1, candidates.size()));
+    // 定番のフォールバック候補（ひらがな・カタカナ）を末尾に足す
+    for (const std::u32string& extra : {segment.reading, HiraganaToKatakana(segment.reading)}) {
+        if (std::find(candidates.begin(), candidates.end(), extra) == candidates.end()) {
+            candidates.push_back(extra);
+        }
+    }
+    segment.unlearnable = SymbolCandidateMerger::UnlearnableCandidates(candidates, symbols);
+    segment.candidateIndex = 0;
     segment.candidates = std::move(candidates);
     return true;
 }

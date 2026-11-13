@@ -30,8 +30,9 @@ if (Test-Path $InstalledDll) {
 Copy-Item (Join-Path $SourceDir "iroha-tip.dll") $InstalledDll
 Copy-Item (Join-Path $SourceDir "iroha-server.exe") $InstallDir -Force
 Copy-Item (Join-Path $SourceDir "iroha-settings.exe") $InstallDir -Force
-# 辞書ラティスの辞書データ（変換サーバが実行ファイルと同じフォルダの Dictionary を読む）とライセンス文
-foreach ($folder in @("Dictionary", "licenses")) {
+# 辞書ラティスの辞書データ（変換サーバが実行ファイルと同じフォルダの Dictionary を読む）・
+# 記号・顔文字・絵文字のデータ（Symbols）とライセンス文
+foreach ($folder in @("Dictionary", "Symbols", "licenses")) {
     $installed = Join-Path $InstallDir $folder
     if (Test-Path $installed) { Remove-Item $installed -Recurse -Force }
     Copy-Item (Join-Path $SourceDir $folder) $installed -Recurse

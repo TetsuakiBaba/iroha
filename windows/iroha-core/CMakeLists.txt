@@ -25,6 +25,7 @@ add_library(iroha-core STATIC
     src/reading_constraint.cpp
     src/romaji_composer.cpp
     src/session_manager.cpp
+    src/symbol_candidates.cpp
     src/unicode.cpp
     src/user_dictionary.cpp
     src/user_dictionary_engine.cpp

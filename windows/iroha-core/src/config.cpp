@@ -32,12 +32,16 @@ Config LoadConfig(const std::filesystem::path& path) {
     if (const json::Value* live = root.Find("liveConversion")) {
         if (live->type == json::Value::Type::Bool) config.liveConversion = live->boolean;
     }
+    if (const json::Value* symbols = root.Find("symbolCandidates")) {
+        if (symbols->type == json::Value::Type::Bool) config.symbolCandidates = symbols->boolean;
+    }
     return config;
 }
 
 bool SaveConfig(const std::filesystem::path& path, const Config& config) {
     std::string out = "{\"model\":" + json::QuoteString(Utf32ToUtf8(config.model)) +
                       ",\"liveConversion\":" + (config.liveConversion ? "true" : "false") +
+                      ",\"symbolCandidates\":" + (config.symbolCandidates ? "true" : "false") +
                       ",\"version\":1}";
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);

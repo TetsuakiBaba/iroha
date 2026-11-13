@@ -18,6 +18,8 @@
 //   iroha-cli model-selfcheck <同じ形式.jsonl> [--limit N]
 //                                                 : モデルの採点が生成と辻褄が合うかを確かめる（macOS版の出力は使わない）
 //   iroha-cli remote <読み>                        : 変換サーバ経由の変換（IPC検証用）
+//   iroha-cli symbols [読み...]                     : 記号・顔文字・絵文字の表（Mozc のデータ）を引く。
+//                                                   Windows で描けないとして除いた絵文字も数える
 //   iroha-cli session [--context 文脈] [--interval ミリ秒] <キー列>
 //                                                 : 変換サーバのセッションにキーを順に送り、TIP が画面に出す内容を見る。
 //                                                   キー列は打つ文字をそのまま並べ、特別なキーは <space> <enter> <esc>
@@ -52,6 +54,7 @@
 #include <string>
 #include <vector>
 
+#include "emoji_renderability.h"
 #include "ipc_protocol.h"
 #include "iroha/chunked_conversion_engine.h"
 #include "iroha/config.h"
@@ -62,6 +65,7 @@
 #include "iroha/learning_store.h"
 #include "iroha/reading_aligner.h"
 #include "iroha/romaji_composer.h"
+#include "iroha/symbol_candidates.h"
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_engine.h"
 #include "iroha/user_dictionary_store.h"
@@ -811,6 +815,73 @@ int RunModelSelfCheck(const std::wstring& referencePath, int limit) {
     return maxBatchDifference < 0.01 && generateBelow == 0 ? 0 : 2;
 }
 
+// ---- symbols: 記号・顔文字・絵文字の表を引く ----
+
+std::filesystem::path ExecutableDirectoryPath() {
+    wchar_t modulePath[MAX_PATH];
+    const DWORD length = GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return {};
+    return std::filesystem::path(modulePath).parent_path();
+}
+
+std::string JoinUtf8(const std::vector<std::u32string>& values, const char* separator) {
+    std::string joined;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) joined += separator;
+        joined += Utf32ToUtf8(values[i]);
+    }
+    return joined;
+}
+
+int RunSymbols(const std::vector<std::u32string>& readings) {
+    const auto directory = iroha::SymbolCandidateTable::DefaultDirectory(ExecutableDirectoryPath());
+    if (!directory) {
+        std::fprintf(stderr, "記号のデータが見つかりません（windows/scripts/fetch-symbols.ps1 で取得できます）\n");
+        return 1;
+    }
+    // Windows で描けない絵文字を除いた表と、除かない表の両方を作って、除いた数を出す
+    std::vector<std::u32string> excluded;
+    auto predicate = iroha::EmojiRenderability::MakePredicate();
+    const auto all = iroha::SymbolCandidateTable::Load(*directory);
+    const auto table = iroha::SymbolCandidateTable::Load(
+        *directory, [&](const std::u32string& emoji) {
+            const bool renderable = !predicate || predicate(emoji);
+            if (!renderable) excluded.push_back(emoji);
+            return renderable;
+        });
+    if (!all || !table) {
+        std::fprintf(stderr, "記号のデータを読めません\n");
+        return 1;
+    }
+    const auto counts = table->GetCounts();
+    char line[512];
+    std::snprintf(line, sizeof(line), "%s  絵文字 %zu・顔文字 %zu・記号 %zu\n",
+                  directory->u8string().c_str(), counts.emoji, counts.emoticons, counts.symbols);
+    PrintUtf8(line);
+    if (!predicate) {
+        PrintUtf8("（DirectWrite を使えないため、描けない絵文字を除いていない）\n");
+    } else {
+        std::snprintf(line, sizeof(line), "Windows で描けないとして除いた絵文字 %zu 個（全 %zu 個）\n",
+                      excluded.size(), all->GetCounts().emoji);
+        PrintUtf8(line);
+        const size_t shown = std::min<size_t>(excluded.size(), 40);
+        PrintUtf8("  " + JoinUtf8(std::vector<std::u32string>(excluded.begin(), excluded.begin() + shown), " ") +
+                  (shown < excluded.size() ? " …" : "") + "\n");
+    }
+    for (const std::u32string& argument : readings) {
+        const std::u32string reading = RomajiToKana(argument);
+        const iroha::SymbolCandidates found = table->Candidates(reading);
+        PrintUtf8(Utf32ToUtf8(reading) + "\n");
+        std::snprintf(line, sizeof(line), "  絵文字(%zu): ", found.emoji.size());
+        PrintUtf8(line + JoinUtf8(found.emoji, " ") + "\n");
+        std::snprintf(line, sizeof(line), "  顔文字(%zu): ", found.emoticons.size());
+        PrintUtf8(line + JoinUtf8(found.emoticons, "  ") + "\n");
+        std::snprintf(line, sizeof(line), "  記号(%zu): ", found.symbols.size());
+        PrintUtf8(line + JoinUtf8(found.symbols, " ") + "\n");
+    }
+    return 0;
+}
+
 // ---- session: 変換サーバのセッションにキーを送る ----
 
 struct SessionKeyStroke {
@@ -981,6 +1052,10 @@ int wmain(int argc, wchar_t** argv) {
         }
         std::printf("  [%.1fms]\n", ms);
         return 0;
+    }
+
+    if (command == U"symbols") {
+        return RunSymbols(std::vector<std::u32string>(args.begin() + 2, args.end()));
     }
 
     if (command == U"session" && args.size() >= 3) {

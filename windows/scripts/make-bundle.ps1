@@ -1,7 +1,7 @@
 ﻿# 配布用zipを作る（macos/scripts/make-bundle.sh のWindows版）。
 #   iroha-<version>-windows.zip
 #     ├─ iroha-tip.dll / iroha-server.exe / iroha-settings.exe
-#     ├─ Dictionary/（辞書ラティスの辞書データ）・licenses/
+#     ├─ Dictionary/（辞書ラティスの辞書データ）・Symbols/（記号・顔文字・絵文字のデータ）・licenses/
 #     ├─ install.ps1 / uninstall.ps1 / fetch-model.ps1
 #     └─ README.txt
 # バージョンは引数、無ければ git describe から取る（リリースはCIがタグから注入する）。
@@ -43,6 +43,13 @@ Copy-Item (Join-Path $PSScriptRoot "fetch-model.ps1") $stage
 $DictionaryRoot = Join-Path $RepoRoot "vendor\azooKey_dictionary_storage"
 Copy-Item (Join-Path $DictionaryRoot "Dictionary") (Join-Path $stage "Dictionary") -Recurse
 Copy-Item (Join-Path $DictionaryRoot "LICENSE") (Join-Path $stage "Dictionary\LICENSE")
+# 記号・顔文字・絵文字の候補の Mozc のデータ（BSD 3-Clause）。BSD の条件で LICENSE も一緒に置く
+& (Join-Path $PSScriptRoot "fetch-symbols.ps1")
+$SymbolsRoot = Join-Path $RepoRoot "vendor\mozc-data"
+New-Item -ItemType Directory -Force (Join-Path $stage "Symbols") | Out-Null
+foreach ($file in @("symbol.tsv", "emoticon.tsv", "categorized.tsv", "emoji_data.tsv", "LICENSE")) {
+    Copy-Item (Join-Path $SymbolsRoot $file) (Join-Path $stage "Symbols")
+}
 New-Item -ItemType Directory -Force (Join-Path $stage "licenses") | Out-Null
 Copy-Item (Join-Path $RepoRoot "windows\iroha-core\src\lattice\LICENSE-AzooKeyKanaKanjiConverter.txt") `
     (Join-Path $stage "licenses")
@@ -80,6 +87,7 @@ LLM（iroha-kkc-v1）でかな漢字変換する日本語IMEです。
   辞書データ azooKey_dictionary_storage: Apache-2.0 (Dictionary\LICENSE)
   辞書ラティスの変換（AzooKeyKanaKanjiConverter を C++ に移したもの）: MIT
     (licenses\LICENSE-AzooKeyKanaKanjiConverter.txt)
+  記号・顔文字・絵文字のデータ（Mozc の src/data/、Google）: BSD 3-Clause (Symbols\LICENSE)
 "@ | Out-File (Join-Path $stage "README.txt") -Encoding utf8
 
 $zipTemp = Join-Path $env:TEMP "iroha-bundle\$stageName.zip"

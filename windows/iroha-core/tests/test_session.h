@@ -343,14 +343,16 @@ void TestSessionCandidatesAndCommit() {
 
     auto output = Press(session, Key::Space); // 次の候補へ（候補ウィンドウが開く）
     EXPECT_TRUE(output.candidatesVisible);
-    EXPECT_TRUE(output.candidates == (std::vector<std::u32string>{U"記者", U"汽車", U"貴社"}));
+    // 末尾にひらがな・カタカナ
+    EXPECT_TRUE(output.candidates ==
+                (std::vector<std::u32string>{U"記者", U"汽車", U"貴社", U"きしゃ", U"キシャ"}));
     EXPECT_TRUE(output.candidateIndex == 1);
     EXPECT_EQ(output.PreeditText(), U"汽車");
 
     output = Press(session, Key::Up);
     EXPECT_TRUE(output.candidateIndex == 0);
     output = Press(session, Key::Space, true); // Shift+Space は前の候補（先頭からは末尾へ）
-    EXPECT_TRUE(output.candidateIndex == 2);
+    EXPECT_TRUE(output.candidateIndex == 4);
     output = session.Handle(Key::Character, U'2', false, nullptr); // 数字キーで選ぶ
     EXPECT_TRUE(output.candidateIndex == 1);
     EXPECT_EQ(output.PreeditText(), U"汽車");
@@ -366,7 +368,7 @@ void TestSessionCandidatesAndCommit() {
     }
 }
 
-// 今の結果が候補の一覧に無ければ先頭に足す
+// 今の結果は候補の先頭に置く（一覧に無ければ足し、あれば先頭へ移す）
 void TestSessionKeepsCurrentResultInCandidates() {
     FakeSessionHost host;
     host.table[U"きしゃ"] = U"喜捨";
@@ -374,9 +376,46 @@ void TestSessionKeepsCurrentResultInCandidates() {
     iroha::InputSession session(&host);
     Type(session, U"kisha");
     Press(session, Key::Space);
-    const auto output = Press(session, Key::Down);
-    EXPECT_TRUE(output.candidates == (std::vector<std::u32string>{U"喜捨", U"記者", U"汽車"}));
+    auto output = Press(session, Key::Down);
+    EXPECT_TRUE(output.candidates ==
+                (std::vector<std::u32string>{U"喜捨", U"記者", U"汽車", U"きしゃ", U"キシャ"}));
     EXPECT_TRUE(output.candidateIndex == 1);
+    Press(session, Key::Escape);
+
+    host.table[U"きしゃ"] = U"汽車";
+    Press(session, Key::Escape);
+    Type(session, U"kisha");
+    Press(session, Key::Space);
+    output = Press(session, Key::Down);
+    EXPECT_TRUE(output.candidates ==
+                (std::vector<std::u32string>{U"汽車", U"記者", U"きしゃ", U"キシャ"}));
+}
+
+// 記号・顔文字・絵文字を候補に合流させ、それを選んだ確定は学習に知らせない
+void TestSessionSymbolCandidates() {
+    FakeSessionHost host;
+    host.table[U"わらい"] = U"笑い";
+    host.candidateTable[U"わらい"] = {U"笑い", U"嗤い"};
+    iroha::InputSession session(&host);
+    session.SetSymbolTable(std::make_shared<iroha::SymbolCandidateTable>(
+        "", "(^^)\tわらい\tSMILE", "", "1F602\t😂\twarai わらい\t\t\t\tE0.6"));
+    Type(session, U"warai");
+    Press(session, Key::Space);
+    auto output = Press(session, Key::Down);
+    // 絵文字は 7 番目だが、候補が少なければエンジンの候補の後ろ。顔文字はその後、最後にひらがな・カタカナ
+    EXPECT_TRUE(output.candidates == (std::vector<std::u32string>{U"笑い", U"嗤い", U"😂", U"(^^)",
+                                                                  U"わらい", U"ワライ"}));
+    output = Press(session, Key::Down);
+    EXPECT_EQ(output.PreeditText(), U"😂");
+    EXPECT_EQ(Press(session, Key::Enter).commit, U"😂");
+    EXPECT_TRUE(host.commits.empty());
+
+    // 表に無い候補を選んだ確定は学習に知らせる
+    Type(session, U"warai");
+    Press(session, Key::Space);
+    Press(session, Key::Down);
+    EXPECT_EQ(Press(session, Key::Enter).commit, U"嗤い");
+    EXPECT_TRUE(host.commits.size() == 1);
 }
 
 // 文節の移動と、文節の候補を求めるときの文脈（左側の変換結果を足す）
@@ -529,6 +568,7 @@ void RunSessionTests() {
     TestSessionSpaceKeepsKanaWhenConversionFails();
     TestSessionCandidatesAndCommit();
     TestSessionKeepsCurrentResultInCandidates();
+    TestSessionSymbolCandidates();
     TestSessionMoveSegment();
     TestSessionResizeSegment();
     TestSessionEscapeFromSegmentMode();

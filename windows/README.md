@@ -19,8 +19,9 @@ iroha-core/     変換エンジンのC++移植
                 src/lattice/ は辞書ラティス（下の「辞書ラティス」節）
                 input_session / session_manager は入力の状態（下の「入力の状態とライブ変換」節）
 iroha-cli/      検証用CLI（kana / convert / segment / bench / ajimee / lattice /
-                lattice-dump / lattice-parity / remote / session / repl）
-shared/         TIP⇔サーバの名前付きパイプIPCプロトコル（ipc_protocol.h）
+                lattice-dump / lattice-parity / remote / session / symbols / repl）
+shared/         TIP⇔サーバの名前付きパイプIPCプロトコル（ipc_protocol.h）と、
+                サーバ・CLI で使う Windows 専用の部品（emoji_renderability）
 scripts/        ビルド・インストールスクリプト
 ```
 
@@ -29,6 +30,10 @@ scripts/        ビルド・インストールスクリプト
 ```powershell
 # llama.cpp静的ライブラリ（vendor/dist-windows へ。vendor/dist はmacOS用なので触らない）
 powershell -ExecutionPolicy Bypass -File windows\scripts\build-llama.ps1
+
+# 辞書ラティスの辞書と、記号・顔文字・絵文字のデータ（vendor/ へ。macOS版と同じコミット）
+powershell -ExecutionPolicy Bypass -File windows\scripts\fetch-dictionary.ps1
+powershell -ExecutionPolicy Bypass -File windows\scripts\fetch-symbols.ps1
 
 # TIP DLL
 powershell -ExecutionPolicy Bypass -File windows\scripts\build-tip.ps1
@@ -191,6 +196,30 @@ windows\build\iroha-cli\iroha-cli.exe session --interval 120 "kyouhaiitenkidesun
 表示形の切替（F6〜F10）・Shift+英字の英字入力・予測変換・打ち間違いの訂正。
 変換サーバが止まっている間は、かな入力もできない（キーを受けても表示を決められない）
 
+## 記号・顔文字・絵文字の候補
+
+文節の候補ウィンドウに Mozc（BSD 3-Clause、Google）の記号・顔文字・絵文字を足す（2026-11-13）。
+規則は macOS版の `SymbolCandidateTable` / `SymbolCandidateMerger` と同じで、`iroha-core` の `symbol_candidates` に移した
+（テストは 1 対 1）。候補の並びは「今の表示 → エンジンの候補（絵文字は上から 7 番目）→ 顔文字 → 記号 → ひらがな・カタカナ」。
+ライブ変換には使わず、表にある候補（漢字・かなだけのものを除く）を選んだ確定は学習しない。
+「えもじ」で全部の絵文字、「かおもじ」で全部の顔文字。`config.json` の `"symbolCandidates": false` で止められる
+
+- データは `fetch-symbols.ps1` が macOS版と同じコミットで `vendor/mozc-data` に取り、`install-tip.ps1`・配布 zip が
+  実行ファイルと同じフォルダの `Symbols` に LICENSE と一緒に置く
+- Windows で描けない絵文字は、変換サーバが読み込むときに除く（`shared/emoji_renderability.cpp`）。規則は macOS版の
+  `EmojiRenderability` と同じ（字形がすべて Segoe UI Emoji にあり、部品より少ない字形で描かれる）に、もう 1 つ足した:
+  字形が 1 つでも先頭の部品だけと同じ字形なら除く（イングランドの旗などのタグ文字の旗は、Windows ではタグを捨てて
+  黒い旗 🏴 になる）。2026-11-13（Windows 11 26200）: 全 1,918 個のうち 294 個を除いた（国旗・Unicode 16 の絵文字など）。
+  読み込みは 62ms
+- 候補ウィンドウは Direct2D・DirectWrite で描く（GDI では絵文字が白黒になり、肌の色の組み合わせなども 1 つの絵に
+  ならない）。絵文字の候補は Segoe UI Emoji で描く（Meiryo UI にも ❤ などの白黒の字形があるため）。
+  Direct2D を作れなければ GDI で描く
+
+```powershell
+# 表を引く（Windows で描けないとして除いた絵文字の数と例も出す。リポジトリの下で実行する）
+windows\build\iroha-cli\iroha-cli.exe symbols neko warai kaomoji
+```
+
 ## 開発メモ
 
 - ビルド環境: VS 2022の「C++によるデスクトップ開発」+ cmake/ninja。
@@ -236,7 +265,8 @@ windows\build\iroha-cli\iroha-cli.exe session --interval 120 "kyouhaiitenkidesun
       候補ウィンドウ専用の語）
 - [x] M7f: ライブ変換。入力の状態を変換サーバ側に移した（`InputSession` / `SessionManager`。
       TIP はキーを送って表示を反映するだけ）
-- [ ] M7e: 記号・絵文字の候補、専門辞書
+- [x] M7e-1: 記号・顔文字・絵文字の候補（Mozc のデータ、Windows で描けない絵文字を除く、候補ウィンドウを Direct2D で描く）
+- [ ] M7e-2: 専門辞書
 - [ ] M5b: UIlessモード（ITfCandidateListUIElement。タスクバー検索ボックス等）
 - [ ] M6b: 製品化の残り（インストーラ/署名、release.ymlの両OS対応、UIA対応）
 

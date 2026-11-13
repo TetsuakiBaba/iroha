@@ -63,6 +63,8 @@ public:
 
     // ライブ変換を使うか（今あるセッションと、これから作るセッションに効く）
     void SetLiveConversionEnabled(bool enabled);
+    // 文節の候補に合流させる記号・顔文字・絵文字の表（nullptr なら合流させない。同じく全セッションに効く）
+    void SetSymbolTable(std::shared_ptr<const SymbolCandidateTable> table);
 
     size_t SessionCount();
 
@@ -94,6 +96,7 @@ private:
     std::map<uint64_t, std::unique_ptr<Entry>> sessions_;
     uint64_t useCounter_ = 0;
     bool liveConversionEnabled_ = true;
+    std::shared_ptr<const SymbolCandidateTable> symbolTable_;
 
     // エンジン。キーの処理が待っている間（engineWaiters_ > 0）、ライブ変換は途中でやめる。
     // 鍵を取る順は stateMutex_ → engineMutex_（裏のスレッドは engineMutex_ を離してから stateMutex_）

@@ -74,6 +74,7 @@ SessionManager::Entry& SessionManager::EntryFor(uint64_t sessionId) {
         }
         auto entry = std::make_unique<Entry>(this, sessionId);
         entry->session.SetLiveConversionEnabled(liveConversionEnabled_);
+        entry->session.SetSymbolTable(symbolTable_);
         found = sessions_.emplace(sessionId, std::move(entry)).first;
     }
     found->second->lastUsed = ++useCounter_;
@@ -113,6 +114,12 @@ void SessionManager::SetLiveConversionEnabled(bool enabled) {
     std::lock_guard<std::mutex> lock(stateMutex_);
     liveConversionEnabled_ = enabled;
     for (auto& item : sessions_) item.second->session.SetLiveConversionEnabled(enabled);
+}
+
+void SessionManager::SetSymbolTable(std::shared_ptr<const SymbolCandidateTable> table) {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    symbolTable_ = std::move(table);
+    for (auto& item : sessions_) item.second->session.SetSymbolTable(symbolTable_);
 }
 
 size_t SessionManager::SessionCount() {

@@ -78,6 +78,13 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File windows/scripts/fetch-dictionary.ps1
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # 記号・顔文字・絵文字の Mozc のデータ（約1MB、コミット固定）。単体テストの実データの部分が読む
+      - name: Fetch Mozc symbol data
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File windows/scripts/fetch-symbols.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       # iroha-core/engine/cli/server/tip のビルドと単体テスト
       - name: Build and test
         shell: pwsh

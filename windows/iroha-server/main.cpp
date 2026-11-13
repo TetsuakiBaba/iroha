@@ -8,6 +8,7 @@
 //   （iroha::SessionManager）。ライブ変換だけは裏のスレッドで行い、TIP が結果を問い合わせる
 // - モデルは起動時にプリロードする（初回変換のもたつき防止）
 
+#include "emoji_renderability.h"
 #include "ipc_protocol.h"
 
 #include <sddl.h>
@@ -28,6 +29,7 @@
 #include "iroha/learning_store.h"
 #include "iroha/reading_aligner.h"
 #include "iroha/session_manager.h"
+#include "iroha/symbol_candidates.h"
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_engine.h"
 #include "iroha/user_dictionary_store.h"
@@ -127,10 +129,37 @@ struct ServerState {
     std::unique_ptr<iroha::UserDictionaryEngine> dictionaryEngine;
     std::unique_ptr<iroha::LearningEngine> engine;
     bool liveConversion = true;
+    // 記号・顔文字・絵文字の表（設定で切ってあれば nullptr。読み込みは初めて要るときに 1 回だけ）
+    std::shared_ptr<const iroha::SymbolCandidateTable> symbols;
+    std::shared_ptr<const iroha::SymbolCandidateTable> loadedSymbols;
+    bool symbolsLoaded = false;
 
     void Build() {
-        liveConversion =
-            iroha::LoadConfig(std::filesystem::path(DataDir() + L"\\config.json")).liveConversion;
+        const iroha::Config config =
+            iroha::LoadConfig(std::filesystem::path(DataDir() + L"\\config.json"));
+        liveConversion = config.liveConversion;
+        if (config.symbolCandidates && !symbolsLoaded) {
+            symbolsLoaded = true;
+            if (const auto directory =
+                    iroha::SymbolCandidateTable::DefaultDirectory(ExecutableDirectory())) {
+                // Windows が描けない絵文字（新しい版の絵文字・国旗）は表に入れない
+                const auto start = GetTickCount64();
+                if (auto table = iroha::SymbolCandidateTable::Load(
+                        *directory, iroha::EmojiRenderability::MakePredicate())) {
+                    loadedSymbols = std::make_shared<iroha::SymbolCandidateTable>(std::move(*table));
+                    const auto counts = loadedSymbols->GetCounts();
+                    char message[160];
+                    std::snprintf(message, sizeof(message),
+                                  "symbols loaded: emoji %zu, emoticons %zu, symbols %zu (%llums)",
+                                  counts.emoji, counts.emoticons, counts.symbols,
+                                  GetTickCount64() - start);
+                    Log(message);
+                }
+            } else {
+                Log("symbols not found (no symbol candidates)");
+            }
+        }
+        symbols = config.symbolCandidates ? loadedSymbols : nullptr;
         const std::string newModelPath = ResolveModelPath();
         if (!zenz || newModelPath != modelPath) {
             zenz = std::make_unique<iroha::ZenzEngine>(newModelPath);
@@ -285,6 +314,7 @@ bool HandleRequest(ServerState& state, iroha::SessionManager& sessions,
             Log("reload requested");
             sessions.WithEngine([&] { state.Build(); });
             sessions.SetLiveConversionEnabled(state.liveConversion);
+            sessions.SetSymbolTable(state.symbols);
             *response = iroha::ipc::BuildOkResponse({});
             return true;
         }
@@ -378,6 +408,7 @@ int wmain() {
     ServerBackend backend(&state);
     iroha::SessionManager sessions(&backend);
     sessions.SetLiveConversionEnabled(state.liveConversion);
+    sessions.SetSymbolTable(state.symbols);
 
     const std::wstring pipeName = iroha::ipc::PipeName();
     PSECURITY_DESCRIPTOR pipeSecurity = CreatePipeSecurityDescriptor();

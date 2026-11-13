@@ -236,7 +236,11 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   顔文字 → 記号はエンジンの候補の後ろ。「えもじ」「かおもじ」で全部。ライブ変換には使わず、表にある候補は
   確定しても学習しない（`unlearnableCandidates`。漢字・かなだけの候補は除く。覚えると「わらい」だけ打ったときに
   ライブ変換が絵文字になる）。macOS が描けない絵文字は OS の版の対応表ではなく Apple Color Emoji の字形で除く
-  （`EmojiRenderability`。組の絵文字は字形 2 つで描かれるので「字形 1 つ」では判定しない）
+  （`EmojiRenderability`。組の絵文字は字形 2 つで描かれるので「字形 1 つ」では判定しない）。
+  Windows 版は同じ規則を `windows/iroha-core` の `symbol_candidates` に移してある（2026-11-13。テストは 1 対 1）。
+  `fetch-symbols.ps1` のコミットは `fetch-symbols.sh` と合わせる。Windows で描けない絵文字は Segoe UI Emoji の字形で除く
+  （`windows/shared/emoji_renderability.cpp`。国旗は Windows では絵にならないので除かれる。タグ文字の旗（イングランドなど）は
+  黒い旗の字形 1 つになるので、先頭の部品だけの字形と同じなら除く）
 - 専門辞書（`TermDictionary` / `TermDictionaryStore` / `TermDictionaryFetcher`、`macos/Sources/IrohaCore/TermDictionary/`、
   設定 > 辞書・学習 > 専門辞書、一般ユーザ向け。2026-11-08）は、配布している辞書を 1 つずつ追加・削除する。
   一覧は `models/term-dictionaries.json`、本体は Release `term-dictionaries-v1`（**必ず `--prerelease`**）、

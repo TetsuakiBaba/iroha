@@ -35,6 +35,7 @@ if ($Uninstall) {
     Remove-Item (Join-Path $InstallDir "iroha-server.exe") -Force -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $InstallDir "iroha-settings.exe") -Force -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $InstallDir "Dictionary") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $InstallDir "Symbols") -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $InstallDir "*.pdb") -Force -ErrorAction SilentlyContinue
     Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
         -Name "iroha-server" -ErrorAction SilentlyContinue
@@ -91,6 +92,18 @@ if (Test-Path (Join-Path $Dictionary "mm.binary")) {
     if ($LASTEXITCODE -ge 8) { throw "辞書データのコピーに失敗しました（robocopy: $LASTEXITCODE）" }
 } else {
     Write-Warning "辞書データがありません（windows\scripts\fetch-dictionary.ps1 で取得できます）: $Dictionary"
+}
+# 記号・顔文字・絵文字の候補の Mozc のデータ（変換サーバが実行ファイルと同じフォルダの Symbols を読む。
+# 無くても動くが、候補ウィンドウに記号・顔文字・絵文字が出ない）。BSD の条件で LICENSE も一緒に置く
+$Symbols = Join-Path $RepoRoot "vendor\mozc-data"
+if (Test-Path (Join-Path $Symbols "emoji_data.tsv")) {
+    $InstalledSymbols = Join-Path $InstallDir "Symbols"
+    New-Item -ItemType Directory -Force $InstalledSymbols | Out-Null
+    foreach ($file in @("symbol.tsv", "emoticon.tsv", "categorized.tsv", "emoji_data.tsv", "LICENSE")) {
+        Copy-Item (Join-Path $Symbols $file) $InstalledSymbols -Force
+    }
+} else {
+    Write-Warning "記号のデータがありません（windows\scripts\fetch-symbols.ps1 で取得できます）: $Symbols"
 }
 # デバッグ用にPDBも並べる（あれば）
 foreach ($src in @($BuiltDll, $BuiltServer)) {

@@ -4,8 +4,8 @@
 cmake_minimum_required(VERSION 3.21)
 project(iroha-server LANGUAGES CXX)
 
-add_executable(iroha-server main.cpp)
-target_link_libraries(iroha-server PRIVATE iroha-engine)
+add_executable(iroha-server main.cpp ../shared/emoji_renderability.cpp)
+target_link_libraries(iroha-server PRIVATE iroha-engine dwrite)
 target_include_directories(iroha-server PRIVATE ../shared)
 if(MSVC)
     target_compile_options(iroha-server PRIVATE /utf-8 /W4 /EHsc)

@@ -1,11 +1,14 @@
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "iroha/romaji_composer.h"
+#include "iroha/symbol_candidates.h"
 
 namespace iroha {
 
@@ -117,6 +120,11 @@ public:
     // ライブ変換を使うか（既定は使う。使わないときは Space を押すまでかなのまま）
     void SetLiveConversionEnabled(bool enabled) { liveConversionEnabled_ = enabled; }
 
+    // 文節の候補ウィンドウに合流させる記号・顔文字・絵文字の表（nullptr なら合流させない）
+    void SetSymbolTable(std::shared_ptr<const SymbolCandidateTable> table) {
+        symbolTable_ = std::move(table);
+    }
+
     // 文節の候補として求める数
     static constexpr int kSegmentCandidateCount = 9;
     // 候補ウィンドウの1ページの候補数（数字キー 1〜9 はページの中の番号。TIP の表示と同じにする）
@@ -136,6 +144,8 @@ private:
         std::u32string result;                  // 今選んでいる変換結果
         std::vector<std::u32string> candidates; // 未取得なら空
         size_t candidateIndex = 0;
+        // 選んで確定しても学習しない候補（記号・顔文字・絵文字）
+        std::set<std::u32string> unlearnable;
     };
 
     void HandleComposing(SessionKey key, char32_t character, std::u32string* commit);
@@ -159,6 +169,7 @@ private:
 
     Host* host_;
     bool liveConversionEnabled_ = true;
+    std::shared_ptr<const SymbolCandidateTable> symbolTable_;
     uint64_t revision_ = 0;
 
     // 合成（かな入力・ライブ変換）
