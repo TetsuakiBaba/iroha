@@ -81,10 +81,14 @@ if (Test-Path $BuiltSettings) {
 # 無くても動くが、候補ウィンドウの候補がモデルの生成だけになる）
 $Dictionary = Join-Path $RepoRoot "vendor\azooKey_dictionary_storage\Dictionary"
 if (Test-Path (Join-Path $Dictionary "mm.binary")) {
-    Write-Host "==> 辞書データをコピー"
+    # 約3,400ファイル。リポジトリがDropboxの下にあり、オンラインのみのファイルが混ざっていると、
+    # コピーの途中でDropboxがダウンロードするので数分かかる（2026-11-13 実測で約7分。2回目以降は
+    # 変わったファイルだけなので数秒）。止まって見えないよう、フォルダごとの進み具合と最後の集計を出す
+    Write-Host "==> 辞書データをコピー（約3,400ファイル。初回は数分かかることがあります）"
     $InstalledDictionary = Join-Path $InstallDir "Dictionary"
-    if (Test-Path $InstalledDictionary) { Remove-Item $InstalledDictionary -Recurse -Force }
-    Copy-Item $Dictionary $InstalledDictionary -Recurse
+    robocopy $Dictionary $InstalledDictionary /MIR /NFL /NJH /NP | Out-Host
+    # robocopyの終了コードは8以上が失敗
+    if ($LASTEXITCODE -ge 8) { throw "辞書データのコピーに失敗しました（robocopy: $LASTEXITCODE）" }
 } else {
     Write-Warning "辞書データがありません（windows\scripts\fetch-dictionary.ps1 で取得できます）: $Dictionary"
 }
