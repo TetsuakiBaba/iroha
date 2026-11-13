@@ -98,11 +98,14 @@ public actor LatticeConverter {
     /// 読みから作る特別な候補（azooKey の機能。読み全体に一致する候補として辞書の候補の間に入る）:
     /// 桁区切りの数字（「12345」→ 12,345）、時刻（「1230」→ 12:30、「930」→ 9:30）、
     /// 和暦・西暦（「2026ねん」→ 令和8年、「しょうわ64ねん」→ 1989年）。
-    /// メールアドレス・装飾英字・Unicode・バージョンは iroha の入力（かなの読み）に合わないので使わない
+    /// メールアドレス・装飾英字・Unicode・バージョンは iroha の入力（かなの読み）に合わないので使わない。
+    /// 和暦・西暦は azooKey の `CalendarSpecialCandidateProvider` ではなく、明治の年の計算を直した
+    /// iroha の `EraYearCandidateProvider` を使う（候補と評価値はそれ以外同じ）。
+    /// Windows 版（windows/iroha-core/src/lattice/）はこの 3 つを同じ順で作る。変えるときは両方を合わせる
     static let specialCandidateProviders: [any SpecialCandidateProvider] = [
         CommaSeparatedNumberSpecialCandidateProvider(),
         TimeExpressionSpecialCandidateProvider(),
-        CalendarSpecialCandidateProvider(),
+        EraYearCandidateProvider(),
     ]
 
     /// `fullMatchCandidates` が返す候補数の上限

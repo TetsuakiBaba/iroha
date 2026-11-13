@@ -425,7 +425,10 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   ・依頼の文面と答えの読み方（複数行なら最後の行）は測定と同じにしてある。変えたら測り直す
   ・AI の案で確定した文は学習にも変換記録にも残さない（`segmentsFromAI`）
 - 候補ウィンドウの辞書ラティスには azooKey の特別な候補（`LatticeConverter.specialCandidateProviders`、2026-10-27）を
-  入れている: 桁区切り（「12345」→ 12,345）・時刻（「1230」→ 12:30）・和暦西暦（「2026ねん」→ 令和8年）
+  入れている: 桁区切り（「12345」→ 12,345）・時刻（「1230」→ 12:30）・和暦西暦（「2026ねん」→ 令和8年）。
+  和暦西暦だけは azooKey の実装ではなく iroha の `EraYearCandidates`（2026-11-13）: azooKey v0.11.2 は明治の年で
+  1967 を引いていて「1900ねん」が「明治-67年」になるので、同じ候補を作る部品を書き写して直した。
+  Windows 版（`windows/iroha-core/src/lattice/special_candidates.cpp`）と同じ規則にしてある。変えるときは両方を合わせる
 - 変換・予測の左文脈は合成開始時にアプリのカーソル手前テキストを1回読む（`DocumentContextSettings.read`、
   既定ON）。読めないアプリでは `recentCommitted`（確定文字列の蓄積）に代える。合成中は読み直さない。
   左文脈は**カーソルのある行だけ**（`LeftContext.normalize`、azooKey と同じ。2026-09-30 に「改行を除いて前の段落と
@@ -521,7 +524,13 @@ cd macos && swift build --build-system native && swift test --build-system nativ
 - WindowsのIMEはTSF（Text Services Framework）ベースで `windows/` に実装する。
   macOSのIMK部分（`macos/Sources/iroha/`）は流用不可
 - 候補ウィンドウの辞書ラティスはmacOS版ではAzooKeyKanaKanjiConverter（Swift）を使っている。
-  C++再実装では同等の辞書ラティス（azooKey辞書のLOUDS形式を読むか、別の辞書）が別途必要
+  Windows版はその変換の部分をC++に移したもの（`windows/iroha-core/src/lattice/`、入口は `LatticeConverter`。
+  2026-11-13、ユーザの判断: 辞書ラティスはほぼ直さないので書き写す）で、同じ辞書データを読む
+  （`windows/scripts/fetch-dictionary.ps1`、コミットは `macos/scripts/fetch-dictionary.sh` と合わせる）。
+  **移植が正しいかの判定は `iroha-cli lattice-parity <macOS版の lattice-dump の出力>`**（候補の並びまで一致するか。
+  AJIMEE 200件で一致を確認済み）。macOS側でAzooKeyKanaKanjiConverterの版や `LatticeConverter.swift` の
+  呼び出し方（オプション・特別な候補）を変えたら、Windows側も合わせて `lattice-parity` を回す。
+  専門辞書をラティスに読ませる部分・サーバへの組み込み・モデルでの再採点は未移植（`windows/README.md`）
 - 変換エンジンは選択肢が2つ: `macos/Sources/IrohaCore/` をSwift for Windowsで共有
   （Foundation + llama.cppのみ依存で移植可能な設計）、または別言語で再実装。
   **方針は未決定。実装前にユーザーに確認する**

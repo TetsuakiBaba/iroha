@@ -61,6 +61,12 @@ final class LatticeRescoringEngineTests: XCTestCase {
         XCTAssertTrue(number.contains("12,345"), "\(number)")
         let year = await lattice.fullMatchCandidates(reading: "2026ねん", nBest: 10)
         XCTAssertTrue(year.contains("令和8年"), "\(year)")
+        // 明治の年は iroha の EraYearCandidateProvider が作る（azooKey の実装は「明治-67年」になる）
+        let meiji = await lattice.fullMatchCandidates(reading: "1900ねん", nBest: 10)
+        XCTAssertTrue(meiji.contains("明治33年"), "\(meiji)")
+        XCTAssertFalse(meiji.contains("明治-67年"), "\(meiji)")
+        let seireki = await lattice.fullMatchCandidates(reading: "れいわ8ねん", nBest: 10)
+        XCTAssertTrue(seireki.contains("2026年"), "\(seireki)")
     }
 
     /// 第一候補（ライブ変換）はラティスを通さずzenzの生成に任せる
