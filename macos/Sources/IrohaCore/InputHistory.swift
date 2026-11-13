@@ -136,8 +136,16 @@ public final class InputHistoryStore: @unchecked Sendable {
     private var own: HostFile
     /// 他のMacのファイル（ホスト名 → 内容）
     private var others: [String: HostFile] = [:]
-    /// 合算した結果（検索・一覧に使う）
+    /// 合算した結果（検索・一覧に使う）。書き換えは `setMerged` / `removeMerged` / `rebuildMerged` だけで行う
+    /// （`byFirstCharacter` と食い違わせないため）
     private var merged: [InputHistoryEntry.Key: InputHistoryEntry] = [:]
+    /// 候補を引くための索引: 読みの最初の 1 文字 → その文字で始まる語（中身は `merged` と同じ）。
+    /// 候補は 1 打鍵ごとに main thread で引く。全件を先頭から調べると履歴の件数に比例して打鍵が遅れる
+    /// （2026-11-13 実測: 約 14,000 語で 1 回 2.6 ミリ秒、IME の中では 1 打鍵に 2 回で約 18 ミリ秒）
+    private var byFirstCharacter: [Character: [InputHistoryEntry]] = [:]
+    /// 合算に使った「これ以前に使われた分は数えない」日時（`record` が 1 語ぶんだけ合算を直すときに使う）
+    private var mergedClearedAt = Date.distantPast
+    private var mergedRemovedAt: [InputHistoryEntry.Key: Date] = [:]
     /// 最後に読み込み/保存したときの各ファイルの更新日時（外部からの変更の検出用）
     private var loadedModificationDates: [String: Date] = [:]
     private let saveQueue = DispatchQueue(label: "iroha.inputhistory.save", qos: .utility)
@@ -160,12 +168,27 @@ public final class InputHistoryStore: @unchecked Sendable {
     public func record(reading: String, text: String, at date: Date = Date()) {
         let units = InputHistoryUnits.units(reading: reading, text: text)
         guard !units.isEmpty else { return }
+        // 確定の記録は次の打鍵の処理の中（main thread）で呼ばれるので、合算を全件作り直さず、変わった語だけ直す
+        // （2026-11-13 実測: 約 14,000 語で全件の作り直しは 1 回 16 ミリ秒。確定 1 回で文節の数だけ呼ばれる）
         lock.lock()
         for key in units {
-            Self.add(key, count: 1, at: date, to: &own.entries)
+            let before: InputHistoryEntry?
+            let after: InputHistoryEntry
+            if let index = own.entries.firstIndex(where: { $0.reading == key.reading && $0.text == key.text }) {
+                before = own.entries[index]
+                own.entries[index].count += 1
+                own.entries[index].lastUsed = max(own.entries[index].lastUsed, date)
+                after = own.entries[index]
+            } else {
+                before = nil
+                after = InputHistoryEntry(reading: key.reading, text: key.text, count: 1, lastUsed: date)
+                own.entries.append(after)
+            }
+            applyOwnChange(before: before, after: after)
         }
-        Self.trim(&own)
-        rebuildMerged()
+        for dropped in Self.trim(&own) {
+            recomputeMerged(for: dropped.key)
+        }
         lock.unlock()
         scheduleSave()
         postDidChange()
@@ -218,9 +241,11 @@ public final class InputHistoryStore: @unchecked Sendable {
     /// 読みが `prefix` で始まり、それより長い語を、確定した回数の多い順（同じなら最近使った順）に返す。
     /// 表記が同じものは1つにまとめる
     public func candidates(prefix: String, limit: Int = InputHistoryStore.candidateLimit) -> [InputHistoryEntry] {
-        guard !prefix.isEmpty, limit > 0 else { return [] }
+        guard let first = prefix.first, limit > 0 else { return [] }
         lock.lock()
-        let matches = merged.values.filter { $0.reading.count > prefix.count && $0.reading.hasPrefix(prefix) }
+        // 文字数は一致した語でだけ数える（`String.count` は 1 文字ずつ区切りを調べるので、全件で数えると遅い）
+        let matches = (byFirstCharacter[first] ?? [])
+            .filter { $0.reading.hasPrefix(prefix) && $0.reading.count > prefix.count }
         lock.unlock()
         var seen: Set<String> = []
         var results: [InputHistoryEntry] = []
@@ -340,41 +365,151 @@ public final class InputHistoryStore: @unchecked Sendable {
         return lhs.reading < rhs.reading
     }
 
-    private static func add(_ key: InputHistoryEntry.Key, count: Int, at date: Date,
-                            to entries: inout [InputHistoryEntry]) {
-        if let index = entries.firstIndex(where: { $0.key == key }) {
-            entries[index].count += count
-            entries[index].lastUsed = max(entries[index].lastUsed, date)
-        } else {
-            entries.append(InputHistoryEntry(reading: key.reading, text: key.text, count: count, lastUsed: date))
+    /// 上限を超えた分を、最後に使った日時が古いものから捨てる
+    /// - Returns: 捨てた語
+    @discardableResult
+    private static func trim(_ file: inout HostFile) -> [InputHistoryEntry] {
+        let excess = file.entries.count - maxEntries
+        guard excess > 0 else { return [] }
+        // 確定のたびに呼ばれ、上限に達したあとは新しい語が増えるたびに 1〜数語を捨てる。そのときは並べ替えない
+        if excess <= 16 {
+            var dropped: [InputHistoryEntry] = []
+            for _ in 0..<excess {
+                guard let oldest = file.entries.indices.min(by: {
+                    file.entries[$0].lastUsed < file.entries[$1].lastUsed
+                }) else { break }
+                dropped.append(file.entries.remove(at: oldest))
+            }
+            return dropped
         }
+        let sorted = file.entries.sorted { $0.lastUsed > $1.lastUsed }
+        file.entries = Array(sorted.prefix(maxEntries))
+        return Array(sorted.dropFirst(maxEntries))
     }
 
-    private static func trim(_ file: inout HostFile) {
-        guard file.entries.count > maxEntries else { return }
-        file.entries = Array(file.entries.sorted { $0.lastUsed > $1.lastUsed }.prefix(maxEntries))
+    /// 全ホストを合算した結果と、そのとき使った「これ以前は数えない」日時
+    private struct Merge {
+        var entries: [InputHistoryEntry.Key: InputHistoryEntry] = [:]
+        var clearedAt = Date.distantPast
+        var removedAt: [InputHistoryEntry.Key: Date] = [:]
+    }
+
+    private static func merge(_ files: [HostFile]) -> Merge {
+        var merge = Merge()
+        merge.clearedAt = files.compactMap(\.clearedAt).max() ?? .distantPast
+        for removal in files.flatMap(\.removals) {
+            merge.removedAt[removal.key] = max(merge.removedAt[removal.key] ?? .distantPast, removal.removedAt)
+        }
+        for entry in files.flatMap(\.entries) {
+            guard isCounted(entry, clearedAt: merge.clearedAt, removedAt: merge.removedAt) else { continue }
+            if var existing = merge.entries[entry.key] {
+                existing.count += entry.count
+                existing.lastUsed = max(existing.lastUsed, entry.lastUsed)
+                merge.entries[entry.key] = existing
+            } else {
+                merge.entries[entry.key] = entry
+            }
+        }
+        return merge
+    }
+
+    /// 合算で数える語か（すべて消した日時・その語を消した日時より後に使われている）
+    private static func isCounted(_ entry: InputHistoryEntry, clearedAt: Date,
+                                  removedAt: [InputHistoryEntry.Key: Date]) -> Bool {
+        entry.lastUsed > clearedAt && entry.lastUsed > removedAt[entry.key] ?? .distantPast
+    }
+
+    private func isCounted(_ entry: InputHistoryEntry) -> Bool {
+        Self.isCounted(entry, clearedAt: mergedClearedAt, removedAt: mergedRemovedAt)
+    }
+
+    private static func index(_ entries: [InputHistoryEntry.Key: InputHistoryEntry]) -> [Character: [InputHistoryEntry]] {
+        var index: [Character: [InputHistoryEntry]] = [:]
+        for entry in entries.values {
+            guard let first = entry.reading.first else { continue }
+            index[first, default: []].append(entry)
+        }
+        return index
     }
 
     /// 全ホストを合算し直す（lock を取った状態で呼ぶ）
     private func rebuildMerged() {
-        let files = [own] + Array(others.values)
-        let clearedAt = files.compactMap(\.clearedAt).max() ?? .distantPast
-        var removedAt: [InputHistoryEntry.Key: Date] = [:]
-        for removal in files.flatMap(\.removals) {
-            removedAt[removal.key] = max(removedAt[removal.key] ?? .distantPast, removal.removedAt)
+        let merge = Self.merge([own] + Array(others.values))
+        merged = merge.entries
+        mergedClearedAt = merge.clearedAt
+        mergedRemovedAt = merge.removedAt
+        byFirstCharacter = Self.index(merge.entries)
+    }
+
+    /// このMacの 1 語が `before` から `after` に変わった（回数が増えた・新しく加わった）分だけ合算を直す
+    /// （lock を取った状態で呼ぶ）。結果は全件を合算し直したときと同じになる:
+    /// 合算は数える語の回数の和と最後に使った日時の最大なので、このMacの分の差だけ足せばよい。
+    /// 前は数えていなかった語（他のMacで消したあと、このMacに残っていた分）が数えるようになったときは、
+    /// このMacの回数をまるごと足す
+    private func applyOwnChange(before: InputHistoryEntry?, after: InputHistoryEntry) {
+        guard isCounted(after) else { return }
+        let countedBefore = before.map(isCounted) ?? false
+        guard var entry = merged[after.key] else {
+            setMerged(after)
+            return
         }
-        var result: [InputHistoryEntry.Key: InputHistoryEntry] = [:]
-        for entry in files.flatMap(\.entries) {
-            guard entry.lastUsed > clearedAt, entry.lastUsed > removedAt[entry.key] ?? .distantPast else { continue }
-            if var existing = result[entry.key] {
-                existing.count += entry.count
-                existing.lastUsed = max(existing.lastUsed, entry.lastUsed)
-                result[entry.key] = existing
-            } else {
-                result[entry.key] = entry
+        entry.count += countedBefore ? after.count - (before?.count ?? 0) : after.count
+        entry.lastUsed = max(entry.lastUsed, after.lastUsed)
+        setMerged(entry)
+    }
+
+    /// 1 語ぶんの合算を、全ホストのファイルから求め直す（lock を取った状態で呼ぶ。上限で捨てた語に使う）
+    private func recomputeMerged(for key: InputHistoryEntry.Key) {
+        var result: InputHistoryEntry?
+        for file in [own] + Array(others.values) {
+            for entry in file.entries
+            where entry.reading == key.reading && entry.text == key.text && isCounted(entry) {
+                if var existing = result {
+                    existing.count += entry.count
+                    existing.lastUsed = max(existing.lastUsed, entry.lastUsed)
+                    result = existing
+                } else {
+                    result = entry
+                }
             }
         }
-        merged = result
+        if let result {
+            setMerged(result)
+        } else {
+            removeMerged(key)
+        }
+    }
+
+    private func setMerged(_ entry: InputHistoryEntry) {
+        merged[entry.key] = entry
+        guard let first = entry.reading.first else { return }
+        if let position = byFirstCharacter[first]?.firstIndex(where: {
+            $0.reading == entry.reading && $0.text == entry.text
+        }) {
+            byFirstCharacter[first]?[position] = entry
+        } else {
+            byFirstCharacter[first, default: []].append(entry)
+        }
+    }
+
+    private func removeMerged(_ key: InputHistoryEntry.Key) {
+        guard merged.removeValue(forKey: key) != nil, let first = key.reading.first else { return }
+        byFirstCharacter[first]?.removeAll { $0.reading == key.reading && $0.text == key.text }
+        if byFirstCharacter[first]?.isEmpty == true { byFirstCharacter[first] = nil }
+    }
+
+    /// 増分で直してきた合算と索引が、全件を合算し直した結果と同じか（テスト用）
+    func isConsistentWithFullMerge() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let full = Self.merge([own] + Array(others.values))
+        let indexed = byFirstCharacter.values.flatMap { $0 }
+        let indexedByKey = Dictionary(indexed.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        let bucketsAreRight = byFirstCharacter.allSatisfy { first, bucket in
+            !bucket.isEmpty && bucket.allSatisfy { $0.reading.first == first }
+        }
+        return merged == full.entries && mergedClearedAt == full.clearedAt && mergedRemovedAt == full.removedAt
+            && indexed.count == merged.count && indexedByKey == merged && bucketsAreRight
     }
 
     private func reloadAll() {

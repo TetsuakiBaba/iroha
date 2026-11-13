@@ -78,6 +78,121 @@ final class InputHistoryStoreTests: XCTestCase {
         XCTAssertEqual(store.candidates(prefix: "もでx"), [])
     }
 
+    /// 決まった並びの乱数（テストを毎回同じにする）
+    private struct Generator {
+        var state: UInt64
+        mutating func next(_ bound: Int) -> Int {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            return Int((state >> 33) % UInt64(bound))
+        }
+    }
+
+    private func randomReading(_ generator: inout Generator) -> String {
+        let kana = Array("あいうかきくさしすたちつ")
+        return String((0..<(2 + generator.next(4))).map { _ in kana[generator.next(kana.count)] })
+    }
+
+    /// 索引で引いた候補が、全件を先頭から調べたときと同じになる
+    func testCandidatesMatchScanOfAllEntries() {
+        let store = makeStore(host: "a")
+        var generator = Generator(state: 1)
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        for i in 0..<400 {
+            let reading = randomReading(&generator)
+            store.record(reading: reading, text: reading, at: t0.addingTimeInterval(Double(i)))
+        }
+        let entries = store.entries
+        XCTAssertGreaterThan(entries.count, 100)
+        func scan(_ prefix: String) -> [InputHistoryEntry] {
+            var seen: Set<String> = []
+            return entries
+                .filter { $0.reading.hasPrefix(prefix) && $0.reading.count > prefix.count }
+                .sorted {
+                    if $0.count != $1.count { return $0.count > $1.count }
+                    if $0.lastUsed != $1.lastUsed { return $0.lastUsed > $1.lastUsed }
+                    return $0.reading < $1.reading
+                }
+                .filter { seen.insert($0.text).inserted }
+                .prefix(InputHistoryStore.candidateLimit).map { $0 }
+        }
+        var nonEmpty = 0
+        for prefix in ["あ", "か", "し", "つ", "あい", "かき", "しす", "たち", "あいう", "きくさ", "ん", "あx"] {
+            let candidates = store.candidates(prefix: prefix)
+            XCTAssertEqual(candidates, scan(prefix), prefix)
+            if !candidates.isEmpty { nonEmpty += 1 }
+        }
+        XCTAssertGreaterThan(nonEmpty, 6)
+        XCTAssertTrue(store.isConsistentWithFullMerge())
+    }
+
+    /// 記録のたびに変わった語だけ直した合算が、全件を合算し直した結果と同じになる
+    /// （他のMacの分・消した記録・すべて消した日時が混ざっても）
+    func testIncrementalMergeMatchesFullMerge() {
+        let a = makeStore(host: "a")
+        let b = makeStore(host: "b")
+        var generator = Generator(state: 7)
+        var now = Date(timeIntervalSince1970: 1_000)
+        func check(_ step: String) {
+            XCTAssertTrue(a.isConsistentWithFullMerge(), "a: \(step)")
+            XCTAssertTrue(b.isConsistentWithFullMerge(), "b: \(step)")
+        }
+        for round in 0..<12 {
+            for _ in 0..<20 {
+                now += 1
+                let reading = randomReading(&generator)
+                (generator.next(2) == 0 ? a : b).record(reading: reading, text: reading, at: now)
+            }
+            check("記録 \(round)")
+            a.flush(); b.flush()
+            a.reloadIfChanged(); b.reloadIfChanged()
+            check("読み直し \(round)")
+            // b で消す → a に残っている分は数えなくなる → a でまた確定すると a の回数がまるごと戻る
+            if round % 3 == 1, let entry = b.entries.max(by: { $0.count < $1.count }) {
+                now += 1
+                b.remove([entry.key], at: now)
+                b.flush()
+                a.reloadIfChanged()
+                check("削除 \(round)")
+                XCTAssertEqual(a.candidates(prefix: String(entry.reading.prefix(1))).filter { $0.key == entry.key }, [])
+                now += 1
+                a.record(reading: entry.reading, text: entry.text, at: now)
+                check("削除のあとの記録 \(round)")
+            }
+            if round == 8 {
+                now += 1
+                b.reset(at: now)
+                b.flush()
+                a.reloadIfChanged()
+                check("すべて消す")
+            }
+        }
+    }
+
+    /// 上限を超えたら最後に使った日時が古い語から捨て、合算と索引からも外す
+    func testTrimDropsOldestAndUpdatesIndex() throws {
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        var file = InputHistoryStore.HostFile()
+        file.entries = (0..<InputHistoryStore.maxEntries).map {
+            InputHistoryEntry(reading: "ごい\($0)", text: "語彙\($0)", count: 1, lastUsed: t0.addingTimeInterval(Double($0)))
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try encoder.encode(file).write(to: directory.appendingPathComponent("a.json"))
+        let store = makeStore(host: "a")
+        XCTAssertEqual(store.count, InputHistoryStore.maxEntries)
+        store.record(reading: "もでる", text: "モデル", at: t0.addingTimeInterval(100_000))
+        XCTAssertEqual(store.count, InputHistoryStore.maxEntries)
+        XCTAssertEqual(store.candidates(prefix: "もで").map(\.text), ["モデル"])
+        XCTAssertFalse(store.entries.contains { $0.text == "語彙0" })
+        XCTAssertTrue(store.entries.contains { $0.text == "語彙1" })
+        XCTAssertTrue(store.isConsistentWithFullMerge())
+        // いちばん古い日時で記録した語は、その場で捨てられる
+        store.record(reading: "ふるい", text: "古い", at: t0)
+        XCTAssertEqual(store.candidates(prefix: "ふる"), [])
+        XCTAssertTrue(store.isConsistentWithFullMerge())
+    }
+
     func testMergesHostsAndPersists() {
         let a = makeStore(host: "a")
         a.record(reading: "もでる", text: "モデル")
