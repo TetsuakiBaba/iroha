@@ -87,6 +87,10 @@ struct Config {
     std::array<SelectionPreset, 5> selectionPresets;
     std::optional<std::string> selectionOnDemandHotkey;
     std::string selectionExcludedApps;
+    // マウスで選んだときの出し方（macOS版と同じ値: "off" / "bubble"（既定） / "immediateMenu" / "optionMenu"。
+    // "optionMenu" は Windows では Alt を押しながら選んだとき）と、選んだ文字数の表示（既定 OFF）
+    std::string selectionTriggerMode = "bubble";
+    bool selectionCharacterCount = false;
     // 「こえ」モード（既定 OFF。macOS版と同じキーの名前）: 押している間録音するキー
     // （"rightControl"（既定）か "rightShift"。macOS版は "rightCommand" / "rightOption"）
     bool voiceInput = false;

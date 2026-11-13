@@ -182,6 +182,12 @@ struct ServerState {
                                         stored.hotkey.value_or(fallback.hotkey), stored.enabled.value_or(fallback.enabled)});
         }
         settings.onDemandHotkey = config.selectionOnDemandHotkey.value_or(iroha::SelectionSettingsDefaults::kOnDemandHotkey);
+        using Trigger = iroha::SelectionAssistantSettings::Trigger;
+        settings.trigger = config.selectionTriggerMode == "off"             ? Trigger::Off
+                           : config.selectionTriggerMode == "immediateMenu" ? Trigger::ImmediateMenu
+                           : config.selectionTriggerMode == "optionMenu"    ? Trigger::AltMenu
+                                                                            : Trigger::Bubble;
+        settings.characterCount = config.selectionCharacterCount;
         // 使わないアプリ: カンマか改行で区切った実行ファイルの名前（小文字で比べる）
         std::wstring current;
         const std::wstring apps = iroha::Utf32ToUtf16(iroha::Utf8ToUtf32(config.selectionExcludedApps)) + L",";
@@ -653,8 +659,32 @@ private:
 };
 
 // 1リクエストを処理してレスポンスのバイト列を返す。shutdownならfalseを返す
+// 前の版の TIP を読み込んだままのアプリを知らせる（アプリは起動したときの TIP を使い続ける。インストールし直しても
+// 開き直すまで新しい機能が効かない）。プロセスごとに 1 回だけ
+void NoticeStaleTip(ServerState& state, DWORD processId) {
+    static std::vector<DWORD> noticed;
+    if (processId == 0 || !state.selection ||
+        std::find(noticed.begin(), noticed.end(), processId) != noticed.end()) {
+        return;
+    }
+    noticed.push_back(processId);
+    std::wstring name = L"このアプリ";
+    if (HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId)) {
+        wchar_t path[MAX_PATH];
+        DWORD size = MAX_PATH;
+        if (QueryFullProcessImageNameW(process, 0, path, &size)) {
+            name = std::filesystem::path(path).stem().wstring();
+        }
+        CloseHandle(process);
+    }
+    Log(("stale tip: pid " + std::to_string(processId)).c_str());
+    state.selection->ShowNotice(U"「" + iroha::Utf16ToUtf32(name) +
+                                    U"」は前の版の iroha を読み込んだままです。新しい機能を使うには開き直してください",
+                                8000);
+}
+
 bool HandleRequest(ServerState& state, iroha::SessionManager& sessions,
-                   const std::vector<char>& request, std::vector<char>* response) {
+                   const std::vector<char>& request, std::vector<char>* response, DWORD clientProcessId) {
     iroha::ipc::Reader reader{request.data(), request.size()};
     uint32_t version = 0;
     uint32_t type = 0;
@@ -732,6 +762,10 @@ bool HandleRequest(ServerState& state, iroha::SessionManager& sessions,
                 *response = iroha::ipc::BuildErrorResponse("未知のキーです");
                 return true;
             }
+            // TIP の版（後から足した。無ければ前の版の TIP）
+            uint32_t tipRevision = 0;
+            reader.U32(&tipRevision);
+            if (tipRevision < iroha::ipc::kTipRevision) NoticeStaleTip(state, clientProcessId);
             const std::u32string leftContext = iroha::Utf8ToUtf32(leftContextUtf8);
             const iroha::SessionOutput output = sessions.HandleKey(
                 sessionId, static_cast<iroha::SessionKey>(key), static_cast<char32_t>(character),
@@ -874,7 +908,9 @@ int wmain() {
                          &bytesRead, nullptr)) {
                 request.resize(bytesRead);
                 std::vector<char> response;
-                running = HandleRequest(state, sessions, request, &response);
+                ULONG clientProcessId = 0;
+                GetNamedPipeClientProcessId(pipe, &clientProcessId);
+                running = HandleRequest(state, sessions, request, &response, clientProcessId);
                 DWORD written = 0;
                 WriteFile(pipe, response.data(), static_cast<DWORD>(response.size()),
                           &written, nullptr);

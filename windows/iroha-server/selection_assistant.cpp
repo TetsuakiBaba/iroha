@@ -4,14 +4,20 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <UIAutomation.h>
+#include <windowsx.h>
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <optional>
 #include <thread>
 
+#include "iroha/character_count.h"
 #include "iroha/unicode.h"
 #include "key_shortcut.h"
 
@@ -23,9 +29,19 @@ constexpr UINT WM_APP_CONFIGURE = WM_APP + 1;
 constexpr UINT WM_APP_PARTIAL = WM_APP + 2; // wParam: 番号、lParam: std::u32string*
 constexpr UINT WM_APP_DONE = WM_APP + 3;    // wParam: 番号、lParam: AIResult*
 constexpr UINT WM_APP_QUIT = WM_APP + 4;
+constexpr UINT WM_APP_MOUSE_DOWN = WM_APP + 5; // lParam: 位置
+constexpr UINT WM_APP_GESTURE = WM_APP + 6;    // wParam: Alt を押していたか、lParam: 位置
+constexpr UINT WM_APP_CAPTURED = WM_APP + 7;   // lParam: Capture*
+constexpr UINT WM_APP_NOTICE = WM_APP + 8;     // wParam: 出す時間（ミリ秒）、lParam: std::u32string*
 constexpr int kOnDemandHotkeyId = 100;
 constexpr const wchar_t* kHiddenClass = L"IrohaSelectionHotkeys";
 constexpr const wchar_t* kPanelClass = L"IrohaSelectionPanel";
+constexpr const wchar_t* kBubbleClass = L"IrohaSelectionBubble";
+// アイコン・知らせの窓のタイマー
+constexpr UINT_PTR kTimerCapture = 1; // 選んでから読むまでの待ち（macOS版と同じ 160ms）
+constexpr UINT_PTR kTimerDismiss = 2; // 放っておいたら消す
+// メニューの項目の番号（0 から先はプリセットの番号）
+constexpr UINT kMenuOnDemand = 1000;
 
 enum ControlId {
     kIdTitle = 200,
@@ -184,6 +200,104 @@ void BringToForeground(HWND window) {
     if (attached) AttachThreadInput(foregroundThread, currentThread, FALSE);
 }
 
+// ---- マウスで選んだとき ----
+
+// 低水準のマウスのフック（専用のスレッドで動かす。ここでは何も待たない。待つとシステム全体のマウスが遅れる）
+std::atomic<HWND> g_mouseTarget{nullptr};
+POINT g_downPoint = {};
+bool g_mouseDown = false;
+bool g_dragged = false;
+DWORD g_lastUpTime = 0;
+POINT g_lastUpPoint = {};
+
+LRESULT CALLBACK MouseHookProc(int code, WPARAM wParam, LPARAM lParam) {
+    if (code == HC_ACTION) {
+        const auto* info = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
+        HWND target = g_mouseTarget.load();
+        const LPARAM point = MAKELPARAM(static_cast<short>(info->pt.x), static_cast<short>(info->pt.y));
+        switch (wParam) {
+        case WM_LBUTTONDOWN:
+            g_mouseDown = true;
+            g_dragged = false;
+            g_downPoint = info->pt;
+            if (target) PostMessageW(target, WM_APP_MOUSE_DOWN, 0, point);
+            break;
+        case WM_MOUSEMOVE:
+            // 4 ピクセル以上動かしたらドラッグ（macOS版と同じ）
+            if (g_mouseDown && !g_dragged) {
+                const long dx = info->pt.x - g_downPoint.x;
+                const long dy = info->pt.y - g_downPoint.y;
+                if (dx * dx + dy * dy >= 16) g_dragged = true;
+            }
+            break;
+        case WM_LBUTTONUP: {
+            const bool doubleClick = info->time - g_lastUpTime <= GetDoubleClickTime() &&
+                                     std::abs(info->pt.x - g_lastUpPoint.x) <= GetSystemMetrics(SM_CXDOUBLECLK) &&
+                                     std::abs(info->pt.y - g_lastUpPoint.y) <= GetSystemMetrics(SM_CYDOUBLECLK);
+            const bool gesture = g_mouseDown && (g_dragged || doubleClick);
+            g_lastUpTime = doubleClick ? 0 : info->time; // 3 回目のクリックを 2 回目と数えない
+            g_lastUpPoint = info->pt;
+            g_mouseDown = false;
+            if (gesture && target) {
+                const bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                PostMessageW(target, WM_APP_GESTURE, alt ? 1 : 0, point);
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    return CallNextHookEx(nullptr, code, wParam, lParam);
+}
+
+// 選んだ文章を UI Automation で読んだ結果
+struct Capture {
+    uint64_t serial = 0;
+    HWND window = nullptr;
+    POINT point = {};
+    // 読めた文章（読めなかったら無し）
+    std::optional<std::u32string> text;
+    // 文章は読めないが、入力欄・文書の上で選んだ（メニューで選んだ時点で Ctrl+C で取る）
+    bool textControl = false;
+};
+
+// 前面の窓のフォーカスのある部品から、選んでいる文章を読む（UI Automation。呼び出し側で COM を初期化しておく）
+void ReadSelectionWithAutomation(IUIAutomation* automation, Capture* capture) {
+    IUIAutomationElement* element = nullptr;
+    if (FAILED(automation->GetFocusedElement(&element)) || !element) return;
+    IUIAutomationTextPattern* pattern = nullptr;
+    if (SUCCEEDED(element->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&pattern))) && pattern) {
+        IUIAutomationTextRangeArray* ranges = nullptr;
+        if (SUCCEEDED(pattern->GetSelection(&ranges)) && ranges) {
+            int count = 0;
+            ranges->get_Length(&count);
+            std::u32string text;
+            for (int i = 0; i < count; ++i) {
+                IUIAutomationTextRange* range = nullptr;
+                if (FAILED(ranges->GetElement(i, &range)) || !range) continue;
+                BSTR value = nullptr;
+                if (SUCCEEDED(range->GetText(-1, &value)) && value) {
+                    if (!text.empty()) text += U"\n";
+                    text += Utf16ToUtf32(std::wstring(value, SysStringLen(value)));
+                    SysFreeString(value);
+                }
+                range->Release();
+            }
+            ranges->Release();
+            capture->text = text;
+        }
+        pattern->Release();
+    } else {
+        // 文章を読めない部品: 入力欄・文書なら、メニューで選んだときに Ctrl+C で取る
+        CONTROLTYPEID type = 0;
+        if (SUCCEEDED(element->get_CurrentControlType(&type))) {
+            capture->textControl = type == UIA_EditControlTypeId || type == UIA_DocumentControlTypeId;
+        }
+    }
+    element->Release();
+}
+
 std::wstring ProcessName(HWND window) {
     DWORD processId = 0;
     GetWindowThreadProcessId(window, &processId);
@@ -224,6 +338,25 @@ struct SelectionAssistant::Impl {
     HWND title = nullptr, source = nullptr, prompt = nullptr, output = nullptr, notice = nullptr;
     HWND primary = nullptr, copy = nullptr, close = nullptr;
     Phase phase = Phase::Hidden;
+    // マウスで選んだとき: アイコン（と知らせ）の窓・フックのスレッド・UI Automation で読むスレッド
+    HWND bubble = nullptr;
+    HFONT bubbleFont = nullptr;
+    HFONT iconFont = nullptr;
+    std::u32string bubbleLabel;   // 添え書き（文字数。空ならアイコンだけ）
+    bool bubbleClickable = false; // クリックでメニューを出すか（偽なら文字数・知らせの表示だけ）
+    std::optional<Capture> bubbleCapture;
+    POINT gesturePoint = {};
+    bool gestureAlt = false;
+    uint64_t captureSerial = 0;
+    std::u32string lastFingerprint;
+    std::chrono::steady_clock::time_point lastFingerprintTime;
+    std::thread hookThread;
+    DWORD hookThreadId = 0;
+    std::thread automationThread;
+    std::mutex automationMutex;
+    std::condition_variable automationCondition;
+    std::optional<Capture> automationJob;
+    bool automationStopping = false;
     HWND target = nullptr;       // 選択を取ったアプリの窓（結果を貼る先）
     std::u32string sourceText;   // 選択していた文章（無ければ空）
     std::u32string resultText;
@@ -235,6 +368,19 @@ struct SelectionAssistant::Impl {
     void Run();
     void RegisterHotkeys();
     void OnHotkey(int id);
+    // id のプリセット（kOnDemandHotkeyId ならその場で指示）を、window で選んでいた文章（無ければ文章を作る）に使う
+    void RunAction(int id, HWND window, const std::optional<std::u32string>& selected);
+    // マウスで選んだとき
+    void UpdateMouseHook();
+    void StopMouseHook();
+    void AutomationLoop();
+    void OnMouseDown(POINT point);
+    void OnGesture(POINT point, bool alt);
+    void OnCaptured(const Capture& capture);
+    void ShowBubble(POINT point, const std::u32string& label, bool clickable, int milliseconds);
+    void HideBubble();
+    void ShowMenu(const Capture& capture);
+    static LRESULT CALLBACK BubbleProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     std::optional<std::u32string> CaptureSelection(HWND window);
     void ShowPanel(const std::u32string& heading);
     void Layout();
@@ -275,6 +421,14 @@ void SelectionAssistant::Configure(SelectionAssistantSettings settings) {
     if (HWND hidden = impl_->hidden.load()) PostMessageW(hidden, WM_APP_CONFIGURE, 0, 0);
 }
 
+void SelectionAssistant::ShowNotice(const std::u32string& text, int milliseconds) {
+    HWND hidden = impl_->hidden.load();
+    auto* copy = new std::u32string(text);
+    if (!hidden || !PostMessageW(hidden, WM_APP_NOTICE, static_cast<WPARAM>(milliseconds), reinterpret_cast<LPARAM>(copy))) {
+        delete copy;
+    }
+}
+
 void SelectionAssistant::Impl::Run() {
     SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     const HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -290,6 +444,13 @@ void SelectionAssistant::Impl::Run() {
     panelClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
     panelClass.lpszClassName = kPanelClass;
     RegisterClassExW(&panelClass);
+    WNDCLASSEXW bubbleClass = {sizeof(bubbleClass)};
+    bubbleClass.lpfnWndProc = BubbleProc;
+    bubbleClass.hInstance = instance;
+    bubbleClass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32649)); // IDC_HAND
+    bubbleClass.lpszClassName = kBubbleClass;
+    RegisterClassExW(&bubbleClass);
+    automationThread = std::thread([this] { AutomationLoop(); });
 
     HWND window = CreateWindowExW(0, kHiddenClass, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, instance, this);
     if (!window) {
@@ -306,8 +467,18 @@ void SelectionAssistant::Impl::Run() {
         DispatchMessageW(&message);
     }
     StopWorker();
+    StopMouseHook();
+    {
+        std::lock_guard<std::mutex> lock(automationMutex);
+        automationStopping = true;
+    }
+    automationCondition.notify_all();
+    if (automationThread.joinable()) automationThread.join();
     if (panel) DestroyWindow(panel);
+    if (bubble) DestroyWindow(bubble);
     if (font) DeleteObject(font);
+    if (bubbleFont) DeleteObject(bubbleFont);
+    if (iconFont) DeleteObject(iconFont);
 }
 
 void SelectionAssistant::Impl::RegisterHotkeys() {
@@ -317,6 +488,7 @@ void SelectionAssistant::Impl::RegisterHotkeys() {
         std::lock_guard<std::mutex> lock(settingsMutex);
         active = settings;
     }
+    UpdateMouseHook();
     if (!active.enabled) return;
     std::vector<uint32_t> registered;
     const auto add = [&](int id, const std::string& text) {
@@ -369,8 +541,12 @@ void SelectionAssistant::Impl::OnHotkey(int id) {
         std::find(active.excludedApps.begin(), active.excludedApps.end(), process) != active.excludedApps.end()) {
         return;
     }
+    RunAction(id, window, CaptureSelection(window));
+}
+
+void SelectionAssistant::Impl::RunAction(int id, HWND window, const std::optional<std::u32string>& selected) {
+    HideBubble();
     target = window;
-    const auto selected = CaptureSelection(window);
     sourceText = selected.value_or(U"");
     generation = !selected;
     if (id == kOnDemandHotkeyId || !selected) {
@@ -567,9 +743,323 @@ LRESULT CALLBACK SelectionAssistant::Impl::HiddenProc(HWND hwnd, UINT message, W
     case WM_APP_CONFIGURE:
         if (self) self->RegisterHotkeys();
         return 0;
+    case WM_APP_MOUSE_DOWN:
+        if (self) self->OnMouseDown(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+        return 0;
+    case WM_APP_GESTURE:
+        if (self) self->OnGesture(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}, wParam != 0);
+        return 0;
+    case WM_APP_CAPTURED: {
+        std::unique_ptr<Capture> capture(reinterpret_cast<Capture*>(lParam));
+        if (self) self->OnCaptured(*capture);
+        return 0;
+    }
+    case WM_APP_NOTICE: {
+        std::unique_ptr<std::u32string> text(reinterpret_cast<std::u32string*>(lParam));
+        POINT cursor = {};
+        GetCursorPos(&cursor);
+        if (self) self->ShowBubble(cursor, *text, /*clickable=*/false, static_cast<int>(wParam));
+        return 0;
+    }
+    case WM_TIMER:
+        if (!self) return 0;
+        if (wParam == kTimerCapture) {
+            // 選んでから少し待った: 前面の窓で選んでいる文章を読んでもらう
+            KillTimer(hwnd, kTimerCapture);
+            Capture capture;
+            capture.serial = self->captureSerial;
+            capture.window = GetForegroundWindow();
+            capture.point = self->gesturePoint;
+            {
+                std::lock_guard<std::mutex> lock(self->automationMutex);
+                self->automationJob = capture;
+            }
+            self->automationCondition.notify_one();
+        } else if (wParam == kTimerDismiss) {
+            self->HideBubble();
+        }
+        return 0;
     case WM_APP_QUIT:
         PostQuitMessage(0);
         return 0;
+    default:
+        break;
+    }
+    return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+// ---- マウスで選んだとき ----
+
+// フックが要るのは、AI編集のマウスのきっかけか文字数の表示を使うときだけ
+void SelectionAssistant::Impl::UpdateMouseHook() {
+    const bool needed = (active.enabled && active.trigger != SelectionAssistantSettings::Trigger::Off) ||
+                        active.characterCount;
+    if (needed == hookThread.joinable()) return;
+    if (!needed) {
+        StopMouseHook();
+        return;
+    }
+    g_mouseTarget = hidden.load();
+    std::atomic<DWORD> started{0};
+    hookThread = std::thread([this, &started] {
+        MSG message;
+        PeekMessageW(&message, nullptr, WM_USER, WM_USER, PM_NOREMOVE); // スレッドのメッセージの列を作る
+        HHOOK hook = SetWindowsHookExW(WH_MOUSE_LL, MouseHookProc, GetModuleHandleW(nullptr), 0);
+        if (!hook) log("selection: mouse hook failed (" + std::to_string(GetLastError()) + ")");
+        started = GetCurrentThreadId();
+        while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        if (hook) UnhookWindowsHookEx(hook);
+    });
+    while (started.load() == 0) Sleep(1);
+    hookThreadId = started.load();
+    log("selection: mouse hook started");
+}
+
+void SelectionAssistant::Impl::StopMouseHook() {
+    if (!hookThread.joinable()) return;
+    PostThreadMessageW(hookThreadId, WM_QUIT, 0, 0);
+    hookThread.join();
+    hookThreadId = 0;
+    HideBubble();
+}
+
+// UI Automation で選んでいる文章を読む（相手のアプリの応答を待つことがあるので、窓のスレッドとは別に行う）
+void SelectionAssistant::Impl::AutomationLoop() {
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    IUIAutomation* automation = nullptr;
+    CoCreateInstance(__uuidof(CUIAutomation), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&automation));
+    if (!automation) log("selection: UI Automation unavailable");
+    for (;;) {
+        Capture capture;
+        {
+            std::unique_lock<std::mutex> lock(automationMutex);
+            automationCondition.wait(lock, [this] { return automationStopping || automationJob.has_value(); });
+            if (automationStopping) break;
+            capture = *automationJob;
+            automationJob.reset();
+        }
+        if (automation) ReadSelectionWithAutomation(automation, &capture);
+        HWND window = hidden.load();
+        auto* result = new Capture(capture);
+        if (!window || !PostMessageW(window, WM_APP_CAPTURED, 0, reinterpret_cast<LPARAM>(result))) delete result;
+    }
+    if (automation) automation->Release();
+    if (SUCCEEDED(initialized)) CoUninitialize();
+}
+
+// マウスを押した: 出ているアイコンを閉じ、読みかけの選択は捨てる（アイコンの上を押したときは閉じない）
+void SelectionAssistant::Impl::OnMouseDown(POINT point) {
+    ++captureSerial;
+    if (hidden.load()) KillTimer(hidden.load(), kTimerCapture);
+    if (bubble && IsWindowVisible(bubble)) {
+        RECT rect = {};
+        GetWindowRect(bubble, &rect);
+        if (!PtInRect(&rect, point)) HideBubble();
+    }
+}
+
+// ドラッグかダブルクリックで選んだ（macOS版 handleMouseSelectionGesture）。選択が落ち着くまで少し待ってから読む
+void SelectionAssistant::Impl::OnGesture(POINT point, bool alt) {
+    if (phase != Phase::Hidden || (panel && IsWindowVisible(panel))) return;
+    if (bubble && IsWindowVisible(bubble)) {
+        RECT rect = {};
+        GetWindowRect(bubble, &rect);
+        if (PtInRect(&rect, point)) return;
+    }
+    const bool ai = active.enabled && active.trigger != SelectionAssistantSettings::Trigger::Off &&
+                    (active.trigger != SelectionAssistantSettings::Trigger::AltMenu || alt);
+    if (!ai && !active.characterCount) return;
+    gesturePoint = point;
+    gestureAlt = alt;
+    SetTimer(hidden.load(), kTimerCapture, 160, nullptr);
+}
+
+void SelectionAssistant::Impl::OnCaptured(const Capture& capture) {
+    if (capture.serial != captureSerial || phase != Phase::Hidden) return;
+    if (composing && composing()) return;
+    const std::wstring process = ProcessName(capture.window);
+    if (process.empty() || process.rfind(L"iroha", 0) == 0 ||
+        std::find(active.excludedApps.begin(), active.excludedApps.end(), process) != active.excludedApps.end()) {
+        return;
+    }
+    const bool hasText = capture.text && !TrimWhitespace(*capture.text).empty();
+    if (!hasText && !capture.textControl) return;
+    // 同じ選択を続けて拾わない（macOS版と同じ 0.75 秒）
+    const std::u32string fingerprint = Utf16ToUtf32(process) + U"|" + capture.text.value_or(U"?");
+    const auto now = std::chrono::steady_clock::now();
+    if (fingerprint == lastFingerprint && now - lastFingerprintTime < std::chrono::milliseconds(750)) return;
+    lastFingerprint = fingerprint;
+    lastFingerprintTime = now;
+
+    const bool ai = active.enabled && active.trigger != SelectionAssistantSettings::Trigger::Off &&
+                    (active.trigger != SelectionAssistantSettings::Trigger::AltMenu || gestureAlt);
+    const std::u32string label = active.characterCount && hasText ? CharacterCount(*capture.text).Summary() : U"";
+    bubbleCapture = capture;
+    if (!ai) {
+        if (!label.empty()) ShowBubble(capture.point, label, /*clickable=*/false, 4000);
+        return;
+    }
+    if (active.trigger == SelectionAssistantSettings::Trigger::Bubble) {
+        ShowBubble(capture.point, label, /*clickable=*/true, 4000);
+        return;
+    }
+    // すぐにメニューを出す（文字数はメニューの脇に表示だけ）
+    if (!label.empty()) ShowBubble(capture.point, label, /*clickable=*/false, 4000);
+    ShowMenu(capture);
+}
+
+// アイコン（と文字数）・知らせを、マウスの右下に出す
+void SelectionAssistant::Impl::ShowBubble(POINT point, const std::u32string& label, bool clickable, int milliseconds) {
+    HWND owner = hidden.load();
+    if (!bubble) {
+        bubble = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kBubbleClass, L"iroha", WS_POPUP, 0,
+                                 0, 10, 10, nullptr, nullptr, GetModuleHandleW(nullptr), this);
+        if (!bubble) return;
+    }
+    bubbleLabel = label;
+    bubbleClickable = clickable;
+    const UINT dpi = GetDpiForWindow(bubble);
+    const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
+    if (bubbleFont) DeleteObject(bubbleFont);
+    if (iconFont) DeleteObject(iconFont);
+    bubbleFont = CreateFontW(-scale(12), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Yu Gothic UI");
+    iconFont = CreateFontW(-scale(16), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                           CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI Symbol");
+    // 大きさ: アイコンだけなら丸、添え書きがあれば横長
+    int textWidth = 0;
+    if (!label.empty()) {
+        HDC dc = GetDC(bubble);
+        HGDIOBJ old = SelectObject(dc, bubbleFont);
+        const std::wstring wide = Wide(label);
+        SIZE size = {};
+        GetTextExtentPoint32W(dc, wide.c_str(), static_cast<int>(wide.size()), &size);
+        textWidth = size.cx;
+        SelectObject(dc, old);
+        ReleaseDC(bubble, dc);
+    }
+    const int height = scale(34);
+    const int width = label.empty() ? height : (clickable ? scale(30) : scale(4)) + textWidth + scale(24);
+    MONITORINFO monitor = {sizeof(monitor)};
+    GetMonitorInfoW(MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST), &monitor);
+    const int x = std::min(std::max<int>(point.x + scale(10), monitor.rcWork.left + scale(6)),
+                           static_cast<int>(monitor.rcWork.right) - width - scale(6));
+    const int y = std::min(std::max<int>(point.y + scale(14), monitor.rcWork.top + scale(6)),
+                           static_cast<int>(monitor.rcWork.bottom) - height - scale(6));
+    SetWindowRgn(bubble, CreateRoundRectRgn(0, 0, width + 1, height + 1, height, height), FALSE);
+    SetWindowPos(bubble, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    InvalidateRect(bubble, nullptr, TRUE);
+    SetTimer(owner, kTimerDismiss, static_cast<UINT>(std::max(500, milliseconds)), nullptr);
+}
+
+void SelectionAssistant::Impl::HideBubble() {
+    if (HWND owner = hidden.load()) KillTimer(owner, kTimerDismiss);
+    if (bubble) ShowWindow(bubble, SW_HIDE);
+}
+
+// プリセットのメニュー（macOS版 SelectionMenuController）。選んだら、読めなかった文章はここで Ctrl+C で取る
+void SelectionAssistant::Impl::ShowMenu(const Capture& capture) {
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"iroha");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kMenuOnDemand, L"AIに指示...");
+    bool separated = false;
+    for (size_t i = 0; i < active.presets.size(); ++i) {
+        const auto& preset = active.presets[i];
+        if (!preset.enabled) continue;
+        if (!separated) AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        separated = true;
+        std::u32string name = TrimWhitespace(preset.name).empty() ? U"プリセット" + Utf8ToUtf32(std::to_string(i + 1))
+                                                                  : preset.name;
+        std::replace(name.begin(), name.end(), U'\n', U' ');
+        if (name.size() > 42) name = name.substr(0, 42) + U"…";
+        AppendMenuW(menu, MF_STRING, static_cast<UINT>(i + 1), Wide(name).c_str());
+    }
+    // メニューは前面の窓のものでないとすぐ閉じるので、アイコンの窓を前面にして出す
+    if (!bubble) {
+        bubble = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kBubbleClass, L"iroha", WS_POPUP, 0,
+                                 0, 10, 10, nullptr, nullptr, GetModuleHandleW(nullptr), this);
+    }
+    BringToForeground(bubble);
+    const UINT choice = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
+                                         capture.point.x, capture.point.y, bubble, nullptr);
+    PostMessageW(bubble, WM_NULL, 0, 0);
+    DestroyMenu(menu);
+    HideBubble();
+    if (choice == 0 || !capture.window || !IsWindow(capture.window)) {
+        if (capture.window && IsWindow(capture.window)) SetForegroundWindow(capture.window);
+        return;
+    }
+    std::optional<std::u32string> selected;
+    if (capture.text && !TrimWhitespace(*capture.text).empty()) {
+        selected = capture.text;
+        SetForegroundWindow(capture.window);
+    } else {
+        selected = CaptureSelection(capture.window);
+    }
+    RunAction(choice == kMenuOnDemand ? kOnDemandHotkeyId : static_cast<int>(choice) - 1, capture.window, selected);
+}
+
+LRESULT CALLBACK SelectionAssistant::Impl::BubbleProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == WM_NCCREATE) {
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                          reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams));
+    }
+    auto* self = reinterpret_cast<Impl*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!self) return DefWindowProcW(hwnd, message, wParam, lParam);
+    switch (message) {
+    case WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE; // 押しても相手のアプリのフォーカスを奪わない
+    case WM_LBUTTONUP:
+        if (self->bubbleClickable && self->bubbleCapture) {
+            const Capture capture = *self->bubbleCapture;
+            self->ShowMenu(capture);
+        }
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT paint;
+        HDC dc = BeginPaint(hwnd, &paint);
+        RECT client = {};
+        GetClientRect(hwnd, &client);
+        const UINT dpi = GetDpiForWindow(hwnd);
+        const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
+        // 背景（明るい面）と縁
+        HBRUSH background = CreateSolidBrush(RGB(0xFB, 0xFB, 0xFD));
+        HPEN border = CreatePen(PS_SOLID, 1, RGB(0xC8, 0xCB, 0xD3));
+        HGDIOBJ oldBrush = SelectObject(dc, background);
+        HGDIOBJ oldPen = SelectObject(dc, border);
+        RoundRect(dc, 0, 0, client.right, client.bottom, client.bottom, client.bottom);
+        SelectObject(dc, oldBrush);
+        SelectObject(dc, oldPen);
+        DeleteObject(background);
+        DeleteObject(border);
+        SetBkMode(dc, TRANSPARENT);
+        int x = scale(12);
+        if (self->bubbleClickable) {
+            // アイコン（macOS版の sparkles にあたる記号）
+            SelectObject(dc, self->iconFont);
+            SetTextColor(dc, RGB(0x4F, 0x5B, 0xD5));
+            RECT icon = {self->bubbleLabel.empty() ? 0 : x - scale(2), 0,
+                         self->bubbleLabel.empty() ? client.right : x + scale(22), client.bottom};
+            DrawTextW(dc, L"\u2726", 1, &icon, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            x += scale(24);
+        }
+        if (!self->bubbleLabel.empty()) {
+            SelectObject(dc, self->bubbleFont);
+            SetTextColor(dc, RGB(0x20, 0x22, 0x28));
+            RECT text = {x, 0, client.right - scale(10), client.bottom};
+            const std::wstring wide = Wide(self->bubbleLabel);
+            DrawTextW(dc, wide.c_str(), static_cast<int>(wide.size()), &text,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+        }
+        EndPaint(hwnd, &paint);
+        return 0;
+    }
     default:
         break;
     }

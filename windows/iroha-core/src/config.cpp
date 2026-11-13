@@ -158,6 +158,11 @@ Config LoadConfig(const std::filesystem::path& path) {
         config.selectionOnDemandHotkey = hotkey->string;
     }
     text("selectionExcludedApps", &config.selectionExcludedApps);
+    text("selectionTriggerMode", &config.selectionTriggerMode);
+    if (const json::Value* count = root.Find("selectionCharacterCount");
+        count && count->type == json::Value::Type::Bool) {
+        config.selectionCharacterCount = count->boolean;
+    }
     if (const json::Value* voice = root.Find("voiceInputEnabled"); voice && voice->type == json::Value::Type::Bool) {
         config.voiceInput = voice->boolean;
     }
@@ -220,6 +225,8 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                            ? ",\"selectionOnDemandHotkey\":" + json::QuoteString(*config.selectionOnDemandHotkey)
                            : std::string()) +
                       ",\"selectionExcludedApps\":" + json::QuoteString(config.selectionExcludedApps) +
+                      ",\"selectionTriggerMode\":" + json::QuoteString(config.selectionTriggerMode) +
+                      ",\"selectionCharacterCount\":" + (config.selectionCharacterCount ? "true" : "false") +
                       EncodeSelectionPresets(config) +
                       ",\"voiceInputEnabled\":" + (config.voiceInput ? "true" : "false") +
                       ",\"voiceInputHoldKey\":" + json::QuoteString(config.voiceInputHoldKey) +

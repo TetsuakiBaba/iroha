@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.21)
 project(iroha-core LANGUAGES CXX)
 
 add_library(iroha-core STATIC
+    src/character_count.cpp
     src/chunked_conversion_engine.cpp
     src/ai_conversion.cpp
     src/ai_fix.cpp

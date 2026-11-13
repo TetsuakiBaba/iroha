@@ -11,7 +11,7 @@
 //                type==Convert のとき u32 n, string reading, string context
 //                type==Record  のとき string reading, string committed, string baseline
 //                type==SessionKey  のとき u64 session, u32 key, u32 character, u32 flags,
-//                                         string leftContext
+//                                         string leftContext, u32 tipRevision（後から足した。無ければ前の版の TIP）
 //                type==SessionPoll のとき u64 session, u64 revision
 //                type==SessionEnd  のとき u64 session
 //   レスポンス:  u32 version, u32 status(0=ok),
@@ -58,6 +58,9 @@
 namespace iroha::ipc {
 
 constexpr uint32_t kProtocolVersion = 1;
+// TIP の版。変換サーバは、これより古い（送ってこない）TIP を読み込んだままのアプリを知らせる。
+// TIP と変換サーバの間で、新しい機能のために TIP を入れ替える必要が出たら上げる
+constexpr uint32_t kTipRevision = 2;
 constexpr DWORD kMaxMessageBytes = 64 * 1024;
 
 enum class MessageType : uint32_t {
@@ -234,6 +237,7 @@ inline std::vector<char> BuildSessionKeyRequest(uint64_t sessionId, SessionKey k
     PutU32(&buf, static_cast<uint32_t>(character));
     PutU32(&buf, (shift ? kKeyFlagShift : 0) | (leftContext ? kKeyFlagHasLeftContext : 0));
     PutString(&buf, leftContext ? Utf32ToUtf8(*leftContext) : std::string());
+    PutU32(&buf, kTipRevision);
     return buf;
 }
 
