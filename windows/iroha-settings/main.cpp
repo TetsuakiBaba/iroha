@@ -126,6 +126,7 @@ enum ControlId {
     kIdFullWidthSpace,
     kIdVoice,
     kIdVoiceKey,
+    kIdVoiceToggleHotkey,
     kIdDelimited,
     kIdDelimitedStart,
     kIdDelimitedEnd,
@@ -349,7 +350,8 @@ struct App {
     HWND typoDelay = nullptr, typoMinLength = nullptr, typoThreshold = nullptr, typoThresholdDefault = nullptr;
     HWND predictiveToggle = nullptr, historyReset = nullptr;
     HWND punctuationCombo = nullptr, spaceToggle = nullptr;
-    HWND voiceToggle = nullptr, voiceKeyCombo = nullptr;
+    HWND voiceToggle = nullptr, voiceKeyCombo = nullptr, voiceToggleHotkey = nullptr;
+    Row* voiceToggleHotkeyRow = nullptr;
     HWND delimitedToggle = nullptr, delimitedStart = nullptr, delimitedEnd = nullptr;
     HWND aiFixToggle = nullptr, aiFixThreshold = nullptr, aiFixShortcut = nullptr;
     Row* typoRow = nullptr;
@@ -690,19 +692,32 @@ void App::BuildInputPage() {
     voiceRow = page->AddItem(
         L"「こえ」モードを使う", L"",
         L"ON の間、下で決めたキーを押している間だけマイクで録音し、キーを離すと、話した内容を入力中の文字（未確定文字列）に"
-        L"入れます。確定はしません。話した内容は読み（ひらがな）に戻してから iroha のかな漢字変換に通すので、キーボードで"
+        L"入れます（押して始め、もう一度押して終えるキーでも録音できます）。確定はしません。話した内容は読み（ひらがな）に戻してから iroha のかな漢字変換に通すので、キーボードで"
         L"打ったときと同じように、Space で候補を選ぶ・続きをキーボードで打つ・Enter で確定する、ができます。"
         L"英字・数字は読みに戻さず、音声認識が出した表記のまま入ります。話している間は、途中結果が入力中の文字として"
         L"見えます。キーを押してすぐ離したとき、押している間にほかのキーを使ったとき（ショートカット）は録音を捨てます。"
         L"音声認識は Windows の音声認識（SAPI）がこのコンピュータの中で行い、音声を外部に送りません。"
         L"声で入れた文は、変換の学習・変換記録・入力履歴に残しません。");
     voiceRow->right = {{voiceToggle, 110}};
-    voiceKeyCombo = MakeCombo(page, kIdVoiceKey, {L"右 Ctrl", L"右 Shift"});
-    Row* voiceKey = page->AddItem(L"押している間だけ録音するキー", L"",
-                                  L"このキーだけを押し続けている間、録音します。ほかのキーと一緒に押したとき（右 Ctrl+C など）は"
-                                  L"録音しません。キーはアプリにもそのまま届きます。");
-    voiceKey->right = {{voiceKeyCombo, 120, 32, 120}};
+    voiceKeyCombo = MakeCombo(page, kIdVoiceKey, {L"右 Ctrl", L"右 Shift", L"「かな」キー", L"使わない"});
+    Row* voiceKey = page->AddItem(
+        L"押している間だけ録音するキー", L"",
+        L"このキーだけを押し続けている間、録音します。ほかのキーと一緒に押したとき（右 Ctrl+C など）は録音しません。"
+        L"右 Ctrl・右 Shift はアプリにもそのまま届きます。「かな」キーは Mac のキーボードの「かな」、Windows の日本語"
+        L"キーボードの「ひらがな」で、短く押すと今までどおりかなに切り替わり、押し続けると録音します（英数モードからでも使えます）。"
+        L"右 Shift を 8 秒以上押し続けると、Windows がフィルター キーを有効にするかを尋ねます。Mac の JIS キーボードには"
+        L"右 Ctrl がありません。リモートデスクトップでは、「かな」を離したことが届かない接続があります（「キーの確認...」で"
+        L"「離した」が出るかで確かめられます）。そのときは下の、押して始め・もう一度押して終えるキーを使います。");
+    voiceKey->right = {{voiceKeyCombo, 120, 32, 160}};
     voiceKey->enabled = [this] { return config.voiceInput; };
+    voiceToggleHotkey = MakeEdit(page, kIdVoiceToggleHotkey, L"例: Ctrl+Alt+K");
+    voiceToggleHotkeyRow = page->AddItem(
+        L"押して始め、もう一度押して終えるキー", L"",
+        L"1 回押すと録音を始め、もう一度押すと録音を終えて、話した内容を入れます。押し続けなくてよいので、どのキーボードでも"
+        L"使えます。録音中に Esc などほかのキーを押すと、録音を捨てます。英数モードで押したときは、かなに切り替えてから録音します。"
+        L"「Ctrl+Alt+K」のように、Ctrl・Alt・Shift とキーを + でつないで書きます。空にすると使いません。");
+    voiceToggleHotkeyRow->right = {{voiceToggleHotkey, 180, 30}};
+    voiceToggleHotkeyRow->enabled = [this] { return config.voiceInput; };
 
     page->AddHeader(L"区切り記号で英字を入力",
                     L"かな入力のまま、開始の記号を打つと英字入力になり、終わりの記号を打つまで打ったとおりの英字が入ります"
@@ -1243,7 +1258,13 @@ void App::Refresh() {
     SendMessageW(punctuationCombo, CB_SETCURSEL, Wide(config.punctuation) == kPunctuations[1] ? 1 : 0, 0);
     SetCheck(spaceToggle, config.fullWidthSpace);
     SetCheck(voiceToggle, config.voiceInput);
-    SendMessageW(voiceKeyCombo, CB_SETCURSEL, config.voiceInputHoldKey == "rightShift" ? 1 : 0, 0);
+    SendMessageW(voiceKeyCombo, CB_SETCURSEL,
+                 config.voiceInputHoldKey == "rightShift" ? 1
+                 : config.voiceInputHoldKey == "kana"     ? 2
+                 : config.voiceInputHoldKey == "none"     ? 3
+                                                          : 0,
+                 0);
+    SetWindowTextW(voiceToggleHotkey, Wide(config.voiceInputToggleHotkey).c_str());
     if (!voiceEngineChecked) {
         // 日本語の認識エンジンがあるか（開いたときに 1 回だけ調べる）
         voiceEngineChecked = true;
@@ -2164,7 +2185,17 @@ void App::OnCommand(int id, int code, HWND control) {
         if (clicked) Update([&](iroha::Config& c) { c.voiceInput = Checked(control); });
         return;
     case kIdVoiceKey:
-        if (selected) Update([&](iroha::Config& c) { c.voiceInputHoldKey = comboIndex() == 1 ? "rightShift" : "rightControl"; });
+        if (selected) {
+            static const char* const kHoldKeys[] = {"rightControl", "rightShift", "kana", "none"};
+            const int index = comboIndex();
+            Update([&](iroha::Config& c) { c.voiceInputHoldKey = kHoldKeys[index >= 0 && index < 4 ? index : 0]; });
+        }
+        return;
+    case kIdVoiceToggleHotkey:
+        if (left) {
+            SaveShortcut(control, PageFor(L"input"), voiceToggleHotkeyRow, L"",
+                         [](iroha::Config& c, const std::string& text) { c.voiceInputToggleHotkey = text; });
+        }
         return;
     case kIdDelimited:
         if (clicked) Update([&](iroha::Config& c) { c.delimitedAlphabet = Checked(control); });

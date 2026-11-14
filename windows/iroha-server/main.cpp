@@ -371,7 +371,8 @@ struct ServerState {
         const auto fixShortcut = iroha::KeyShortcut::Parse(config.aiFixShortcut);
         sessionSettings.aiFixShortcut = fixShortcut ? fixShortcut->Encode() : 0;
         sessionSettings.aiFixShortcutLabel = fixShortcut ? iroha::Utf8ToUtf32(config.aiFixShortcut) : U"";
-        // 「こえ」モード: 押している間録音するキー（TIP に渡す仮想キーコード。右 Ctrl か右 Shift）
+        // 「こえ」モード: 押している間録音するキー（TIP に渡す仮想キーコード。右 Ctrl・右 Shift・「かな」）と、
+        // 押して始め・もう一度押して終えるキー
         sessionSettings.voiceInput = config.voiceInput;
         sessionSettings.documentContext = config.documentContext;
         const auto privateShortcut = iroha::KeyShortcut::Parse(config.privateModeHotkey);
@@ -381,7 +382,9 @@ struct ServerState {
         // デバッグ表示は開発者モードが ON のときだけ（macOS版と同じ）
         sessionSettings.developerOverlay = config.developerMode && config.developerOverlay;
         learningEnabled = config.learningEnabled;
-        sessionSettings.voiceKey = config.voiceInputHoldKey == "rightShift" ? VK_RSHIFT : VK_RCONTROL;
+        sessionSettings.voiceKey = iroha::VoiceHoldKeyCode(config.voiceInputHoldKey);
+        const auto voiceToggleShortcut = iroha::KeyShortcut::Parse(config.voiceInputToggleHotkey);
+        sessionSettings.voiceToggleShortcut = voiceToggleShortcut ? voiceToggleShortcut->Encode() : 0;
         sessionSettings.delimitedAlphabet = config.delimitedAlphabet;
         sessionSettings.delimitedStart = symbol(config.delimitedAlphabetStart);
         sessionSettings.delimitedEnd = symbol(config.delimitedAlphabetEnd);

@@ -179,6 +179,7 @@ Config LoadConfig(const std::filesystem::path& path) {
         config.voiceInput = voice->boolean;
     }
     text("voiceInputHoldKey", &config.voiceInputHoldKey);
+    text("voiceInputToggleHotkey", &config.voiceInputToggleHotkey);
     text("updateCheckURL", &config.updateCheckURL);
     for (size_t i = 0; i < config.selectionPresets.size(); ++i) {
         const std::string prefix = "selPreset" + std::to_string(i);
@@ -250,6 +251,7 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                       EncodeSelectionPresets(config) +
                       ",\"voiceInputEnabled\":" + (config.voiceInput ? "true" : "false") +
                       ",\"voiceInputHoldKey\":" + json::QuoteString(config.voiceInputHoldKey) +
+                      ",\"voiceInputToggleHotkey\":" + json::QuoteString(config.voiceInputToggleHotkey) +
                       ",\"autoUpdateCheck\":" + (config.autoUpdateCheck ? "true" : "false") +
                       (config.updateCheckURL.empty() ? std::string()
                                                      : ",\"updateCheckURL\":" + json::QuoteString(config.updateCheckURL)) +
@@ -264,6 +266,13 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
     }
     std::filesystem::rename(tmp, path, ec);
     return !ec;
+}
+
+uint32_t VoiceHoldKeyCode(const std::string& name) {
+    if (name == "rightShift") return kVoiceKeyRightShift;
+    if (name == "kana") return kVoiceKeyKana;
+    if (name == "none") return 0;
+    return kVoiceKeyRightControl;
 }
 
 } // namespace iroha

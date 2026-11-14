@@ -134,6 +134,8 @@ struct SessionOutput {
     bool voicePending = false;
     uint32_t voiceKey = 0;
     std::u32string voiceNotice;
+    // 押して録音を始め、もう一度押して終えるキー（KeyShortcut::Encode。0 なら使わない）
+    uint32_t voiceToggleShortcut = 0;
     // プライベートモードを切り替えるキー（KeyShortcut::Encode。0 なら割り当てなし）
     uint32_t privateModeShortcut = 0;
     // デバッグ表示（開発者モード）: カーソルの右下に出す行（改行で区切る。空なら出さない）
@@ -190,6 +192,8 @@ struct SessionSettings {
     // 「こえ」モード（macOS版の VoiceInputSettings。既定 OFF）: 押している間録音するキー（仮想キーコード。TIP に渡す）
     bool voiceInput = false;
     uint32_t voiceKey = 0;
+    // 押して録音を始め、もう一度押して終えるキー（KeyShortcut::Encode。0 なら割り当てなし。TIP に渡す）
+    uint32_t voiceToggleShortcut = 0;
     // アプリの文章（TIP が送る左文脈）を使うか（OFF なら直前に確定した文字列だけを文脈にする）
     bool documentContext = true;
     // プライベートモードを切り替えるキー（TIP に渡す。KeyShortcut::Encode。0 なら割り当てなし）

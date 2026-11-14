@@ -265,6 +265,7 @@ STDMETHODIMP TextService::Deactivate() {
         ConvertClient::SendKey(sessionId_, iroha::SessionKey::VoiceCancel, 0, false, nullptr, &ignored);
     }
     voiceHeld_ = false;
+    voiceToggled_ = false;
     SetVoiceContext(nullptr);
     if (sessionId_ != 0) {
         ConvertClient::EndSession(sessionId_);
@@ -543,6 +544,7 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
     idleUndoable_ = output.undoableCommit;
     idleFullWidthSpace_ = output.fullWidthSpace;
     voiceKey_ = output.voiceKey;
+    voiceToggleShortcut_ = output.voiceToggleShortcut;
     privateShortcut_ = output.privateModeShortcut;
     inputModeShortcut_ = output.inputModeShortcut;
     liveConversion_ = output.liveConversion;
@@ -997,12 +999,34 @@ STDMETHODIMP TextService::OnSetFocus(BOOL foreground) {
 
 // ---- 「こえ」モード ----
 
-// 決めたキー（右 Ctrl・右 Shift）か。右 Ctrl は拡張キーの印、右 Shift はスキャンコード（0x36）で見分ける
+namespace {
+
+// 「かな」キー（Mac の「かな」= USB の LANG1、Windows の「ひらがな」）か。DecideKey の「かなにする」と同じ見分け方
+bool IsKanaKey(WPARAM wParam, LPARAM lParam) {
+    const UINT scanCode = (lParam >> 16) & 0xFF;
+    return scanCode == 0x72 || scanCode == 0xF2 || wParam == 0x16 /* VK_IME_ON */ || wParam == 0xF2 /* VK_DBE_HIRAGANA */;
+}
+
+} // namespace
+
+// 決めたキー（右 Ctrl・右 Shift・「かな」）か。右 Ctrl は拡張キーの印、右 Shift はスキャンコード（0x36）で見分ける。
+// 「かな」は英数モードでも受ける（押すとかなにして、押したままなら録音する）
 bool TextService::IsVoiceKeyEvent(WPARAM wParam, LPARAM lParam) const {
-    if (voiceKey_ == 0 || directMode_) return false;
+    if (voiceKey_ == 0) return false;
+    if (voiceKey_ == iroha::kVoiceKeyKana) return IsKanaKey(wParam, lParam);
+    if (directMode_) return false;
     if (voiceKey_ == VK_RCONTROL) return (wParam == VK_CONTROL || wParam == VK_RCONTROL) && (lParam & (1 << 24)) != 0;
     if (voiceKey_ == VK_RSHIFT) return (wParam == VK_SHIFT || wParam == VK_RSHIFT) && ((lParam >> 16) & 0xFF) == 0x36;
     return false;
+}
+
+// 押して録音を始め、もう一度押して終えるキーか（修飾キーまで一致したとき）
+bool TextService::IsVoiceToggleEvent(WPARAM wParam) const {
+    if (voiceToggleShortcut_ == 0) return false;
+    const iroha::KeyShortcut shortcut = iroha::KeyShortcut::Decode(voiceToggleShortcut_);
+    return shortcut.vk == wParam && shortcut.control == ((GetKeyState(VK_CONTROL) & 0x8000) != 0) &&
+           shortcut.alt == ((GetKeyState(VK_MENU) & 0x8000) != 0) &&
+           shortcut.shift == ((GetKeyState(VK_SHIFT) & 0x8000) != 0);
 }
 
 // 決めたキー以外の修飾キーが押されているか（一緒に押したときはショートカットなので録音しない）
@@ -1011,6 +1035,21 @@ bool TextService::OtherModifiersDown() const {
     const bool otherControl = voiceKey_ == VK_RCONTROL ? down(VK_LCONTROL) : down(VK_CONTROL);
     const bool otherShift = voiceKey_ == VK_RSHIFT ? down(VK_LSHIFT) : down(VK_SHIFT);
     return otherControl || otherShift || down(VK_MENU) || down(VK_LWIN) || down(VK_RWIN);
+}
+
+// 録音を始める（押している間の録音か、押して始めた録音か）
+void TextService::StartVoice(ITfContext* context, WPARAM wParam, bool toggled) {
+    voiceHeld_ = true;
+    voiceToggled_ = toggled;
+    // 離したことを取りこぼしたときに読むキー。「かな」は経路（リモートデスクトップなど）によって離したことが
+    // キーの状態に出ないことがあるので、押した時点で押されていると読めたときだけ読む
+    voiceHeldKey_ = voiceKey_ == iroha::kVoiceKeyKana ? static_cast<uint32_t>(wParam) : voiceKey_;
+    voiceHeldPolled_ = !toggled && (GetAsyncKeyState(static_cast<int>(voiceHeldKey_)) & 0x8000) != 0;
+    SetVoiceContext(context);
+    if (FAILED(SendSessionKey(context, iroha::SessionKey::VoiceStart, 0, false))) {
+        voiceHeld_ = false;
+        voiceToggled_ = false;
+    }
 }
 
 void TextService::SetVoiceContext(ITfContext* context) {
@@ -1036,7 +1075,9 @@ void TextService::LoadVoiceKeyFromConfig() {
     const std::wstring path = std::wstring(localAppData) + L"\\iroha\\config.json";
     free(localAppData);
     const iroha::Config config = iroha::LoadConfig(std::filesystem::path(path));
-    voiceKey_ = !config.voiceInput ? 0 : config.voiceInputHoldKey == "rightShift" ? VK_RSHIFT : VK_RCONTROL;
+    voiceKey_ = config.voiceInput ? iroha::VoiceHoldKeyCode(config.voiceInputHoldKey) : 0;
+    const auto voiceToggleShortcut = iroha::KeyShortcut::Parse(config.voiceInputToggleHotkey);
+    voiceToggleShortcut_ = config.voiceInput && voiceToggleShortcut ? voiceToggleShortcut->Encode() : 0;
     const auto privateShortcut = iroha::KeyShortcut::Parse(config.privateModeHotkey);
     privateShortcut_ = privateShortcut ? privateShortcut->Encode() : 0;
     const auto inputModeShortcut = iroha::KeyShortcut::Parse(config.inputModeHotkey);
@@ -1050,14 +1091,23 @@ void TextService::LoadVoiceKeyFromConfig() {
 STDMETHODIMP TextService::OnTestKeyDown(ITfContext* context, WPARAM wParam,
                                         LPARAM lParam, BOOL* eaten) {
     if (!eaten) return E_INVALIDARG;
-    // 「こえ」モードのキー: 押した最初の 1 回だけ受けて OnKeyDown で送る（キーはアプリにも渡す）
-    if (IsVoiceKeyEvent(wParam, lParam)) {
-        *eaten = context != nullptr && !voiceHeld_ && (lParam & (1 << 30)) == 0 && !OtherModifiersDown();
+    // 「こえ」モードの押して始め・もう一度押して終えるキー: 受けて OnKeyDown で送る（アプリには渡さない）
+    if (IsVoiceToggleEvent(wParam)) {
+        *eaten = context != nullptr;
         return S_OK;
     }
-    // 押している間にほかのキーが来た: ショートカットに使っている（録音を捨てる）
-    if (voiceHeld_) {
+    // 「こえ」モードの押している間のキー: 押した最初の 1 回だけ受けて OnKeyDown で送る（キーはアプリにも渡す）。
+    // 「かな」はいつも受ける（かなにするキーなので、アプリには渡さない）
+    if (IsVoiceKeyEvent(wParam, lParam)) {
+        *eaten = context != nullptr && (voiceKey_ == iroha::kVoiceKeyKana ||
+                                        (!voiceHeld_ && (lParam & (1 << 30)) == 0 && !OtherModifiersDown()));
+        return S_OK;
+    }
+    // 押している間にほかのキーが来た: ショートカットに使っている（録音を捨てる）。押して始めた録音は、
+    // 修飾キー（終えるキーの Ctrl・Alt など）では捨てず、ほかのキー（Esc など）で捨てる
+    if (voiceHeld_ && !(voiceToggled_ && IsModifierKey(wParam))) {
         voiceHeld_ = false;
+        voiceToggled_ = false;
         SendVoiceKeyAsync(iroha::SessionKey::VoiceCancel);
     }
     *eaten = (context != nullptr &&
@@ -1072,12 +1122,36 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* context, WPARAM wParam, LPARAM l
     if (!eaten) return E_INVALIDARG;
     *eaten = FALSE;
     if (!context) return S_OK;
+    if (IsVoiceToggleEvent(wParam)) {
+        *eaten = TRUE;
+        if ((lParam & (1 << 30)) != 0) return S_OK; // 押し続けたときの繰り返し
+        if (voiceToggled_ && shown_.voicePending) {
+            // 録音中にもう一度押した: そこまでの音声を認識して入れる
+            voiceHeld_ = false;
+            voiceToggled_ = false;
+            SendSessionKey(context, iroha::SessionKey::VoiceStop, 0, false);
+            return S_OK;
+        }
+        if (directMode_) {
+            KeyDecision kana;
+            kana.kind = KeyDecision::Kind::SetKanaMode;
+            bool passToApp = false;
+            HandleKey(context, kana, &passToApp);
+        }
+        StartVoice(context, wParam, /*toggled=*/true);
+        return S_OK;
+    }
     if (IsVoiceKeyEvent(wParam, lParam)) {
+        if (voiceKey_ == iroha::kVoiceKeyKana) {
+            // 今までどおりかなにする（押してすぐ離せば、録音は始まる前に捨てられる）
+            *eaten = TRUE;
+            KeyDecision kana;
+            kana.kind = KeyDecision::Kind::SetKanaMode;
+            bool passToApp = false;
+            HandleKey(context, kana, &passToApp);
+        }
         if (!voiceHeld_ && (lParam & (1 << 30)) == 0 && !OtherModifiersDown()) {
-            voiceHeld_ = true;
-            SetVoiceContext(context);
-            const HRESULT hr = SendSessionKey(context, iroha::SessionKey::VoiceStart, 0, false);
-            if (FAILED(hr)) voiceHeld_ = false;
+            StartVoice(context, wParam, /*toggled=*/false);
         }
         return S_OK;
     }
@@ -1100,14 +1174,14 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* context, WPARAM wParam, LPARAM l
 // 「こえ」モードのキーを離した: OnKeyUp で送る（キーはアプリにも渡す）
 STDMETHODIMP TextService::OnTestKeyUp(ITfContext* context, WPARAM wParam, LPARAM lParam, BOOL* eaten) {
     if (!eaten) return E_INVALIDARG;
-    *eaten = context != nullptr && voiceHeld_ && IsVoiceKeyEvent(wParam, lParam);
+    *eaten = context != nullptr && voiceHeld_ && !voiceToggled_ && IsVoiceKeyEvent(wParam, lParam);
     return S_OK;
 }
 
 STDMETHODIMP TextService::OnKeyUp(ITfContext* context, WPARAM wParam, LPARAM lParam, BOOL* eaten) {
     if (!eaten) return E_INVALIDARG;
     *eaten = FALSE;
-    if (context && voiceHeld_ && IsVoiceKeyEvent(wParam, lParam)) {
+    if (context && voiceHeld_ && !voiceToggled_ && IsVoiceKeyEvent(wParam, lParam)) {
         voiceHeld_ = false;
         SendSessionKey(context, iroha::SessionKey::VoiceStop, 0, false);
     }

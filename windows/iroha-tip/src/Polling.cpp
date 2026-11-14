@@ -68,7 +68,7 @@ void TextService::DestroyPollWindow() {
 void TextService::OnPollTimer() {
     if (!polling_) return;
     // 「こえ」モードのキーを離したことが届かなかった（押している間に入力先が変わったなど）
-    if (voiceHeld_ && (GetAsyncKeyState(static_cast<int>(voiceKey_)) & 0x8000) == 0) {
+    if (voiceHeld_ && voiceHeldPolled_ && (GetAsyncKeyState(static_cast<int>(voiceHeldKey_)) & 0x8000) == 0) {
         voiceHeld_ = false;
         SendVoiceKeyAsync(iroha::SessionKey::VoiceStop);
     }

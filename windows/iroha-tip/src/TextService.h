@@ -133,10 +133,13 @@ private:
     // 手元の表示の控えを捨てる（合成が終わった）
     void ClearShown();
 
-    // 「こえ」モード: 決めたキー（右 Ctrl か右 Shift）の押下・解放を変換サーバに送る。
-    // 押している間にほかのキーが来たら取り消しを送る（ショートカットに使っている）
+    // 「こえ」モード: 決めたキー（右 Ctrl・右 Shift・「かな」）の押下・解放を変換サーバに送る。
+    // 押している間にほかのキーが来たら取り消しを送る（ショートカットに使っている）。
+    // 押して始め・もう一度押して終えるキー（設定 voiceInputToggleHotkey）でも始め・終える
     bool IsVoiceKeyEvent(WPARAM wParam, LPARAM lParam) const;
+    bool IsVoiceToggleEvent(WPARAM wParam) const;
     bool OtherModifiersDown() const;
+    void StartVoice(ITfContext* context, WPARAM wParam, bool toggled);
     // キーの処理の外から送る（取り消し・取りこぼした解放）。返事は非同期で反映する
     void SendVoiceKeyAsync(iroha::SessionKey key);
     void SetVoiceContext(ITfContext* context);
@@ -195,6 +198,12 @@ private:
     bool predictive_ = false;
     std::u32string punctuation_ = U"、。";
     bool voiceHeld_ = false;
+    // 押して始め・もう一度押して終えるキー（KeyShortcut::Encode。0 なら使わない）と、今の録音をそれで始めたか
+    uint32_t voiceToggleShortcut_ = 0;
+    bool voiceToggled_ = false;
+    // 離したことを取りこぼしたときに状態を読むキー（読めないキーなら voiceHeldPolled_ が偽）
+    uint32_t voiceHeldKey_ = 0;
+    bool voiceHeldPolled_ = false;
     ITfContext* voiceContext_ = nullptr;
     // 予測変換の候補の小窓と、知らせの小窓
     CandidateWindow predictionWindow_;

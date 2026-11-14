@@ -107,9 +107,12 @@ struct Config {
     std::string selectionTriggerMode = "bubble";
     bool selectionCharacterCount = false;
     // 「こえ」モード（既定 OFF。macOS版と同じキーの名前）: 押している間録音するキー
-    // （"rightControl"（既定）か "rightShift"。macOS版は "rightCommand" / "rightOption"）
+    // （"rightControl"（既定）・"rightShift"・"kana"（Mac の「かな」・Windows の「ひらがな」）・"none"。
+    // macOS版は "rightCommand" / "rightOption"）と、押して録音を始め、もう一度押して終えるキー
+    // （Windows版だけ。KeyShortcut の形。空なら割り当てなし。2026-11-14、右 Ctrl の無い Mac の JIS キーボードのため）
     bool voiceInput = false;
     std::string voiceInputHoldKey = "rightControl";
+    std::string voiceInputToggleHotkey = "Ctrl+Alt+K";
     // アップデートを 1 日 1 回自動で確認する（既定 ON。macOS版の autoUpdateCheck）と、確認先の上書き
     // （空なら GitHub の最新の Release。プレリリースで試すとき用。macOS版の updateCheckURL）
     bool autoUpdateCheck = true;
@@ -118,5 +121,12 @@ struct Config {
 
 Config LoadConfig(const std::filesystem::path& path);
 bool SaveConfig(const std::filesystem::path& path, const Config& config);
+
+// 「こえ」モードの押している間録音するキー（voiceInputHoldKey）を、TIP に渡す仮想キーコードにする（0 なら使わない）。
+// 右 Ctrl は 0xA3、右 Shift は 0xA1、「かな」は目印に VK_KANA（0x15）を使う（TIP はスキャンコードでも見分ける）
+constexpr uint32_t kVoiceKeyRightControl = 0xA3;
+constexpr uint32_t kVoiceKeyRightShift = 0xA1;
+constexpr uint32_t kVoiceKeyKana = 0x15;
+uint32_t VoiceHoldKeyCode(const std::string& name);
 
 } // namespace iroha

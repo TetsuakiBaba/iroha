@@ -1558,6 +1558,7 @@ void TestSessionVoiceInput() {
     iroha::SessionSettings settings;
     settings.voiceInput = true;
     settings.voiceKey = 0xA3;
+    settings.voiceToggleShortcut = 0x3004B; // Ctrl+Alt+K
     settings.predictive = true;
     settings.conversionLog = true;
     session.SetSettings(settings);
@@ -1565,6 +1566,7 @@ void TestSessionVoiceInput() {
     const std::u32string document = U"前の行\n会議の件";
     auto output = session.Handle(Key::VoiceStart, 0, false, &document);
     EXPECT_TRUE(output.voicePending && output.voiceKey == 0xA3 && output.preedit.empty() && host.voiceStarts.size() == 1);
+    EXPECT_TRUE(output.voiceToggleShortcut == 0x3004B);
     const uint64_t generation = host.voiceStarts.back();
     EXPECT_TRUE(session.HandleVoiceEvent(generation, VoiceEventOf(Kind::Started)));
     EXPECT_EQ(session.Current().voiceNotice, U"● 聞いています");
@@ -1626,7 +1628,8 @@ void TestSessionVoiceInput() {
     session.SetSettings(settings);
     const size_t starts = host.voiceStarts.size();
     output = session.Handle(Key::VoiceStart, 0, false, nullptr);
-    EXPECT_TRUE(!output.voicePending && output.voiceKey == 0 && host.voiceStarts.size() == starts);
+    EXPECT_TRUE(!output.voicePending && output.voiceKey == 0 && output.voiceToggleShortcut == 0 &&
+                host.voiceStarts.size() == starts);
 }
 
 // 入力中に声で入れると、打った読みの続きになる。文節変換中なら、そこまでを確定してから入れる

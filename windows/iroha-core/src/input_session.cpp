@@ -2505,6 +2505,7 @@ SessionOutput InputSession::Current() const {
     output.aiShortcuts = settings_.aiShortcuts;
     output.voicePending = voicePhase_ != VoicePhase::Idle;
     output.voiceKey = settings_.voiceInput ? settings_.voiceKey : 0;
+    output.voiceToggleShortcut = settings_.voiceInput ? settings_.voiceToggleShortcut : 0;
     output.voiceNotice = voiceMessage_;
     output.privateModeShortcut = settings_.privateModeShortcut;
     output.inputModeShortcut = settings_.inputModeShortcut;

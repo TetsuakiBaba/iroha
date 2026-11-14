@@ -87,6 +87,9 @@ std::wstring Meaning(UINT vk, UINT scan, bool control, bool alt, bool shift) {
     case VK_OEM_3: if (alt) return L"かな・英数の切り替え（Alt+`）"; break;
     default: break;
     }
+    if (g_config.voiceInput && Matches(g_config.voiceInputToggleHotkey, vk, control, alt, shift)) {
+        return L"「こえ」モードの録音を始める・終える";
+    }
     if (Matches(g_config.privateModeHotkey, vk, control, alt, shift)) return L"プライベートモードの切り替え";
     if (control && !alt && vk == VK_OEM_PERIOD) return L"句読点の切り替え";
     return L"";
@@ -115,13 +118,38 @@ void AddLine(const std::wstring& line) {
     SendMessageW(g_list, LB_SETTOPINDEX, static_cast<WPARAM>(index), 0);
 }
 
-void OnKey(UINT vk, LPARAM info) {
+// かな・英数を切り替えるキー（Mac の「かな」「英数」・ひらがな・半角/全角など）。「こえ」モードで押し続けて使う
+// 「かな」を離したことが届くかを見るため、離したのも出す
+bool IsModeKey(UINT vk, UINT scan) {
+    return scan == 0x71 || scan == 0x72 || scan == 0xF1 || scan == 0xF2 || vk == 0x15 || vk == 0x16 || vk == 0x19 ||
+           vk == 0x1A || (vk >= 0xF0 && vk <= 0xF4);
+}
+
+void OnKey(UINT vk, LPARAM info, DWORD time) {
     const UINT scan = static_cast<UINT>(info & 0xFF);
     const bool extended = (info & 0x100) != 0;
     const bool up = (info & 0x200) != 0;
     const DWORD modifiers = static_cast<DWORD>(info >> 16);
     const bool control = (modifiers & 1) != 0, alt = (modifiers & 2) != 0, shift = (modifiers & 4) != 0, win = (modifiers & 8) != 0;
-    if (up && !IsModifier(vk)) return; // 離したのは修飾キーだけ出す（押したまま別のキーを押したかを見るため）
+    // 離したのは修飾キーとかな・英数のキーだけ出す（押したまま別のキーを押したか・押し続けられるかを見るため）
+    if (up && !IsModifier(vk) && !IsModeKey(vk, scan)) return;
+    // 押してから離すまでの時間（押し続けたときの繰り返しは、最初に押した時刻から数える）
+    static DWORD pressedAt[256] = {};
+    static bool pressed[256] = {};
+    std::wstring held;
+    if (vk < 256) {
+        if (!up && !pressed[vk]) {
+            pressed[vk] = true;
+            pressedAt[vk] = time;
+        } else if (up) {
+            if (pressed[vk]) {
+                wchar_t seconds[32];
+                std::swprintf(seconds, 32, L"（%.2f 秒）", static_cast<double>(time - pressedAt[vk]) / 1000.0);
+                held = seconds;
+            }
+            pressed[vk] = false;
+        }
+    }
     std::wstring keys;
     if (!IsModifier(vk)) {
         if (control) keys += L"Ctrl+";
@@ -134,7 +162,7 @@ void OnKey(UINT vk, LPARAM info) {
     wchar_t codes[96];
     std::swprintf(codes, 96, L"  仮想キー 0x%02X・スキャンコード 0x%02X%s%s", vk, scan, extended ? L"（拡張）" : L"",
                   up ? L"・離した" : L"");
-    std::wstring line = keys + codes;
+    std::wstring line = keys + codes + held;
     if (!up) {
         const std::wstring meaning = Meaning(vk, scan, control, alt, shift);
         if (!meaning.empty()) line += L"  → iroha: " + meaning;
@@ -176,7 +204,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
     case WM_APP_KEY:
-        OnKey(static_cast<UINT>(wParam), lParam);
+        OnKey(static_cast<UINT>(wParam), lParam, static_cast<DWORD>(GetMessageTime())); // 知らせを出した時刻
         return 0;
     case WM_DESTROY:
         if (g_hook) UnhookWindowsHookEx(g_hook);

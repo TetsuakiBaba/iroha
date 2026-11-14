@@ -40,8 +40,30 @@ void TestConfigDefaultsAndRoundTrip() {
     std::filesystem::remove_all(directory, ignored);
 }
 
+// 「こえ」モードのキー: 押している間のキーの名前 → 仮想キーコード、押して始め・終えるキーの既定値と保存
+void TestConfigVoiceKeys() {
+    EXPECT_TRUE(iroha::VoiceHoldKeyCode("rightControl") == 0xA3);
+    EXPECT_TRUE(iroha::VoiceHoldKeyCode("rightShift") == 0xA1);
+    EXPECT_TRUE(iroha::VoiceHoldKeyCode("kana") == iroha::kVoiceKeyKana);
+    EXPECT_TRUE(iroha::VoiceHoldKeyCode("none") == 0);
+    EXPECT_TRUE(iroha::VoiceHoldKeyCode("unknown") == 0xA3);
+
+    const std::filesystem::path directory = std::filesystem::temp_directory_path() / ("iroha-config-" + iroha::GenerateUuid());
+    const std::filesystem::path path = directory / "config.json";
+    iroha::Config config = iroha::LoadConfig(path);
+    EXPECT_TRUE(config.voiceInputHoldKey == "rightControl" && config.voiceInputToggleHotkey == "Ctrl+Alt+K");
+    config.voiceInputHoldKey = "kana";
+    config.voiceInputToggleHotkey = ""; // 割り当てなし
+    EXPECT_TRUE(iroha::SaveConfig(path, config));
+    const iroha::Config loaded = iroha::LoadConfig(path);
+    EXPECT_TRUE(loaded.voiceInputHoldKey == "kana" && loaded.voiceInputToggleHotkey.empty());
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+}
+
 void RunConfigTests() {
     TestConfigDefaultsAndRoundTrip();
+    TestConfigVoiceKeys();
 }
 
 } // namespace
