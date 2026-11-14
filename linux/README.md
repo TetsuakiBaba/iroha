@@ -159,8 +159,10 @@ IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-
   知らせないアプリではマウスポインタの近く
 - **上のバーの iroha のアイコン**（`tray_icon`、2026-11-14）: GNOME は入力ソースが 1 つだけのとき上のバーの入力ソースの表示を
   出さないので、iroha だけを入力ソースにすると「あ」もメニューも見えなくなる。そのときだけ、エンジンのプロセスが
-  StatusNotifierItem と dbusmenu を GDBus で出し、Ubuntu の AppIndicator の拡張機能（Ubuntu の既定で有効）に「あ」「A」の
-  アイコンと同じ入力メニューを出す。入力ソースが 2 つ以上なら GNOME が出すので出さない（GNOME の設定
+  StatusNotifierItem と dbusmenu を GDBus で出し、Ubuntu の AppIndicator の拡張機能（Ubuntu の既定で有効）にアイコンと
+  同じ入力メニューを出す。アイコンの絵は macOS版の入力メニューと同じ「い」「A」（`macos/Resources/main.tiff`・`en.tiff`）。
+  `linux/scripts/make-mode-icons.py` がその字形の透明度を `linux/ibus-iroha/mode_icons.h` に書き出し、エンジンが白で塗る
+  （絵を変えたら macOS版の .tiff を直してスクリプトを流し直す）。入力ソースが 2 つ以上なら GNOME が出すので出さない（GNOME の設定
   `org.gnome.desktop.input-sources sources` を見張る）。環境変数 `IROHA_TRAY_ICON=1` で常に、`=0` で出さない。
   アイコンの操作は最後にフォーカスを得たエンジンに渡す
 - 左文脈は周辺テキスト（surrounding text）から読む。確定の取り消し（Ctrl+Backspace）は周辺テキストでカーソルの手前を
@@ -255,7 +257,7 @@ macOS版の「要素の文字」（アクセシビリティで要素の文字数
   アプリに渡す）、メニューのかな・英数・句読点スタイル・プライベートモード・ライブ変換・予測変換（config.json が書き換わり、
   読み直したあとのメニューに出る）
 - 上のバーのアイコン・Mac のキー・カーソルの近くの表示（Xvfb・別の ibus-daemon・試験用の受け手。2026-11-14）:
-  受け手への登録、メニューの項目（dbusmenu の GetLayout）、アイコンの絵（16〜64 の 6 つの大きさ）とツールチップ、メニューの
+  受け手への登録、メニューの項目（dbusmenu の GetLayout）、アイコンの絵（16〜32 の 4 つの大きさ。「い」「A」）とツールチップ、メニューの
   「英数」で英数になり記号が A に変わる、Mac の「かな」「英数」キー（Hangul・Hangul_Hanja）、切り替えたときにカーソルの右下に
   「あ」「A」が出て 1 秒で消える、メニューの「ライブ変換」で設定が変わる
 - 選択テキストのマウスの操作（Xvfb・ウィンドウマネージャなし。2026-11-14）: ドラッグで「✦ 18文字」のアイコン、英単語の

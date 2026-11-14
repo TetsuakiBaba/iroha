@@ -1,11 +1,11 @@
 #include "tray_icon.h"
 
+#include "mode_icons.h"
+
 #include <gio/gio.h>
-#include <pango/pangocairo.h>
 #include <unistd.h>
 
 #include <algorithm>
-#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -121,47 +121,22 @@ std::string MenuLabel(const std::string& label) {
     return out;
 }
 
-// 入力モードの記号を描いたアイコン（大きさごと。上のバーは暗い色なので白い文字。背景は透明）。
+// 入力モードのアイコン（大きさごと）。字形は macOS版の入力メニューのアイコン（「い」「A」。mode_icons.h）で、
+// 上のバーは暗い色なので白で塗る（背景は透明）。
 // 形式は StatusNotifierItem の IconPixmap（幅・高さ・ARGB32 をネットワークバイト順に並べたもの、乗算済みでない値）
-GVariant* IconPixmaps(const std::string& symbol) {
+GVariant* IconPixmaps(bool directMode) {
     GVariantBuilder builder;
     g_variant_builder_init(&builder, G_VARIANT_TYPE("a(iiay)"));
-    for (int size : {16, 22, 24, 32, 48, 64}) {
-        cairo_surface_t* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, size, size);
-        cairo_t* cr = cairo_create(surface);
-        PangoLayout* layout = pango_cairo_create_layout(cr);
-        PangoFontDescription* font = pango_font_description_from_string("Sans Bold");
-        pango_font_description_set_absolute_size(font, std::round(size * 0.78) * PANGO_SCALE);
-        pango_layout_set_font_description(layout, font);
-        pango_font_description_free(font);
-        pango_layout_set_text(layout, symbol.c_str(), -1);
-        PangoRectangle ink;
-        pango_layout_get_pixel_extents(layout, &ink, nullptr);
-        cairo_set_source_rgb(cr, 1, 1, 1);
-        cairo_move_to(cr, (size - ink.width) / 2.0 - ink.x, (size - ink.height) / 2.0 - ink.y);
-        pango_cairo_show_layout(cr, layout);
-        g_object_unref(layout);
-        cairo_destroy(cr);
-        cairo_surface_flush(surface);
-        const unsigned char* data = cairo_image_surface_get_data(surface);
-        const int stride = cairo_image_surface_get_stride(surface);
+    for (const mode_icons::Icon& icon : directMode ? mode_icons::kDirectIcon : mode_icons::kKanaIcon) {
+        const int size = icon.size;
         std::string bytes;
         bytes.reserve(static_cast<size_t>(size) * size * 4);
-        for (int y = 0; y < size; ++y) {
-            const auto* row = reinterpret_cast<const uint32_t*>(data + y * stride);
-            for (int x = 0; x < size; ++x) {
-                const uint32_t pixel = row[x];
-                const uint32_t alpha = pixel >> 24;
-                auto channel = [alpha](uint32_t value) -> char {
-                    return static_cast<char>(alpha == 0 ? 0 : std::min<uint32_t>(255, value * 255 / alpha));
-                };
-                bytes += static_cast<char>(alpha);
-                bytes += channel((pixel >> 16) & 0xff);
-                bytes += channel((pixel >> 8) & 0xff);
-                bytes += channel(pixel & 0xff);
-            }
+        for (int i = 0; i < size * size; ++i) {
+            bytes += static_cast<char>(icon.alpha[i]);
+            bytes += static_cast<char>(0xff);
+            bytes += static_cast<char>(0xff);
+            bytes += static_cast<char>(0xff);
         }
-        cairo_surface_destroy(surface);
         GVariant* array = g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, bytes.data(), bytes.size(), 1);
         g_variant_builder_add(&builder, "(ii@ay)", size, size, array);
     }
@@ -273,7 +248,7 @@ struct TrayIcon::Impl {
         if (name == "Title") return g_variant_new_string("iroha");
         if (name == "Status") return g_variant_new_string("Active");
         if (name == "WindowId") return g_variant_new_int32(0);
-        if (name == "IconPixmap") return IconPixmaps(symbol);
+        if (name == "IconPixmap") return IconPixmaps(symbol == menu::ModeSymbol(true));
         if (name == "OverlayIconPixmap" || name == "AttentionIconPixmap") return EmptyPixmaps();
         if (name == "IconThemePath" || name == "IconName" || name == "OverlayIconName" ||
             name == "AttentionIconName" || name == "AttentionMovieName") {
