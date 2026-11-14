@@ -286,7 +286,8 @@ struct TermRow {
 struct App {
     GtkApplication* application = nullptr;
     GtkWindow* window = nullptr;
-    GtkWidget* notebook = nullptr;
+    // 項目の中身（ページ）と、左の項目の一覧
+    GtkWidget* stack = nullptr;
     // 値を画面に写している間は、変更の知らせで保存しない
     bool updating = false;
 
@@ -526,24 +527,37 @@ void App::ShowDialog(const std::string& text, const char* acceptLabel, Handler o
 void App::Build() {
     window = GTK_WINDOW(gtk_application_window_new(application));
     gtk_window_set_title(window, "iroha の設定");
-    gtk_window_set_default_size(window, 760, 640);
+    gtk_window_set_default_size(window, 900, 660);
     g_windowAlive = true;
     Connect(window, "destroy", [] { g_windowAlive = false; });
-    notebook = gtk_notebook_new();
-    gtk_notebook_set_scrollable(GTK_NOTEBOOK(notebook), TRUE);
+    // 項目は左に縦に並べ、右にその中身を出す（GNOME の「設定」と同じ形）。上に横に並べるタブ（GtkNotebook）では
+    // 9 つの項目が窓の幅に収まらず、左右に送らないと全部見えなかった
+    stack = gtk_stack_new();
+    gtk_stack_set_transition_type(GTK_STACK(stack), GTK_STACK_TRANSITION_TYPE_NONE);
+    gtk_widget_set_hexpand(stack, TRUE);
+    gtk_widget_set_vexpand(stack, TRUE);
     GtkWidget* pages[iroha::settings::kTabCount] = {
         BuildModelPage(), BuildInputPage(),     BuildDictionaryPage(), BuildTermPage(),  BuildRulePage(),
         BuildAIPage(),    BuildSelectionPage(), BuildLearningPage(),   BuildAboutPage(),
     };
     for (int i = 0; i < iroha::settings::kTabCount; ++i) {
-        gtk_notebook_append_page(GTK_NOTEBOOK(notebook), pages[i],
-                                 gtk_label_new(iroha::settings::TabTitle(static_cast<Tab>(i))));
+        const Tab tab = static_cast<Tab>(i);
+        gtk_stack_add_titled(GTK_STACK(stack), pages[i], iroha::settings::TabName(tab), iroha::settings::TabTitle(tab));
     }
-    g_signal_connect(notebook, "switch-page", G_CALLBACK(+[](GtkNotebook*, GtkWidget*, guint page, gpointer) {
-                         g_app->OnTabShown(static_cast<Tab>(page));
+    g_signal_connect(stack, "notify::visible-child-name", G_CALLBACK(+[](GObject* object, GParamSpec*, gpointer) {
+                         const char* name = gtk_stack_get_visible_child_name(GTK_STACK(object));
+                         if (const std::optional<Tab> tab = iroha::settings::ParseTabName(name ? name : "")) {
+                             g_app->OnTabShown(*tab);
+                         }
                      }),
                      nullptr);
-    gtk_window_set_child(window, notebook);
+    GtkWidget* sidebar = gtk_stack_sidebar_new();
+    gtk_stack_sidebar_set_stack(GTK_STACK_SIDEBAR(sidebar), GTK_STACK(stack));
+    gtk_widget_set_size_request(sidebar, 150, -1);
+    gtk_widget_set_vexpand(sidebar, TRUE);
+    GtkWidget* layout = Box(GTK_ORIENTATION_HORIZONTAL, 0);
+    Append(layout, {sidebar, gtk_separator_new(GTK_ORIENTATION_VERTICAL), stack});
+    gtk_window_set_child(window, layout);
 
     // 開いたときに全部のページを今の値にする（Windows版と同じ）
     RefreshModelPage();
@@ -2030,10 +2044,11 @@ int OnCommandLine(GApplication* application, GApplicationCommandLine* commandLin
         app.Build();
     }
     if (tab) {
-        if (gtk_notebook_get_current_page(GTK_NOTEBOOK(g_app->notebook)) == static_cast<int>(*tab)) {
+        const char* current = gtk_stack_get_visible_child_name(GTK_STACK(g_app->stack));
+        if (current && std::strcmp(current, iroha::settings::TabName(*tab)) == 0) {
             g_app->OnTabShown(*tab);
         } else {
-            gtk_notebook_set_current_page(GTK_NOTEBOOK(g_app->notebook), static_cast<int>(*tab));
+            gtk_stack_set_visible_child_name(GTK_STACK(g_app->stack), iroha::settings::TabName(*tab));
         }
     }
     gtk_window_present(g_app->window);
