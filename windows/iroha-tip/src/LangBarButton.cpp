@@ -73,9 +73,9 @@ STDMETHODIMP LangBarButton::GetInfo(TF_LANGBARITEMINFO* info) {
     if (!info) return E_INVALIDARG;
     info->clsidService = CLSID_IROHA_TIP;
     info->guidItem = GUID_LBI_INPUTMODE;
-    // TEXTCOLORICON: モノクロのアイコンをホストがテーマの文字色で塗る
-    // BTN_MENU: クリックでメニューを開く（Windows の IME と同じ。メニューはシステムが出し、InitMenu で中身を渡す）
-    info->dwStyle = TF_LBI_STYLE_BTN_MENU | TF_LBI_STYLE_SHOWNINTRAY | TF_LBI_STYLE_TEXTCOLORICON;
+    // TEXTCOLORICON: モノクロのアイコンをホストがテーマの文字色で塗る。
+    // BTN_BUTTON: 左クリック・右クリックとも OnClick に届く（左は切り替え、右はメニュー。2026-11-14 実機で確かめた形）
+    info->dwStyle = TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY | TF_LBI_STYLE_TEXTCOLORICON;
     info->ulSort = 0;
     wcscpy_s(info->szDescription, L"iroha 入力モード");
     return S_OK;
@@ -96,7 +96,7 @@ STDMETHODIMP LangBarButton::GetTooltipString(BSTR* tooltip) {
     const bool direct = owner_ && owner_->IsDirectMode();
     const bool privateMode = owner_ && owner_->IsPrivateMode();
     std::wstring text = direct ? L"iroha: 半角英数" : L"iroha: ひらがな";
-    text += L"\nクリックでメニュー（入力モードの切り替え・設定）";
+    text += L"\nクリックで切り替え、右クリックでメニュー（設定など）";
     if (privateMode) {
         const uint32_t shortcut = owner_->PrivateShortcut();
         text += L"\nプライベートモード";
@@ -109,10 +109,13 @@ STDMETHODIMP LangBarButton::GetTooltipString(BSTR* tooltip) {
     return *tooltip ? S_OK : E_OUTOFMEMORY;
 }
 
-// メニューの形のボタンでは、ふつうはシステムが InitMenu でメニューを出すので呼ばれない。
-// 呼ばれたとき（ホストによっては右クリックなど）は、同じ項目のメニューを自分で出す
-STDMETHODIMP LangBarButton::OnClick(TfLBIClick, POINT point, const RECT*) {
+// 左クリックはかな・英数の切り替え、右クリックはメニュー（Windows の IME と同じ。項目は TextService::MenuEntries）
+STDMETHODIMP LangBarButton::OnClick(TfLBIClick click, POINT point, const RECT*) {
     if (!owner_) return S_OK;
+    if (click != TF_LBI_CLK_RIGHT) {
+        owner_->OnModeButtonClicked();
+        return S_OK;
+    }
     HMENU menu = CreatePopupMenu();
     if (!menu) return S_OK;
     for (const TextService::MenuEntry& entry : owner_->MenuEntries()) {
@@ -124,18 +127,23 @@ STDMETHODIMP LangBarButton::OnClick(TfLBIClick, POINT point, const RECT*) {
         AppendMenuW(menu, flags, entry.id, entry.text.c_str());
         if (entry.radio && entry.checked) CheckMenuRadioItem(menu, entry.id, entry.id, entry.id, MF_BYCOMMAND);
     }
-    // メニューの持ち主にする見えない窓（このスレッドの窓が要る）
+    // メニューの持ち主にする見えない窓（このスレッドの窓が要る）。前面にしておかないと、メニューの外を押しても閉じない
     HWND owner = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"", WS_POPUP, point.x, point.y, 0, 0, nullptr, nullptr,
                                  g_hInst, nullptr);
-    const UINT chosen = owner ? TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN,
-                                                 point.x, point.y, owner, nullptr)
-                              : 0;
-    if (owner) DestroyWindow(owner);
+    UINT chosen = 0;
+    if (owner) {
+        SetForegroundWindow(owner);
+        chosen = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, point.x,
+                                  point.y, owner, nullptr);
+        PostMessageW(owner, WM_NULL, 0, 0);
+        DestroyWindow(owner);
+    }
     DestroyMenu(menu);
     if (chosen != 0 && owner_) owner_->OnMenuCommand(chosen);
     return S_OK;
 }
 
+// メニューの形のボタンにしたとき・言語バーがメニューを求めたときのために、同じ項目を渡す
 STDMETHODIMP LangBarButton::InitMenu(ITfMenu* menu) {
     if (!menu || !owner_) return E_INVALIDARG;
     for (const TextService::MenuEntry& entry : owner_->MenuEntries()) {

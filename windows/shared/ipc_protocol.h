@@ -62,7 +62,7 @@ namespace iroha::ipc {
 constexpr uint32_t kProtocolVersion = 1;
 // TIP の版。変換サーバは、これより古い（送ってこない）TIP を読み込んだままのアプリを知らせる。
 // TIP と変換サーバの間で、新しい機能のために TIP を入れ替える必要が出たら上げる
-constexpr uint32_t kTipRevision = 2;
+constexpr uint32_t kTipRevision = 3;
 constexpr DWORD kMaxMessageBytes = 64 * 1024;
 
 enum class MessageType : uint32_t {

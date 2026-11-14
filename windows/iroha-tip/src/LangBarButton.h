@@ -4,8 +4,8 @@
 class TextService;
 
 // 通知領域（言語バー）の入力モードボタン。
-// 「あ」（かな）/「A」（英数）のアイコンを表示し、クリックでメニュー（入力モード・設定・ライブ変換など。
-// macOS版の入力メニューに合わせた項目。TextService::MenuEntries）を開く。
+// 「あ」（かな）/「A」（英数）のアイコンを表示し、クリックでモードを切り替え、右クリックでメニュー
+// （入力モード・設定・ライブ変換など。macOS版の入力メニューに合わせた項目。TextService::MenuEntries）を開く。
 // アイコンは実行時にGDIで描画する（タスクバーのテーマに合わせて白黒を選ぶ）。
 class LangBarButton : public ITfLangBarItemButton, public ITfSource {
 public:
