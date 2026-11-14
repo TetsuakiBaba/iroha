@@ -474,11 +474,21 @@ void Page::Show(bool visible) {
     if (visible) Relayout();
 }
 
+// スクロールは並べ直さず、ページの絵と部品を画素ごと動かし（ScrollWindowEx の SW_SCROLLCHILDREN）、
+// 新しく見えた所だけをその場で描く。並べ直して全部を描き直す予定に積む形では、ホイールやつまみのドラッグで
+// スクロールが続くと描き直しが追いつかず、動いている間は部品が残像のように見えた（2026-11-14）
 void Page::ScrollTo(int position) {
     RECT client = {};
     GetClientRect(hwnd_, &client);
-    scroll_ = std::max(0, std::min(position, contentHeight_ - static_cast<int>(client.bottom)));
-    Relayout();
+    const int next = std::max(0, std::min(position, contentHeight_ - static_cast<int>(client.bottom)));
+    const int delta = scroll_ - next;
+    if (delta == 0) return;
+    scroll_ = next;
+    SetScrollPos(hwnd_, SB_VERT, scroll_, TRUE);
+    HRGN exposed = CreateRectRgn(0, 0, 0, 0);
+    ScrollWindowEx(hwnd_, 0, delta, nullptr, nullptr, exposed, nullptr, SW_SCROLLCHILDREN);
+    RedrawWindow(hwnd_, nullptr, exposed, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    DeleteObject(exposed);
 }
 
 int Page::MeasureText(HFONT font, const std::wstring& text, int width) const {
