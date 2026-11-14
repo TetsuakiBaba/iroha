@@ -1002,6 +1002,35 @@
     });
   }
 
+  // ---------- はじめかたの OS の切り替え ----------
+  // 開いた OS に合わせて最初のタブを選ぶ（分からなければ Mac）。← → でもタブを移れる
+  function setupOsTabs() {
+    const tabs = [...document.querySelectorAll('.os-tabs [role="tab"]')];
+    if (!tabs.length) return;
+    document.documentElement.classList.add("js-tabs");
+    const select = (tab, focus) => {
+      tabs.forEach((t) => {
+        const on = t === tab;
+        t.setAttribute("aria-selected", String(on));
+        t.tabIndex = on ? 0 : -1;
+        document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+      });
+      if (focus) tab.focus();
+    };
+    tabs.forEach((tab, i) => {
+      tab.addEventListener("click", () => select(tab, false));
+      tab.addEventListener("keydown", (e) => {
+        if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+        e.preventDefault();
+        select(tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length], true);
+      });
+    });
+    const platform = ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || "").toLowerCase();
+    const guess = platform.includes("win") ? "os-tab-windows" : (platform.includes("linux") && !/android/.test(navigator.userAgent.toLowerCase())) ? "os-tab-linux" : "os-tab-mac";
+    select(document.getElementById(guess) || tabs[0], false);
+  }
+
+  setupOsTabs();
   runHero();
   runSpeed();
   runTypo();

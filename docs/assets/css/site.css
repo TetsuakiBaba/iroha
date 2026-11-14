@@ -434,6 +434,20 @@ h3 { font-family: var(--font-mincho); font-weight: 500; font-size: 17px; margin:
 }
 
 .download-box p { color: var(--ink-soft); font-size: 14px; margin: 14px 0 0; }
+.download-box .dl-second { margin-top: 26px; }
+/* はじめかたの OS の切り替え（スクリプトが動かないときは 3 つとも出る） */
+.os-tabs { display: flex; flex-wrap: wrap; gap: 0; margin: 0 0 18px; border-bottom: 1px solid var(--line); }
+.os-tabs button {
+  font: inherit; font-size: 13px; letter-spacing: .14em; color: var(--ink-faint); background: none; border: 0;
+  border-bottom: 2px solid transparent; padding: 8px 16px 9px; margin-bottom: -1px; cursor: pointer;
+}
+.os-tabs button:hover { color: var(--ink); }
+.os-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.os-tabs button:focus-visible { outline: 1px solid var(--ink-soft); outline-offset: 2px; }
+.os-panel + .os-panel { margin-top: 18px; }
+.js-tabs .os-panel + .os-panel { margin-top: 0; }
+.js-tabs .os-panel[hidden] { display: none; }
+.steps-after { margin: 28px 0 12px; font-size: 14px; color: var(--ink-soft); }
 
 /* よくある質問 */
 .faq details { border-bottom: 1px solid var(--line); padding: 4px 0; }
@@ -529,16 +543,18 @@ table.keys td { color: var(--ink-soft); }
 .chart .pt.mine circle { fill: var(--kobai); }
 .chart .pt.mine text:not(.val) { fill: var(--kobai); }
 .chart .pt.other circle { fill: var(--ink-faint); }
-.chart .gap text { text-anchor: middle; font-size: 14px; font-weight: 600; fill: var(--kobai); }
-.chart .gap-line { stroke: var(--kobai); stroke-width: 1.6; stroke-dasharray: 200; stroke-dashoffset: 200; }
-.chart .gap-head { fill: none; stroke: var(--kobai); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.chart .pt, .chart .gap-head, .chart .gap text { opacity: 0; }
+.chart .limit { stroke: var(--ink-faint); stroke-width: 1; stroke-dasharray: 6 4; }
+.chart .limit-label { font-size: 12px; fill: var(--ink-faint); }
+.chart .series { fill: none; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 100; stroke-dashoffset: 100; }
+.chart .series.mine { stroke: var(--kobai); stroke-width: 2.8; }
+.chart .series.other { stroke: var(--ink-faint); }
+.chart .pt { opacity: 0; }
 .chart .pt circle { transform-box: fill-box; transform-origin: center; transform: scale(0); }
-.chart.play .pt { opacity: 1; transition: opacity .4s ease; }
-.chart.play .pt circle { transform: scale(1); transition: transform .5s cubic-bezier(.3,1.6,.5,1); }
-.chart.play .pt.mine, .chart.play .pt.mine circle { transition-delay: .5s; }
-.chart.play .gap-line { stroke-dashoffset: 0; transition: stroke-dashoffset .9s ease 1.1s; }
-.chart.play .gap-head, .chart.play .gap text { opacity: 1; transition: opacity .3s ease 1.9s; }
+.chart.play .series { stroke-dashoffset: 0; transition: stroke-dashoffset 1.6s ease; }
+.chart.play .series.mine { transition-delay: .3s; }
+.chart.play .pt { opacity: 1; transition: opacity .4s ease 1.6s; }
+.chart.play .pt circle { transform: scale(1); transition: transform .5s cubic-bezier(.3,1.6,.5,1) 1.6s; }
+.chart.play .pt.mine, .chart.play .pt.mine circle { transition-delay: 1.9s; }
 .kkc-message {
   margin: 18px 0 0; padding: 4px 0 4px 16px; border-left: 3px solid var(--fuji);
   font-size: 17px; line-height: 1.8; color: var(--ink);

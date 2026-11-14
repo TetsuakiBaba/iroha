@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>iroha — 文字入力のいろは</title>
-<meta name="description" content="iroha（いろは）は、Mac のための文字入力です。キーボードで打った文字も、声で入れた言葉も、同じ変換で文にします。機能と機能、人と人をつなげることを、文字入力の基本と考えて作っています。無料・オープンソース。">
+<meta name="description" content="iroha（いろは）は、AI 時代のかな漢字変換です。キーボードで打った文字も、声で入れた言葉も、同じ変換で文にします。機能と機能、人と人をつなげることを、文字入力の基本と考えて作っています。無料・オープンソース。">
 <meta name="theme-color" content="#fbfaf6" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#11100e" media="(prefers-color-scheme: dark)">
 <link rel="canonical" href="https://tetsuakibaba.github.io/iroha/">
@@ -14,7 +14,7 @@
 <meta property="og:locale" content="ja_JP">
 <meta property="og:url" content="https://tetsuakibaba.github.io/iroha/">
 <meta property="og:title" content="iroha — 文字入力のいろは">
-<meta property="og:description" content="Mac のための文字入力。キーボードで打った文字も、声で入れた言葉も、同じ変換で文にします。無料・オープンソース。">
+<meta property="og:description" content="AI 時代のかな漢字変換。キーボードで打った文字も、声で入れた言葉も、同じ変換で文にします。無料・オープンソース。">
 <meta property="og:image" content="https://tetsuakibaba.github.io/iroha/assets/img/ogp.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -27,7 +27,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Yuji+Syuku&family=Shippori+Mincho:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="assets/css/site.css">
+<link rel="stylesheet" href="assets/css/site.css?v=20261114">
 </head>
 <body>
 
@@ -56,16 +56,16 @@
 <section class="hero" aria-labelledby="hero-title">
   <div class="wrap hero-grid">
     <div>
-      <p class="eyebrow"><span>Mac のための文字入力</span><span class="eyebrow-en">IROHA</span></p>
+      <p class="eyebrow"><span>AI 時代のかな漢字変換</span><span class="eyebrow-en">IROHA</span></p>
       <h1 id="hero-title"><span class="nw">文字入力の</span><wbr><span class="nw accent">いろは</span></h1>
-      <p class="lead">iroha（いろは）は、Mac のための文字入力です。<br>キーボードで打った文字も、声で入れた言葉も、同じ変換で文にします。<br>機能と機能、人と人をつなげることを、文字入力の基本と考えて作っています。</p>
+      <p class="lead">iroha（いろは）は、AI 時代のかな漢字変換です。<br>キーボードで打った文字も、声で入れた言葉も、同じ変換で文にします。<br>機能と機能、人と人をつなげることを、文字入力の基本と考えて作っています。</p>
       <div class="cta-row">
         <a class="btn btn-primary" href="#download">無料でダウンロード</a>
         <a class="btn btn-ghost" href="usage.html">使い方を見る</a>
       </div>
       <div class="meta-row">
-        <span class="chip">macOS 14 以降</span>
-        <span class="chip">Apple シリコンの Mac</span>
+        <span class="chip">Mac（macOS 14 以降・Apple シリコン）</span>
+        <span class="chip">Windows・Linux（試験版）</span>
         <span class="chip">無料・オープンソース</span>
       </div>
     </div>
@@ -107,7 +107,8 @@
       <p class="section-lead" style="margin-bottom:0">iroha-kkc は、iroha のために一から作ったかな漢字変換の AI です。打つたびに変換をやり直すライブ変換に向けて、速さを第一に設計しました。</p>
       <p class="kkc-message">ライブ変換に慣れるほど、この変換の速さの心地よさに気がつくはずです。</p>
       <ul class="points">
-        <li><b>変換にかかる時間は、これまでの代表的な AI のかな漢字変換モデル（zenz）の半分以下。</b>3,253 問のテストでは平均 0.024 秒でした（zenz は 0.063 秒）。</li>
+        <li><b>読みが長くなっても、変換の時間が延びにくい。</b>読みが 40 文字のとき変換 1 回は 0.040 秒、80 文字でも 0.081 秒で、これまでの代表的な AI のかな漢字変換モデル（zenz）の 0.057 秒・0.115 秒より速く、読みが長いほど差が広がります（Apple M4）。</li>
+        <li><b>80 文字まで、押したのと同時と感じる速さに収まります。</b>キーを押してから画面が応えるまでの遅れは、0.085 秒までなら押したのと同時と感じるとされています。zenz は 59 文字でこれを超えました（Apple M4）。</li>
         <li><b>正確さは同じかそれ以上。</b>3,253 問の変換のテストで、比べたモデルより多く正解しました。公開されている 200 問のテスト（AJIMEE-Bench）でも、同じ水準の正解率です。</li>
       </ul>
       <a class="more-link" href="#papers">しくみと比較の詳細（論文） →</a>
@@ -115,56 +116,57 @@
 
     <div>
       <figure class="speed chart" id="speed">
-        <h3>速さと正確さ（AJIMEE-Bench・200 問）</h3>
-        <!-- 数字は配布と同じ Q5_K_M どうしを AJIMEE-Bench で同じ回に交互に 3 回測った平均
-             （experiments/iroha-bench/results/ajimee-q5-site/、2026-11-06、M1 Max、NNのみ）:
-             iroha-kkc 35.5ms・86.0%、zenz-v3.1-small 79.1ms・87.0%（正解率は 3 回とも同じ）。
-             座標: x = 56 + ms × 4.04、y = 244 − % × 2.2 -->
+        <h3>読みの長さと変換の時間</h3>
+        <!-- 数字は論文（experiments/paper-jxiv/iroha-t5.pdf）の表 5・図 2 の Apple M4・llama.cpp・Q5_K_M（配布と同じ形式）の行。
+             元の値は iroha-t5.tex の図 2 の座標（experiments/iroha-bench/prefix-latency/kit/results/<機械>/by_length.tsv）。
+             39 文の読みの先頭 1〜80 文字を 1 項目ずつ変換し、項目ごとに 3 回の中央値、長さごとに 39 文の中央値。左文脈なし・辞書ラティスなし。
+             論文のモデルは iroha-t5-alpha。iroha-kkc-v1 は構成と大きさが同じで、変換時間は測り直していない（experiments/iroha-bench/README.md）。
+             座標: x = 56 + 文字数 × 5.05、y = 244 − ms × 220 / 150 -->
         <svg viewBox="0 0 480 300" role="img" aria-labelledby="chart-desc">
-          <desc id="chart-desc">横軸は 1 回の変換にかかる時間、縦軸は正解率。iroha-kkc は 0.036 秒で 86.0%、これまでのモデル（zenz）は 0.079 秒で 87.0%。正解率はほぼ同じ高さで、iroha-kkc は約 2.2 倍速い。</desc>
+          <desc id="chart-desc">横軸は読みの文字数（1〜80）、縦軸は変換 1 回にかかる時間。iroha-kkc は 40 文字で 0.040 秒、80 文字で 0.081 秒。これまでのモデル（zenz）は 40 文字で 0.057 秒、80 文字で 0.115 秒。iroha-kkc は 80 文字まで 0.085 秒を超えず、zenz は 59 文字で超える。</desc>
           <g class="grid">
             <line x1="56" y1="24" x2="460" y2="24"/>
-            <line x1="56" y1="79" x2="460" y2="79"/>
-            <line x1="56" y1="134" x2="460" y2="134"/>
-            <line x1="56" y1="189" x2="460" y2="189"/>
+            <line x1="56" y1="97.3" x2="460" y2="97.3"/>
+            <line x1="56" y1="170.7" x2="460" y2="170.7"/>
           </g>
           <g class="axis">
             <line x1="56" y1="244" x2="460" y2="244"/>
             <line x1="56" y1="24" x2="56" y2="244"/>
           </g>
           <g class="tick-y">
-            <text x="48" y="28">100%</text>
-            <text x="48" y="138">50%</text>
-            <text x="48" y="248">0%</text>
+            <text x="48" y="28">0.15</text>
+            <text x="48" y="101">0.1</text>
+            <text x="48" y="175">0.05</text>
+            <text x="48" y="248">0 秒</text>
           </g>
           <g class="tick-x">
             <text x="56" y="266">0</text>
-            <text x="157" y="266">0.025</text>
-            <text x="258" y="266">0.05</text>
-            <text x="359" y="266">0.075</text>
-            <text x="460" y="266">0.1 秒</text>
+            <text x="157" y="266">20</text>
+            <text x="258" y="266">40</text>
+            <text x="359" y="266">60</text>
+            <text x="460" y="266">80</text>
           </g>
-          <text class="axis-label" x="258" y="292">1 回の変換にかかる時間（左ほど速い）</text>
-          <text class="corner" x="56" y="12">正解率（上ほど正確）</text>
+          <text class="axis-label" x="258" y="292">読みの文字数（打ったかなの数）</text>
+          <text class="corner" x="56" y="12">変換 1 回にかかる時間（下ほど速い）</text>
 
-          <g class="gap">
-            <line class="gap-line" x1="364" y1="134" x2="210" y2="134"/>
-            <path class="gap-head" d="M217 128 L208 134 L217 140"/>
-            <text x="287" y="125">約 2.2 倍速い</text>
-          </g>
+          <line class="limit" x1="56" y1="119.3" x2="460" y2="119.3"/>
+          <text class="limit-label" x="62" y="113">0.085 秒（押したのと同時と感じる上限）</text>
+
+          <path class="series other" fill="none" pathLength="100" d="M61.0 233.1 L66.1 229.9 L71.2 228.5 L76.2 228.0 L81.2 226.0 L86.3 225.5 L91.3 222.9 L96.4 220.2 L101.4 217.7 L106.5 217.3 L111.5 216.9 L116.6 214.5 L121.6 212.0 L126.7 210.1 L131.8 209.5 L136.8 207.6 L141.8 205.0 L146.9 202.9 L151.9 200.1 L157.0 199.3 L162.1 197.2 L167.1 195.7 L172.1 194.7 L177.2 191.9 L182.2 192.1 L187.3 189.4 L192.3 184.7 L197.4 184.3 L202.4 181.7 L207.5 179.5 L212.5 178.7 L217.6 176.7 L222.7 174.9 L227.7 173.7 L232.8 170.8 L237.8 168.5 L242.8 167.0 L247.9 163.3 L252.9 161.0 L258.0 160.5 L263.0 157.9 L268.1 155.4 L273.1 153.2 L278.2 154.5 L283.2 150.9 L288.3 149.5 L293.4 147.6 L298.4 144.6 L303.4 142.4 L308.5 140.7 L313.6 139.0 L318.6 135.3 L323.6 136.3 L328.7 132.8 L333.8 130.9 L338.8 127.8 L343.8 125.8 L348.9 123.7 L353.9 118.7 L359.0 115.8 L364.1 115.4 L369.1 112.7 L374.1 111.0 L379.2 110.1 L384.2 107.6 L389.3 105.1 L394.3 103.6 L399.4 101.0 L404.4 99.5 L409.5 99.2 L414.6 96.3 L419.6 94.0 L424.6 91.5 L429.7 88.5 L434.8 86.0 L439.8 85.2 L444.8 81.3 L449.9 79.1 L454.9 78.6 L460.0 75.3"/>
+          <path class="series mine" fill="none" pathLength="100" d="M61.0 236.2 L66.1 234.2 L71.2 232.4 L76.2 230.9 L81.2 230.4 L86.3 230.1 L91.3 228.6 L96.4 227.1 L101.4 226.0 L106.5 225.5 L111.5 224.2 L116.6 223.9 L121.6 222.4 L126.7 221.0 L131.8 219.7 L136.8 219.4 L141.8 217.9 L146.9 216.1 L151.9 216.0 L157.0 214.5 L162.1 213.2 L167.1 211.6 L172.1 211.1 L177.2 209.8 L182.2 209.1 L187.3 207.9 L192.3 207.9 L197.4 205.0 L202.4 204.4 L207.5 198.8 L212.5 197.5 L217.6 196.0 L222.7 195.9 L227.7 194.9 L232.8 193.3 L237.8 191.8 L242.8 190.3 L247.9 188.3 L252.9 186.8 L258.0 186.1 L263.0 184.7 L268.1 183.3 L273.1 181.4 L278.2 181.2 L283.2 179.6 L288.3 178.1 L293.4 177.6 L298.4 175.9 L303.4 174.9 L308.5 172.6 L313.6 171.3 L318.6 170.8 L323.6 170.4 L328.7 167.3 L333.8 166.3 L338.8 165.1 L343.8 163.2 L348.9 161.6 L353.9 160.5 L359.0 158.3 L364.1 160.0 L369.1 151.5 L374.1 150.3 L379.2 149.7 L384.2 147.6 L389.3 146.0 L394.3 144.0 L399.4 142.8 L404.4 142.1 L409.5 141.2 L414.6 139.7 L419.6 137.5 L424.6 135.8 L429.7 133.9 L434.8 132.4 L439.8 131.7 L444.8 128.6 L449.9 129.0 L454.9 125.9 L460.0 124.8"/>
 
           <g class="pt other">
-            <circle cx="375.6" cy="52.6" r="9"/>
-            <text class="end" x="440" y="82">これまでのモデル（zenz）</text>
-            <text class="val end" x="440" y="100">0.079 秒・87.0%</text>
+            <circle cx="258" cy="160.5" r="5"/>
+            <text class="val end" x="250" y="152">0.057 秒</text>
+            <text class="end" x="452" y="64">これまでのモデル（zenz）</text>
           </g>
           <g class="pt mine">
-            <circle cx="199.4" cy="54.8" r="11"/>
-            <text class="end" x="182" y="56">iroha-kkc</text>
-            <text class="val end" x="182" y="74">0.036 秒・86.0%</text>
+            <circle cx="258" cy="186.1" r="6"/>
+            <text class="val end" x="250" y="214">0.040 秒</text>
+            <text class="end" x="452" y="176">iroha-kkc</text>
           </g>
         </svg>
-        <figcaption class="speed-note">正解率の差（1.0 ポイント）は、200 問のテストでは誤差の範囲に入ります。3,253 問のテストでは iroha-kkc の方が多く正解しました。どちらも配布しているものと同じ形式のモデルを、Apple M1 Max で測りました（時間は 3 回の平均）。</figcaption>
+        <figcaption class="speed-note">論文の測定（表 5・図 2）から、Apple M4 で配布と同じ形式（Q5_K_M）のモデルを llama.cpp で動かした結果です。39 文の読みの先頭 1〜80 文字をそれぞれ変換し、文字数ごとに中央値をとりました（辞書を使わず、モデルだけで変換）。10〜80 文字の各長さでの速さの比の中央値は、Apple M4 で 1.45 倍、Apple M2 で 1.36 倍でした。論文で測ったのは、iroha-kkc と構成と大きさが同じ前の版です。</figcaption>
         <div class="speed-foot">
           <p></p>
           <button class="replay" type="button" data-replay="speed">もう一度</button>
@@ -285,10 +287,10 @@
       <p class="section-lead" style="margin-bottom:0">決めたキー（初期設定は右 ⌘）を押している間に話した内容が、確定されずに入力中の文字として入ります。</p>
       <ul class="points">
         <li><b>打った文と同じかな漢字変換に渡します。</b>音声認識が出した漢字かな交じりの結果を読み（ひらがな）に戻してから変換するので、スペースキーの候補・文節の打ち直し・続きのキー入力が、打った文と同じようにできます。</li>
-        <li><b>音声認識はこの Mac の中で行います。</b>音声を外部に送りません。</li>
+        <li><b>音声認識はお使いの Mac の中で行います。</b>音声を外部に送りません。</li>
         <li><b>言いよどみは、AI に除いてもらえます。</b>「えー」「あー」のような言いよどみが入ったままでも、「AI に書き換えを頼む」に言いよどみを除く指示を登録しておくと、話した文をそのまま整えられます。話したあとに手で直す箇所が減り、文を速く作れます（外部の AI サービスを選んだときは、その文がそのサービスに送られます）。</li>
         <li>読みは音声認識の表記から求め直すので、人名などで取り違えることがあります。そのときは、スペースキーの候補か文節の打ち直しで直します。</li>
-        <li>使うには、設定 &gt; 情報 で開発者モードを ON にし、設定 &gt; 入力 &gt;「こえ」モード を ON にします（初期設定は OFF、macOS 26 以降）。マイクの使用は設定画面から許可します。</li>
+        <li>使うには、設定 &gt; 情報 で開発者モードを ON にし、設定 &gt; 入力 &gt;「こえ」モード を ON にします（初期設定は OFF）。Mac 版（macOS 26 以降）と Windows 版（試験版。押すキーの初期設定は右 Ctrl）で使えます。Linux 版にはまだありません。マイクの使用は設定画面から許可します。</li>
       </ul>
     </div>
 
@@ -315,7 +317,7 @@
     <div class="feature-grid">
       <div class="feature">
         <h3>ユーザ辞書</h3>
-        <p>人の名前や専門の言葉を登録できます。Mac に登録してある「ユーザ辞書」も取り込めます。</p>
+        <p>人の名前や専門の言葉を登録できます。Mac では、macOS に登録してある「ユーザ辞書」も取り込めます。</p>
       </div>
       <div class="feature">
         <h3>変換の学習</h3>
@@ -350,8 +352,8 @@
         <span class="eg"><code>kyouha_iroha_wo</code> → 今日はirohaを</span>
       </div>
       <div class="feature">
-        <h3>複数の Mac で同じ辞書</h3>
-        <p>データの置き場所を iCloud Drive や Dropbox にすると、辞書や学習を複数の Mac で使えます。</p>
+        <h3>複数のパソコンで同じ辞書</h3>
+        <p>データの置き場所を iCloud Drive や Dropbox にすると、辞書や学習を複数のパソコンで使えます。</p>
       </div>
     </div>
   </div>
@@ -400,12 +402,12 @@
 <section id="privacy" class="section section-tint" aria-labelledby="privacy-title">
   <div class="wrap">
     <div class="privacy">
-      <div class="seal" aria-hidden="true">Mac の<br>なかで</div>
+      <div class="seal" aria-hidden="true">手元の<br>なかで</div>
       <div>
         <h2 id="privacy-title" style="font-size:24px">打った文字は、外に送りません</h2>
-        <p><strong>かな漢字変換も打ち間違いの訂正も、この Mac の中だけで行います。</strong>iroha が通信するのは、アップデートの確認と、変換に使うデータのダウンロードのときだけです（どちらも GitHub から）。</p>
-        <p>例外は「AI に書き換えを頼む」機能で、外部の AI サービス（Claude や OpenAI 互換のサービスなど）を自分で選んだときだけ、その文がそのサービスに送られます。Mac の中で動く Apple Intelligence や Ollama を選べば、外には送られません。</p>
-        <p>パスワードの入力欄では、macOS が日本語入力そのものを止めるので、iroha には文字が届きません。</p>
+        <p><strong>かな漢字変換も打ち間違いの訂正も、お使いのパソコンの中だけで行います。</strong>iroha が通信するのは、アップデートの確認と、変換に使うデータのダウンロードのときだけです（どちらも GitHub から）。</p>
+        <p>例外は「AI に書き換えを頼む」機能で、外部の AI サービス（Claude や OpenAI 互換のサービスなど）を自分で選んだときだけ、その文がそのサービスに送られます。パソコンの中で動く Ollama や LM Studio、Mac の Apple Intelligence を選べば、外には送られません。</p>
+        <p>Mac では、パスワードの入力欄で macOS が日本語入力そのものを止めるので、iroha には文字が届きません。</p>
       </div>
     </div>
   </div>
@@ -415,31 +417,62 @@
 <!-- 4・5 は、入れたあとに打つことへ取り組む場所（2026-11-11、ユーザの考え）。「タイプのいろは」はブラインドタッチの基本を学ぶページで、
      これから作る（できたら「準備中」をリンクに替える）。「青空写経」は公開済みの別のサイト。プログラミングの「写経」は載せない。
      青空写経を書き上げると iroha の機能を解除できる仕組みは 2026-11-11 に入れて、2026-11-13 にやめた（ユーザの判断）。ここには書かない -->
+<!-- Windows版・Linux版の手順の正は windows/README.md・windows/installer/iroha.iss と linux/scripts/bundle/README.txt。
+     2026-11-14 時点では両方とも試験版で、v0.18.0-beta.1（Pre-release）だけに添付してある（releases/latest は Mac 版だけ）。
+     通常の版に添付するようになったら、ボタンを 1 つにして「名前に beta が付いた版」の説明を外す。
+     Windows版のインストーラーは署名していない。Linux版の fcitx5 は動かして確かめていない（linux/README.md） -->
 <section id="download" class="section" aria-labelledby="download-title">
   <div class="wrap split">
     <div>
       <p class="eyebrow"><span>はじめる</span><span class="eyebrow-en">DOWNLOAD</span></p>
       <h2 id="download-title">はじめかた</h2>
-      <ol class="steps">
-        <li><b>ダウンロードして開く。</b>「最新版をダウンロード」のボタンから <code>iroha-x.y.z.zip</code> を入手し、展開した <b>iroha.app</b> をダブルクリックします。自動でインストールされます。</li>
-        <li><b>入力ソースに追加する。</b>「システム設定」→「キーボード」→「入力ソース」の「編集」→「＋」→「日本語」→「iroha」を選びます。一覧に出ないときは、一度ログアウトしてから試してください。</li>
-        <li><b>メニューバーで iroha を選ぶ。</b>初めて使うときに、変換に使うデータを 1 回だけダウンロードします。</li>
+      <p class="section-lead">Mac 版のほかに、Windows 版と Linux 版を試験版（ベータ版）として配布しています。お使いの OS を選んでください。</p>
+      <div class="os-tabs" role="tablist" aria-label="OS を選ぶ">
+        <button type="button" role="tab" id="os-tab-mac" aria-controls="os-mac" aria-selected="true">Mac</button>
+        <button type="button" role="tab" id="os-tab-windows" aria-controls="os-windows" aria-selected="false">Windows（試験版）</button>
+        <button type="button" role="tab" id="os-tab-linux" aria-controls="os-linux" aria-selected="false">Linux（試験版）</button>
+      </div>
+      <div class="os-panel" id="os-mac" role="tabpanel" aria-labelledby="os-tab-mac">
+        <ol class="steps">
+          <li><b>ダウンロードして開く。</b>「Mac 版をダウンロード」のボタンから <code>iroha-x.y.z.zip</code> を入手し、展開した <b>iroha.app</b> をダブルクリックします。自動でインストールされます。</li>
+          <li><b>入力ソースに追加する。</b>「システム設定」→「キーボード」→「入力ソース」の「編集」→「＋」→「日本語」→「iroha」を選びます。一覧に出ないときは、一度ログアウトしてから試してください。</li>
+          <li><b>メニューバーで iroha を選ぶ。</b>初めて使うときに、変換に使うデータを 1 回だけダウンロードします。</li>
+        </ol>
+      </div>
+      <div class="os-panel" id="os-windows" role="tabpanel" aria-labelledby="os-tab-windows">
+        <ol class="steps">
+          <li><b>インストーラーを開く。</b>「Windows 版・Linux 版をダウンロード」のボタンから、名前に beta が付いた版の <code>iroha-x.y.z-windows-x64-setup.exe</code> を入手して開きます。管理者の許可を求められます。インストールの途中で、変換に使うデータ（約 82MB）をダウンロードします。</li>
+          <li><b>キーボードに iroha を追加する。</b>「設定」→「時刻と言語」→「言語と地域」→「日本語」の「言語のオプション」→「キーボード」に「iroha」が出ます。出ないときは、一度サインアウトしてから確かめてください。</li>
+          <li><b>Win + Space で iroha に切り替える。</b>設定はスタートメニューの「iroha の設定」から開けます。</li>
+        </ol>
+      </div>
+      <div class="os-panel" id="os-linux" role="tabpanel" aria-labelledby="os-tab-linux">
+        <ol class="steps">
+          <li><b>ダウンロードして展開する。</b>「Windows 版・Linux 版をダウンロード」のボタンから、名前に beta が付いた版の <code>iroha-x.y.z-linux-x86_64.tar.gz</code> を入手して展開します。</li>
+          <li><b>install.sh を実行する。</b>展開したフォルダの端末で <code>./install.sh</code> を実行します（sudo のパスワードを求められます）。初めて入れるときに、変換に使うデータ（約 82MB）をダウンロードします。</li>
+          <li><b>入力ソースに iroha を追加する。</b>GNOME では「設定」→「キーボード」→「入力ソース」で「日本語 (iroha)」を足します。fcitx5 では、fcitx5 の設定で入力メソッドに iroha を足します。設定は入力ソースのメニューの「設定…」から開けます。</li>
+        </ol>
+      </div>
+      <p class="steps-after">入れたあとは、打つことにも慣れていきましょう。</p>
+      <ol class="steps" style="counter-reset: step 3">
         <li><b>タイプのいろはで、打ち方を身につける。</b>キーボードを見ずに打つ、ブラインドタッチの基本を学ぶページです（準備中）。</li>
         <li><b>青空写経で、書き写す。</b>青空文庫の名作を、原稿用紙に一字ずつ書き写します。<a href="https://tetsuakibaba.github.io/AozoraShakyo/">青空写経を開く</a></li>
       </ol>
       <dl class="req">
-        <dt>動作環境</dt><dd>macOS 14 以降、Apple シリコン（M1 以降）の Mac</dd>
+        <dt>動作環境</dt><dd>Mac: macOS 14 以降、Apple シリコン（M1 以降）<br>Windows: Windows 10 以降（64 ビット、x64）<br>Linux: Ubuntu 22.04 以降（x86_64）、IBus または fcitx5</dd>
         <dt>価格</dt><dd>無料（オープンソース、MIT ライセンス）</dd>
-        <dt>アップデート</dt><dd>新しい版が出ると iroha が知らせます</dd>
-        <dt>アンインストール</dt><dd>iroha の設定 →「情報」→「iroha をアンインストール…」</dd>
+        <dt>アップデート</dt><dd>Mac・Windows: 新しい版が出ると iroha が知らせます<br>Linux: 新しい版を同じ手順で入れ直します</dd>
+        <dt>アンインストール</dt><dd>Mac: iroha の設定 →「情報」→「iroha をアンインストール…」<br>Windows: Windows の「設定」→「アプリ」→「インストールされているアプリ」で iroha を選ぶ<br>Linux: 展開したフォルダの <code>./uninstall.sh</code></dd>
       </dl>
     </div>
     <div>
       <div class="download-box">
         <span class="logo logo-md" role="img" aria-label="いろは"><img src="assets/img/icon-512.png" alt="" width="42" height="42"><span aria-hidden="true">ろは</span></span>
         <p class="romaji" style="margin:6px 0 20px">iroha</p>
-        <a class="btn btn-primary" href="https://github.com/TetsuakiBaba/iroha/releases/latest">最新版をダウンロード</a>
+        <a class="btn btn-primary" href="https://github.com/TetsuakiBaba/iroha/releases/latest">Mac 版をダウンロード</a>
         <p>GitHub の配布ページが開きます。「Assets」の中の <code>iroha-x.y.z.zip</code> をダウンロードしてください。</p>
+        <a class="btn btn-ghost dl-second" href="https://github.com/TetsuakiBaba/iroha/releases">Windows 版・Linux 版をダウンロード</a>
+        <p>試験版（ベータ版）です。配布ページの一覧で、名前に beta が付いた版（Pre-release）の「Assets」から、Windows は <code>-windows-x64-setup.exe</code>、Linux は <code>-linux-x86_64.tar.gz</code> で終わるファイルを選んでください。</p>
         <p><a href="https://github.com/TetsuakiBaba/iroha/releases">これまでの版と変更点</a></p>
       </div>
     </div>
@@ -457,18 +490,18 @@
     </details>
     <details>
       <summary>打った文字がどこかに送られることはありますか？</summary>
-      <p>ありません。変換はこの Mac の中で行います。外部の AI サービスを自分で選んで「AI に書き換えを頼む」機能を使ったときだけ、その文がそのサービスに送られます。</p>
+      <p>ありません。変換はお使いのパソコンの中で行います。外部の AI サービスを自分で選んで「AI に書き換えを頼む」機能を使ったときだけ、その文がそのサービスに送られます。</p>
     </details>
     <details>
-      <summary>Intel の Mac や Windows で使えますか？</summary>
-      <p>今は Apple シリコン（M1 以降）の Mac だけに対応しています。</p>
+      <summary>Windows や Linux、Intel の Mac で使えますか？</summary>
+      <p>Windows 版（Windows 10 以降の 64 ビット）と Linux 版（Ubuntu 22.04 以降、IBus または fcitx5）を、試験版（ベータ版）として配布しています。入れ方は<a href="#download">はじめかた</a>にあります。使える機能は Mac 版より少なく、たとえば Linux 版には「こえ」モードがありません。Intel の Mac には対応していません。</p>
     </details>
     <details>
-      <summary>入力ソースの一覧に iroha が出てきません。</summary>
+      <summary>Mac の入力ソースの一覧に iroha が出てきません。</summary>
       <p>インストールの直後は一覧に出ないことがあります。一度ログアウトしてログインし直してから、もう一度追加してください。</p>
     </details>
     <details>
-      <summary>入力メニューで iroha が灰色になって選べません。</summary>
+      <summary>Mac の入力メニューで iroha が灰色になって選べません。</summary>
       <p>ほかのアプリがパスワード入力のための保護（セキュア入力）を続けているときに起きます。そのアプリのパスワード欄を閉じるか、アプリを終了すると戻ります。iroha は、原因になっているアプリの名前を画面に知らせます。</p>
     </details>
     <details>
@@ -477,7 +510,7 @@
     </details>
     <details>
       <summary>やめるときはどうすればよいですか？</summary>
-      <p>iroha の設定 →「情報」→「iroha をアンインストール…」で、入力ソースからの削除とアプリの削除まで行います。辞書などのデータも一緒に消すかを選べます。</p>
+      <p>Mac 版は、iroha の設定 →「情報」→「iroha をアンインストール…」で、入力ソースからの削除とアプリの削除まで行います。辞書などのデータも一緒に消すかを選べます。Windows 版は Windows の「設定」→「アプリ」から、Linux 版は展開したフォルダの <code>./uninstall.sh</code> で外します。</p>
     </details>
     <details>
       <summary>不具合を見つけたとき、要望があるときは？</summary>
@@ -694,6 +727,6 @@
   </div>
 </footer>
 
-<script src="assets/js/site.js"></script>
+<script src="assets/js/site.js?v=20261114"></script>
 </body>
 </html>

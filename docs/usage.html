@@ -26,7 +26,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Yuji+Syuku&family=Shippori+Mincho:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="assets/css/site.css">
+<link rel="stylesheet" href="assets/css/site.css?v=20261114">
 </head>
 <body>
 
@@ -50,6 +50,7 @@
     <p class="eyebrow"><span>使い方</span><span class="eyebrow-en">HOW TO</span></p>
     <h1>使い方</h1>
     <p>iroha のキー操作と、よく使う機能の使い方です。設定は、メニューバーの入力ソースのアイコン →「設定…」から開けます。</p>
+    <p>このページのキー操作と設定の場所は、Mac 版のものです。Windows 版と Linux 版（試験版）では、キーや設定の場所が違うことがあります。入れ方は<a href="./#download">トップページの「はじめかた」</a>にあります。</p>
     <ul class="toc">
       <li><a href="#basic">基本の操作</a></li>
       <li><a href="#bunsetsu">区切りと候補を直す</a></li>
@@ -171,7 +172,7 @@
     <p>入力中の文を、登録しておいた指示で AI に書き換えてもらえます。指示は 3 つまで登録でき、初めは 1 つ目に英訳が入っています。</p>
     <p class="example">あした会議やるから来て　→　<b>⌥ + Return</b>　→　Come to the meeting tomorrow.</p>
     <ul>
-      <li>使う AI は設定の「モデル」→「AI サービス」で選びます。Apple Intelligence（macOS 26 以降）、Ollama、LM Studio のように Mac の中で動くものと、Claude や OpenAI 互換のサービスのように外部のものがあります。</li>
+      <li>使う AI は設定の「モデル」→「AI サービス」で選びます。Apple Intelligence（macOS 26 以降）、Ollama、LM Studio のようにパソコンの中で動くものと、Claude や OpenAI 互換のサービスのように外部のものがあります。</li>
       <li><b>外部のサービスを選んだときは、書き換える文がそのサービスに送られます。</b></li>
       <li>書き換えの途中で Esc を押すと取り消せます。結果が日本語のときは、確定する前に区切りごとに直せます。</li>
     </ul>
@@ -192,14 +193,14 @@
 
   <section id="koe" class="doc-section">
     <h2>「こえ」モード</h2>
-    <p>設定の「情報」→「開発者モード」を ON にすると、「入力」のタブに「「こえ」モード」が出ます（初期設定は OFF、macOS 26 以降）。マイクの使用は設定画面から許可します。</p>
+    <p>設定の「情報」→「開発者モード」を ON にすると、「入力」のタブに「「こえ」モード」が出ます（初期設定は OFF）。Mac 版（macOS 26 以降）と Windows 版（試験版）で使えます。Windows 版では設定の「入力」のタブにあり、押すキーの初期設定は右 Ctrl です。Linux 版にはまだありません。マイクの使用は設定画面から許可します。</p>
     <ul>
       <li>決めたキー（初期設定は右 ⌘。右 Option・fn も選べます）を押している間だけ録音し、離すと、話した内容が確定されずに入力中の文字として入ります。</li>
       <li>音声認識が出した漢字かな交じりの結果を読み（ひらがな）に戻してから、キーボードで打ったときと同じかな漢字変換に渡します。Space の候補・区切りの打ち直し・続きのキー入力・Return での確定が、打った文と同じようにできます。</li>
       <li>話している間は、音声認識の途中の結果が入力中の文字として見えます。</li>
       <li>読みは音声認識の表記から求め直すので、人名などで取り違えることがあります。Space の候補か区切りの打ち直しで直します。英字・数字は読みに戻さず、音声認識の表記のまま入ります。</li>
       <li>「えー」「あー」のような言いよどみは、<a href="#ai">AI に書き換えを頼む</a>機能で除けます。言いよどみを除く指示を登録しておき、声で入れたあとにそのキーを押します。話したあとに手で直す箇所が減ります。</li>
-      <li>音声認識はこの Mac の中で行い、音声を外部に送りません。声で入れた文は、変換の学習・入力の履歴に残しません。</li>
+      <li>音声認識はお使いの Mac の中で行い、音声を外部に送りません。声で入れた文は、変換の学習・入力の履歴に残しません。</li>
     </ul>
   </section>
 
@@ -213,7 +214,7 @@
           <tr><td>辞書・学習</td><td>ユーザ辞書、変換ルール、変換の学習、プライベートモード</td></tr>
           <tr><td>選択テキスト</td><td>ほかのアプリで選んだ文を AI で書き換える機能、選んだ文字数の表示</td></tr>
           <tr><td>モデル</td><td>かな漢字変換のモデル、AI サービスの選択</td></tr>
-          <tr><td>情報</td><td>アップデートの確認、データの置き場所（iCloud Drive や Dropbox で複数の Mac と共有）、ライセンス、アンインストール</td></tr>
+          <tr><td>情報</td><td>アップデートの確認、データの置き場所（iCloud Drive や Dropbox で複数のパソコンと共有）、ライセンス、アンインストール</td></tr>
         </tbody>
       </table>
     </div>
