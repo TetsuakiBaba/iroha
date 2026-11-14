@@ -1,4 +1,5 @@
 #include "iroha/zenz_engine.h"
+#include "iroha/inference_timer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -246,6 +247,13 @@ std::u32string ZenzEngine::DecodeUtf8DroppingFragments(const std::string& bytes)
     std::u32string text = Utf8ToUtf32(bytes);
     text.erase(std::remove(text.begin(), text.end(), char32_t(0xFFFD)), text.end());
     return text;
+}
+
+// 読み込みにかかった時間をデバッグ表示のために測る（読み込み済みなら測らない）
+bool ZenzEngine::EnsureLoadedMeasured(std::string* error) {
+    if (runtime_) return true;
+    const inference_timer::Measure measure(inference_timer::Measure::Kind::ModelLoad);
+    return EnsureLoaded(error);
 }
 
 bool ZenzEngine::EnsureLoaded(std::string* error) {
@@ -675,7 +683,8 @@ bool ZenzEngine::Convert(const std::u32string& reading,
                          std::vector<std::u32string>* results, std::string* error) {
     if (!results) return false;
     results->clear();
-    if (!EnsureLoaded(error)) return false;
+    if (!EnsureLoadedMeasured(error)) return false;
+    const inference_timer::Measure measure(inference_timer::Measure::Kind::NeuralNetwork);
     Runtime& rt = *runtime_;
 
     const std::u32string prompt = BuildPrompt(reading, leftContext, kMaxContextLength);
@@ -773,7 +782,8 @@ bool ZenzEngine::ConvertScored(const std::u32string& reading,
                                const std::u32string& leftContext, ScoredConversion* result,
                                std::string* error) {
     if (!result) return false;
-    if (!EnsureLoaded(error)) return false;
+    if (!EnsureLoadedMeasured(error)) return false;
+    const inference_timer::Measure measure(inference_timer::Measure::Kind::NeuralNetwork);
     const std::u32string prompt = BuildPrompt(reading, leftContext, kMaxContextLength);
     std::vector<llama_token> promptTokens;
     if (!TokenizePrompt(prompt, &promptTokens, error)) return false;
@@ -797,8 +807,9 @@ bool ZenzEngine::Score(const std::vector<std::u32string>& candidates,
                        std::vector<float>* scores, std::string* error) {
     if (!scores) return false;
     scores->clear();
-    if (!EnsureLoaded(error)) return false;
+    if (!EnsureLoadedMeasured(error)) return false;
     if (candidates.empty()) return true;
+    const inference_timer::Measure measure(inference_timer::Measure::Kind::NeuralNetwork);
     Runtime& rt = *runtime_;
     llama_context* ctx = rt.context;
     const int vocabSize = llama_vocab_n_tokens(rt.vocab);

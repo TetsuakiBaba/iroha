@@ -59,6 +59,7 @@ void TextService::DestroyPollWindow() {
     if (pollWindow_) {
         KillTimer(pollWindow_, reinterpret_cast<UINT_PTR>(this) + 1);
         noticeWindow_.Hide();
+        debugWindow_.Hide();
         DestroyWindow(pollWindow_);
         pollWindow_ = nullptr;
     }

@@ -109,6 +109,7 @@ private:
     struct Generated;
     struct FirstToken;
 
+    bool EnsureLoadedMeasured(std::string* error);
     bool EnsureLoaded(std::string* error);
     bool TokenizePrompt(const std::u32string& prompt, std::vector<int32_t>* tokens,
                         std::string* error);

@@ -198,6 +198,7 @@ enum ControlId {
     kIdAutoUpdate,
     kIdCheckUpdate,
     kIdDeveloperMode,
+    kIdDeveloperOverlay,
 };
 
 // 句読点の組（設定の値と表示）
@@ -404,7 +405,7 @@ struct App {
     bool downloading = false;
     // 情報
     HWND gitHub = nullptr, dataFolder = nullptr, developerToggle = nullptr;
-    HWND autoUpdateToggle = nullptr, checkUpdate = nullptr;
+    HWND autoUpdateToggle = nullptr, checkUpdate = nullptr, developerOverlayToggle = nullptr;
     Row* licenseTypoRows[16] = {};
     std::vector<Row*> licenseRows;
 
@@ -1036,10 +1037,21 @@ void App::BuildAboutPage() {
                   L"ON にすると、細かな調整や開発者向けの項目を設定画面に表示します（入力: アプリの文章を文脈に使う・"
                   L"打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ・区切り記号で英字を入力・AIで直す、"
                   L"辞書・学習: 記号・顔文字・絵文字を候補に出す、選択テキスト: 除外するアプリ、モデル: モデルファイルの指定・"
-                  L"LoRA アダプタ）。開発者モードの項目には、項目名の右に紫色の「開発者」の印を付けています。見出しに印が"
+                  L"LoRA アダプタ、情報: デバッグ表示）。開発者モードの項目には、項目名の右に紫色の「開発者」の印を付けています。見出しに印が"
                   L"あるものは、その節全体が開発者モードの項目です。OFF にしても項目が見えなくなるだけで、変えた設定はそのまま"
                   L"効きます。")
         ->right = {{developerToggle, 110}};
+    developerOverlayToggle = MakeToggle(page, kIdDeveloperOverlay);
+    Row* overlayRow = page->AddItem(
+        L"デバッグ表示", L"推論にかかった時間と左文脈を、入力中の文字の上に表示します",
+        L"入力を始めたときの左文脈（アプリの文章から読めたか・何文字か）と、かな漢字変換・打ち間違いの訂正の 1 回ごとの"
+        L"時間（全体と、そのうちニューラルネットの計算。モデルの読み込みがあればその時間）を出します。ライブ変換を"
+        L"結果を使わずに打ち切った数も添えます。Enter で確定したとき・ほかの場所に移ったときに閉じます。"
+        L"macOS 版の「推論にかかった時間と左文脈をカーソルの右下に表示する」と同じです（「要素の文字」の行と"
+        L"加速度センサのグラフは macOS 専用なのでありません）。",
+        /*developer=*/true);
+    overlayRow->right = {{developerOverlayToggle, 110}};
+    overlayRow->visible = [this] { return developerMode; };
     page->AddNote(L"「開発者」の印の付いた項目と節は、開発者モードのときだけ表示します。")->visible = [this] {
         return developerMode;
     };
@@ -1278,6 +1290,7 @@ void App::Refresh() {
     // 情報
     SetCheck(developerToggle, developerMode);
     SetCheck(autoUpdateToggle, config.autoUpdateCheck);
+    SetCheck(developerOverlayToggle, config.developerOverlay);
     RelayoutAll();
 }
 
@@ -2296,6 +2309,9 @@ void App::OnCommand(int id, int code, HWND control) {
     case kIdDataFolder:
         if (clicked) ShellExecuteW(window, L"open", DataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         return;
+    case kIdDeveloperOverlay:
+        if (clicked) Update([&](iroha::Config& c) { c.developerOverlay = Checked(control); });
+        return;
     case kIdAutoUpdate:
         if (clicked) Update([&](iroha::Config& c) { c.autoUpdateCheck = Checked(control); }, /*reload=*/false);
         return;
@@ -2309,8 +2325,8 @@ void App::OnCommand(int id, int code, HWND control) {
         return;
     case kIdDeveloperMode:
         if (!clicked) return;
-        // 開発者モードは表示だけを変える（変換サーバは読み直さなくてよい）
-        Update([&](iroha::Config& c) { c.developerMode = Checked(control); }, /*reload=*/false);
+        // 開発者モードは表示を変え、デバッグ表示を出すかも決める（変換サーバに読み直させる）
+        Update([&](iroha::Config& c) { c.developerMode = Checked(control); });
         developerMode = config.developerMode;
         RelayoutAll();
         return;

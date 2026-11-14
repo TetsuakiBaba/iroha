@@ -580,6 +580,7 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
             candidateWindow_.Hide();
             predictionWindow_.Hide();
             UpdateTypoFeedback(context, output, synchronous);
+            UpdateDebugOverlay(context, output, synchronous);
             if (output.voicePending) {
                 StartPolling();
             } else {
@@ -601,6 +602,7 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
         predictionWindow_.Hide();
     }
     UpdateTypoFeedback(context, output, synchronous);
+    UpdateDebugOverlay(context, output, synchronous);
     // ライブ変換・打ち間違いの訂正・AI変換・AIで直す・「こえ」モードの結果待ちの間は問い合わせる
     if (shown_.livePending || shown_.typoPending || shown_.aiPending || shown_.aiFixPending || shown_.voicePending) {
         StartPolling();
@@ -636,6 +638,7 @@ void TextService::ClearShown() {
     shown_ = iroha::SessionOutput();
     candidateWindow_.Hide();
     predictionWindow_.Hide();
+    debugWindow_.Hide();
     if (!typoFeedbackShown_.empty()) {
         typoFeedbackShown_.clear();
         noticeWindow_.Hide();
@@ -721,6 +724,50 @@ void TextService::UpdateTypoFeedback(ITfContext* context, const iroha::SessionOu
         return;
     }
     // 問い合わせで届いたとき: 書き込みのエディットセッションの後に、読み取りだけのセッションで位置を求める
+    AddRef();
+    context->AddRef();
+    const HRESULT hr = RequestEditSession(
+        context, clientId_,
+        [this, context, show](TfEditCookie ec) -> HRESULT {
+            RECT rect = {};
+            HWND owner = nullptr;
+            if (CompositionRectIn(ec, context, &rect, &owner)) show(rect, owner);
+            context->Release();
+            Release();
+            return S_OK;
+        },
+        TF_ES_ASYNCDONTCARE | TF_ES_READ);
+    if (FAILED(hr)) {
+        context->Release();
+        Release();
+    }
+}
+
+// デバッグ表示（macOS版 DeveloperOverlay）。行は変換サーバが作る（左文脈・かな漢字変換・打ち間違いの訂正の時間）。
+// 候補・予測・知らせの小窓は未確定文字列の下に出るので、こちらは上に出す。未確定文字列が伸びるので毎回置き直す
+void TextService::UpdateDebugOverlay(ITfContext* context, const iroha::SessionOutput& output, bool synchronous) {
+    if (output.debugOverlay.empty()) {
+        debugWindow_.Hide();
+        return;
+    }
+    std::vector<std::u32string> lines;
+    size_t start = 0;
+    for (;;) {
+        const size_t end = output.debugOverlay.find(U'\n', start);
+        lines.push_back(output.debugOverlay.substr(start, end == std::u32string::npos ? std::u32string::npos : end - start));
+        if (end == std::u32string::npos) break;
+        start = end + 1;
+    }
+    const auto show = [this, lines](const RECT& rect, HWND owner) {
+        debugWindow_.Show(owner, rect, lines, {}, SIZE_MAX, /*numbered=*/false, /*expanded=*/false, /*above=*/true);
+    };
+    if (synchronous) {
+        RECT rect = {};
+        HWND owner = nullptr;
+        if (CompositionRect(context, &rect, &owner)) show(rect, owner);
+        return;
+    }
+    // 問い合わせで届いたとき（ライブ変換・休止での訂正の結果）: 読み取りだけのセッションで位置を求める
     AddRef();
     context->AddRef();
     const HRESULT hr = RequestEditSession(

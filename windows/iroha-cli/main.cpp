@@ -1389,6 +1389,13 @@ void PrintSessionOutput(const std::u32string& label, const iroha::SessionOutput&
     }
     if (output.aiFixPending) line += " （AIで直す: 結果待ち）";
     if (!output.aiFixNotice.empty()) line += "  〔" + Utf32ToUtf8(output.aiFixNotice) + "〕";
+    if (!output.debugOverlay.empty()) {
+        std::u32string overlay = output.debugOverlay;
+        for (char32_t& c : overlay) {
+            if (c == U'\n') c = U'｜';
+        }
+        line += "  〔デバッグ: " + Utf32ToUtf8(overlay) + "〕";
+    }
     if (output.voicePending) line += " （こえ: 録音・認識中）";
     if (!output.voiceNotice.empty()) line += "  〔" + Utf32ToUtf8(output.voiceNotice) + "〕";
     if (output.aiFixFeedback) {

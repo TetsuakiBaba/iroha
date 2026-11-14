@@ -12,6 +12,7 @@
 #include "iroha/ai_conversion.h"
 #include "iroha/ai_fix.h"
 #include "iroha/conversion_log.h"
+#include "iroha/debug_overlay.h"
 #include "iroha/input_history.h"
 #include "iroha/romaji_composer.h"
 #include "iroha/symbol_candidates.h"
@@ -132,6 +133,8 @@ struct SessionOutput {
     std::u32string voiceNotice;
     // プライベートモードを切り替えるキー（KeyShortcut::Encode。0 なら割り当てなし）
     uint32_t privateModeShortcut = 0;
+    // デバッグ表示（開発者モード）: カーソルの右下に出す行（改行で区切る。空なら出さない）
+    std::u32string debugOverlay;
 
     bool Composing() const { return !preedit.empty(); }
     // 未確定文字列をつなげたもの
@@ -182,6 +185,8 @@ struct SessionSettings {
     bool documentContext = true;
     // プライベートモードを切り替えるキー（TIP に渡す。KeyShortcut::Encode。0 なら割り当てなし）
     uint32_t privateModeShortcut = 0;
+    // デバッグ表示（macOS版の DeveloperOverlaySettings。開発者モードが ON で、デバッグ表示を ON にしたとき）
+    bool developerOverlay = false;
 };
 
 // 入力の状態（読み・ライブ変換の結果・固定部分・英字入力・文節・候補）を持ち、キーごとに表示を決める。
@@ -321,13 +326,17 @@ public:
     // （「その変換結果 + 増えたかな」を出せる。変換が打鍵に追いつかないときも表示が進む）。
     // 要らなくなった依頼（CancelLiveConversion より前のもの）の結果は捨てる。
     // converted が nullptr なら変換できなかった（待ちだけを解く）
+    // timing はデバッグ表示が ON のときに測った時間（無ければ出さない）
     bool CompleteLiveConversion(uint64_t generation, const std::u32string& reading,
-                                const std::u32string* converted);
+                                const std::u32string* converted, const InferenceReport* timing = nullptr);
+    // 裏で頼んだライブ変換を、結果を使わずに打ち切った（デバッグ表示の次の行に数を添える）
+    void NoteCancelledConversion() { ++debug_.cancelled; }
 
     // 裏で頼んだ打ち間違いの訂正の結果を受け取る（訂正が無ければ correction は無し）。表示が変わったら真。
     // 読みが変わっていれば（入力が進んでいれば）使わない
     bool CompleteTypoCorrection(uint64_t generation, const std::u32string& reading,
-                                const std::optional<TypoCorrection>& correction);
+                                const std::optional<TypoCorrection>& correction,
+                                const InferenceReport* timing = nullptr);
 
     // AI変換の途中経過（累積の出力）・結果（失敗なら無し）を受け取る。表示が変わったら真。
     // 結果が日本語なら文節に区切った未確定文字列にし、そうでなければ（英訳など・失敗）確定する
@@ -400,6 +409,19 @@ public:
     static std::vector<std::u32string> AlphabetCandidates(const std::u32string& text);
 
 private:
+    // デバッグ表示の行（macOS版 DeveloperOverlay）。入力を始めたときと Enter で確定したときに捨てる
+    struct DebugLines {
+        std::u32string context;
+        std::u32string conversion;
+        std::u32string typo;
+        int cancelled = 0; // 前にかな漢字変換の行を出してから、結果を使わずに打ち切った変換の数
+    };
+    DebugLines debug_;
+    // かな漢字変換を 1 回頼む。デバッグ表示が ON なら時間を測って行にする
+    bool ConvertMeasured(debug_overlay::ConversionKind kind, const std::u32string& reading,
+                         const std::u32string& context, int candidateCount, std::vector<std::u32string>* results,
+                         std::string* error);
+    void ReportConversion(debug_overlay::ConversionKind kind, const InferenceReport& report, size_t readingLength);
     enum class Mode { Composing, Segmenting };
 
     // 学習で差し替えた表示を、表示形の指定で退けたときの記録。退けた表示形のまま確定したら、その学習を消す

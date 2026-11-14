@@ -29,10 +29,11 @@ public:
     // candidates は全候補。selectedIndex のあるページだけを表示する。
     // annotations は候補の右に小さく出す印（専門辞書の名前。候補と同じ数か空）
     // numbered が偽なら番号を付けない（予測変換の候補・知らせ）。selectedIndex が候補の数以上なら何も選ばない。
-    // expanded なら、ページ（9 件ずつの列）を全部横に並べた表にする（Tab。番号は列の中で数える）
+    // expanded なら、ページ（9 件ずつの列）を全部横に並べた表にする（Tab。番号は列の中で数える）。
+    // above なら直上（入らなければ直下）に出す（デバッグ表示。候補・予測・知らせの小窓と重ねない）
     void Show(HWND owner, const RECT& anchor, const std::vector<std::u32string>& candidates,
               const std::vector<std::u32string>& annotations, size_t selectedIndex,
-              bool numbered = true, bool expanded = false);
+              bool numbered = true, bool expanded = false, bool above = false);
     void Hide();
 
     // 絵文字として描く候補か（絵文字のフォントで描く）

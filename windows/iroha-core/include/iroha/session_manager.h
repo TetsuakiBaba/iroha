@@ -217,6 +217,8 @@ private:
     std::map<uint64_t, std::unique_ptr<Entry>> sessions_;
     uint64_t useCounter_ = 0;
     SessionSettings settings_;
+    // デバッグ表示が ON か（裏のスレッドが変換・訂正の時間を測るか。settings_ の写し）
+    std::atomic<bool> measuring_{false};
     std::shared_ptr<const SymbolCandidateTable> symbolTable_;
     std::shared_ptr<const TermDictionaryLookup> termLookup_;
     std::shared_ptr<const UserRewriteRuleSet> rewriteRules_;

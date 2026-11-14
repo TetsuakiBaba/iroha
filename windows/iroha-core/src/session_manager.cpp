@@ -233,6 +233,7 @@ void SessionManager::WithEngine(const std::function<void()>& work) {
 void SessionManager::SetSettings(const SessionSettings& settings) {
     std::lock_guard<std::mutex> lock(stateMutex_);
     settings_ = settings;
+    measuring_ = settings.developerOverlay;
     for (auto& item : sessions_) item.second->session.SetSettings(settings_);
 }
 
@@ -357,11 +358,23 @@ void SessionManager::TypoWorkerLoop() {
             }
             continue;
         }
-        const auto correction = backend_->CorrectTypo(job.reading, job.threshold, job.minimumLength);
+        // デバッグ表示が ON なら訂正 1 回の時間を測る
+        const bool measuring = measuring_.load();
+        InferenceReport report;
+        const auto started = std::chrono::steady_clock::now();
+        std::optional<TypoCorrection> correction;
+        {
+            std::optional<inference_timer::Scope> scope;
+            if (measuring) scope.emplace(&report.stats);
+            correction = backend_->CorrectTypo(job.reading, job.threshold, job.minimumLength);
+        }
+        report.totalMicros =
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
         std::lock_guard<std::mutex> lock(stateMutex_);
         const auto found = sessions_.find(sessionId);
         if (found != sessions_.end()) {
-            found->second->session.CompleteTypoCorrection(job.generation, job.reading, correction);
+            found->second->session.CompleteTypoCorrection(job.generation, job.reading, correction,
+                                                          measuring ? &report : nullptr);
         }
     }
 }
@@ -447,7 +460,14 @@ void SessionManager::WorkerLoop() {
 
         std::vector<std::u32string> results;
         bool converted = false;
+        bool wasCancelled = false;
+        // デバッグ表示が ON ならライブ変換 1 回の時間を測る
+        const bool measuring = measuring_.load();
+        InferenceReport report;
+        const auto started = std::chrono::steady_clock::now();
         {
+            std::optional<inference_timer::Scope> scope;
+            if (measuring) scope.emplace(&report.stats);
             std::lock_guard<std::mutex> engine(engineMutex_);
             // やめるのは、キーの処理がエンジンを待っているとき・依頼が要らなくなったとき・終了するとき
             bool cancelled = false;
@@ -466,7 +486,10 @@ void SessionManager::WorkerLoop() {
                 // 途中でやめた変換は、エンジンの外側の層が代わりの結果で成功にしていることがある
                 if (cancelled) converted = false;
             }
+            wasCancelled = cancelled;
         }
+        report.totalMicros =
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
         {
             std::lock_guard<std::mutex> lock(jobMutex_);
             runningSerial_ = 0;
@@ -475,9 +498,11 @@ void SessionManager::WorkerLoop() {
             std::lock_guard<std::mutex> lock(stateMutex_);
             const auto found = sessions_.find(job.sessionId);
             if (found != sessions_.end()) {
+                if (measuring && wasCancelled) found->second->session.NoteCancelledConversion();
                 found->second->session.CompleteLiveConversion(
                     job.generation, job.reading,
-                    converted && !results.empty() ? &results.front() : nullptr);
+                    converted && !results.empty() ? &results.front() : nullptr,
+                    measuring && converted ? &report : nullptr);
             }
         }
     }

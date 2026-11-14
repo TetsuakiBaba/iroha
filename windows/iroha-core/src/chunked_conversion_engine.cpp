@@ -1,4 +1,5 @@
 #include "iroha/chunked_conversion_engine.h"
+#include "iroha/inference_timer.h"
 
 #include <algorithm>
 
@@ -98,6 +99,7 @@ bool ChunkedConversionEngine::ConvertCached(const std::u32string& reading,
     const auto cached = cache_.find(key);
     if (cached != cache_.end()) {
         *converted = cached->second;
+        inference_timer::Note(InferenceStats::kCache);
         return true;
     }
     std::vector<std::u32string> candidates;

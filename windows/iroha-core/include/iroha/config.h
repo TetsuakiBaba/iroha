@@ -47,6 +47,8 @@ struct Config {
     std::string modelAdapterPath;
     // 設定画面の開発者モード（細かな調整・開発者向けの項目を出す。設定画面だけが使う）
     bool developerMode = false;
+    // デバッグ表示（推論にかかった時間と左文脈をカーソルの右下に出す。開発者モードが ON のときだけ効く。macOS版と同じキー）
+    bool developerOverlay = false;
     // 変換記録（確定を logs/conversions/ に残す。左文脈に文書の文章が入るので既定 OFF）と、
     // 直した確定だけを残すか（キーの名前は macOS版の設定と同じ）
     bool conversionLog = false;

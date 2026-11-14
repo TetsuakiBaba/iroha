@@ -1,4 +1,5 @@
 #include "iroha/learning_engine.h"
+#include "iroha/inference_timer.h"
 
 #include <algorithm>
 
@@ -50,6 +51,7 @@ bool LearningEngine::Convert(const std::u32string& reading,
             if (error) *error = baseError;
             return false;
         }
+        inference_timer::Note(InferenceStats::kLearning);
         return true;
     }
 

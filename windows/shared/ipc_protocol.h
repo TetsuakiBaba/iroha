@@ -28,7 +28,8 @@
 //                    前の部分・打った読みの変わった部分・直した読みの変わった部分・後の部分）,
 //                    u32 aiShortcutCount, u32×aiShortcutCount（AI変換のプリセットのキー）,
 //                    u32 aiFixShortcut, string aiFixNotice, u32 aiFixFeedbackCount（0 か 4）, string×aiFixFeedbackCount,
-//                    u32 voiceKey, string voiceNotice（「こえ」モード）, u32 privateModeShortcut
+//                    u32 voiceKey, string voiceNotice（「こえ」モード）, u32 privateModeShortcut,
+//                    string debugOverlay（デバッグ表示の行。改行区切り）
 //                    （印と取り消せる確定から後は後から足したので、無い返事も読めるようにしてある）
 //                flags: 1 文節変換中 / 2 変換の結果待ち / 4 候補ウィンドウ / 8 入力していないときの Space は全角 /
 //                       16 確定した文字列を未確定文字列に置き換える（UndoCommit への返事） / 32 プライベートモード /
@@ -348,6 +349,7 @@ inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
     PutU32(&buf, output->voiceKey);
     PutString(&buf, Utf32ToUtf8(output->voiceNotice));
     PutU32(&buf, output->privateModeShortcut);
+    PutString(&buf, Utf32ToUtf8(output->debugOverlay));
     return buf;
 }
 
@@ -484,7 +486,10 @@ inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
                     std::string voiceNotice;
                     if (reader.U32(&output.voiceKey) && reader.String(&voiceNotice)) {
                         output.voiceNotice = Utf8ToUtf32(voiceNotice);
-                        reader.U32(&output.privateModeShortcut);
+                        std::string debugOverlay;
+                        if (reader.U32(&output.privateModeShortcut) && reader.String(&debugOverlay)) {
+                            output.debugOverlay = Utf8ToUtf32(debugOverlay);
+                        }
                     }
                 }
             }

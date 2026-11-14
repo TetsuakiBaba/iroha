@@ -111,6 +111,8 @@ private:
     void ShowNotice(ITfContext* context, const std::u32string& text);
     // 打ち間違いを直したときの「打った読み → 直した読み」を出す・閉じる（問い合わせで届いたときは非同期で出す）
     void UpdateTypoFeedback(ITfContext* context, const iroha::SessionOutput& output, bool synchronous);
+    // デバッグ表示（開発者モード。推論にかかった時間と左文脈）を未確定文字列の上に出す
+    void UpdateDebugOverlay(ITfContext* context, const iroha::SessionOutput& output, bool synchronous);
     // 未確定文字列（無ければカーソル）のスクリーン座標と、窓の持ち主
     bool CompositionRect(ITfContext* context, RECT* rect, HWND* owner);
     bool CompositionRectIn(TfEditCookie ec, ITfContext* context, RECT* rect, HWND* owner);
@@ -179,6 +181,8 @@ private:
     // 予測変換の候補の小窓と、知らせの小窓
     CandidateWindow predictionWindow_;
     CandidateWindow noticeWindow_;
+    // デバッグ表示の小窓（変換サーバの返事の debugOverlay。空なら出さない）
+    CandidateWindow debugWindow_;
     // 出している打ち間違いの訂正の小窓の文（同じ訂正を出し直さない。空なら出していない）
     std::u32string typoFeedbackShown_;
     // 確定の取り消しで、未確定文字列に置き換えるカーソルの手前の長さ（UTF-16）

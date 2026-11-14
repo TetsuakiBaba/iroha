@@ -452,6 +452,21 @@ $env:IROHA_TERM_DICTIONARIES = "installed"
 windows\build\iroha-cli\iroha-cli.exe lattice goenseihaien
 ```
 
+## デバッグ表示
+
+macOS版の開発者モードの「推論にかかった時間と左文脈をカーソルの右下に表示する」（`DeveloperOverlay`）を移した
+（2026-11-14。設定 > 情報 > 開発者向け の「デバッグ表示」、`developerOverlay`。開発者モードが ON のときだけ効く。既定 OFF）。
+Linux版（f69ceab の段階で `linux/iroha-core` に入ったもの）と同じ作りで、コアの部分はそこから写した。
+
+- 行は 3 本: 入力を始めたときの左文脈（アプリから読めたか・何文字か。読めなければ代わりの確定文字列）、かな漢字変換 1 回ごと
+  （ライブ変換・文節に分ける・区切り直し・候補ウィンドウ。全体の時間とそのうち NN の時間と回数、モデルの読み込み、結果を
+  使わずに打ち切った変換の数）、打ち間違いの訂正 1 回ごと。文面は macOS版と同じ（`iroha-core` の `debug_overlay`）。
+  「要素の文字」の行と加速度センサのグラフは macOS 専用なので無い
+- NN の時間は `inference_timer`（スレッドごとの入れ物）に `ZenzEngine`・`TypoNormalizer` が足し込む。学習・ユーザ辞書・
+  区切りのキャッシュで NN を通さなかったときは理由を添える。ライブ変換と休止での訂正は `SessionManager` の裏のスレッドで測る
+- 変換サーバが `SessionOutput::debugOverlay`（改行区切り）で返し、TIP が未確定文字列の**上**に出す（候補・予測・知らせの
+  小窓は下に出るので重ねない）。Enter で確定したとき・合成が終わったときに閉じる。`iroha-cli session` も行を出す
+
 ## 配布（インストーラーと自動アップデート）
 
 2026-11-14 に作った。配布物は `iroha-<版>-windows-x64-setup.exe` だけ（zip は置かない。macOS版のアップデータは

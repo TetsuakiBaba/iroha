@@ -385,7 +385,7 @@ void CandidateWindow::PaintWithGdi(HDC dc, const RECT& client) const {
 void CandidateWindow::Show(HWND owner, const RECT& anchor,
                            const std::vector<std::u32string>& candidates,
                            const std::vector<std::u32string>& annotations, size_t selectedIndex,
-                           bool numbered, bool expanded) {
+                           bool numbered, bool expanded, bool above) {
     EnsureWindow(owner);
     if (!hwnd_) return;
     UpdateFont();
@@ -423,7 +423,12 @@ void CandidateWindow::Show(HWND owner, const RECT& anchor,
     GetMonitorInfoW(MonitorFromRect(&anchorCopy, MONITOR_DEFAULTTONEAREST), &monitor);
     int x = anchor.left;
     int y = anchor.bottom + 2;
-    if (y + content.cy > monitor.rcWork.bottom) y = anchor.top - content.cy - 2;
+    if (above) {
+        y = anchor.top - content.cy - 2;
+        if (y < monitor.rcWork.top) y = anchor.bottom + 2;
+    } else if (y + content.cy > monitor.rcWork.bottom) {
+        y = anchor.top - content.cy - 2;
+    }
     if (x + content.cx > monitor.rcWork.right) x = monitor.rcWork.right - content.cx;
     if (x < monitor.rcWork.left) x = monitor.rcWork.left;
     if (y < monitor.rcWork.top) y = monitor.rcWork.top;

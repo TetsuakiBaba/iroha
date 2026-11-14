@@ -89,6 +89,7 @@ Config LoadConfig(const std::filesystem::path& path) {
     for (const auto& flag : {std::make_pair("learningEnabled", &config.learningEnabled),
                              std::make_pair("documentContext", &config.documentContext),
                              std::make_pair("developerMode", &config.developerMode),
+                             std::make_pair("developerOverlay", &config.developerOverlay),
                              std::make_pair("autoUpdateCheck", &config.autoUpdateCheck)}) {
         if (const json::Value* value = root.Find(flag.first); value && value->type == json::Value::Type::Bool) {
             *flag.second = value->boolean;
@@ -216,6 +217,7 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                       ",\"documentContext\":" + (config.documentContext ? "true" : "false") +
                       ",\"modelAdapterPath\":" + json::QuoteString(config.modelAdapterPath) +
                       ",\"developerMode\":" + (config.developerMode ? "true" : "false") +
+                      ",\"developerOverlay\":" + (config.developerOverlay ? "true" : "false") +
                       ",\"conversionLogEnabled\":" + (config.conversionLog ? "true" : "false") +
                       ",\"conversionLogScope\":" + (config.conversionLogCorrectionsOnly ? "\"corrections\"" : "\"all\"") +
                       ",\"typoNormalizer\":" + (config.typoCorrection ? "true" : "false") +

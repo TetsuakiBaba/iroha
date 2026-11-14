@@ -1,5 +1,6 @@
 #include "iroha/input_session.h"
 
+#include <chrono>
 #include <algorithm>
 
 #include "iroha/candidate_grid.h"
@@ -123,6 +124,7 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
     }
     // 声の途中結果を見せている間は合成中と同じ扱い（TIP は左文脈を付けてこない。録音を始めたときに読んである）
     // アプリの文章を文脈に使わない設定なら、TIP が読んだ左文脈は捨てる（直前に確定した文字列を使う）
+    const bool documentGiven = leftContext != nullptr;
     if (!settings_.documentContext) leftContext = nullptr;
     if (!IsComposing() && !voicePartial_) {
         state_.contextFromDocument = leftContext != nullptr;
@@ -133,6 +135,19 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
             // プライベートモード中に確定した文字列を、モードを切ったあとの左文脈に残さない
             state_.context.clear();
             state_.contextHasPrivateText = false;
+        }
+        // デバッグ表示: 入力を始めたら前の入力の行を捨て、左文脈をどこから取ったかを出す
+        if (key == SessionKey::Character) {
+            debug_ = DebugLines();
+            if (settings_.developerOverlay) {
+                using debug_overlay::ContextSource;
+                const ContextSource source = leftContext ? ContextSource::Document
+                                             : documentGiven && !settings_.documentContext ? ContextSource::Disabled
+                                                                                          : ContextSource::Unavailable;
+                debug_.context = debug_overlay::ContextLine(
+                    source, leftContext ? state_.context : U"",
+                    leftContext ? std::nullopt : std::optional<std::u32string>(state_.context));
+            }
         }
     }
 
@@ -225,6 +240,8 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
     }
     // キーの処理で読み・状態が変わったら予測の候補を引き直す（変わっていなければ選択はそのまま）
     RefreshPrediction();
+    // デバッグ表示は Enter での確定・フォーカスが外れたときに閉じる（確定した入力の数字を次の入力まで残さない）
+    if (key == SessionKey::Enter || key == SessionKey::Reset) debug_ = DebugLines();
     ++revision_;
     SessionOutput output = Current();
     output.commit = pendingCommit_ + commit;
@@ -529,11 +546,17 @@ void InputSession::CancelLiveConversion() {
 }
 
 bool InputSession::CompleteLiveConversion(uint64_t generation, const std::u32string& reading,
-                                          const std::u32string* converted) {
+                                          const std::u32string* converted, const InferenceReport* timing) {
     if (generation <= liveValidAfter_ || generation > requestGeneration_) return false;
     const auto it = requests_.find(generation);
     if (it == requests_.end()) return false;
     const Request request = it->second;
+    if (timing && converted) {
+        ReportConversion(request.kind == Request::Kind::Live ? debug_overlay::ConversionKind::Live
+                                                             : debug_overlay::ConversionKind::Segmenting,
+                         *timing, reading.size());
+        ++revision_;
+    }
     // これより前の依頼は、終わったか捨てられている
     requests_.erase(requests_.begin(), std::next(it));
     bool changed = false;
@@ -940,7 +963,8 @@ void InputSession::EnterSegmentMode() {
         } else {
             std::vector<std::u32string> results;
             std::string error;
-            if (!host_->Convert(reading, s.context + fixedPrefix, 1, &results, &error) ||
+            if (!ConvertMeasured(debug_overlay::ConversionKind::Segmenting, reading, s.context + fixedPrefix, 1,
+                                 &results, &error) ||
                 results.empty()) {
                 // 変換できないときは読みのまま表示を続ける（Enterでかな確定できる）
                 return;
@@ -1180,8 +1204,8 @@ bool InputSession::EnsureSegmentCandidates(size_t index) {
     if (segment.candidatesFetched) return !segment.candidates.empty();
     std::vector<std::u32string> candidates;
     std::string error;
-    if (!host_->Convert(segment.reading, s.context + LeftResults(index), settings_.candidateCount,
-                        &candidates, &error) ||
+    if (!ConvertMeasured(debug_overlay::ConversionKind::Candidates, segment.reading, s.context + LeftResults(index),
+                         settings_.candidateCount, &candidates, &error) ||
         candidates.empty()) {
         return false;
     }
@@ -1318,6 +1342,11 @@ void InputSession::ResizeSegment(int delta) {
     const std::u32string left = LeftResults(s.currentSegment);
     std::vector<std::u32string> converted;
     std::string error;
+    // デバッグ表示: 区切り直しは今の文節と残りの 2 回の変換を合わせて 1 行にする
+    InferenceReport report;
+    const auto started = std::chrono::steady_clock::now();
+    std::optional<inference_timer::Scope> measuring;
+    if (settings_.developerOverlay) measuring.emplace(&report.stats);
     if (!host_->Convert(currentReading, s.context + left, 1, &converted, &error) || converted.empty()) {
         return; // 変換できないときは何もしない
     }
@@ -1340,6 +1369,14 @@ void InputSession::ResizeSegment(int delta) {
             segment.result = remainder;
             rebuilt.push_back(std::move(segment));
         }
+    }
+    if (measuring) {
+        measuring.reset();
+        report.totalMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+                                 std::chrono::steady_clock::now() - started)
+                                 .count();
+        ReportConversion(debug_overlay::ConversionKind::Resegmenting, report,
+                         currentReading.size() + remainder.size());
     }
     s.segments = std::move(rebuilt);
 }
@@ -1584,7 +1621,9 @@ void InputSession::ReconvertRetypedSpan(size_t start, size_t count, bool splits)
     if (reading.empty()) return;
     std::vector<std::u32string> results;
     std::string error;
-    if (!host_->Convert(reading, s.context + LeftResults(start), 1, &results, &error) || results.empty()) {
+    if (!ConvertMeasured(debug_overlay::ConversionKind::Segmenting, reading, s.context + LeftResults(start), 1,
+                         &results, &error) ||
+        results.empty()) {
         return;
     }
     std::vector<Segment> pieces;
@@ -1645,6 +1684,34 @@ void InputSession::SyncCompositionWithRetypedSegment(size_t index, bool removed)
         if (chunk) s.fixedChunks.push_back(*chunk);
     }
     if (!chunk) --s.segmentFixedCount;
+}
+
+// ---- デバッグ表示 ----
+
+bool InputSession::ConvertMeasured(debug_overlay::ConversionKind kind, const std::u32string& reading,
+                                   const std::u32string& context, int candidateCount,
+                                   std::vector<std::u32string>* results, std::string* error) {
+    if (!settings_.developerOverlay) return host_->Convert(reading, context, candidateCount, results, error);
+    InferenceReport report;
+    const auto started = std::chrono::steady_clock::now();
+    bool converted = false;
+    {
+        const inference_timer::Scope scope(&report.stats);
+        converted = host_->Convert(reading, context, candidateCount, results, error);
+    }
+    report.totalMicros =
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
+    if (converted) ReportConversion(kind, report, reading.size());
+    return converted;
+}
+
+// かな漢字変換の行を差し替える（取り消しの数はここで出して数え直す）
+void InputSession::ReportConversion(debug_overlay::ConversionKind kind, const InferenceReport& report,
+                                    size_t readingLength) {
+    if (!settings_.developerOverlay) return;
+    debug_.conversion =
+        debug_overlay::ConversionLine(kind, report.totalMicros, report.stats, readingLength, debug_.cancelled);
+    debug_.cancelled = 0;
 }
 
 // ---- AI変換 ----
@@ -2171,11 +2238,20 @@ void InputSession::ScheduleTypoCorrection() {
 }
 
 bool InputSession::CompleteTypoCorrection(uint64_t generation, const std::u32string& reading,
-                                          const std::optional<TypoCorrection>& correction) {
+                                          const std::optional<TypoCorrection>& correction,
+                                          const InferenceReport* timing) {
     if (!typoPending_ || generation != typoGeneration_) return false;
     typoPending_ = false;
     typoChecked_.emplace(reading, correction);
     const State& s = state_;
+    if (timing && settings_.developerOverlay) {
+        using debug_overlay::TypoOutcome;
+        const TypoOutcome outcome = !correction                              ? TypoOutcome::None
+                                    : correction->IsTrailingInsertionOnly() ? TypoOutcome::TrailingInsertion
+                                                                            : TypoOutcome::Corrected;
+        debug_.typo = debug_overlay::TypoLine(debug_overlay::TypoTrigger::Idle, timing->totalMicros, timing->stats,
+                                              reading.size(), outcome);
+    }
     // 「読みの末尾に足しただけ」は訂正ではなく続きの補完。打ちかけの読みは常に終わりが足りなく見えるので捨てる
     if (correction && correction->reading == reading && !correction->IsTrailingInsertionOnly() &&
         s.mode == Mode::Composing && !s.alphabetRun && !s.displayOverride && s.composer.Text() == reading &&
@@ -2248,8 +2324,25 @@ std::optional<TypoCorrection> InputSession::TypoCorrectionForSegments() {
             if (typoChecked_ && typoChecked_->first == *s.typoReading) {
                 s.typoSegmentCorrection = typoChecked_->second;
             } else {
-                s.typoSegmentCorrection = host_->CorrectTypo(*s.typoReading, settings_.typoThreshold,
-                                                             static_cast<size_t>(std::max(1, settings_.typoMinimumLength)));
+                InferenceReport report;
+                const auto started = std::chrono::steady_clock::now();
+                {
+                    std::optional<inference_timer::Scope> measuring;
+                    if (settings_.developerOverlay) measuring.emplace(&report.stats);
+                    s.typoSegmentCorrection =
+                        host_->CorrectTypo(*s.typoReading, settings_.typoThreshold,
+                                           static_cast<size_t>(std::max(1, settings_.typoMinimumLength)));
+                }
+                if (settings_.developerOverlay) {
+                    report.totalMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+                                             std::chrono::steady_clock::now() - started)
+                                             .count();
+                    debug_.typo = debug_overlay::TypoLine(
+                        debug_overlay::TypoTrigger::Conversion, report.totalMicros, report.stats,
+                        s.typoReading->size(),
+                        s.typoSegmentCorrection ? debug_overlay::TypoOutcome::Corrected
+                                                : debug_overlay::TypoOutcome::None);
+                }
             }
         }
     }
@@ -2396,6 +2489,13 @@ SessionOutput InputSession::Current() const {
     output.voiceKey = settings_.voiceInput ? settings_.voiceKey : 0;
     output.voiceNotice = voiceMessage_;
     output.privateModeShortcut = settings_.privateModeShortcut;
+    if (settings_.developerOverlay) {
+        for (const std::u32string* line : {&debug_.context, &debug_.conversion, &debug_.typo}) {
+            if (line->empty()) continue;
+            if (!output.debugOverlay.empty()) output.debugOverlay += U'\n';
+            output.debugOverlay += *line;
+        }
+    }
     output.aiFixShortcut = settings_.aiFix ? settings_.aiFixShortcut : 0;
     output.aiFixPending = aiFixCheckPending_ || aiFixRequestPending_;
     if (aiFixOffer_ && s.mode == Mode::Composing) {
