@@ -57,6 +57,7 @@ using std::min;
 #include "term_dictionary_fetcher.h"
 #include "typo_normalizer_fetcher.h"
 #include "ui.h"
+#include "key_check.h"
 #include "updater.h"
 #include "voice_recognizer.h"
 
@@ -135,6 +136,7 @@ enum ControlId {
     kIdPrivateMode,
     kIdPrivateHotkey,
     kIdInputModeHotkey,
+    kIdKeyCheck,
     kIdLearning,
     kIdLearnReset,
     kIdLearnOpen,
@@ -366,6 +368,7 @@ struct App {
     // 辞書・学習
     HWND privateToggle = nullptr, privateHotkey = nullptr, inputModeHotkey = nullptr;
     Row* inputModeHotkeyRow = nullptr;
+    HWND keyCheck = nullptr;
     HWND learningToggle = nullptr, learnReset = nullptr, learnOpen = nullptr;
     HWND logToggle = nullptr, logScopeCombo = nullptr, logOpen = nullptr, logReset = nullptr;
     HWND symbolsToggle = nullptr;
@@ -661,6 +664,13 @@ void App::BuildInputPage() {
         L"割り当てなしになります。これとは別に、半角/全角キー・Alt+`（US 配列）・Mac のキーボードの「かな」「英数」キー"
         L"（かなにする・英数にする）・タスクバーの「あ」「A」のクリックでも切り替えられます。");
     inputModeHotkeyRow->right = {{inputModeHotkey, 180, 30}};
+    keyCheck = MakeButton(page, kIdKeyCheck, L"キーの確認...");
+    page->AddItem(L"キーの確認", L"押したキーが Windows に届いているかを見ます",
+                  L"リモートデスクトップや Mac のキーボードで、切り替えのキーが効かないときに使います。開いた窓が前面に"
+                  L"ある間だけ、押したキーの番号（仮想キーコード・スキャンコード）と修飾キー、iroha がそのキーをどう扱うかを"
+                  L"一覧に出します。一覧に出ないキーは、Windows に届く前にリモートデスクトップのアプリや Mac の側が"
+                  L"使っています（例: Mac の Ctrl+Space は入力ソースの切り替え）。")
+        ->right = {{keyCheck, 150}};
 
     page->AddHeader(L"句読点・スペース");
     punctuationCombo = MakeCombo(page, kIdPunctuation, {kPunctuations[0], kPunctuations[1]});
@@ -2187,6 +2197,9 @@ void App::OnCommand(int id, int code, HWND control) {
     // 辞書・学習
     case kIdPrivateMode:
         if (clicked) Update([&](iroha::Config& c) { c.privateMode = Checked(control); });
+        return;
+    case kIdKeyCheck:
+        if (clicked) key_check::Show(window, config);
         return;
     case kIdInputModeHotkey:
         if (left) {

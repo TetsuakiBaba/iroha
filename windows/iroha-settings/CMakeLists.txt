@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(iroha-settings LANGUAGES CXX)
 
-add_executable(iroha-settings WIN32 main.cpp ui.cpp updater.cpp ../shared/term_dictionary_fetcher.cpp
+add_executable(iroha-settings WIN32 main.cpp ui.cpp updater.cpp key_check.cpp ../shared/term_dictionary_fetcher.cpp
     ../shared/typo_normalizer_fetcher.cpp ../shared/ai_client.cpp ../shared/secret_store.cpp
     ../shared/voice_recognizer.cpp)
 target_link_libraries(iroha-settings PRIVATE

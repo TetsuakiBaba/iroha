@@ -473,6 +473,13 @@ windows\build\iroha-cli\iroha-cli.exe lattice goenseihaien
   （リモートデスクトップなど）で違うので、スキャンコード 0x72（かな）・0x71（英数）で見分ける。Windows の IME オン／オフの
   キー（VK_IME_ON・VK_IME_OFF）も同じに扱う。**Mac からリモートデスクトップで使ったときに届くかは未確認**
 - どれも英数モードの間も受ける（`TextService::DecideKey`）。タスクバーの「あ」「A」のクリックでも切り替わる
+- キーの確認（設定 > 入力 > かな・英数の切り替え の「キーの確認...」、`iroha-settings/key_check.cpp`）: 窓が前面にある間だけ、
+  低水準のキーボードのフックで届いたキーの仮想キーコード・スキャンコード・修飾キーと、iroha の扱いを一覧に出す。
+  2026-11-14 に、Mac からリモートデスクトップで Ctrl+Space・Ctrl+Alt+P が効かないと報告があったので作った（Mac の
+  Ctrl+Space は macOS の入力ソースの切り替えなので、Windows に届いていない見込み。確かめていない）
+- タスクバーの入力モードの表示は、かなが「い」、英数が「A」の絵（macOS版のメニューバーの main.tiff・en.tiff から
+  `make-icon.py` が作る `windows/resources/mode-kana.ico`・`mode-alphanumeric.ico`。テーマの文字色で塗り直す）。
+  絵を読めなければ「あ」「A」の文字を描く
 
 入力していないときの知らせ（プライベートモード・句読点）の位置は、カーソルの手前の 1 文字の右端にする（幅 0 の範囲の位置を
 ずれて返すアプリがあるため。取れなければ GetGUIThreadInfo のキャレット）

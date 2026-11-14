@@ -6,6 +6,7 @@
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "TextService.h"
 #include "key_shortcut.h"
@@ -170,7 +171,38 @@ STDMETHODIMP LangBarButton::OnMenuSelect(UINT id) {
     return S_OK;
 }
 
-// 「あ」/「A」を描いたアイコンを作る（呼び出し側=システムが破棄する）
+// 入力モードの絵（windows/resources の mode-kana.ico・mode-alphanumeric.ico。macOS版のメニューバーの「い」「A」。
+// 黒い形と透明の背景）を size で読み、形の不透明さだけを取り出す
+static bool LoadModeAlpha(int resource, int size, std::vector<BYTE>* alpha) {
+    HICON icon = static_cast<HICON>(LoadImageW(g_hInst, MAKEINTRESOURCEW(resource), IMAGE_ICON, size, size, 0));
+    if (!icon) return false;
+    ICONINFO info = {};
+    bool ok = false;
+    if (GetIconInfo(icon, &info) && info.hbmColor) {
+        BITMAPINFO bmi = {};
+        bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
+        bmi.bmiHeader.biWidth = size;
+        bmi.bmiHeader.biHeight = -size; // top-down
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        std::vector<DWORD> pixels(static_cast<size_t>(size) * size);
+        HDC screen = GetDC(nullptr);
+        if (GetDIBits(screen, info.hbmColor, 0, size, pixels.data(), &bmi, DIB_RGB_COLORS) == size) {
+            alpha->resize(pixels.size());
+            for (size_t i = 0; i < pixels.size(); ++i) (*alpha)[i] = static_cast<BYTE>(pixels[i] >> 24);
+            ok = true;
+        }
+        ReleaseDC(nullptr, screen);
+    }
+    if (info.hbmColor) DeleteObject(info.hbmColor);
+    if (info.hbmMask) DeleteObject(info.hbmMask);
+    DestroyIcon(icon);
+    return ok;
+}
+
+// 入力モードのアイコンを作る（呼び出し側=システムが破棄する）。かなは「い」、英数は「A」の絵（macOS版と同じ）。
+// 絵を読めなければ「あ」「A」の文字を描く
 HICON LangBarButton::CreateModeIcon() const {
     const bool direct = owner_ && owner_->IsDirectMode();
     const wchar_t* text = direct ? L"A" : L"あ";
@@ -194,42 +226,52 @@ HICON LangBarButton::CreateModeIcon() const {
         DeleteDC(memory);
         return nullptr;
     }
-
-    HGDIOBJ oldBitmap = SelectObject(memory, color);
-    // 透明背景（アルファ0）に文字だけを描く。アンチエイリアスは
-    // アルファ再構成が崩れるため無効にする
-    std::memset(bits, 0, static_cast<size_t>(size) * size * 4);
-    HFONT font = CreateFontW(-(size - 2), 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
-                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                             NONANTIALIASED_QUALITY, DEFAULT_PITCH, L"Meiryo UI");
-    HGDIOBJ oldFont = SelectObject(memory, font);
-    SetBkMode(memory, TRANSPARENT);
-    // TF_LBI_STYLE_TEXTCOLORICONの場合ホストがテーマ色で塗り直すため
-    // 白で描く（RGB(0,0,0)は透過画素と区別できないため使わない）。
-    // ホストが塗らない環境向けのフォールバックとしてテーマに合わせる
-    const bool light = IsSystemLightTheme();
-    SetTextColor(memory, light ? RGB(16, 16, 16) : RGB(255, 255, 255));
-    RECT rect = {0, 0, size, size};
-    DrawTextW(memory, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    // プライベートモードの間は下に線を引く（macOS版はカーソルの横に鍵のマークを出す）
-    if (owner_ && owner_->IsPrivateMode()) {
-        const int thickness = size >= 24 ? 3 : 2;
-        RECT bar = {1, size - thickness, size - 1, size};
-        HBRUSH brush = CreateSolidBrush(light ? RGB(16, 16, 16) : RGB(255, 255, 255));
-        FillRect(memory, &bar, brush);
-        DeleteObject(brush);
-    }
-    GdiFlush();
-
-    // GDIの文字描画はアルファを書かないため、色が付いた画素を不透明にする
     auto* pixels = static_cast<DWORD*>(bits);
-    for (int i = 0; i < size * size; ++i) {
-        if (pixels[i] != 0) pixels[i] |= 0xFF000000;
-    }
+    std::memset(bits, 0, static_cast<size_t>(size) * size * 4);
+    // TF_LBI_STYLE_TEXTCOLORICON の場合ホストがテーマ色で塗り直す。塗らない環境向けにテーマに合わせた色で描く
+    // （RGB(0,0,0) は透過画素と区別できないため使わない）
+    const bool light = IsSystemLightTheme();
+    const DWORD ink = light ? 0x101010 : 0xFFFFFF;
+    const bool privateMode = owner_ && owner_->IsPrivateMode();
+    const int thickness = size >= 24 ? 3 : 2;
 
-    SelectObject(memory, oldFont);
-    DeleteObject(font);
-    SelectObject(memory, oldBitmap);
+    std::vector<BYTE> alpha;
+    if (LoadModeAlpha(direct ? 3 : 2, size, &alpha)) {
+        for (size_t i = 0; i < alpha.size(); ++i) {
+            if (alpha[i] != 0) pixels[i] = (static_cast<DWORD>(alpha[i]) << 24) | ink;
+        }
+        // プライベートモードの間は下に線を引く（macOS版はカーソルの横に鍵のマークを出す）
+        if (privateMode) {
+            for (int y = size - thickness; y < size; ++y) {
+                for (int x = 1; x < size - 1; ++x) pixels[y * size + x] = 0xFF000000 | ink;
+            }
+        }
+    } else {
+        HGDIOBJ oldBitmap = SelectObject(memory, color);
+        // 透明背景（アルファ0）に文字だけを描く。アンチエイリアスはアルファ再構成が崩れるため無効にする
+        HFONT font = CreateFontW(-(size - 2), 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, NONANTIALIASED_QUALITY, DEFAULT_PITCH,
+                                 L"Meiryo UI");
+        HGDIOBJ oldFont = SelectObject(memory, font);
+        SetBkMode(memory, TRANSPARENT);
+        SetTextColor(memory, light ? RGB(16, 16, 16) : RGB(255, 255, 255));
+        RECT rect = {0, 0, size, size};
+        DrawTextW(memory, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        if (privateMode) {
+            RECT bar = {1, size - thickness, size - 1, size};
+            HBRUSH brush = CreateSolidBrush(light ? RGB(16, 16, 16) : RGB(255, 255, 255));
+            FillRect(memory, &bar, brush);
+            DeleteObject(brush);
+        }
+        GdiFlush();
+        // GDIの文字描画はアルファを書かないため、色が付いた画素を不透明にする
+        for (int i = 0; i < size * size; ++i) {
+            if (pixels[i] != 0) pixels[i] |= 0xFF000000;
+        }
+        SelectObject(memory, oldFont);
+        DeleteObject(font);
+        SelectObject(memory, oldBitmap);
+    }
     DeleteDC(memory);
 
     HBITMAP mask = CreateBitmap(size, size, 1, 1, nullptr);

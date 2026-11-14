@@ -2,3 +2,6 @@
 // アイコン1番はプロファイルアイコン（言語切替UI・タスクバーの入力インジケーターに出る）。
 // 設定画面・変換サーバ・インストーラーと同じもの（windows/scripts/make-icon.py が macOS版のアイコンから作る）
 1 ICON "..\\..\\resources\\iroha.ico"
+// 2・3 番はタスクバーの入力モードの表示（かなの「い」・英数の「A」。LangBarButton::CreateModeIcon）
+2 ICON "..\\..\\resources\\mode-kana.ico"
+3 ICON "..\\..\\resources\\mode-alphanumeric.ico"
