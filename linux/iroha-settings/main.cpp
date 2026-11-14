@@ -309,6 +309,7 @@ struct App {
     GtkWidget* countDrop = nullptr;
     GtkWidget* modeKeyEntry = nullptr;
     GtkWidget* modeKeyStatus = nullptr;
+    GtkWidget* modeIndicatorCheck = nullptr;
     GtkWidget* privateCheck = nullptr;
     GtkWidget* delimitedCheck = nullptr;
     GtkWidget* aiFixCheck = nullptr;
@@ -737,6 +738,7 @@ GtkWidget* App::BuildInputPage() {
     gtk_grid_attach(GTK_GRID(grid), Label("かな・英数を切り替えるキー:"), 0, 2, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), modeKeyEntry, 1, 2, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), modeKeyStatus, 2, 2, 1, 1);
+    modeIndicatorCheck = CheckButton("かな・英数を切り替えたときに、カーソルの近くに「あ」「A」を出す");
     privateCheck = CheckButton("プライベートモード（Ctrl+Alt+P でも切り替え）");
     // macOS版では開発者モードの項目。記号・キーは config.json の delimitedAlphabetStart / End・aiFixShortcut で変えられる
     delimitedCheck = CheckButton("区切り記号で囲んだ英字入力（kyouha_iPhone_wo → 今日はiPhoneを）");
@@ -757,11 +759,11 @@ GtkWidget* App::BuildInputPage() {
                             "変更はすぐに反映されます（iroha の入力エンジンが読み直します）。",
                             true);
     gtk_widget_add_css_class(note, "dim-label");
-    Append(page, {liveCheck, predictiveCheck, symbolsCheck, spaceCheck, grid, privateCheck, delimitedCheck, aiFixCheck,
+    Append(page, {liveCheck, predictiveCheck, symbolsCheck, spaceCheck, grid, modeIndicatorCheck, privateCheck, delimitedCheck, aiFixCheck,
                   typoCheck, typoStatus, typoButtons, note});
 
-    for (GtkWidget* check : {liveCheck, predictiveCheck, symbolsCheck, spaceCheck, privateCheck, delimitedCheck,
-                             aiFixCheck}) {
+    for (GtkWidget* check : {liveCheck, predictiveCheck, symbolsCheck, spaceCheck, modeIndicatorCheck, privateCheck,
+                             delimitedCheck, aiFixCheck}) {
         Connect(check, "toggled", [this] {
             if (!updating) SaveInputPage();
         });
@@ -796,6 +798,7 @@ void App::RefreshInputPage() {
     gtk_check_button_set_active(GTK_CHECK_BUTTON(predictiveCheck), config.predictive);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(symbolsCheck), config.symbolCandidates);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(spaceCheck), config.fullWidthSpace);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(modeIndicatorCheck), config.inputModeIndicator);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(privateCheck), config.privateMode);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(delimitedCheck), config.delimitedAlphabet);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(aiFixCheck), config.aiFix);
@@ -820,6 +823,7 @@ void App::SaveInputPage() {
     config.predictive = Checked(predictiveCheck);
     config.symbolCandidates = Checked(symbolsCheck);
     config.fullWidthSpace = Checked(spaceCheck);
+    config.inputModeIndicator = Checked(modeIndicatorCheck);
     config.privateMode = Checked(privateCheck);
     config.delimitedAlphabet = Checked(delimitedCheck);
     config.aiFix = Checked(aiFixCheck);

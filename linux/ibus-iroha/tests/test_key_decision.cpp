@@ -2,6 +2,7 @@
 #include <cstdio>
 
 #include "key_decision.h"
+#include "tray_icon.h"
 #include "key_shortcut.h"
 
 namespace {
@@ -176,12 +177,17 @@ void TestInputModes() {
     EXPECT_TRUE(DecideKey('`', m::kAlt, Idle()).kind == Kind::ToggleDirectMode);
     EXPECT_TRUE(DecideKey(0xff27, 0, Idle()).kind == Kind::SetKanaMode);      // Hiragana_Katakana
     EXPECT_TRUE(DecideKey(0xff30, 0, Idle()).kind == Kind::SetDirectMode);    // Eisu_toggle
+    // Mac の JIS キーボードの「かな」「英数」キー（Hangul・Hangul_Hanja）。英数モード中・入力中でも効く
+    EXPECT_TRUE(DecideKey(0xff31, 0, Idle()).kind == Kind::SetKanaMode);
+    EXPECT_TRUE(DecideKey(0xff34, 0, Idle()).kind == Kind::SetDirectMode);
+    EXPECT_TRUE(DecideKey(0xff34, 0, Composing()).kind == Kind::SetDirectMode);
     // 英数モード中は切り替えキー以外を食わない
     KeyContext direct = Idle();
     direct.directMode = true;
     EXPECT_TRUE(DecideKey('a', 0, direct).kind == Kind::Pass);
     EXPECT_TRUE(DecideKey(' ', 0, direct).kind == Kind::Pass);
     EXPECT_TRUE(DecideKey(0xff2a, 0, direct).kind == Kind::ToggleDirectMode);
+    EXPECT_TRUE(DecideKey(0xff31, 0, direct).kind == Kind::SetKanaMode);
     // 設定の切り替えキー（既定 Ctrl+Space）: かな・英数のどちらでも、入力中でも切り替える
     EXPECT_TRUE(DecideKey(0x20, m::kControl, Idle()).kind == Kind::ToggleDirectMode);
     EXPECT_TRUE(DecideKey(0x20, m::kControl, direct).kind == Kind::ToggleDirectMode);
@@ -201,6 +207,16 @@ void TestInputModes() {
     EXPECT_TRUE(DecideKey(0x20, m::kControl, custom).kind == Kind::Pass);
 }
 
+// 上のバーの iroha のアイコンは、GNOME の入力ソースが iroha だけのときに出す
+void TestTrayIconRule() {
+    using iroha::ibus::OnlyIrohaInputSource;
+    EXPECT_TRUE(OnlyIrohaInputSource({{"ibus", "iroha"}}));
+    EXPECT_TRUE(OnlyIrohaInputSource({{"ibus", "iroha-dev"}}));
+    EXPECT_TRUE(!OnlyIrohaInputSource({{"ibus", "iroha"}, {"ibus", "mozc-jp"}}));
+    EXPECT_TRUE(!OnlyIrohaInputSource({{"xkb", "jp"}}));
+    EXPECT_TRUE(!OnlyIrohaInputSource({}));
+}
+
 } // namespace
 
 int main() {
@@ -212,6 +228,7 @@ int main() {
     TestTabAndUndo();
     TestInputModes();
     TestAIKeys();
+    TestTrayIconRule();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

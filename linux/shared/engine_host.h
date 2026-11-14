@@ -66,6 +66,8 @@ public:
     const SessionSettings& Settings() const { return sessionSettings_; }
     // かな・英数を切り替えるキー（KeyShortcut::Encode。0 なら割り当てなし。設定 inputModeHotkey）
     uint32_t InputModeShortcut() const { return inputModeShortcut_; }
+    // かな・英数を切り替えたときにカーソルの近くに「あ」「A」を出すか（設定 inputModeIndicator）
+    bool InputModeIndicator() const { return inputModeIndicator_; }
     // 入力メニューを組むのに使う今の状態（入力モード・版は呼ぶ側で入れる）
     menu::State MenuState() const;
     // 入力メニューから設定を変える（config.json を書き換えて、読み直しを頼む。
@@ -147,6 +149,7 @@ private:
     // 変換の学習を使うか（設定 learningEnabled。OFF なら記録も適用もしない）
     std::atomic<bool> learningEnabled_{true};
     uint32_t inputModeShortcut_ = 0;
+    bool inputModeIndicator_ = true;
     std::string inputModeShortcutLabel_;
     std::string privateModeShortcutLabel_;
     std::unique_ptr<UserRewriteRuleStore> rewriteRules_;

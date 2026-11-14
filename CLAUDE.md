@@ -620,7 +620,10 @@ cd macos && swift build --build-system native && swift test --build-system nativ
 - 入力メニュー（GNOME の上のバーの入力ソースのメニュー・fcitx5 のステータスの領域）は macOS版の入力メニュー
   （`IrohaInputController.menu`）と同じ並びにする（ユーザの要望。2026-11-14）。項目と並びは `linux/shared/input_menu.cpp` の
   1 か所にあり、IBus と fcitx5 のエンジンが使う。**macOS版の入力メニューの項目を変えたら、ここも合わせる**。
-  かな ⇄ 英数は設定のキー（`inputModeHotkey`、既定 Ctrl+Space。Linux版だけの設定）でも切り替える（`key_decision`）
+  かな ⇄ 英数は設定のキー（`inputModeHotkey`、既定 Ctrl+Space。Linux版だけの設定）と Mac の JIS キーボードの「かな」「英数」
+  （keysym の Hangul・Hangul_Hanja）でも切り替える（`key_decision`）。切り替えたらカーソルの近くに「あ」「A」を出す。
+  入力ソースを iroha だけにすると GNOME が上のバーの表示を出さないので、そのときだけエンジンが自分のアイコンとメニューを
+  AppIndicator の拡張機能に出す（`linux/ibus-iroha/tray_icon`。macOS版と同じく、入力ソースは iroha 1 つで中に あ / A がある形）
 - 「こえ」モードは Linux版では未実装（計画は `linux/README.md`）。進み具合と未対応のものも `linux/README.md`
 
 ## 自作変換モデル（文字単位T5）の学習（training/t5/、2026-09-11設計）

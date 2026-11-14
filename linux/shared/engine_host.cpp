@@ -216,6 +216,7 @@ void EngineHost::Build() {
     const auto modeShortcut = KeyShortcut::Parse(config.inputModeHotkey);
     inputModeShortcut_ = modeShortcut ? modeShortcut->Encode() : 0;
     inputModeShortcutLabel_ = modeShortcut ? config.inputModeHotkey : "";
+    inputModeIndicator_ = config.inputModeIndicator;
     learningEnabled_ = config.learningEnabled;
     sessionSettings_.conversionLog = config.conversionLog;
     sessionSettings_.typoCorrection = config.typoCorrection;

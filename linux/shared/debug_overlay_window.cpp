@@ -13,12 +13,9 @@
 namespace iroha {
 
 namespace {
-// 余白・カーソルとの間（論理ピクセル。macOS版と同じ）
-constexpr double kPaddingX = 6;
-constexpr double kPaddingY = 3;
+// カーソルとの間（論理ピクセル。macOS版と同じ）。余白と文字の大きさは OverlayStyle（デバッグ表示の既定は
+// 余白 6・3、文字は macOS版の smallSystemFontSize - 1 にあたる 9 ポイント）
 constexpr int kCaretGap = 2;
-// 文字の大きさ（ポイント。macOS版の smallSystemFontSize - 1 にあたる）
-constexpr char kFont[] = "Sans 9";
 } // namespace
 
 DebugOverlayWindow::Rect PlaceDebugOverlay(const DebugOverlayWindow::Rect& caret, int width, int height,
@@ -33,6 +30,7 @@ DebugOverlayWindow::Rect PlaceDebugOverlay(const DebugOverlayWindow::Rect& caret
 }
 
 struct DebugOverlayWindow::Impl {
+    OverlayStyle style;
     Display* display = nullptr;
     Window window = 0;
     cairo_surface_t* surface = nullptr;
@@ -45,7 +43,7 @@ struct DebugOverlayWindow::Impl {
         PangoLayout* layout = pango_cairo_create_layout(cr);
         pango_cairo_context_set_resolution(pango_layout_get_context(layout), 96.0 * scale);
         pango_cairo_update_layout(cr, layout);
-        PangoFontDescription* font = pango_font_description_from_string(kFont);
+        PangoFontDescription* font = pango_font_description_from_string(style.font);
         pango_layout_set_font_description(layout, font);
         pango_font_description_free(font);
         pango_layout_set_text(layout, text.c_str(), -1);
@@ -63,8 +61,8 @@ struct DebugOverlayWindow::Impl {
         g_object_unref(layout);
         cairo_destroy(cr);
         cairo_surface_destroy(scratch);
-        width = std::max(1, textWidth + static_cast<int>(2 * kPaddingX * scale));
-        height = std::max(1, textHeight + static_cast<int>(2 * kPaddingY * scale));
+        width = std::max(1, textWidth + static_cast<int>(2 * style.paddingX * scale));
+        height = std::max(1, textHeight + static_cast<int>(2 * style.paddingY * scale));
     }
 
     void Draw() {
@@ -77,8 +75,12 @@ struct DebugOverlayWindow::Impl {
         cairo_set_line_width(cr, 1);
         cairo_rectangle(cr, 0.5, 0.5, width - 1, height - 1);
         cairo_stroke(cr);
-        cairo_set_source_rgb(cr, 0.30, 0.31, 0.34);
-        cairo_move_to(cr, kPaddingX * scale, kPaddingY * scale);
+        if (style.strongText) {
+            cairo_set_source_rgb(cr, 0.10, 0.10, 0.12);
+        } else {
+            cairo_set_source_rgb(cr, 0.30, 0.31, 0.34);
+        }
+        cairo_move_to(cr, style.paddingX * scale, style.paddingY * scale);
         PangoLayout* layout = MakeLayout(cr);
         pango_cairo_show_layout(cr, layout);
         g_object_unref(layout);
@@ -88,7 +90,7 @@ struct DebugOverlayWindow::Impl {
     }
 };
 
-DebugOverlayWindow::DebugOverlayWindow() : impl_(new Impl) {}
+DebugOverlayWindow::DebugOverlayWindow(OverlayStyle style) : impl_(new Impl) { impl_->style = style; }
 
 DebugOverlayWindow::~DebugOverlayWindow() {
     if (impl_->surface) cairo_surface_destroy(impl_->surface);
@@ -127,7 +129,7 @@ bool DebugOverlayWindow::Open() {
     impl_->window = XCreateWindow(display, RootWindow(display, screen), 0, 0, 1, 1, 0, CopyFromParent, InputOutput,
                                   CopyFromParent, CWOverrideRedirect | CWSaveUnder | CWEventMask | CWBackPixel,
                                   &attributes);
-    XStoreName(display, impl_->window, "iroha debug");
+    XStoreName(display, impl_->window, impl_->style.name);
     // マウスを透過する（入力の形を空にする）
     int shapeEvent = 0;
     int shapeError = 0;
@@ -169,6 +171,24 @@ void DebugOverlayWindow::Show(const std::string& text, const Rect& caret, bool a
     visible_ = true;
     impl_->Draw();
     Dispatch();
+}
+
+bool DebugOverlayWindow::PointerLocation(Rect* location) {
+    if (!Open()) return false;
+    Window root = 0;
+    Window child = 0;
+    int rootX = 0;
+    int rootY = 0;
+    int windowX = 0;
+    int windowY = 0;
+    unsigned int mask = 0;
+    Display* display = impl_->display;
+    if (!XQueryPointer(display, RootWindow(display, DefaultScreen(display)), &root, &child, &rootX, &rootY, &windowX,
+                       &windowY, &mask)) {
+        return false;
+    }
+    *location = Rect{rootX, rootY, 0, 0};
+    return true;
 }
 
 void DebugOverlayWindow::Hide() {

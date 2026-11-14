@@ -18,6 +18,10 @@ constexpr uint32_t Katakana = 0xff26;
 constexpr uint32_t Hiragana_Katakana = 0xff27;
 constexpr uint32_t Zenkaku_Hankaku = 0xff2a;
 constexpr uint32_t Eisu_toggle = 0xff30;
+// Mac の JIS キーボードの「かな」「英数」キー（USB の LANG1・LANG2。Linux では KEY_HANGEUL・KEY_HANJA になり、
+// XKB の既定の配列（inet）で Hangul・Hangul_Hanja の keysym になる）
+constexpr uint32_t Hangul = 0xff31;
+constexpr uint32_t Hangul_Hanja = 0xff34;
 constexpr uint32_t Left = 0xff51;
 constexpr uint32_t Up = 0xff52;
 constexpr uint32_t Right = 0xff53;
@@ -78,7 +82,7 @@ KeyDecision DecideKey(uint32_t keyval, uint32_t modifiers, const KeyContext& con
     const bool alt = (modifiers & kAlt) != 0;
     // 入力モードの切り替えキーは英数モード中でも受ける。
     //   設定のキー（inputModeHotkey。既定 Ctrl+Space）、半角/全角（Zenkaku_Hankaku・Kanji、US配列は Alt+`）、
-    //   ひらがなキー、英数キー
+    //   ひらがなキー、英数キー、Mac の JIS キーボードの「かな」「英数」キー
     if (context.inputModeShortcut != 0 &&
         KeyShortcut::Decode(context.inputModeShortcut).Matches(keyval, modifiers)) {
         decision.kind = KeyDecision::Kind::ToggleDirectMode;
@@ -92,9 +96,11 @@ KeyDecision DecideKey(uint32_t keyval, uint32_t modifiers, const KeyContext& con
         case key::Hiragana_Katakana:
         case key::Hiragana:
         case key::Katakana:
+        case key::Hangul:
             decision.kind = KeyDecision::Kind::SetKanaMode;
             return decision;
         case key::Eisu_toggle:
+        case key::Hangul_Hanja:
             decision.kind = KeyDecision::Kind::SetDirectMode;
             return decision;
         case key::grave:

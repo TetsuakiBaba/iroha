@@ -23,8 +23,10 @@ target_compile_options(iroha-keys PRIVATE -Wall -Wextra)
 # fcitx5 のエンジン（共有ライブラリ）にも入れる
 set_target_properties(iroha-keys PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_executable(ibus-engine-iroha main.cpp engine.cpp)
-target_link_libraries(ibus-engine-iroha PRIVATE iroha-keys iroha-shared iroha-overlay PkgConfig::IBUS)
+# 上のバーの iroha のアイコン（StatusNotifierItem と dbusmenu を GDBus で出す。記号は Pango で描く）
+pkg_check_modules(TRAY REQUIRED IMPORTED_TARGET gio-2.0 pangocairo cairo)
+add_executable(ibus-engine-iroha main.cpp engine.cpp tray_icon.cpp)
+target_link_libraries(ibus-engine-iroha PRIVATE iroha-keys iroha-shared iroha-overlay PkgConfig::IBUS PkgConfig::TRAY)
 target_compile_definitions(ibus-engine-iroha PRIVATE IROHA_VERSION="${IROHA_VERSION}")
 target_compile_options(ibus-engine-iroha PRIVATE -Wall -Wextra)
 

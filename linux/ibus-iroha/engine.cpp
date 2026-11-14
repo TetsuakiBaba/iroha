@@ -18,6 +18,7 @@
 #include "iroha/session_manager.h"
 #include "iroha/unicode.h"
 #include "key_decision.h"
+#include "tray_icon.h"
 
 namespace {
 
@@ -27,6 +28,9 @@ std::function<void(const std::string&)> sharedLog;
 uint64_t nextSessionId = 1;
 // 動いているエンジン（設定を読み直したときにメニューを作り直す）
 std::vector<IBusEngine*> liveEngines;
+// 上のバーの iroha のアイコン（入力ソースが iroha だけのとき）と、その操作を受けるエンジン（最後にフォーカスを得たもの）
+iroha::ibus::TrayIcon* sharedTray = nullptr;
+IBusEngine* trayEngine = nullptr;
 
 // 候補ウィンドウの 1 ページの数（InputSession::kCandidatePageSize と同じ。数字キーはページの中の番号）
 constexpr size_t kPageSize = 9;
@@ -259,6 +263,9 @@ void UpdateProperties(IBusEngine* engine, bool force = false) {
     }
     if (!force && signature == state.menuSignature) return;
     state.menuSignature = signature;
+    if (sharedTray && (engine == trayEngine || !trayEngine)) {
+        sharedTray->Update(items, iroha::menu::ModeSymbol(menuState.directMode));
+    }
     if (state.properties) g_object_unref(state.properties);
     state.properties = MakeProperties(items, menuState.directMode);
     ibus_engine_register_properties(engine, state.properties);
@@ -316,6 +323,59 @@ void UpdateOverlay(IBusEngine* engine) {
         }
     }
     sharedOverlay->Show(U8(state.shown.debugOverlay), *state.cursor, state.shown.candidatesVisible);
+}
+
+// ---- かな・英数を切り替えたときの「あ」「A」（設定 inputModeIndicator） ----
+
+// 出しておく時間
+constexpr guint kModeIndicatorMs = 1000;
+iroha::DebugOverlayWindow* sharedModeIndicator = nullptr;
+guint modeIndicatorTimer = 0;
+
+gboolean ModeIndicatorReadable(gint, GIOCondition, gpointer) {
+    if (sharedModeIndicator) sharedModeIndicator->Dispatch();
+    return G_SOURCE_CONTINUE;
+}
+
+gboolean HideModeIndicatorLater(gpointer) {
+    modeIndicatorTimer = 0;
+    if (sharedModeIndicator) sharedModeIndicator->Hide();
+    return G_SOURCE_REMOVE;
+}
+
+void HideModeIndicator() {
+    if (modeIndicatorTimer) g_source_remove(modeIndicatorTimer);
+    modeIndicatorTimer = 0;
+    if (sharedModeIndicator) sharedModeIndicator->Hide();
+}
+
+// 今の入力モードの記号をカーソルの右下に少しの間出す。カーソルの位置を知らせないアプリではマウスポインタの近く
+void ShowModeIndicator(IBusEngine* engine) {
+    if (!sharedHost || !sharedHost->InputModeIndicator()) return;
+    const State& state = StateOf(engine);
+    if (!sharedModeIndicator) {
+        iroha::OverlayStyle style;
+        style.font = "Sans Bold 12";
+        style.paddingX = 7;
+        style.paddingY = 2;
+        style.strongText = true;
+        style.name = "iroha input mode";
+        sharedModeIndicator = new iroha::DebugOverlayWindow(style);
+        if (sharedModeIndicator->Open()) {
+            g_unix_fd_add(sharedModeIndicator->Fd(), G_IO_IN, ModeIndicatorReadable, nullptr);
+        } else {
+            Log("input mode indicator: cannot open the X display (Wayland or no DISPLAY)");
+        }
+    }
+    iroha::DebugOverlayWindow::Rect at;
+    if (state.cursor) {
+        at = *state.cursor;
+    } else if (!sharedModeIndicator->PointerLocation(&at)) {
+        return;
+    }
+    sharedModeIndicator->Show(iroha::menu::ModeSymbol(state.directMode), at, /*aboveLine=*/false);
+    if (modeIndicatorTimer) g_source_remove(modeIndicatorTimer);
+    modeIndicatorTimer = g_timeout_add(kModeIndicatorMs, HideModeIndicatorLater, nullptr);
 }
 
 // 返ってきた表示を IBus に反映する。結果待ち（問い合わせが要る）なら真を返す
@@ -442,12 +502,15 @@ void CommitNow(IBusEngine* engine) {
     if (Composing(StateOf(engine))) SendKey(engine, iroha::SessionKey::CommitNow, 0, false);
 }
 
-void SetDirectMode(IBusEngine* engine, bool direct) {
+// 入力モードを変える。announce なら（キー・メニューで切り替えたとき）、変わらなくても今のモードをカーソルの近くに出す
+void SetDirectMode(IBusEngine* engine, bool direct, bool announce = false) {
     State& state = StateOf(engine);
-    if (state.directMode == direct) return;
-    CommitNow(engine);
-    state.directMode = direct;
-    UpdateProperties(engine);
+    if (state.directMode != direct) {
+        CommitNow(engine);
+        state.directMode = direct;
+        UpdateProperties(engine);
+    }
+    if (announce) ShowModeIndicator(engine);
 }
 
 // ---- IBusEngine の仮想関数 ----
@@ -493,13 +556,13 @@ gboolean ProcessKeyEvent(IBusEngine* engine, guint keyval, guint keycode, guint 
                 return TRUE;
             }
             case Kind::ToggleDirectMode:
-                SetDirectMode(engine, !state.directMode);
+                SetDirectMode(engine, !state.directMode, /*announce=*/true);
                 return TRUE;
             case Kind::SetKanaMode:
-                SetDirectMode(engine, false);
+                SetDirectMode(engine, false, /*announce=*/true);
                 return TRUE;
             case Kind::SetDirectMode:
-                SetDirectMode(engine, true);
+                SetDirectMode(engine, true, /*announce=*/true);
                 return TRUE;
         }
     } catch (const std::exception& error) {
@@ -511,6 +574,7 @@ gboolean ProcessKeyEvent(IBusEngine* engine, guint keyval, guint keycode, guint 
 void FocusIn(IBusEngine* engine) {
     State& state = StateOf(engine);
     state.focused = true;
+    trayEngine = engine;
     UpdateProperties(engine, /*force=*/true);
     // 周辺テキストは、エンジンが一度読むとアプリに求めるようになる
     std::u32string ignored;
@@ -520,6 +584,7 @@ void FocusIn(IBusEngine* engine) {
 
 void FocusOut(IBusEngine* engine) {
     StateOf(engine).focused = false;
+    HideModeIndicator();
     try {
         ResetComposition(engine);
     } catch (const std::exception& error) {
@@ -591,21 +656,19 @@ void OpenSettings(const char* tab) {
     }
 }
 
-// メニューの項目が押された。propertyState は、ラジオ・トグルなら押したあとの状態
-// （GNOME はラジオを選んだときだけ CHECKED で、IBus のパネルは外れた方にも UNCHECKED で送ってくる）
-void PropertyActivate(IBusEngine* engine, const gchar* name, guint propertyState) {
+// メニューの項目を動かす。checked は、ラジオ・トグルなら押したあとの状態
+void RunMenuCommand(IBusEngine* engine, const std::string& key, bool checked) {
     using iroha::menu::Command;
     try {
-        const bool checked = propertyState == PROP_STATE_CHECKED;
         State& state = StateOf(engine);
-        switch (iroha::menu::CommandFor(name ? name : "")) {
+        switch (iroha::menu::CommandFor(key)) {
             case Command::None:
                 break;
             case Command::KanaMode:
-                if (checked) SetDirectMode(engine, false);
+                if (checked) SetDirectMode(engine, false, /*announce=*/true);
                 break;
             case Command::DirectMode:
-                if (checked) SetDirectMode(engine, true);
+                if (checked) SetDirectMode(engine, true, /*announce=*/true);
                 break;
             case Command::Settings:
                 OpenSettings(nullptr);
@@ -642,6 +705,23 @@ void PropertyActivate(IBusEngine* engine, const gchar* name, guint propertyState
         UpdateProperties(engine, /*force=*/true);
     } catch (const std::exception& error) {
         Log(std::string("property failed: ") + error.what());
+    }
+}
+
+// IBus のプロパティ（GNOME の入力ソースのメニュー）が押された。propertyState は、ラジオ・トグルなら押したあとの状態
+// （GNOME はラジオを選んだときだけ CHECKED で、IBus のパネルは外れた方にも UNCHECKED で送ってくる）
+void PropertyActivate(IBusEngine* engine, const gchar* name, guint propertyState) {
+    RunMenuCommand(engine, name ? name : "", propertyState == PROP_STATE_CHECKED);
+}
+
+// 上のバーの iroha のアイコンのメニューが押された（ラジオは選ぶ、トグルは今と逆にする）
+void TrayActivated(const std::string& key) {
+    if (!trayEngine) return;
+    for (const auto& item : iroha::menu::Build(MenuStateOf(StateOf(trayEngine)))) {
+        if (item.key != key) continue;
+        const bool checked = item.type == iroha::menu::Item::Type::Radio ? true : !item.checked;
+        RunMenuCommand(trayEngine, key, checked);
+        return;
     }
 }
 
@@ -687,6 +767,7 @@ void Destroy(IBusObject* object) {
         if (state->properties) g_object_unref(state->properties);
         state->properties = nullptr;
         liveEngines.erase(std::remove(liveEngines.begin(), liveEngines.end(), engine), liveEngines.end());
+        if (trayEngine == engine) trayEngine = nullptr;
     }
     IBUS_OBJECT_CLASS(iroha_engine_parent_class)->destroy(object);
 }
@@ -732,6 +813,10 @@ void SetShared(EngineHost* host, SessionManager* sessions, std::function<void(co
     sharedHost = host;
     sharedSessions = sessions;
     sharedLog = std::move(log);
+    if (!sharedTray) {
+        sharedTray = new TrayIcon(TrayActivated, [](const std::string& message) { Log(message); });
+        sharedTray->Start();
+    }
 }
 
 void SettingsReloaded() {

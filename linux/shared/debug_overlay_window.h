@@ -7,10 +7,20 @@
 // 置き場所はカーソルの右下（行の下。上の行を隠さないように）で、画面の下に収まらないときと、候補ウィンドウが
 // 出ているとき（IBus・fcitx5 の候補ウィンドウはカーソルの下に出るので重なる）は行の上にする。
 // Wayland のセッションでは開かない（ほかのアプリのカーソル位置に窓を置けない）。
-// 呼び出し側の main loop で Fd() を見張り、読めるようになったら Dispatch() を呼ぶ（再描画のため）
+// 呼び出し側の main loop で Fd() を見張り、読めるようになったら Dispatch() を呼ぶ（再描画のため）。
+// 同じ窓を、かな・英数を切り替えたときの「あ」「A」の表示にも使う（OverlayStyle で文字の大きさと濃さを変える）
 #include <string>
 
 namespace iroha {
+
+// 窓の見た目（既定はデバッグ表示）
+struct OverlayStyle {
+    const char* font = "Sans 9"; // Pango の書き方（ポイント）
+    double paddingX = 6;         // 余白（論理ピクセル）
+    double paddingY = 3;
+    bool strongText = false;     // 文字を濃くする（偽なら少し薄い灰色。macOS版の secondaryLabelColor）
+    const char* name = "iroha debug"; // 窓の名前（調べるとき用）
+};
 
 class DebugOverlayWindow {
 public:
@@ -21,7 +31,7 @@ public:
         int height = 0;
     };
 
-    DebugOverlayWindow();
+    explicit DebugOverlayWindow(OverlayStyle style = OverlayStyle());
     ~DebugOverlayWindow();
     DebugOverlayWindow(const DebugOverlayWindow&) = delete;
     DebugOverlayWindow& operator=(const DebugOverlayWindow&) = delete;
@@ -37,6 +47,8 @@ public:
     void Show(const std::string& text, const Rect& caret, bool aboveLine);
     void Hide();
     bool Visible() const { return visible_; }
+    // マウスポインタの位置（大きさ 0 の Rect。カーソルの位置を知らせないアプリで代わりに使う）。取れなければ偽
+    bool PointerLocation(Rect* location);
 
 private:
     struct Impl;

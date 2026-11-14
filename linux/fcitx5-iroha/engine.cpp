@@ -68,6 +68,17 @@ constexpr auto kPollLimit = std::chrono::seconds(10);
 constexpr auto kAIPollLimit = std::chrono::seconds(120);
 // 句読点・プライベートモードの切り替えの知らせを出しておく時間（マイクロ秒）
 constexpr uint64_t kNoticeUs = 2000000;
+// かな・英数を切り替えたときの「あ」「A」を出しておく時間と見た目（IBus のエンジンと同じ）
+constexpr uint64_t kModeIndicatorUs = 1000000;
+OverlayStyle ModeIndicatorStyle() {
+    OverlayStyle style;
+    style.font = "Sans Bold 12";
+    style.paddingX = 7;
+    style.paddingY = 2;
+    style.strongText = true;
+    style.name = "iroha input mode";
+    return style;
+}
 // 左文脈として読むカーソルより前の文字数
 constexpr size_t kLeftContextLength = 64;
 
@@ -217,15 +228,15 @@ public:
                     return;
                 }
                 case Kind::ToggleDirectMode:
-                    SetDirectMode(ic, !state.directMode);
+                    SetDirectMode(ic, !state.directMode, /*announce=*/true);
                     event.filterAndAccept();
                     return;
                 case Kind::SetKanaMode:
-                    SetDirectMode(ic, false);
+                    SetDirectMode(ic, false, /*announce=*/true);
                     event.filterAndAccept();
                     return;
                 case Kind::SetDirectMode:
-                    SetDirectMode(ic, true);
+                    SetDirectMode(ic, true, /*announce=*/true);
                     event.filterAndAccept();
                     return;
             }
@@ -255,6 +266,7 @@ public:
             }
             state.shown = SessionOutput();
             overlay_.Hide();
+            modeIndicator_.Hide();
             ic->inputPanel().reset();
             ic->updatePreedit();
             ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
@@ -332,10 +344,10 @@ public:
                 case menu::Command::None:
                     return;
                 case menu::Command::KanaMode:
-                    if (ic) SetDirectMode(ic, false);
+                    if (ic) SetDirectMode(ic, false, /*announce=*/true);
                     break;
                 case menu::Command::DirectMode:
-                    if (ic) SetDirectMode(ic, true);
+                    if (ic) SetDirectMode(ic, true, /*announce=*/true);
                     break;
                 case menu::Command::Settings:
                     fcitx::startProcess({settings});
@@ -618,12 +630,39 @@ private:
         if (ic->propertyFor(&factory_)->shown.Composing()) SendKey(ic, SessionKey::CommitNow, 0, false);
     }
 
-    void SetDirectMode(fcitx::InputContext* ic, bool direct) {
+    // 入力モードを変える。announce なら（キー・メニューで切り替えたとき）、変わらなくても今のモードをカーソルの近くに出す
+    void SetDirectMode(fcitx::InputContext* ic, bool direct, bool announce = false) {
         IrohaState& state = *ic->propertyFor(&factory_);
-        if (state.directMode == direct) return;
-        CommitNow(ic);
-        state.directMode = direct;
-        UpdateMenu(ic);
+        if (state.directMode != direct) {
+            CommitNow(ic);
+            state.directMode = direct;
+            UpdateMenu(ic);
+        }
+        if (announce) ShowModeIndicator(ic);
+    }
+
+    // 今の入力モードの記号（「あ」「A」）をカーソルの右下に少しの間出す（設定 inputModeIndicator）。
+    // カーソルの位置が分からなければマウスポインタの近く
+    void ShowModeIndicator(fcitx::InputContext* ic) {
+        if (!host_.InputModeIndicator()) return;
+        if (!modeIndicatorWatch_ && modeIndicator_.Open()) {
+            modeIndicatorWatch_ = instance_->eventLoop().addIOEvent(
+                modeIndicator_.Fd(), fcitx::IOEventFlag::In, [this](fcitx::EventSourceIO*, int, fcitx::IOEventFlags) {
+                    modeIndicator_.Dispatch();
+                    return true;
+                });
+        }
+        const fcitx::Rect& rect = ic->cursorRect();
+        DebugOverlayWindow::Rect at{rect.left(), rect.top(), rect.width(), rect.height()};
+        const bool known = rect.width() > 0 || rect.height() > 0 || rect.left() != 0 || rect.top() != 0;
+        if (!known && !modeIndicator_.PointerLocation(&at)) return;
+        modeIndicator_.Show(menu::ModeSymbol(ic->propertyFor(&factory_)->directMode), at, /*aboveLine=*/false);
+        modeIndicatorTimer_ = instance_->eventLoop().addTimeEvent(
+            CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + kModeIndicatorUs, 0,
+            [this](fcitx::EventSourceTime*, uint64_t) {
+                modeIndicator_.Hide();
+                return true;
+            });
     }
 
     // 入力中かの目印（選択テキストのAI編集が読む）。変わったときだけ書く
@@ -680,6 +719,10 @@ private:
     int composingFlag_ = -1;
     // デバッグ表示の窓（1 枚をすべての入力コンテキストで使う）
     DebugOverlayWindow overlay_;
+    // かな・英数を切り替えたときの「あ」「A」
+    DebugOverlayWindow modeIndicator_{ModeIndicatorStyle()};
+    std::unique_ptr<fcitx::EventSourceIO> modeIndicatorWatch_;
+    std::unique_ptr<fcitx::EventSourceTime> modeIndicatorTimer_;
     std::unique_ptr<fcitx::EventSourceIO> overlayWatch_;
     std::vector<std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>>> eventHandlers_;
 };
