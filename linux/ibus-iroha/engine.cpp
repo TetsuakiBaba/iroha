@@ -73,8 +73,6 @@ struct State {
     guint replaceBeforeLength = 0;
     guint pollTimer = 0;
     std::chrono::steady_clock::time_point pollStarted;
-    guint noticeTimer = 0;
-    std::u32string notice;
     // 入力メニュー（IBus のプロパティの一覧）と、それを作った項目の中身（変わったときだけ作り直す）
     IBusPropList* properties = nullptr;
     std::string menuSignature;
@@ -178,15 +176,13 @@ void UpdateLookupTable(IBusEngine* engine) {
     ibus_engine_update_lookup_table(engine, table, TRUE);
 }
 
-// 補助テキスト（候補ウィンドウの上の 1 行）: 知らせ > 打ち間違いの訂正 > AI の案 > AIで直すの窓・知らせ >
+// 補助テキスト（候補ウィンドウの上の 1 行）: 打ち間違いの訂正 > AI の案 > AIで直すの窓・知らせ >
 // AI変換の結果待ち > 予測変換 > 候補の位置（表に広げているときは列）
 void UpdateAuxiliary(IBusEngine* engine) {
     const State& state = StateOf(engine);
     const iroha::SessionOutput& shown = state.shown;
     std::string line;
-    if (!state.notice.empty()) {
-        line = U8(state.notice);
-    } else if (Composing(state) && shown.typoFeedback) {
+    if (Composing(state) && shown.typoFeedback) {
         line = "訂正: " + FeedbackLine(*shown.typoFeedback);
     } else if (Composing(state) && shown.aiFixFeedback) {
         line = "AI の案: " + FeedbackLine(*shown.aiFixFeedback);
@@ -271,22 +267,6 @@ void UpdateProperties(IBusEngine* engine, bool force = false) {
     ibus_engine_register_properties(engine, state.properties);
 }
 
-gboolean ClearNotice(gpointer data) {
-    IBusEngine* engine = IBUS_ENGINE(data);
-    State& state = StateOf(engine);
-    state.noticeTimer = 0;
-    state.notice.clear();
-    UpdateAuxiliary(engine);
-    return G_SOURCE_REMOVE;
-}
-
-void ShowNotice(IBusEngine* engine, const std::u32string& notice) {
-    State& state = StateOf(engine);
-    state.notice = notice;
-    if (state.noticeTimer) g_source_remove(state.noticeTimer);
-    state.noticeTimer = g_timeout_add(kNoticeMs, ClearNotice, engine);
-}
-
 // 入力中かの目印（選択テキストのAI編集が読む）。変わったときだけ書く
 void UpdateComposingFlag() {
     static int last = -1;
@@ -323,6 +303,62 @@ void UpdateOverlay(IBusEngine* engine) {
         }
     }
     sharedOverlay->Show(U8(state.shown.debugOverlay), *state.cursor, state.shown.candidatesVisible);
+}
+
+// ---- 句読点・プライベートモードの切り替えの知らせ ----
+// GNOME の候補ウィンドウ（補助テキスト）には出さず、自分の小窓でカーソルの近くに出す（macOS版の CaretPanel と同じ）。
+// 補助テキストに出していたときは、GNOME の上で知らせが出ないことがあった（2026-11-14。エンジンは送っていて、
+// 試験用の Panel には届いていた）。合成していないときに出すことが多く、候補ウィンドウの都合に左右されないようにする
+
+iroha::DebugOverlayWindow* sharedNotice = nullptr;
+guint noticeTimer = 0;
+
+gboolean NoticeReadable(gint, GIOCondition, gpointer) {
+    if (sharedNotice) sharedNotice->Dispatch();
+    return G_SOURCE_CONTINUE;
+}
+
+gboolean HideNoticeLater(gpointer) {
+    noticeTimer = 0;
+    if (sharedNotice) sharedNotice->Hide();
+    return G_SOURCE_REMOVE;
+}
+
+void HideNotice() {
+    if (noticeTimer) g_source_remove(noticeTimer);
+    noticeTimer = 0;
+    if (sharedNotice) sharedNotice->Hide();
+}
+
+void HideModeIndicator();
+
+// 知らせをカーソルの右下に少しの間出す。カーソルの位置を知らせないアプリではマウスポインタの近く
+void ShowNotice(IBusEngine* engine, const std::u32string& notice) {
+    const State& state = StateOf(engine);
+    if (!sharedNotice) {
+        iroha::OverlayStyle style;
+        style.font = "Sans 10";
+        style.paddingX = 8;
+        style.paddingY = 4;
+        style.strongText = true;
+        style.name = "iroha notice";
+        sharedNotice = new iroha::DebugOverlayWindow(style);
+        if (sharedNotice->Open()) {
+            g_unix_fd_add(sharedNotice->Fd(), G_IO_IN, NoticeReadable, nullptr);
+        } else {
+            Log("notice: cannot open the X display (Wayland or no DISPLAY)");
+        }
+    }
+    iroha::DebugOverlayWindow::Rect at;
+    if (state.cursor) {
+        at = *state.cursor;
+    } else if (!sharedNotice->PointerLocation(&at)) {
+        return;
+    }
+    HideModeIndicator();
+    sharedNotice->Show(U8(notice), at, /*aboveLine=*/state.shown.candidatesVisible);
+    if (noticeTimer) g_source_remove(noticeTimer);
+    noticeTimer = g_timeout_add(kNoticeMs, HideNoticeLater, nullptr);
 }
 
 // ---- かな・英数を切り替えたときの「あ」「A」（設定 inputModeIndicator） ----
@@ -373,6 +409,7 @@ void ShowModeIndicator(IBusEngine* engine) {
     } else if (!sharedModeIndicator->PointerLocation(&at)) {
         return;
     }
+    HideNotice();
     sharedModeIndicator->Show(iroha::menu::ModeSymbol(state.directMode), at, /*aboveLine=*/false);
     if (modeIndicatorTimer) g_source_remove(modeIndicatorTimer);
     modeIndicatorTimer = g_timeout_add(kModeIndicatorMs, HideModeIndicatorLater, nullptr);
@@ -585,6 +622,7 @@ void FocusIn(IBusEngine* engine) {
 void FocusOut(IBusEngine* engine) {
     StateOf(engine).focused = false;
     HideModeIndicator();
+    HideNotice();
     try {
         ResetComposition(engine);
     } catch (const std::exception& error) {
@@ -759,9 +797,7 @@ void Destroy(IBusObject* object) {
     State* state = IROHA_ENGINE(engine)->state;
     if (state) {
         if (state->pollTimer) g_source_remove(state->pollTimer);
-        if (state->noticeTimer) g_source_remove(state->noticeTimer);
         state->pollTimer = 0;
-        state->noticeTimer = 0;
         if (sharedSessions && state->sessionId != 0) sharedSessions->End(state->sessionId);
         state->sessionId = 0;
         if (state->properties) g_object_unref(state->properties);

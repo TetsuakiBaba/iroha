@@ -138,8 +138,12 @@ IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-
 - 設定画面は `<データフォルダ>/reload-request` を書き換え、エンジンが見張って読み直す（Windows版の IPC の Reload にあたる）
 - 表示の対応: 未確定文字列は下線、選んでいる文節は背景色。候補ウィンドウは IBus の候補表（今のページの 9 件だけを渡す。
   クリックの番号がページの中の番号になるように）。**候補の表（Tab）は IBus では表として描けない**ので、今の列だけを出し、
-  補助テキストに「列 2/5（←→ で隣の列）」を出す。補助テキスト（候補の上の 1 行）には、知らせ・打ち間違いの訂正・AI の案・
+  補助テキストに「列 2/5（←→ で隣の列）」を出す。補助テキスト（候補の上の 1 行）には、打ち間違いの訂正・AI の案・
   AIで直すの窓・AI変換の結果待ち・予測変換・候補の位置を、この順で 1 つだけ出す
+- 句読点・プライベートモードの切り替えの知らせは、補助テキストではなく自分の小窓でカーソルの右下に 2 秒出す（IBus のエンジン。
+  macOS版の CaretPanel と同じ。窓は `debug_overlay_window`）。補助テキストに出していたときは、GNOME の上で知らせが出ないことが
+  あった（2026-11-14。エンジンは送っていて、試験用の Panel には届いていた。GNOME 側の理由は特定できていない）。
+  fcitx5 のエンジンは補助テキストのまま
 - フォーカスが外れたときは、IBus が表示中の未確定文字列をそのまま確定する（`IBUS_ENGINE_PREEDIT_COMMIT`）。セッションは
   Reset で捨てる。ほかのエンジンに切り替えたとき（disable）は、今の表示のまま確定する
 - 入力メニュー（GNOME の上のバーの入力ソースのメニュー。IBus のプロパティ）は macOS版の入力メニューと同じ並びにしてある
@@ -182,7 +186,9 @@ IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-
 
 ## 設定画面（iroha-settings）
 
-`--tab model|input|dictionary|terms|rules|ai|selection|learning|about`。タブと項目は Windows版の設定画面と同じで、
+`--tab model|input|dictionary|terms|rules|ai|selection|learning|about`。項目は窓の左に縦に並べ（GtkStackSidebar）、右に
+その中身を出す（GNOME の「設定」と同じ形。上に横に並べるタブ（GtkNotebook）では 9 つの項目が窓の幅に収まらず、左右に
+送らないと全部見えなかった。2026-11-14）。項目と中身は Windows版の設定画面と同じで、
 情報タブ（版・データフォルダ・ライセンスの一覧）を足した。入力タブには、Windows版の設定画面に無い「区切り記号で囲んだ
 英字入力」と「AIで直す」も置いた（記号・キーは config.json の `delimitedAlphabetStart` / `End`・`aiFixShortcut`）。
 時間のかかる処理（取得と照合・AI のモデルの一覧・API キーの読み書き）は裏のスレッドで行う。保存したら `RequestReload()`。
