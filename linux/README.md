@@ -70,7 +70,25 @@ $C session "kyouhaiitenkidesune<space><right><space><enter>"
 $C symbols neko                         # 描けないとして除いた絵文字の数と例も出す
 IROHA_LATTICE=off    $C ajimee testdata/ajimee/evaluation_items.json
 IROHA_LATTICE=always $C ajimee testdata/ajimee/evaluation_items.json
+# 項目ごとの変換時間を TSV に書く（先頭 4 列は macOS版と同じ。集計は experiments/iroha-bench/latency_stats.py）
+IROHA_TIMINGS=out.tsv IROHA_LATTICE=off $C ajimee testdata/iroha-bench-v1/evaluation_items.json
 ```
+
+#### 変換の速さ（2026-11-14、iroha-bench-v1 の 3,253 項目）
+
+GPU マシンの CPU（Xeon E5-1650 v4、6 コア、AVX2 まで。llama.cpp の既定の 4 スレッド）で測った。学習が 4 コアを使い続けて
+いる状態での値。NN のみは 3 周の項目ごとの中央値から集計した（Mac の `iroha-bench-v1-latency` と同じ手順）。
+結果は `experiments/iroha-bench/results/iroha-bench-v1-latency-linux/`（リポジトリ外）。
+
+| モデル（Q5_K_M） | NN のみ 平均 | 中央値 | p95 | 左文脈なし / あり（平均） | 辞書+NN 平均（1 周） |
+|---|---|---|---|---|---|
+| iroha-kkc-v1 | 179.6ms | 148.8 | 374.8 | 140.2 / 255.7 | 308.3ms |
+| zenz-v3.1-small | 170.4ms | 153.6 | 306.2 | 144.5 / 220.4 | 525.3ms |
+
+- Mac（M1 Max の GPU）では T5 が zenz の半分以下の時間だが、Linux の CPU の NN のみでは差がほとんど無く、平均では zenz が少し速い。
+  T5 は短い読み・左文脈なしでは速く、左文脈があると zenz より遅い（Mac では左文脈で増える時間は 3〜4ms）
+- 辞書+NN（候補の採点を含む）では T5 が zenz の 0.59 倍
+- スレッド数は 4 が最も速く、6 以上では学習とコアを取り合って 2 倍以上遅くなった
 
 `linux/build` は Dropbox の同期から外す（`python3 -c "import os; os.setxattr('linux/build','user.com.dropbox.ignored',b'1')"`）。
 辞書・記号のデータを見つける順は Windows版と同じ（環境変数 `IROHA_DICTIONARY` / `IROHA_SYMBOLS` → 実行ファイルと同じ

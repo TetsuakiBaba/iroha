@@ -77,6 +77,7 @@
 #include "iroha/lattice_converter.h"
 #include "iroha/lattice_rescoring_engine.h"
 #include "iroha/learning_engine.h"
+#include "iroha/inference_timer.h"
 #include "iroha/learning_store.h"
 #include "iroha/platform.h"
 #include "iroha/reading_aligner.h"
@@ -397,6 +398,11 @@ int RunAjimee(iroha::ConversionEngine& engine, const std::filesystem::path& path
     Tally withContext;
     Tally withoutContext;
     double totalMilliseconds = 0.0;
+    // IROHA_TIMINGS=<path> で項目ごとの変換時間を TSV に書く（中央値・パーセンタイル・入力の長さ別の集計用。
+    // experiments/iroha-bench/latency_stats.py）。先頭の 4 列は macOS版と同じ。macOS版の NN の内訳
+    // （prompt_ms 以降）の代わりに、NN の時間の合計と回数（inference_timer）を書く
+    const char* timingsPath = std::getenv("IROHA_TIMINGS");
+    std::string timings = "index\treading_length\tcontext_length\tms\tnn_ms\tnn_calls\n";
 
     // ウォームアップ（モデルロードを計測から除外）
     {
@@ -417,13 +423,24 @@ int RunAjimee(iroha::ConversionEngine& engine, const std::filesystem::path& path
         const std::u32string context =
             contextValue ? Utf8ToUtf32(contextValue->AsString()) : U"";
 
+        iroha::InferenceStats stats;
         const auto start = std::chrono::steady_clock::now();
         std::vector<std::u32string> candidates;
         std::u32string result = input;
-        if (ConvertOnce(engine, input, context, 1, &candidates) && !candidates.empty()) {
-            result = candidates.front();
+        {
+            const iroha::inference_timer::Scope scope(&stats);
+            if (ConvertOnce(engine, input, context, 1, &candidates) && !candidates.empty()) {
+                result = candidates.front();
+            }
         }
-        totalMilliseconds += MillisecondsSince(start);
+        const double elapsed = MillisecondsSince(start);
+        totalMilliseconds += elapsed;
+        if (timingsPath) {
+            char row[160];
+            std::snprintf(row, sizeof(row), "\t%zu\t%zu\t%.3f\t%.3f\t%d\n", input.size(), context.size(), elapsed,
+                          stats.neuralNetworkMicros / 1000.0, stats.neuralNetworkCalls);
+            timings += (indexValue ? indexValue->AsString() : "?") + row;
+        }
 
         bool hit = false;
         double minCer = 1.0;
@@ -463,6 +480,11 @@ int RunAjimee(iroha::ConversionEngine& engine, const std::filesystem::path& path
     total.minCerSum = withContext.minCerSum + withoutContext.minCerSum;
     std::printf("全体: %s  平均 %.1fms/変換\n", total.Summary().c_str(),
                 totalMilliseconds / std::max(total.count, 1));
+    if (timingsPath) {
+        std::ofstream out(iroha::PathFromUtf8(timingsPath), std::ios::binary);
+        out << timings;
+        if (!out) std::fprintf(stderr, "IROHA_TIMINGS に書けません: %s\n", timingsPath);
+    }
     return 0;
 }
 
