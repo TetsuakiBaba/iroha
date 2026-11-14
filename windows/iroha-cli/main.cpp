@@ -63,6 +63,7 @@
 //   IROHA_NO_CONSTRAINT=1 で読み制約（constrained decoding）を丸ごと切り素の貪欲生成にする（実験用）
 //   IROHA_KV_REUSE=0 で前回の計算の再利用（KVキャッシュ・エンコーダ出力）を切る（切り分け用）
 //   IROHA_THREADS で推論のスレッド数を変える（計測用）
+//   IROHA_TIMINGS=<path> で ajimee の項目ごとの変換時間を TSV に書く（手順と集計は testdata/speed/README.md）
 
 #define NOMINMAX
 #include <windows.h>
@@ -72,6 +73,7 @@
 #include <chrono>
 #include <climits>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -84,6 +86,7 @@
 #include "ipc_protocol.h"
 #include "iroha/chunked_conversion_engine.h"
 #include "iroha/config.h"
+#include "iroha/inference_timer.h"
 #include "iroha/json.h"
 #include "iroha/lattice_converter.h"
 #include "iroha/lattice_rescoring_engine.h"
@@ -424,6 +427,11 @@ int RunAjimee(iroha::ConversionEngine& engine, const std::wstring& path) {
     Tally withContext;
     Tally withoutContext;
     double totalMilliseconds = 0.0;
+    // IROHA_TIMINGS=<path> で項目ごとの変換時間を TSV に書く（macOS版と同じ指定で、先頭の 4 列も同じ。
+    // 集計は testdata/speed/summarize.py）。nn_ms・nn_calls は NN の計算の合計時間と回数（inference_timer）
+    const char* timingsPath = std::getenv("IROHA_TIMINGS");
+    std::string timings;
+    if (timingsPath) timings = "index\treading_length\tcontext_length\tms\tnn_ms\tnn_calls\n";
 
     // ウォームアップ（モデルロードを計測から除外）
     {
@@ -444,13 +452,25 @@ int RunAjimee(iroha::ConversionEngine& engine, const std::wstring& path) {
         const std::u32string context =
             contextValue ? Utf8ToUtf32(contextValue->AsString()) : U"";
 
+        iroha::InferenceStats stats;
         const auto start = std::chrono::steady_clock::now();
         std::vector<std::u32string> candidates;
         std::u32string result = input;
-        if (ConvertOnce(engine, input, context, 1, &candidates) && !candidates.empty()) {
-            result = candidates.front();
+        {
+            iroha::inference_timer::Scope scope(timingsPath ? &stats : nullptr);
+            if (ConvertOnce(engine, input, context, 1, &candidates) && !candidates.empty()) {
+                result = candidates.front();
+            }
         }
-        totalMilliseconds += MillisecondsSince(start);
+        const double elapsed = MillisecondsSince(start);
+        totalMilliseconds += elapsed;
+        if (timingsPath) {
+            char line[200];
+            std::snprintf(line, sizeof(line), "%s\t%zu\t%zu\t%.3f\t%.3f\t%d\n",
+                          indexValue ? indexValue->AsString().c_str() : "?", input.size(), context.size(),
+                          elapsed, stats.neuralNetworkMicros / 1000.0, stats.neuralNetworkCalls);
+            timings += line;
+        }
 
         bool hit = false;
         double minCer = 1.0;
@@ -490,6 +510,10 @@ int RunAjimee(iroha::ConversionEngine& engine, const std::wstring& path) {
     total.minCerSum = withContext.minCerSum + withoutContext.minCerSum;
     std::printf("全体: %s  平均 %.1fms/変換\n", total.Summary().c_str(),
                 totalMilliseconds / std::max(total.count, 1));
+    if (timingsPath) {
+        std::ofstream out(std::filesystem::path(timingsPath), std::ios::binary);
+        out << timings;
+    }
     return 0;
 }
 
