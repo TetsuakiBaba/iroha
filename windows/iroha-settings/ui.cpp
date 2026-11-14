@@ -640,7 +640,10 @@ void Page::Relayout() {
     info.nPage = static_cast<UINT>(client.bottom);
     info.nPos = scroll_;
     SetScrollInfo(hwnd_, SB_VERT, &info, TRUE);
-    InvalidateRect(hwnd_, nullptr, TRUE);
+    // 部品は再描画なしで動かしている（MoveWindow の FALSE）。ページは子の上を描かない（WS_CLIPCHILDREN）ので、
+    // ページだけを描き直すと、動いた部品の所に前の絵が残り、ホバーで部品が自分を描き直すまで見えなかった
+    // （2026-11-14）。子もまとめて描き直す
+    RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 
 void Page::Paint(HDC dc) {
