@@ -169,6 +169,7 @@ Config LoadConfig(const std::filesystem::path& path) {
     text("selectionExcludedApps", &config.selectionExcludedApps);
     text("selectionTriggerMode", &config.selectionTriggerMode);
     text("privateModeHotkey", &config.privateModeHotkey);
+    text("inputModeHotkey", &config.inputModeHotkey);
     text("modelAdapterPath", &config.modelAdapterPath);
     if (const json::Value* count = root.Find("selectionCharacterCount");
         count && count->type == json::Value::Type::Bool) {
@@ -213,6 +214,7 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                       ",\"predictive\":" + (config.predictive ? "true" : "false") +
                       ",\"privateMode\":" + (config.privateMode ? "true" : "false") +
                       ",\"privateModeHotkey\":" + json::QuoteString(config.privateModeHotkey) +
+                      ",\"inputModeHotkey\":" + json::QuoteString(config.inputModeHotkey) +
                       ",\"learningEnabled\":" + (config.learningEnabled ? "true" : "false") +
                       ",\"documentContext\":" + (config.documentContext ? "true" : "false") +
                       ",\"modelAdapterPath\":" + json::QuoteString(config.modelAdapterPath) +

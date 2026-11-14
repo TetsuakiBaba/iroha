@@ -138,6 +138,8 @@ struct SessionOutput {
     uint32_t privateModeShortcut = 0;
     // デバッグ表示（開発者モード）: カーソルの右下に出す行（改行で区切る。空なら出さない）
     std::u32string debugOverlay;
+    // かな・英数を切り替えるキー（KeyShortcut::Encode。0 なら割り当てなし。TIP が受けて切り替える）
+    uint32_t inputModeShortcut = 0;
     // 今の設定（言語バーのメニューの印に使う）: ライブ変換・予測変換・句読点の組
     bool liveConversion = true;
     bool predictive = false;
@@ -192,6 +194,8 @@ struct SessionSettings {
     bool documentContext = true;
     // プライベートモードを切り替えるキー（TIP に渡す。KeyShortcut::Encode。0 なら割り当てなし）
     uint32_t privateModeShortcut = 0;
+    // かな・英数を切り替えるキー（TIP に渡すだけ。KeyShortcut::Encode。0 なら割り当てなし）
+    uint32_t inputModeShortcut = 0;
     // デバッグ表示（macOS版の DeveloperOverlaySettings。開発者モードが ON で、デバッグ表示を ON にしたとき）
     bool developerOverlay = false;
 };

@@ -63,6 +63,7 @@ public:
     bool IsPrivateMode() const { return privateMode_; }
     // プライベートモードを切り替えるキー（設定 privateModeHotkey。変換サーバの返事で受け取る）。割り当てが無ければ 0
     uint32_t PrivateShortcut() const { return privateShortcut_; }
+    uint32_t InputModeShortcut() const { return inputModeShortcut_; }
     void OnModeButtonClicked();
 
     // 言語バーのメニュー（macOS版の入力メニュー。LangBarButton が出し、選んだ項目をここで処理する）
@@ -187,6 +188,8 @@ private:
     uint32_t voiceKey_ = 0;
     // プライベートモードを切り替えるキー（KeyShortcut::Encode。既定は Ctrl+Alt+P。0 なら割り当てなし）
     uint32_t privateShortcut_ = 0x30050;
+    // かな・英数を切り替えるキー（設定 inputModeHotkey。既定は Ctrl+Space。0 なら割り当てなし）
+    uint32_t inputModeShortcut_ = 0x10020;
     // ライブ変換・予測変換・句読点（言語バーのメニューの印。設定と変換サーバの返事で更新する）
     bool liveConversion_ = true;
     bool predictive_ = false;

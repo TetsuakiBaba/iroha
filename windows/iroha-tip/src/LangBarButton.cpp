@@ -96,7 +96,12 @@ STDMETHODIMP LangBarButton::GetTooltipString(BSTR* tooltip) {
     const bool direct = owner_ && owner_->IsDirectMode();
     const bool privateMode = owner_ && owner_->IsPrivateMode();
     std::wstring text = direct ? L"iroha: 半角英数" : L"iroha: ひらがな";
-    text += L"\nクリックで切り替え、右クリックでメニュー（設定など）";
+    std::wstring modeKey;
+    if (owner_ && owner_->InputModeShortcut() != 0) {
+        const std::string key = iroha::KeyShortcut::Decode(owner_->InputModeShortcut()).Text();
+        modeKey = L"・" + std::wstring(key.begin(), key.end());
+    }
+    text += L"\nクリック" + modeKey + L"で切り替え、右クリックでメニュー（設定など）";
     if (privateMode) {
         const uint32_t shortcut = owner_->PrivateShortcut();
         text += L"\nプライベートモード";

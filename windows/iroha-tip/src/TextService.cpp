@@ -320,6 +320,26 @@ TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) co
     // 入力モードの切替キーは英数モード中でも受ける。
     //   半角/全角（VK_KANJI / VK_DBE_SBCSCHAR / VK_DBE_DBCSCHAR、US配列は Alt+`）
     //   ひらがなキー（VK_DBE_HIRAGANA/VK_DBE_KATAKANA）、無変換相当（VK_DBE_ALPHANUMERIC）
+    //   設定のキー（inputModeHotkey。既定 Ctrl+Space）
+    //   Mac のキーボードの「かな」「英数」（USB の LANG1・LANG2。届くときの仮想キーコードは配列や経路（リモート
+    //   デスクトップなど）で違うので、スキャンコード 0x72・0x71 で見分ける）と、IME オン／オフのキー（VK_IME_ON・VK_IME_OFF）
+    const UINT scanCode = (lParam >> 16) & 0xFF;
+    if (scanCode == 0x72 || scanCode == 0xF2 || wParam == 0x16 /* VK_IME_ON */) {
+        decision.kind = KeyDecision::Kind::SetKanaMode;
+        return decision;
+    }
+    if (scanCode == 0x71 || scanCode == 0xF1 || wParam == 0x1A /* VK_IME_OFF */) {
+        decision.kind = KeyDecision::Kind::SetDirectMode;
+        return decision;
+    }
+    if (inputModeShortcut_ != 0) {
+        const iroha::KeyShortcut shortcut = iroha::KeyShortcut::Decode(inputModeShortcut_);
+        if (shortcut.vk == wParam && shortcut.control == ((GetKeyState(VK_CONTROL) & 0x8000) != 0) &&
+            shortcut.alt == alt && shortcut.shift == ((GetKeyState(VK_SHIFT) & 0x8000) != 0)) {
+            decision.kind = KeyDecision::Kind::ToggleDirectMode;
+            return decision;
+        }
+    }
     switch (wParam) {
         case VK_KANJI: // 0x19
         case 0xF3:     // VK_DBE_SBCSCHAR（半角/全角）
@@ -524,6 +544,7 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
     idleFullWidthSpace_ = output.fullWidthSpace;
     voiceKey_ = output.voiceKey;
     privateShortcut_ = output.privateModeShortcut;
+    inputModeShortcut_ = output.inputModeShortcut;
     liveConversion_ = output.liveConversion;
     predictive_ = output.predictive;
     punctuation_ = output.punctuation;
@@ -680,12 +701,50 @@ bool TextService::CompositionRectIn(TfEditCookie ec, ITfContext* context, RECT* 
         }
     }
     bool found = false;
-    if (range) {
-        BOOL clipped = FALSE;
-        found = SUCCEEDED(view->GetTextExt(ec, range, rect, &clipped));
-        range->Release();
+    if (range && !composition_) {
+        // 入力していないとき（プライベートモード・句読点の知らせなど）: 幅 0 の範囲の位置はずれて返すアプリがあるので、
+        // カーソルの手前の 1 文字（行の頭なら後ろの 1 文字）の位置を求め、その右端（左端）をカーソルとする
+        BOOL empty = FALSE;
+        ITfRange* character = nullptr;
+        if (SUCCEEDED(range->IsEmpty(ec, &empty)) && empty && SUCCEEDED(range->Clone(&character))) {
+            LONG shifted = 0;
+            BOOL clipped = FALSE;
+            RECT charRect = {};
+            if (SUCCEEDED(character->ShiftStart(ec, -1, &shifted, nullptr)) && shifted == -1 &&
+                SUCCEEDED(view->GetTextExt(ec, character, &charRect, &clipped)) && charRect.bottom > charRect.top) {
+                *rect = {charRect.right, charRect.top, charRect.right, charRect.bottom};
+                found = true;
+            } else {
+                character->Release();
+                character = nullptr;
+                if (SUCCEEDED(range->Clone(&character)) && SUCCEEDED(character->ShiftEnd(ec, 1, &shifted, nullptr)) &&
+                    shifted == 1 && SUCCEEDED(view->GetTextExt(ec, character, &charRect, &clipped)) &&
+                    charRect.bottom > charRect.top) {
+                    *rect = {charRect.left, charRect.top, charRect.left, charRect.bottom};
+                    found = true;
+                }
+            }
+            if (character) character->Release();
+        }
     }
+    if (range && !found) {
+        BOOL clipped = FALSE;
+        found = SUCCEEDED(view->GetTextExt(ec, range, rect, &clipped)) && rect->bottom > rect->top;
+    }
+    if (range) range->Release();
     view->Release();
+    if (!found && !composition_) {
+        // 文書から位置が取れない: アプリのキャレット（GetGUIThreadInfo）を使う
+        GUITHREADINFO info = {sizeof(info)};
+        if (GetGUIThreadInfo(0, &info) && info.hwndCaret && info.rcCaret.bottom > info.rcCaret.top) {
+            POINT topLeft = {info.rcCaret.left, info.rcCaret.top};
+            POINT bottomRight = {info.rcCaret.right, info.rcCaret.bottom};
+            ClientToScreen(info.hwndCaret, &topLeft);
+            ClientToScreen(info.hwndCaret, &bottomRight);
+            *rect = {topLeft.x, topLeft.y, bottomRight.x, bottomRight.y};
+            found = true;
+        }
+    }
     return found;
 }
 
@@ -980,6 +1039,8 @@ void TextService::LoadVoiceKeyFromConfig() {
     voiceKey_ = !config.voiceInput ? 0 : config.voiceInputHoldKey == "rightShift" ? VK_RSHIFT : VK_RCONTROL;
     const auto privateShortcut = iroha::KeyShortcut::Parse(config.privateModeHotkey);
     privateShortcut_ = privateShortcut ? privateShortcut->Encode() : 0;
+    const auto inputModeShortcut = iroha::KeyShortcut::Parse(config.inputModeHotkey);
+    inputModeShortcut_ = inputModeShortcut ? inputModeShortcut->Encode() : 0;
     liveConversion_ = config.liveConversion;
     predictive_ = config.predictive;
     punctuation_ = config.punctuation;

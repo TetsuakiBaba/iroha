@@ -354,6 +354,7 @@ void TestUnicodeRoundTrip() {
 #include "test_voice.h"
 #include "test_character_count.h"
 #include "test_update.h"
+#include "test_config.h"
 
 int main() {
     TestBasicGojuon();
@@ -408,6 +409,7 @@ int main() {
     RunVoiceTests();
     RunCharacterCountTests();
     RunUpdateTests();
+    RunConfigTests();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

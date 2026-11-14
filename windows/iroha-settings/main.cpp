@@ -134,6 +134,7 @@ enum ControlId {
     // 辞書・学習
     kIdPrivateMode,
     kIdPrivateHotkey,
+    kIdInputModeHotkey,
     kIdLearning,
     kIdLearnReset,
     kIdLearnOpen,
@@ -363,7 +364,8 @@ struct App {
     bool typoChecked = false;
     bool voiceEngineChecked = false;
     // 辞書・学習
-    HWND privateToggle = nullptr, privateHotkey = nullptr;
+    HWND privateToggle = nullptr, privateHotkey = nullptr, inputModeHotkey = nullptr;
+    Row* inputModeHotkeyRow = nullptr;
     HWND learningToggle = nullptr, learnReset = nullptr, learnOpen = nullptr;
     HWND logToggle = nullptr, logScopeCombo = nullptr, logOpen = nullptr, logReset = nullptr;
     HWND symbolsToggle = nullptr;
@@ -650,6 +652,15 @@ void App::BuildInputPage() {
     historyReset = MakeButton(page, kIdHistoryReset, L"消去");
     historyRow = page->AddItem(L"入力履歴", L"");
     historyRow->right = {{historyReset, 90}};
+
+    page->AddHeader(L"かな・英数の切り替え");
+    inputModeHotkey = MakeEdit(page, kIdInputModeHotkey, L"例: Ctrl+Space");
+    inputModeHotkeyRow = page->AddItem(
+        L"切り替えるキー", L"",
+        L"「Ctrl+Space」のように、Ctrl・Alt・Shift とキーを + でつないで書きます。英数モードの間も効きます。空にすると"
+        L"割り当てなしになります。これとは別に、半角/全角キー・Alt+`（US 配列）・Mac のキーボードの「かな」「英数」キー"
+        L"（かなにする・英数にする）・タスクバーの「あ」「A」のクリックでも切り替えられます。");
+    inputModeHotkeyRow->right = {{inputModeHotkey, 180, 30}};
 
     page->AddHeader(L"句読点・スペース");
     punctuationCombo = MakeCombo(page, kIdPunctuation, {kPunctuations[0], kPunctuations[1]});
@@ -1244,6 +1255,7 @@ void App::Refresh() {
     // 辞書・学習
     SetCheck(privateToggle, config.privateMode);
     SetWindowTextW(privateHotkey, Wide(config.privateModeHotkey).c_str());
+    SetWindowTextW(inputModeHotkey, Wide(config.inputModeHotkey).c_str());
     SetCheck(learningToggle, config.learningEnabled);
     SetCheck(logToggle, config.conversionLog);
     SendMessageW(logScopeCombo, CB_SETCURSEL, config.conversionLogCorrectionsOnly ? 1 : 0, 0);
@@ -2175,6 +2187,12 @@ void App::OnCommand(int id, int code, HWND control) {
     // 辞書・学習
     case kIdPrivateMode:
         if (clicked) Update([&](iroha::Config& c) { c.privateMode = Checked(control); });
+        return;
+    case kIdInputModeHotkey:
+        if (left) {
+            SaveShortcut(control, PageFor(L"input"), inputModeHotkeyRow, L"",
+                         [](iroha::Config& c, const std::string& text) { c.inputModeHotkey = text; });
+        }
         return;
     case kIdPrivateHotkey:
         if (left) {
