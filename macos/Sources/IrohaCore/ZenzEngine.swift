@@ -29,10 +29,13 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer {
         let decoderStartToken: llama_token
         /// 追加学習で作った LoRA アダプタ（`adapterPath` 指定時。context に適用済み）
         let adapter: OpaquePointer?
+        /// GPU に載せる層の数（0 なら CPU だけで推論する）
+        let gpuLayers: Int32
 
         init(model: OpaquePointer, context: OpaquePointer, vocab: OpaquePointer,
              tokenTexts: [String?], tokenIsTerminator: [Bool],
-             isEncoderDecoder: Bool, decoderStartToken: llama_token, adapter: OpaquePointer?) {
+             isEncoderDecoder: Bool, decoderStartToken: llama_token, adapter: OpaquePointer?,
+             gpuLayers: Int32) {
             self.model = model
             self.context = context
             self.vocab = vocab
@@ -41,6 +44,7 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer {
             self.isEncoderDecoder = isEncoderDecoder
             self.decoderStartToken = decoderStartToken
             self.adapter = adapter
+            self.gpuLayers = gpuLayers
         }
 
         deinit {
@@ -608,7 +612,32 @@ public actor ZenzEngine: ConversionEngine, CandidateScorer {
         self.runtime = Runtime(model: loadedModel, context: createdContext, vocab: vocab,
                                tokenTexts: tokenTexts, tokenIsTerminator: tokenIsTerminator,
                                isEncoderDecoder: isEncoderDecoder, decoderStartToken: decoderStart,
-                               adapter: adapter)
+                               adapter: adapter, gpuLayers: modelParams.n_gpu_layers)
+    }
+
+    /// 推論の実行先とスレッド数（変換のベンチマークの記録に残す）
+    public struct RuntimeInfo: Sendable, Equatable {
+        /// "CPU" か「ggml の装置名: 説明」（"MTL0: Apple M2" など。Windows版・Linux版も同じ書き方）
+        public let device: String
+        /// llama.cpp が生成に使う CPU のスレッド数
+        public let threads: Int
+    }
+
+    /// 読み込み済みなら推論の実行先とスレッド数。読み込む前は nil
+    public func runtimeInfo() -> RuntimeInfo? {
+        guard let runtime else { return nil }
+        var device = "CPU"
+        if runtime.gpuLayers != 0 {
+            for index in 0..<ggml_backend_dev_count() {
+                guard let dev = ggml_backend_dev_get(index) else { continue }
+                let type = ggml_backend_dev_type(dev)
+                guard type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU else { continue }
+                device = String(cString: ggml_backend_dev_name(dev)) + ": "
+                    + String(cString: ggml_backend_dev_description(dev))
+                break
+            }
+        }
+        return RuntimeInfo(device: device, threads: Int(llama_n_threads(runtime.context)))
     }
 
     /// 語彙全体の出力文字列を1度だけ取り出しておく（制約判定を毎トークン安く行うため）

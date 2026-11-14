@@ -533,6 +533,9 @@ cd macos && swift build --build-system native && swift test --build-system nativ
     作り方と公開は `./macos/scripts/publish-benchmarks.sh [--upload]`（全件の iroha-bench-v1 と、出典ごとに先頭 40 件の抜粋 360 件）。
     入れた評価セットは `<データフォルダ>/benchmarks/<ID>.jsonl` と `<ID>.json`（出典・ライセンス・MIT の出典の許諾文の記録）。
     **評価セットの中身を変えたら ID を変える**（同じ ID の結果どうしを比べるため）。`IROHA_BENCHMARK_CATALOG` でカタログを差し替えられる
+  ・**記録の形（`.json` のキーと値の取り方）は 3 つの OS で同じにする**（形式 2。2026-11-14）。キー・OS ごとの取り方は
+    `testdata/speed/README.md` の「アプリ内のベンチマークの記録」。キーを変えたらそこと `formatVersion` も変える。
+    その OS で取れない項目は書かない（推し量った値を入れない）
   ・Windows版・Linux版はまだ無い（第 3 段。カタログ・置き場所・記録の形は同じにする）
 - 既定のかな漢字変換モデルは **iroha-kkc-v1**（Q5_K_M。2026-11-06 に iroha-t5-alpha から変更。その前は 2026-10-03 まで
   zenz-v3.1-small。文字単位 T5 e12d2、`training/t5/`）。初回起動時に `ModelDownloader` が取得し、大きさと SHA-256 を照合してから

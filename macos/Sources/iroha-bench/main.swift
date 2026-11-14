@@ -81,6 +81,14 @@ func powerSource() -> String? {
     return nil
 }
 
+/// 「macOS 27.0 (26A428)」の形（Windows版は「Windows 11 24H2 (26100)」、Linux版は /etc/os-release の PRETTY_NAME）
+func osVersion() -> String {
+    let v = ProcessInfo.processInfo.operatingSystemVersion
+    var text = "macOS \(v.majorVersion).\(v.minorVersion)" + (v.patchVersion > 0 ? ".\(v.patchVersion)" : "")
+    if let build = sysctlString("kern.osversion") { text += " (\(build))" }
+    return text
+}
+
 func appVersion(_ given: String?) -> String {
     if let given, !given.isEmpty { return given }
     return Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
@@ -124,13 +132,16 @@ let benchmarkName = options["name"] ?? benchmarkID
 // MARK: - エンジン
 
 let model: EngineAssembly.Model
+var zenz: ZenzEngine?
 if backend == "mlx" {
     guard MLXConversionEngine.supports(modelPath: modelPath) else {
         fail("このモデルは MLX で動かせません（MLX は T5 のモデルだけ）")
     }
     model = .mlx(MLXConversionEngine(modelPath: modelPath, adapterPath: adapterPath))
 } else {
-    model = .llamaCpp(ZenzEngine(modelPath: modelPath, adapterPath: adapterPath))
+    let engine = ZenzEngine(modelPath: modelPath, adapterPath: adapterPath)
+    zenz = engine
+    model = .llamaCpp(engine)
 }
 let latticeConverter = LatticeConverter.defaultDictionaryURL().map {
     LatticeConverter(dictionaryURL: $0) { TermDictionary.empty }
@@ -150,6 +161,10 @@ let started = ContinuousClock.now
 
 emit(BenchmarkRun.Event(kind: .loading, done: 0, total: items.count))
 let warmUp = await Benchmark.warmUp(engine: engine)
+let chip = sysctlString("machdep.cpu.brand_string") ?? "?"
+// 推論の実行先とスレッド数（llama.cpp は読み込んだあとでないと分からない）
+let runtime = await zenz?.runtimeInfo()
+let device = backend == "mlx" ? "MLX: \(chip)" : runtime?.device
 
 var results: [Benchmark.ItemResult] = []
 results.reserveCapacity(items.count)
@@ -165,13 +180,15 @@ let elapsedSeconds = Benchmark.milliseconds(started.duration(to: .now)) / 1000
 // 計測中に打ったキーがあれば、その変換と CPU・GPU を取り合っている（権限は要らない）
 let secondsSinceKey = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
 let environment = BenchmarkRun.Environment(
+    platform: "macos",
     appVersion: appVersion(options["app-version"]),
     hostName: hostName,
-    machineModel: sysctlString("hw.model") ?? "?",
-    chip: sysctlString("machdep.cpu.brand_string") ?? "?",
-    osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+    machineModel: sysctlString("hw.model"),
+    cpu: chip,
+    cpuCores: ProcessInfo.processInfo.activeProcessorCount,
+    osVersion: osVersion(),
     powerSource: powerSource(),
-    lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
+    powerSaving: ProcessInfo.processInfo.isLowPowerModeEnabled,
     thermalStateBefore: thermalBefore,
     thermalStateAfter: BenchmarkRun.Environment.thermalStateName(ProcessInfo.processInfo.thermalState))
 let record = BenchmarkRun.Record(
@@ -181,7 +198,8 @@ let record = BenchmarkRun.Record(
     condition: BenchmarkRun.Condition(
         lattice: lattice, backend: backend,
         model: URL(fileURLWithPath: modelPath).lastPathComponent,
-        adapter: adapterPath.map { URL(fileURLWithPath: $0).lastPathComponent }),
+        adapter: adapterPath.map { URL(fileURLWithPath: $0).lastPathComponent },
+        device: device, threads: runtime?.threads),
     environment: environment,
     startedAt: startedAt,
     finishedAt: Date(),

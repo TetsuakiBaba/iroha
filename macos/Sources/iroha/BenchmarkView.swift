@@ -191,7 +191,7 @@ struct BenchmarkSection: View {
                                 .fontWeight(record.id == shownRecord?.id ? .semibold : .regular)
                             Text(String(format: "acc@1 %.1f%%・中央値 %.1f ms", record.summary.total.accuracy * 100,
                                         record.summary.latency.p50)
-                                + "・\(record.environment.chip)（\(record.environment.hostName)）")
+                                + "・\(record.environment.cpu)（\(record.environment.hostName)）")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -218,17 +218,18 @@ struct BenchmarkResultView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(Self.title(record)).fontWeight(.medium)
-            if record.inputDuringRun {
+            Text(record.condition.summaryText + "\n" + "\(record.environment.cpu)・\(record.environment.osVersion)・"
+                 + "iroha \(record.environment.appVersion)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            if record.inputDuringRun == true {
                 Text("計測中にキーボードの入力がありました。速度の数字は入力の変換と取り合った値です。")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-            if record.environment.powerSource == "battery" || record.environment.lowPowerMode
-                || record.environment.thermalStateAfter != "nominal" {
-                Text("電源 \(record.environment.powerSource == "battery" ? "バッテリー" : "AC")"
-                    + (record.environment.lowPowerMode ? "・低電力モード" : "")
-                    + "・発熱の状態 \(record.environment.thermalStateBefore) → \(record.environment.thermalStateAfter)。"
-                    + "速度の数字はこの影響を受けています。")
+            if let note = record.environment.throttlingNote {
+                Text("\(note)。速度の数字はこの影響を受けています。")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }

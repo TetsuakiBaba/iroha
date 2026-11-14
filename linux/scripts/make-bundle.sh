@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-VERSION="${1:-$(git describe --tags --always --dirty | sed 's/^v//')}"
+VERSION="${1:-$(git describe --tags --match 'v[0-9]*' --always --dirty | sed 's/^v//')}"
 NAME="iroha-$VERSION-linux-x86_64"
 BUILD_DIR="${IROHA_BUNDLE_BUILD_DIR:-$HOME/.cache/iroha/bundle-build}"
 WORK="$(mktemp -d)"

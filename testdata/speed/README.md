@@ -26,7 +26,61 @@
 macOS版はアプリの中でも同じ計測ができる（設定 > モデル > 変換のベンチマーク、開発者モード。2026-11-14）。
 採点と集計は `iroha-cli ajimee` と同じ実装で、条件（ユーザ辞書・学習を使わない、`off` / `always`）も同じ。
 1 件ごとの時間は `<データフォルダ>/logs/bench/<日時>-<ホスト名>.tsv` に上の列のまま書くので、`summarize.py` にそのまま渡せる。
-記録の `.json` には機種・チップ・OS・電源・発熱の状態・計測中のキー入力の有無も残る。
+記録の `.json` には機種・CPU・OS・電源・発熱の状態・推論の実行先とスレッド数・計測中のキー入力の有無も残る。
+
+## アプリ内のベンチマークの記録（3 つの OS で同じ形）
+
+macOS版の形が正（`macos/Sources/IrohaCore/Benchmark/BenchmarkRun.swift`。採点と集計は同じディレクトリの `Benchmark.swift`・
+`BenchmarkSummary.swift`）。Windows版・Linux版を作るときはこの形に合わせ、記録どうしを同じ表に並べられるようにする。
+
+- 置き場所: `<データフォルダ>/logs/bench/<yyyyMMdd-HHmmss>-<ホスト名>.json` と同じ名前の `.tsv`。
+  ホスト名の英数字とハイフン以外は `_` にする。日時は計測を始めた時刻（その機械の地方時）
+- `.tsv`: 先頭の 4 列（`index reading_length context_length ms`）は 3 つの OS で同じ。後ろは各 OS の `iroha-cli ajimee` の
+  `IROHA_TIMINGS` と同じ列（macOS は `prompt_ms`・`decode_ms`・`decode_steps`・`select_ms`、Windows・Linux は `nn_ms`・`nn_calls`）
+- 評価セットの取得: カタログ `models/benchmarks.json`（`formatVersion` 1）から落とし、大きさと SHA-256 を照合してから
+  `<データフォルダ>/benchmarks/<ID>.jsonl` に置き、隣の `<ID>.json` に素性（`id`・`name`・`items`・`sha256`・`license`・
+  `sources`・`notice`・`installedAt`）を書く
+- 条件はユーザ辞書・学習・自分の原稿の表記・専門辞書を使わない。`off`（モデルだけ）と `always`（辞書ラティス + 再採点）。
+  最初の 1 件をモデルの読み込みを含めて変換し（`warmUpMilliseconds`）、その時間は集計に入れない
+
+`.json` のキー（日時は ISO 8601。値が取れない項目はキーごと書かない。推し量った値を入れない）:
+
+| キー | 中身 |
+|---|---|
+| `formatVersion` | 2（このキーが無い記録は形式 1。2026-11-14 の macOS版の最初の版で、`environment.chip`・`lowPowerMode` という名前だった） |
+| `id` | ファイル名（拡張子なし） |
+| `benchmarkID` / `benchmarkName` | 評価セットの ID と表示名 |
+| `startedAt` / `finishedAt` | 計測の始めと終わり |
+| `warmUpMilliseconds` | モデルの読み込みを含む最初の変換の時間 |
+| `inputDuringRun` | 計測中にキーボードの入力があったか。確かめられない環境では書かない |
+| `condition.lattice` | `off` / `always` |
+| `condition.backend` | `llama` / `mlx` |
+| `condition.model` / `condition.adapter` | モデル・LoRA アダプタのファイル名 |
+| `condition.device` | 推論の実行先。`CPU` か「ggml の装置名: 説明」（`MTL0: Apple M2`・`Vulkan0: NVIDIA GeForce RTX 4060` など。GPU に載せる層が 0 でなく、種類が GPU か IGPU の最初の装置）。MLX は `MLX: <チップ名>` |
+| `condition.threads` | llama.cpp の生成のスレッド数（`llama_n_threads`） |
+| `environment.platform` | `macos` / `windows` / `linux` |
+| `environment.appVersion` / `hostName` | アプリの版・ホスト名 |
+| `environment.machineModel` | 機種（下の表） |
+| `environment.cpu` / `cpuCores` | CPU の名前・論理コアの数 |
+| `environment.osVersion` | 下の表 |
+| `environment.powerSource` | `ac` / `battery` |
+| `environment.powerSaving` | 省電力の設定が効いていたか |
+| `environment.thermalStateBefore` / `After` | 発熱の状態（`nominal` / `fair` / `serious` / `critical`） |
+| `summary` | `total`・`withContext`・`withoutContext`（各 `count`・`hits`・`minCERSum`）、`perSource`（`source`・`tally`）、`latency`（`count`・`mean`・`p50`・`p90`・`p99`・`max`）、`lengthBins`（`lower`・`upper`・`count`・`p50`。項目の無い区切りは書かない。最後の区切りは `upper` なし）、`neuralNetworkShare`（NN の時間の合計 ÷ 変換の時間の合計） |
+| `misses` | 正解しなかった項目（`index`・`context`・`input`・`output`・`expected`） |
+
+OS ごとの取り方:
+
+| 項目 | macOS | Windows | Linux |
+|---|---|---|---|
+| `machineModel` | sysctl `hw.model` | SMBIOS の製造元と製品名（`HKLM\HARDWARE\DESCRIPTION\System\BIOS` の `SystemManufacturer`・`SystemProductName`） | `/sys/class/dmi/id/sys_vendor` と `product_name` |
+| `cpu` | sysctl `machdep.cpu.brand_string` | `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0` の `ProcessorNameString` | `/proc/cpuinfo` の `model name` |
+| `cpuCores` | `ProcessInfo.activeProcessorCount` | `GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)` | `sysconf(_SC_NPROCESSORS_ONLN)` |
+| `osVersion` | 「macOS 27.0 (26A428)」 | 「Windows 11 24H2 (26100)」（`RtlGetVersion` のビルド番号と `DisplayVersion`） | `/etc/os-release` の `PRETTY_NAME` |
+| `powerSource` | `IOPSGetProvidingPowerSourceType` | `GetSystemPowerStatus` の `ACLineStatus` | `/sys/class/power_supply/*/online`（種類 `Mains`） |
+| `powerSaving` | 低電力モード | `GetSystemPowerStatus` の `SystemStatusFlag`（省電力モード） | power-profiles-daemon の `power-saver`。無ければ書かない |
+| `thermalState…` | `ProcessInfo.thermalState` | 書かない | 書かない |
+| `inputDuringRun` | `CGEventSource.secondsSinceLastEventType`（keyDown）が計測の時間より短い | `GetLastInputInfo`（マウスも含む） | X11 は XScreenSaver の idle。Wayland では書かない |
 
 ## そろえる条件
 

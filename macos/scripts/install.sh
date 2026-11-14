@@ -35,7 +35,7 @@ fi
 # バンドル組み立てと署名。
 # 開発ビルドはgit describeのバージョン（例: 0.4.2-3-g7aae579）を表示して
 # リリースビルドと区別できるようにする（リリースはCIがタグから注入）
-VERSION="${VERSION:-$(git describe --tags --dirty --always 2>/dev/null | sed 's/^v//')}" \
+VERSION="${VERSION:-$(git describe --tags --match 'v[0-9]*' --dirty --always 2>/dev/null | sed 's/^v//')}" \
 SIGN_IDENTITY="${SIGN_IDENTITY:--}" SIGN_TIMESTAMP=0 \
   ./scripts/make-bundle.sh
 

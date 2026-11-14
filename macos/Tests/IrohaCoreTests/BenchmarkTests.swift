@@ -141,14 +141,16 @@ final class BenchmarkTests: XCTestCase {
         let item = Benchmark.Item(index: "1", contextText: "", input: "キョウ", expectedOutput: ["今日"])
         let result = await Benchmark.run(item, engine: TableEngine(table: [:]))
         let environment = BenchmarkRun.Environment(
-            appVersion: "1.0", hostName: "test", machineModel: "Mac", chip: "Apple M", osVersion: "27",
-            powerSource: "ac", lowPowerMode: false, thermalStateBefore: "nominal", thermalStateAfter: "fair")
+            platform: "macos", appVersion: "1.0", hostName: "test", machineModel: "Mac", cpu: "Apple M", cpuCores: 8,
+            osVersion: "27", powerSource: "ac", powerSaving: false,
+            thermalStateBefore: "nominal", thermalStateAfter: "fair")
         let started = Date(timeIntervalSince1970: 1_800_000_000)
         let id = BenchmarkRun.makeID(date: started, hostName: "my mac.local")
         XCTAssertTrue(id.hasSuffix("-my_mac_local"))
         let record = BenchmarkRun.Record(
             id: id, benchmarkID: "set", benchmarkName: "Set",
-            condition: .init(lattice: .always, backend: "llama", model: "m.gguf", adapter: nil),
+            condition: .init(lattice: .always, backend: "llama", model: "m.gguf", adapter: nil,
+                             device: "MTL0: Apple M", threads: 4),
             environment: environment, startedAt: started, finishedAt: started.addingTimeInterval(5),
             warmUpMilliseconds: 100, inputDuringRun: true, summary: Benchmark.Summary([result]),
             misses: BenchmarkRun.Record.misses(items: [item], results: [result]))
@@ -157,7 +159,11 @@ final class BenchmarkTests: XCTestCase {
         XCTAssertEqual(BenchmarkRun.records(), [record])
         let tsv = try String(contentsOf: BenchmarkRun.timingsURL(id: id), encoding: .utf8)
         XCTAssertTrue(tsv.hasPrefix(Benchmark.timingsHeader))
-        XCTAssertTrue(BenchmarkRun.markdown(record).contains("| 全体 | 1 | 0 (0.0%) |"))
+        XCTAssertEqual(record.formatVersion, BenchmarkRun.Record.currentFormatVersion)
+        let markdown = BenchmarkRun.markdown(record)
+        XCTAssertTrue(markdown.contains("| 全体 | 1 | 0 (0.0%) |"))
+        XCTAssertTrue(markdown.contains("llama.cpp（MTL0: Apple M、4 スレッド）"))
+        XCTAssertEqual(environment.throttlingNote, "発熱の状態 nominal → fair")
         BenchmarkRun.delete(id: id)
         XCTAssertTrue(BenchmarkRun.records().isEmpty)
 
@@ -165,6 +171,48 @@ final class BenchmarkTests: XCTestCase {
         XCTAssertTrue(event.jsonLine().hasSuffix("\n"))
         XCTAssertEqual(BenchmarkRun.Event.parse(event.jsonLine().trimmingCharacters(in: .newlines)), event)
         XCTAssertNil(BenchmarkRun.Event.parse("llama.cpp のログ"))
+    }
+
+    /// 形式 1（最初の版。macOS だけの名前 chip・lowPowerMode）の記録も読める
+    func testReadsFormatOneRecord() throws {
+        let old = """
+        {"benchmarkID": "iroha-bench-v1-quick", "benchmarkName": "iroha-bench-v1（抜粋）",
+         "condition": {"backend": "llama", "lattice": "off", "model": "m.gguf"},
+         "environment": {"appVersion": "0.17.1", "chip": "Apple M2", "hostName": "bell", "lowPowerMode": true,
+                         "machineModel": "Mac14,2", "osVersion": "Version 27.0", "powerSource": "ac",
+                         "thermalStateAfter": "nominal", "thermalStateBefore": "nominal"},
+         "finishedAt": "2026-11-14T12:56:12Z", "id": "20261114-215532-bell", "inputDuringRun": false,
+         "misses": [], "startedAt": "2026-11-14T12:55:32Z", "warmUpMilliseconds": 300,
+         "summary": \(String(decoding: try BenchmarkRun.encoder.encode(Benchmark.Summary([])), as: UTF8.self))}
+        """
+        let record = try BenchmarkRun.decoder.decode(BenchmarkRun.Record.self, from: Data(old.utf8))
+        XCTAssertNil(record.formatVersion)
+        XCTAssertEqual(record.environment.platform, "macos")
+        XCTAssertEqual(record.environment.cpu, "Apple M2")
+        XCTAssertEqual(record.environment.powerSaving, true)
+        XCTAssertNil(record.environment.cpuCores)
+        XCTAssertNil(record.condition.device)
+        XCTAssertEqual(record.inputDuringRun, false)
+        XCTAssertEqual(record.environment.throttlingNote, "省電力の設定")
+
+        // 書き直すと新しい名前だけになる
+        let json = String(decoding: try BenchmarkRun.encoder.encode(record.environment), as: UTF8.self)
+        XCTAssertTrue(json.contains("\"cpu\""))
+        XCTAssertFalse(json.contains("chip"))
+        XCTAssertFalse(json.contains("lowPowerMode"))
+    }
+
+    /// 取れない項目（Linux の発熱・Wayland のキー入力など）は書かない
+    func testOmitsUnknownFields() throws {
+        let environment = BenchmarkRun.Environment(
+            platform: "linux", appVersion: "1.0", hostName: "gpu", machineModel: nil, cpu: "AMD EPYC", cpuCores: 64,
+            osVersion: "Ubuntu 24.04", powerSource: nil, powerSaving: nil,
+            thermalStateBefore: nil, thermalStateAfter: nil)
+        let json = String(decoding: try BenchmarkRun.encoder.encode(environment), as: UTF8.self)
+        XCTAssertFalse(json.contains("thermalState"))
+        XCTAssertFalse(json.contains("powerSaving"))
+        XCTAssertNil(environment.throttlingNote)
+        XCTAssertEqual(try BenchmarkRun.decoder.decode(BenchmarkRun.Environment.self, from: Data(json.utf8)), environment)
     }
 
     // MARK: - 取得

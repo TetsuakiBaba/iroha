@@ -30,42 +30,119 @@ public enum BenchmarkRun {
         public var model: String
         /// LoRA アダプタのファイル名（無ければ nil）
         public var adapter: String?
+        /// 推論の実行先。"CPU" か「ggml の装置名: 説明」（"MTL0: Apple M2"・"Vulkan0: NVIDIA GeForce RTX 4060" など）。
+        /// MLX なら「MLX: <チップ名>」。形式 1 の記録には無い
+        public var device: String?
+        /// llama.cpp が生成に使う CPU のスレッド数。MLX と形式 1 の記録では nil
+        public var threads: Int?
 
-        public init(lattice: Lattice, backend: String, model: String, adapter: String?) {
+        public init(lattice: Lattice, backend: String, model: String, adapter: String?,
+                    device: String? = nil, threads: Int? = nil) {
             self.lattice = lattice
             self.backend = backend
             self.model = model
             self.adapter = adapter
+            self.device = device
+            self.threads = threads
+        }
+
+        /// 「辞書ラティス + 再採点、llama.cpp（MTL0: Apple M2、4 スレッド）、モデル …」の形の 1 行
+        public var summaryText: String {
+            var engine = backend == "mlx" ? "MLX" : "llama.cpp"
+            let detail = [device, threads.map { "\($0) スレッド" }].compactMap { $0 }
+            if !detail.isEmpty { engine += "（" + detail.joined(separator: "、") + "）" }
+            return "\(lattice.displayName)、\(engine)、モデル \(model)" + (adapter.map { "＋アダプタ \($0)" } ?? "")
         }
     }
 
-    /// 速度を左右する、計測した機械の状態
+    /// 速度を左右する、計測した機械の状態。macOS版・Windows版・Linux版で同じ形にする
+    /// （`testdata/speed/README.md` の「アプリ内のベンチマークの記録」に OS ごとの取り方がある）。
+    /// その OS で取れない項目は nil にする（推し量った値を入れない）
     public struct Environment: Codable, Sendable, Equatable {
+        /// "macos" / "windows" / "linux"
+        public var platform: String
         public var appVersion: String
         public var hostName: String
-        /// sysctl hw.model（"Mac15,6" など）
-        public var machineModel: String
-        /// CPU の名前（"Apple M3 Pro" など）
-        public var chip: String
+        /// 機種（macOS は sysctl hw.model の "Mac14,2" など）。分からなければ nil
+        public var machineModel: String?
+        /// CPU の名前（"Apple M2" など）
+        public var cpu: String
+        /// 論理コアの数
+        public var cpuCores: Int?
         public var osVersion: String
         /// "ac" / "battery"。分からなければ nil
         public var powerSource: String?
-        public var lowPowerMode: Bool
-        /// 計測の前後の `ProcessInfo.thermalState`（"nominal" / "fair" / "serious" / "critical"）
-        public var thermalStateBefore: String
-        public var thermalStateAfter: String
+        /// 省電力の設定が効いていたか（macOS の低電力モード・Windows の省電力モード・Linux の power-saver）。分からなければ nil
+        public var powerSaving: Bool?
+        /// 計測の前後の発熱の状態（"nominal" / "fair" / "serious" / "critical"。macOS の `ProcessInfo.thermalState`）。
+        /// 取れない OS では nil
+        public var thermalStateBefore: String?
+        public var thermalStateAfter: String?
 
-        public init(appVersion: String, hostName: String, machineModel: String, chip: String, osVersion: String,
-                    powerSource: String?, lowPowerMode: Bool, thermalStateBefore: String, thermalStateAfter: String) {
+        public init(platform: String, appVersion: String, hostName: String, machineModel: String?, cpu: String,
+                    cpuCores: Int?, osVersion: String, powerSource: String?, powerSaving: Bool?,
+                    thermalStateBefore: String?, thermalStateAfter: String?) {
+            self.platform = platform
             self.appVersion = appVersion
             self.hostName = hostName
             self.machineModel = machineModel
-            self.chip = chip
+            self.cpu = cpu
+            self.cpuCores = cpuCores
             self.osVersion = osVersion
             self.powerSource = powerSource
-            self.lowPowerMode = lowPowerMode
+            self.powerSaving = powerSaving
             self.thermalStateBefore = thermalStateBefore
             self.thermalStateAfter = thermalStateAfter
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case platform, appVersion, hostName, machineModel, cpu, cpuCores, osVersion, powerSource, powerSaving,
+                 thermalStateBefore, thermalStateAfter
+            /// 形式 1（2026-11-14 の最初の版。macOS だけ）の名前
+            case chip, lowPowerMode
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            platform = try c.decodeIfPresent(String.self, forKey: .platform) ?? "macos"
+            appVersion = try c.decode(String.self, forKey: .appVersion)
+            hostName = try c.decode(String.self, forKey: .hostName)
+            machineModel = try c.decodeIfPresent(String.self, forKey: .machineModel)
+            cpu = try c.decodeIfPresent(String.self, forKey: .cpu) ?? c.decode(String.self, forKey: .chip)
+            cpuCores = try c.decodeIfPresent(Int.self, forKey: .cpuCores)
+            osVersion = try c.decode(String.self, forKey: .osVersion)
+            powerSource = try c.decodeIfPresent(String.self, forKey: .powerSource)
+            powerSaving = try c.decodeIfPresent(Bool.self, forKey: .powerSaving)
+                ?? c.decodeIfPresent(Bool.self, forKey: .lowPowerMode)
+            thermalStateBefore = try c.decodeIfPresent(String.self, forKey: .thermalStateBefore)
+            thermalStateAfter = try c.decodeIfPresent(String.self, forKey: .thermalStateAfter)
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(platform, forKey: .platform)
+            try c.encode(appVersion, forKey: .appVersion)
+            try c.encode(hostName, forKey: .hostName)
+            try c.encodeIfPresent(machineModel, forKey: .machineModel)
+            try c.encode(cpu, forKey: .cpu)
+            try c.encodeIfPresent(cpuCores, forKey: .cpuCores)
+            try c.encode(osVersion, forKey: .osVersion)
+            try c.encodeIfPresent(powerSource, forKey: .powerSource)
+            try c.encodeIfPresent(powerSaving, forKey: .powerSaving)
+            try c.encodeIfPresent(thermalStateBefore, forKey: .thermalStateBefore)
+            try c.encodeIfPresent(thermalStateAfter, forKey: .thermalStateAfter)
+        }
+
+        /// 速度の数字が落ちている恐れがある状態（バッテリー・省電力・発熱）の説明。無ければ nil
+        public var throttlingNote: String? {
+            var notes: [String] = []
+            if powerSource == "battery" { notes.append("電源 バッテリー") }
+            if powerSaving == true { notes.append("省電力の設定") }
+            if let before = thermalStateBefore, let after = thermalStateAfter,
+               before != "nominal" || after != "nominal" {
+                notes.append("発熱の状態 \(before) → \(after)")
+            }
+            return notes.isEmpty ? nil : notes.joined(separator: "・")
         }
 
         public static func thermalStateName(_ state: ProcessInfo.ThermalState) -> String {
@@ -90,6 +167,10 @@ public enum BenchmarkRun {
 
     /// 1 回の計測の記録（要約のファイル）
     public struct Record: Codable, Sendable, Equatable, Identifiable {
+        /// 記録の形式。2 で OS 共通の形にした（2026-11-14）。キーが無い記録は形式 1（macOS だけの形）
+        public static let currentFormatVersion = 2
+
+        public let formatVersion: Int?
         /// ファイル名（拡張子なし）
         public let id: String
         public let benchmarkID: String
@@ -100,14 +181,16 @@ public enum BenchmarkRun {
         public let finishedAt: Date
         /// モデルの読み込みを含む、最初の 1 回の変換の時間（ミリ秒）
         public let warmUpMilliseconds: Double
-        /// 計測中にキーボードの入力があったか（あれば速度の数字は IME の変換と取り合った値）
-        public let inputDuringRun: Bool
+        /// 計測中にキーボードの入力があったか（あれば速度の数字は IME の変換と取り合った値）。
+        /// 確かめられない環境（Linux の Wayland など）では nil
+        public let inputDuringRun: Bool?
         public let summary: Benchmark.Summary
         public let misses: [Miss]
 
         public init(id: String, benchmarkID: String, benchmarkName: String, condition: Condition,
                     environment: Environment, startedAt: Date, finishedAt: Date, warmUpMilliseconds: Double,
-                    inputDuringRun: Bool, summary: Benchmark.Summary, misses: [Miss]) {
+                    inputDuringRun: Bool?, summary: Benchmark.Summary, misses: [Miss]) {
+            self.formatVersion = Record.currentFormatVersion
             self.id = id
             self.benchmarkID = benchmarkID
             self.benchmarkName = benchmarkName
@@ -233,13 +316,17 @@ public enum BenchmarkRun {
         let date = DateFormatter.localizedString(from: record.startedAt, dateStyle: .short, timeStyle: .short)
         lines.append("## iroha ベンチマーク（\(record.benchmarkName)、\(date)）")
         lines.append("")
-        lines.append("- 条件: \(record.condition.lattice.displayName)、\(record.condition.backend == "mlx" ? "MLX" : "llama.cpp")、"
-            + "モデル \(record.condition.model)" + (record.condition.adapter.map { "＋アダプタ \($0)" } ?? ""))
-        lines.append("- 機械: \(e.chip)（\(e.machineModel)）、\(e.osVersion)、iroha \(e.appVersion)、電源 "
+        lines.append("- 条件: \(record.condition.summaryText)")
+        lines.append("- 機械: \(e.cpu)" + (e.machineModel.map { "（\($0)）" } ?? "")
+            + "、\(e.osVersion)、iroha \(e.appVersion)、電源 "
             + (e.powerSource == "battery" ? "バッテリー" : e.powerSource == "ac" ? "AC" : "不明")
-            + (e.lowPowerMode ? "（低電力モード）" : "")
-            + "、発熱の状態 \(e.thermalStateBefore) → \(e.thermalStateAfter)")
-        if record.inputDuringRun { lines.append("- 計測中にキーボードの入力があった") }
+            + (e.powerSaving == true ? "（省電力の設定）" : "")
+            + ((e.thermalStateBefore).map { "、発熱の状態 \($0) → \(e.thermalStateAfter ?? "?")" } ?? ""))
+        switch record.inputDuringRun {
+        case true?: lines.append("- 計測中にキーボードの入力があった")
+        case nil: lines.append("- 計測中のキーボードの入力は確かめられない")
+        case false?: break
+        }
         lines.append("")
         lines.append("| 区分 | 件数 | acc@1 | MinCER |")
         lines.append("|---|---:|---:|---:|")
