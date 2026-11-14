@@ -22,5 +22,7 @@ namespace iroha::ibus {
 
 // プロセスで 1 つのエンジン一式とセッションの表（main が作り、ibus_main の前に渡す）
 void SetShared(EngineHost* host, SessionManager* sessions, std::function<void(const std::string&)> log);
+// 設定を読み直した（入力メニューの状態を合わせる）
+void SettingsReloaded();
 
 } // namespace iroha::ibus

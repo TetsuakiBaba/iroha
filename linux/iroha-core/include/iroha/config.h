@@ -39,6 +39,8 @@ struct Config {
     bool privateMode = false;
     // プライベートモードを切り替えるキー（macOS版の privateModeHotkey。空なら割り当てなし）
     std::string privateModeHotkey = "Ctrl+Alt+P";
+    // かな・英数を切り替えるキー（Linux版の設定。空なら割り当てなし。半角/全角キー・Alt+` はこれと別に常に効く）
+    std::string inputModeHotkey = "Ctrl+Space";
     // 変換の学習を使う（macOS版の learningEnabled。OFF なら学習を記録も適用もしない）
     bool learningEnabled = true;
     // アプリの文章（カーソルの手前）を変換の文脈に使う（macOS版の documentContext。OFF なら直前に確定した文字列だけ）

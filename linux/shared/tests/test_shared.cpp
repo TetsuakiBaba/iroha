@@ -8,6 +8,8 @@
 
 #include "debug_overlay_window.h"
 #include "emoji_renderability.h"
+#include "input_menu.h"
+#include "iroha/config.h"
 #include "key_shortcut.h"
 #include "launch_log.h"
 
@@ -101,6 +103,58 @@ void TestDebugOverlayPlacement() {
     EXPECT_TRUE(frame.y == 32);
 }
 
+// 入力メニュー: macOS版と同じ並び。切り替えのキーは今と反対のモードの項目に付く。モデルが無いときだけ状況の行
+void TestInputMenu() {
+    using iroha::menu::Command;
+    using Type = iroha::menu::Item::Type;
+    iroha::menu::State state;
+    state.inputModeShortcut = "Ctrl+Space";
+    state.privateModeShortcut = "Ctrl+Alt+P";
+    state.version = "0.18.0";
+    auto items = iroha::menu::Build(state);
+    std::string order;
+    for (const auto& item : items) order += (item.type == Type::Separator ? std::string("-") : item.key) + " ";
+    EXPECT_TRUE(order ==
+                "InputMode InputMode.Direct - Setup UserDictionary RewriteRules - PrivateMode LiveConversion Predictive "
+                "Punctuation - ModelFolder - Version ");
+    EXPECT_TRUE(items[0].label == "かな" && items[0].checked && items[0].type == Type::Radio);
+    EXPECT_TRUE(items[1].label == "英数（Ctrl+Space）" && !items[1].checked);
+    EXPECT_TRUE(items[7].label == "プライベートモード（Ctrl+Alt+P）" && !items[7].checked);
+    EXPECT_TRUE(items[8].checked && !items[9].checked);  // ライブ変換は既定 ON、予測変換は OFF
+    EXPECT_TRUE(items[10].label == "句読点スタイル: 、。（Ctrl+.）");
+    EXPECT_TRUE(items.back().label == "iroha 0.18.0" && items.back().type == Type::Status);
+    // キーの名前は重ならない（fcitx5 のアクションの名前に使う）
+    for (size_t i = 0; i < items.size(); ++i) {
+        for (size_t j = i + 1; j < items.size(); ++j) EXPECT_TRUE(items[i].key != items[j].key);
+    }
+    state.directMode = true;
+    state.inputModeShortcut.clear();
+    state.privateMode = true;
+    state.punctuation = "，．";
+    state.modelMissing = true;
+    items = iroha::menu::Build(state);
+    EXPECT_TRUE(items[0].label == "かな" && !items[0].checked && items[1].label == "英数" && items[1].checked);
+    EXPECT_TRUE(items[7].checked);
+    EXPECT_TRUE(items[10].label == "句読点スタイル: ，．（Ctrl+.）");
+    EXPECT_TRUE(items[items.size() - 2].key == "ModelStatus" && items[items.size() - 2].type == Type::Status);
+    EXPECT_TRUE(iroha::menu::CommandFor("InputMode") == Command::KanaMode);
+    EXPECT_TRUE(iroha::menu::CommandFor("InputMode.Direct") == Command::DirectMode);
+    EXPECT_TRUE(iroha::menu::CommandFor("Punctuation") == Command::Punctuation);
+    EXPECT_TRUE(iroha::menu::CommandFor("Version") == Command::None);
+    EXPECT_TRUE(iroha::menu::CommandFor("Separator1") == Command::None);
+    // かな・英数を切り替えるキーの設定: 既定は Ctrl+Space、空（割り当てなし）も保存して読み戻せる
+    const auto path = std::filesystem::temp_directory_path() / ("iroha-config-test-" + std::to_string(getpid()) + ".json");
+    iroha::Config config;
+    EXPECT_TRUE(config.inputModeHotkey == "Ctrl+Space");
+    config.inputModeHotkey = "";
+    EXPECT_TRUE(iroha::SaveConfig(path, config));
+    EXPECT_TRUE(iroha::LoadConfig(path).inputModeHotkey.empty());
+    config.inputModeHotkey = "Ctrl+Shift+J";
+    EXPECT_TRUE(iroha::SaveConfig(path, config));
+    EXPECT_TRUE(iroha::LoadConfig(path).inputModeHotkey == "Ctrl+Shift+J");
+    std::filesystem::remove(path);
+}
+
 } // namespace
 
 int main() {
@@ -108,6 +162,7 @@ int main() {
     TestEmojiRenderability();
     TestKeyShortcut();
     TestDebugOverlayPlacement();
+    TestInputMenu();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

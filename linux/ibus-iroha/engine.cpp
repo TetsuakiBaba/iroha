@@ -4,13 +4,16 @@
 #include <chrono>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <glib-unix.h>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "debug_overlay_window.h"
 #include "engine_host.h"
+#include "input_menu.h"
 #include "iroha/platform.h"
 #include "iroha/session_manager.h"
 #include "iroha/unicode.h"
@@ -22,6 +25,8 @@ iroha::EngineHost* sharedHost = nullptr;
 iroha::SessionManager* sharedSessions = nullptr;
 std::function<void(const std::string&)> sharedLog;
 uint64_t nextSessionId = 1;
+// 動いているエンジン（設定を読み直したときにメニューを作り直す）
+std::vector<IBusEngine*> liveEngines;
 
 // 候補ウィンドウの 1 ページの数（InputSession::kCandidatePageSize と同じ。数字キーはページの中の番号）
 constexpr size_t kPageSize = 9;
@@ -66,10 +71,9 @@ struct State {
     std::chrono::steady_clock::time_point pollStarted;
     guint noticeTimer = 0;
     std::u32string notice;
+    // 入力メニュー（IBus のプロパティの一覧）と、それを作った項目の中身（変わったときだけ作り直す）
     IBusPropList* properties = nullptr;
-    IBusProperty* modeProperty = nullptr;
-    IBusProperty* privateProperty = nullptr;
-    IBusProperty* setupProperty = nullptr;
+    std::string menuSignature;
     // デバッグ表示: フォーカスがあるか・アプリが知らせたカーソルの位置（ルートの窓の座標。知らせが無ければ無し）
     bool focused = false;
     std::optional<iroha::DebugOverlayWindow::Rect> cursor;
@@ -209,16 +213,55 @@ void UpdateAuxiliary(IBusEngine* engine) {
     }
 }
 
-void UpdateProperties(IBusEngine* engine) {
+iroha::menu::State MenuStateOf(const State& state) {
+    iroha::menu::State menu = sharedHost ? sharedHost->MenuState() : iroha::menu::State();
+    menu.directMode = state.directMode;
+    menu.privateMode = state.privateMode;
+    menu.version = IROHA_VERSION;
+    return menu;
+}
+
+IBusPropList* MakeProperties(const std::vector<iroha::menu::Item>& items, bool directMode) {
+    using Type = iroha::menu::Item::Type;
+    IBusPropList* list = ibus_prop_list_new();
+    g_object_ref_sink(list);
+    for (const auto& item : items) {
+        IBusPropType type = PROP_TYPE_NORMAL;
+        switch (item.type) {
+            case Type::Radio: type = PROP_TYPE_RADIO; break;
+            case Type::Toggle: type = PROP_TYPE_TOGGLE; break;
+            case Type::Separator: type = PROP_TYPE_SEPARATOR; break;
+            case Type::Normal:
+            case Type::Status: type = PROP_TYPE_NORMAL; break;
+        }
+        IBusProperty* property = ibus_property_new(
+            item.key.c_str(), type, ibus_text_new_from_string(item.label.c_str()),
+            item.command == iroha::menu::Command::Settings ? "preferences-system" : nullptr,
+            ibus_text_new_from_static_string(""), /*sensitive=*/item.type != Type::Status, /*visible=*/TRUE,
+            item.checked ? PROP_STATE_CHECKED : PROP_STATE_UNCHECKED, nullptr);
+        // GNOME と IBus のパネルは、キー InputMode の記号をトップバーに出す
+        if (item.key == "InputMode") {
+            ibus_property_set_symbol(property, ibus_text_new_from_static_string(iroha::menu::ModeSymbol(directMode)));
+        }
+        ibus_prop_list_append(list, property); // 一覧が持つ
+    }
+    return list;
+}
+
+// 入力メニューを今の状態にする。中身が変わったとき（force なら必ず）IBus に渡し直す
+void UpdateProperties(IBusEngine* engine, bool force = false) {
     State& state = StateOf(engine);
-    if (!state.modeProperty) return;
-    ibus_property_set_symbol(state.modeProperty, ibus_text_new_from_static_string(state.directMode ? "A" : "あ"));
-    ibus_property_set_label(state.modeProperty,
-                            ibus_text_new_from_static_string(state.directMode ? "入力モード: 英数（クリックでかなに）"
-                                                                              : "入力モード: かな（クリックで英数に）"));
-    ibus_engine_update_property(engine, state.modeProperty);
-    ibus_property_set_state(state.privateProperty, state.privateMode ? PROP_STATE_CHECKED : PROP_STATE_UNCHECKED);
-    ibus_engine_update_property(engine, state.privateProperty);
+    const iroha::menu::State menuState = MenuStateOf(state);
+    const std::vector<iroha::menu::Item> items = iroha::menu::Build(menuState);
+    std::string signature = iroha::menu::ModeSymbol(menuState.directMode);
+    for (const auto& item : items) {
+        signature += '\n' + item.key + '\t' + item.label + (item.checked ? "\t1" : "\t0");
+    }
+    if (!force && signature == state.menuSignature) return;
+    state.menuSignature = signature;
+    if (state.properties) g_object_unref(state.properties);
+    state.properties = MakeProperties(items, menuState.directMode);
+    ibus_engine_register_properties(engine, state.properties);
 }
 
 gboolean ClearNotice(gpointer data) {
@@ -283,10 +326,9 @@ bool ApplyOutput(IBusEngine* engine, const iroha::SessionOutput& output, bool fr
     state.idleUndoable = output.undoableCommit;
     state.idleFullWidthSpace = output.fullWidthSpace;
     state.privateModeShortcut = output.privateModeShortcut;
-    if (state.privateMode != output.privateMode) {
-        state.privateMode = output.privateMode;
-        UpdateProperties(engine);
-    }
+    state.privateMode = output.privateMode;
+    // プライベートモード・句読点（Ctrl+.）が変わっていればメニューに出す
+    UpdateProperties(engine);
     // 確定の取り消し: カーソルの手前の確定した文字列を消し、未確定文字列に置き換える
     if (output.replacesCommitted && state.replaceBeforeLength > 0 && !output.preedit.empty()) {
         ibus_engine_delete_surrounding_text(engine, -static_cast<gint>(state.replaceBeforeLength),
@@ -428,6 +470,7 @@ gboolean ProcessKeyEvent(IBusEngine* engine, guint keyval, guint keycode, guint 
         context.aiFixShortcut = state.shown.aiFixShortcut;
         context.aiShortcuts = state.shown.aiShortcuts;
         context.privateModeShortcut = state.privateModeShortcut;
+        if (sharedHost) context.inputModeShortcut = sharedHost->InputModeShortcut();
         const iroha::ibus::KeyDecision decision = iroha::ibus::DecideKey(keyval, modifiers, context);
         using Kind = iroha::ibus::KeyDecision::Kind;
         switch (decision.kind) {
@@ -468,7 +511,7 @@ gboolean ProcessKeyEvent(IBusEngine* engine, guint keyval, guint keycode, guint 
 void FocusIn(IBusEngine* engine) {
     State& state = StateOf(engine);
     state.focused = true;
-    ibus_engine_register_properties(engine, state.properties);
+    UpdateProperties(engine, /*force=*/true);
     // 周辺テキストは、エンジンが一度読むとアプリに求めるようになる
     std::u32string ignored;
     TextBeforeCursor(engine, &ignored);
@@ -527,24 +570,76 @@ void Disable(IBusEngine* engine) {
     IBUS_ENGINE_CLASS(iroha_engine_parent_class)->disable(engine);
 }
 
+// 実行ファイルと同じフォルダのプログラムを起動する（設定画面など）
+void Spawn(const std::vector<std::string>& arguments) {
+    std::vector<gchar*> argv;
+    for (const auto& argument : arguments) argv.push_back(const_cast<gchar*>(argument.c_str()));
+    argv.push_back(nullptr);
+    GError* error = nullptr;
+    if (!g_spawn_async(nullptr, argv.data(), nullptr, G_SPAWN_SEARCH_PATH, nullptr, nullptr, nullptr, &error)) {
+        Log("cannot start " + arguments.front() + ": " + (error ? error->message : ""));
+        if (error) g_error_free(error);
+    }
+}
+
+void OpenSettings(const char* tab) {
+    const std::string settings = iroha::PathToUtf8(iroha::platform::ExecutableDirectory() / "iroha-settings");
+    if (tab) {
+        Spawn({settings, "--tab", tab});
+    } else {
+        Spawn({settings});
+    }
+}
+
+// メニューの項目が押された。propertyState は、ラジオ・トグルなら押したあとの状態
+// （GNOME はラジオを選んだときだけ CHECKED で、IBus のパネルは外れた方にも UNCHECKED で送ってくる）
 void PropertyActivate(IBusEngine* engine, const gchar* name, guint propertyState) {
-    (void)propertyState;
+    using iroha::menu::Command;
     try {
-        const std::string property = name ? name : "";
-        if (property == "InputMode") {
-            SetDirectMode(engine, !StateOf(engine).directMode);
-        } else if (property == "PrivateMode") {
-            SendKey(engine, iroha::SessionKey::TogglePrivateMode, 0, false);
-        } else if (property == "Setup") {
-            // 設定画面（エンジンと同じフォルダの iroha-settings）を開く
-            const std::string settings = iroha::PathToUtf8(iroha::platform::ExecutableDirectory() / "iroha-settings");
-            gchar* argv[] = {const_cast<gchar*>(settings.c_str()), nullptr};
-            GError* error = nullptr;
-            if (!g_spawn_async(nullptr, argv, nullptr, G_SPAWN_DEFAULT, nullptr, nullptr, nullptr, &error)) {
-                Log(std::string("cannot open settings: ") + (error ? error->message : ""));
-                if (error) g_error_free(error);
+        const bool checked = propertyState == PROP_STATE_CHECKED;
+        State& state = StateOf(engine);
+        switch (iroha::menu::CommandFor(name ? name : "")) {
+            case Command::None:
+                break;
+            case Command::KanaMode:
+                if (checked) SetDirectMode(engine, false);
+                break;
+            case Command::DirectMode:
+                if (checked) SetDirectMode(engine, true);
+                break;
+            case Command::Settings:
+                OpenSettings(nullptr);
+                break;
+            case Command::UserDictionary:
+                OpenSettings("dictionary");
+                break;
+            case Command::RewriteRules:
+                OpenSettings("rules");
+                break;
+            case Command::PrivateMode:
+                if (checked != state.privateMode) SendKey(engine, iroha::SessionKey::TogglePrivateMode, 0, false);
+                break;
+            // ライブ変換・予測変換は設定を書き換え、読み直したとき（SettingsReloaded）にメニューを合わせる
+            // （ここで合わせると、読み直す前の状態でパネルの印が一度戻る）
+            case Command::LiveConversion:
+                if (sharedHost) sharedHost->ChangeConfig([checked](iroha::Config& config) { config.liveConversion = checked; });
+                return;
+            case Command::Predictive:
+                if (sharedHost) sharedHost->ChangeConfig([checked](iroha::Config& config) { config.predictive = checked; });
+                return;
+            case Command::Punctuation:
+                SendKey(engine, iroha::SessionKey::TogglePunctuation, 0, false);
+                break;
+            case Command::ModelFolder: {
+                const std::filesystem::path models = iroha::platform::DataDirectory() / "models";
+                std::error_code error;
+                std::filesystem::create_directories(models, error);
+                Spawn({"xdg-open", iroha::PathToUtf8(models)});
+                break;
             }
         }
+        // 押したあとの表示をメニューに戻す（ラジオ・トグルはパネルが先に印を動かしているので、状態が変わらなかったときに合わせ直す）
+        UpdateProperties(engine, /*force=*/true);
     } catch (const std::exception& error) {
         Log(std::string("property failed: ") + error.what());
     }
@@ -590,13 +685,8 @@ void Destroy(IBusObject* object) {
         if (sharedSessions && state->sessionId != 0) sharedSessions->End(state->sessionId);
         state->sessionId = 0;
         if (state->properties) g_object_unref(state->properties);
-        if (state->modeProperty) g_object_unref(state->modeProperty);
-        if (state->privateProperty) g_object_unref(state->privateProperty);
-        if (state->setupProperty) g_object_unref(state->setupProperty);
-        state->setupProperty = nullptr;
         state->properties = nullptr;
-        state->modeProperty = nullptr;
-        state->privateProperty = nullptr;
+        liveEngines.erase(std::remove(liveEngines.begin(), liveEngines.end(), engine), liveEngines.end());
     }
     IBUS_OBJECT_CLASS(iroha_engine_parent_class)->destroy(object);
 }
@@ -632,28 +722,8 @@ static void iroha_engine_init(IrohaEngine* engine) {
     State* state = new State();
     engine->state = state;
     state->sessionId = nextSessionId++;
-    state->modeProperty = ibus_property_new("InputMode", PROP_TYPE_NORMAL,
-                                            ibus_text_new_from_static_string("入力モード"), nullptr,
-                                            ibus_text_new_from_static_string("かな ⇄ 英数（半角/全角キー）"), TRUE,
-                                            TRUE, PROP_STATE_UNCHECKED, nullptr);
-    g_object_ref_sink(state->modeProperty);
-    ibus_property_set_symbol(state->modeProperty, ibus_text_new_from_static_string("あ"));
-    state->privateProperty = ibus_property_new(
-        "PrivateMode", PROP_TYPE_TOGGLE, ibus_text_new_from_static_string("プライベートモード"), nullptr,
-        ibus_text_new_from_static_string("学習・入力履歴・予測変換・変換記録・ユーザ辞書を止める（Ctrl+Alt+P）"), TRUE, TRUE,
-        PROP_STATE_UNCHECKED, nullptr);
-    g_object_ref_sink(state->privateProperty);
-    state->properties = ibus_prop_list_new();
-    g_object_ref_sink(state->properties);
-    state->setupProperty = ibus_property_new("Setup", PROP_TYPE_NORMAL, ibus_text_new_from_static_string("設定…"),
-                                             "preferences-system", ibus_text_new_from_static_string("iroha の設定画面を開く"),
-                                             TRUE, TRUE, PROP_STATE_UNCHECKED, nullptr);
-    g_object_ref_sink(state->setupProperty);
-    ibus_prop_list_append(state->properties, state->modeProperty);
-    ibus_prop_list_append(state->properties, state->privateProperty);
-    ibus_prop_list_append(state->properties, state->setupProperty);
     if (sharedHost) state->privateMode = sharedHost->Settings().privateMode;
-    if (state->privateMode) ibus_property_set_state(state->privateProperty, PROP_STATE_CHECKED);
+    liveEngines.push_back(IBUS_ENGINE(engine));
 }
 
 namespace iroha::ibus {
@@ -662,6 +732,13 @@ void SetShared(EngineHost* host, SessionManager* sessions, std::function<void(co
     sharedHost = host;
     sharedSessions = sessions;
     sharedLog = std::move(log);
+}
+
+void SettingsReloaded() {
+    for (IBusEngine* engine : liveEngines) {
+        if (sharedHost) StateOf(engine).privateMode = sharedHost->Settings().privateMode;
+        UpdateProperties(engine);
+    }
 }
 
 } // namespace iroha::ibus

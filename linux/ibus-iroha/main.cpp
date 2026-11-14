@@ -103,6 +103,7 @@ gboolean Reload(gpointer data) {
     reloader.log("reload requested");
     reloader.sessions->WithEngine([&reloader] { reloader.host->Build(); });
     reloader.host->ApplyTo(*reloader.sessions);
+    iroha::ibus::SettingsReloaded();
     return G_SOURCE_REMOVE;
 }
 

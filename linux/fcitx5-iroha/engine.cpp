@@ -14,7 +14,9 @@
 #include <algorithm>
 #include <chrono>
 #include <exception>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,6 +42,7 @@
 #include "debug_overlay_window.h"
 #include "emoji_renderability.h"
 #include "engine_host.h"
+#include "input_menu.h"
 #include "iroha/platform.h"
 #include "iroha/session_manager.h"
 #include "iroha/unicode.h"
@@ -113,18 +116,19 @@ private:
     size_t number_;
 };
 
-// メニューの項目（プライベートモード・設定）
+// 入力メニューの項目 1 つ（並びと名前は input_menu。名前・印は押すたびにエンジンに聞く）
 class IrohaAction : public fcitx::Action {
 public:
-    IrohaAction(IrohaEngine* engine, std::string name) : engine_(engine), name_(std::move(name)) {}
-    std::string shortText(fcitx::InputContext*) const override;
-    std::string icon(fcitx::InputContext*) const override { return name_ == "settings" ? "preferences-system" : ""; }
-    bool isChecked(fcitx::InputContext*) const override;
+    IrohaAction(IrohaEngine* engine, std::string key) : engine_(engine), key_(std::move(key)) {}
+    const std::string& Key() const { return key_; }
+    std::string shortText(fcitx::InputContext* ic) const override;
+    std::string icon(fcitx::InputContext*) const override { return key_ == "Setup" ? "preferences-system" : ""; }
+    bool isChecked(fcitx::InputContext* ic) const override;
     void activate(fcitx::InputContext* ic) override;
 
 private:
     IrohaEngine* engine_;
-    std::string name_;
+    std::string key_;
 };
 
 class IrohaEngine : public fcitx::InputMethodEngineV2 {
@@ -132,17 +136,22 @@ public:
     explicit IrohaEngine(fcitx::Instance* instance)
         : instance_(instance),
           factory_([](fcitx::InputContext&) { return new IrohaState(); }),
-          host_(MakeOptions()),
-          privateAction_(this, "private"),
-          settingsAction_(this, "settings") {
+          host_(MakeOptions()) {
         Log(std::string("start ") + IROHA_VERSION + " (fcitx5)");
         host_.Build();
         sessions_ = std::make_unique<SessionManager>(&host_);
         host_.ApplyTo(*sessions_);
         instance_->inputContextManager().registerProperty("irohaState", &factory_);
-        privateAction_.setCheckable(true);
-        instance_->userInterfaceManager().registerAction("iroha-private", &privateAction_);
-        instance_->userInterfaceManager().registerAction("iroha-settings", &settingsAction_);
+        // 入力メニューの項目は、出すことのある項目すべて（状況の行を含む）を初めに作って登録しておく
+        menu::State all;
+        all.modelMissing = true;
+        for (const menu::Item& item : menu::Build(all)) {
+            auto action = std::make_unique<IrohaAction>(this, item.key);
+            action->setSeparator(item.type == menu::Item::Type::Separator);
+            action->setCheckable(item.type == menu::Item::Type::Radio || item.type == menu::Item::Type::Toggle);
+            instance_->userInterfaceManager().registerAction("iroha-" + item.key, action.get());
+            actions_.push_back(std::move(action));
+        }
         WatchReloadRequest();
         // デバッグ表示: カーソルの位置が変わったら追う
         eventHandlers_.push_back(instance_->watchEvent(
@@ -183,6 +192,7 @@ public:
             context.aiFixShortcut = state.shown.aiFixShortcut;
             context.aiShortcuts = state.shown.aiShortcuts;
             context.privateModeShortcut = state.privateModeShortcut;
+            context.inputModeShortcut = host_.InputModeShortcut();
             const ibus::KeyDecision decision =
                 ibus::DecideKey(static_cast<uint32_t>(key.sym()), static_cast<uint32_t>(key.states()), context);
             using Kind = ibus::KeyDecision::Kind;
@@ -225,9 +235,7 @@ public:
     }
 
     void activate(const fcitx::InputMethodEntry&, fcitx::InputContextEvent& event) override {
-        fcitx::InputContext* ic = event.inputContext();
-        ic->statusArea().addAction(fcitx::StatusGroup::InputMethod, &privateAction_);
-        ic->statusArea().addAction(fcitx::StatusGroup::InputMethod, &settingsAction_);
+        ShowMenu(event.inputContext());
     }
 
     void deactivate(const fcitx::InputMethodEntry& entry, fcitx::InputContextEvent& event) override {
@@ -272,14 +280,97 @@ public:
         }
     }
 
-    bool PrivateMode() const { return host_.Settings().privateMode; }
+    // ---- 入力メニュー（macOS版の入力メニューと同じ並び。input_menu） ----
 
-    void TogglePrivateMode(fcitx::InputContext* ic) {
-        if (ic) SendKey(ic, SessionKey::TogglePrivateMode, 0, false);
+    menu::State MenuStateOf(fcitx::InputContext* ic) {
+        menu::State state = host_.MenuState();
+        if (ic) state.directMode = ic->propertyFor(&factory_)->directMode;
+        state.version = IROHA_VERSION;
+        return state;
     }
 
-    void OpenSettings() {
-        fcitx::startProcess({std::string(IROHA_RESOURCE_DIR) + "/iroha-settings"});
+    std::optional<menu::Item> MenuItem(const std::string& key, fcitx::InputContext* ic) {
+        for (menu::Item& item : menu::Build(MenuStateOf(ic))) {
+            if (item.key == key) return item;
+        }
+        return std::nullopt;
+    }
+
+    // 今の状態で出す項目を、入力コンテキストの状況の領域に並べ直す
+    void ShowMenu(fcitx::InputContext* ic) {
+        if (!ic) return;
+        menuSignature_.clear();
+        ic->statusArea().clearGroup(fcitx::StatusGroup::InputMethod);
+        for (const menu::Item& item : menu::Build(MenuStateOf(ic))) {
+            for (const auto& action : actions_) {
+                if (action->Key() == item.key) ic->statusArea().addAction(fcitx::StatusGroup::InputMethod, action.get());
+            }
+        }
+        ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
+    }
+
+    // 名前・印が変わったかもしれない（プライベートモード・句読点・入力モード）。変わったときだけ知らせる
+    // （キーのたびに全項目を知らせると、そのたびにパネルとの通信が起きる）
+    void UpdateMenu(fcitx::InputContext* ic) {
+        if (!ic) return;
+        std::string signature;
+        for (const menu::Item& item : menu::Build(MenuStateOf(ic))) {
+            signature += item.key + '\t' + item.label + (item.checked ? "\t1\n" : "\t0\n");
+        }
+        if (signature == menuSignature_) return;
+        menuSignature_ = signature;
+        for (const auto& action : actions_) action->update(ic);
+        ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
+    }
+
+    void ActivateMenu(const std::string& key, fcitx::InputContext* ic) {
+        try {
+            const auto item = MenuItem(key, ic);
+            if (!item) return;
+            const auto settings = std::string(IROHA_RESOURCE_DIR) + "/iroha-settings";
+            switch (item->command) {
+                case menu::Command::None:
+                    return;
+                case menu::Command::KanaMode:
+                    if (ic) SetDirectMode(ic, false);
+                    break;
+                case menu::Command::DirectMode:
+                    if (ic) SetDirectMode(ic, true);
+                    break;
+                case menu::Command::Settings:
+                    fcitx::startProcess({settings});
+                    return;
+                case menu::Command::UserDictionary:
+                    fcitx::startProcess({settings, "--tab", "dictionary"});
+                    return;
+                case menu::Command::RewriteRules:
+                    fcitx::startProcess({settings, "--tab", "rules"});
+                    return;
+                case menu::Command::PrivateMode:
+                    if (ic) SendKey(ic, SessionKey::TogglePrivateMode, 0, false);
+                    break;
+                // ライブ変換・予測変換は設定を書き換え、読み直したときにメニューを合わせる
+                case menu::Command::LiveConversion:
+                    host_.ChangeConfig([on = !item->checked](Config& config) { config.liveConversion = on; });
+                    return;
+                case menu::Command::Predictive:
+                    host_.ChangeConfig([on = !item->checked](Config& config) { config.predictive = on; });
+                    return;
+                case menu::Command::Punctuation:
+                    if (ic) SendKey(ic, SessionKey::TogglePunctuation, 0, false);
+                    break;
+                case menu::Command::ModelFolder: {
+                    const std::filesystem::path models = platform::DataDirectory() / "models";
+                    std::error_code error;
+                    std::filesystem::create_directories(models, error);
+                    fcitx::startProcess({"xdg-open", PathToUtf8(models)});
+                    return;
+                }
+            }
+            UpdateMenu(ic);
+        } catch (const std::exception& error) {
+            Log(std::string("menu failed: ") + error.what());
+        }
     }
 
 private:
@@ -297,7 +388,6 @@ private:
 
     void ApplyOutput(fcitx::InputContext* ic, const SessionOutput& output, bool fromKey) {
         IrohaState& state = *ic->propertyFor(&factory_);
-        const bool privateChanged = state.shown.privateMode != output.privateMode;
         state.shown = output;
         state.shown.commit.clear();
         state.idleUndoable = output.undoableCommit;
@@ -357,7 +447,8 @@ private:
         if (!aux.empty()) panel.setAuxUp(fcitx::Text(aux));
         ic->updatePreedit();
         ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
-        if (privateChanged) privateAction_.update(ic);
+        // プライベートモード・句読点（Ctrl+.）が変わっていればメニューに出す
+        UpdateMenu(ic);
         UpdateComposingFlag();
         UpdateOverlay(ic);
         SetPolling(ic, output.Composing() && Pending(output));
@@ -532,7 +623,7 @@ private:
         if (state.directMode == direct) return;
         CommitNow(ic);
         state.directMode = direct;
-        ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
+        UpdateMenu(ic);
     }
 
     // 入力中かの目印（選択テキストのAI編集が読む）。変わったときだけ書く
@@ -571,6 +662,8 @@ private:
                     Log("reload requested");
                     sessions_->WithEngine([this] { host_.Build(); });
                     host_.ApplyTo(*sessions_);
+                    // 入力メニューを合わせる（モデルが見つからない行の出し入れもあるので並べ直す）
+                    ShowMenu(instance_->mostRecentInputContext());
                 }
                 return true;
             });
@@ -580,8 +673,8 @@ private:
     fcitx::FactoryFor<IrohaState> factory_;
     EngineHost host_;
     std::unique_ptr<SessionManager> sessions_;
-    IrohaAction privateAction_;
-    IrohaAction settingsAction_;
+    std::vector<std::unique_ptr<IrohaAction>> actions_;
+    std::string menuSignature_;
     int inotifyFd_ = -1;
     std::unique_ptr<fcitx::EventSourceIO> reloadWatch_;
     int composingFlag_ = -1;
@@ -593,19 +686,17 @@ private:
 
 void IrohaCandidate::select(fcitx::InputContext* ic) const { engine_->SelectCandidate(ic, number_); }
 
-std::string IrohaAction::shortText(fcitx::InputContext*) const {
-    return name_ == "settings" ? "iroha の設定…" : "プライベートモード";
+std::string IrohaAction::shortText(fcitx::InputContext* ic) const {
+    const auto item = engine_->MenuItem(key_, ic);
+    return item ? item->label : "";
 }
 
-bool IrohaAction::isChecked(fcitx::InputContext*) const { return name_ == "private" && engine_->PrivateMode(); }
-
-void IrohaAction::activate(fcitx::InputContext* ic) {
-    if (name_ == "settings") {
-        engine_->OpenSettings();
-    } else {
-        engine_->TogglePrivateMode(ic);
-    }
+bool IrohaAction::isChecked(fcitx::InputContext* ic) const {
+    const auto item = engine_->MenuItem(key_, ic);
+    return item && item->checked;
 }
+
+void IrohaAction::activate(fcitx::InputContext* ic) { engine_->ActivateMenu(key_, ic); }
 
 class IrohaFactory : public fcitx::AddonFactory {
 public:

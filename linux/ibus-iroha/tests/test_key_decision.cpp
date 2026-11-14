@@ -182,6 +182,23 @@ void TestInputModes() {
     EXPECT_TRUE(DecideKey('a', 0, direct).kind == Kind::Pass);
     EXPECT_TRUE(DecideKey(' ', 0, direct).kind == Kind::Pass);
     EXPECT_TRUE(DecideKey(0xff2a, 0, direct).kind == Kind::ToggleDirectMode);
+    // 設定の切り替えキー（既定 Ctrl+Space）: かな・英数のどちらでも、入力中でも切り替える
+    EXPECT_TRUE(DecideKey(0x20, m::kControl, Idle()).kind == Kind::ToggleDirectMode);
+    EXPECT_TRUE(DecideKey(0x20, m::kControl, direct).kind == Kind::ToggleDirectMode);
+    EXPECT_TRUE(DecideKey(0x20, m::kControl, Composing()).kind == Kind::ToggleDirectMode);
+    EXPECT_TRUE(DecideKey(0x20, m::kControl, Segmenting()).kind == Kind::ToggleDirectMode);
+    // 修飾キーが違えば切り替えない（Ctrl+Shift+Space・Space）
+    EXPECT_TRUE(DecideKey(0x20, m::kControl | m::kShift, direct).kind == Kind::Pass);
+    EXPECT_TRUE(DecideKey(0x20, 0, direct).kind == Kind::Pass);
+    // 設定で変えたキー・割り当てなし
+    KeyContext custom = Idle();
+    custom.inputModeShortcut = iroha::KeyShortcut::Parse("Ctrl+Shift+J")->Encode();
+    EXPECT_TRUE(DecideKey('J', m::kControl | m::kShift, custom).kind == Kind::ToggleDirectMode);
+    EXPECT_TRUE(DecideKey(0x20, m::kControl, custom).kind != Kind::ToggleDirectMode);
+    custom.inputModeShortcut = 0;
+    EXPECT_TRUE(DecideKey(0x20, m::kControl, custom).kind != Kind::ToggleDirectMode);
+    custom.directMode = true;
+    EXPECT_TRUE(DecideKey(0x20, m::kControl, custom).kind == Kind::Pass);
 }
 
 } // namespace

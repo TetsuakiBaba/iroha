@@ -212,6 +212,10 @@ void EngineHost::Build() {
     sessionSettings_.developerOverlay = config.developerMode && config.developerOverlay;
     const auto privateShortcut = KeyShortcut::Parse(config.privateModeHotkey);
     sessionSettings_.privateModeShortcut = privateShortcut ? privateShortcut->Encode() : 0;
+    privateModeShortcutLabel_ = privateShortcut ? config.privateModeHotkey : "";
+    const auto modeShortcut = KeyShortcut::Parse(config.inputModeHotkey);
+    inputModeShortcut_ = modeShortcut ? modeShortcut->Encode() : 0;
+    inputModeShortcutLabel_ = modeShortcut ? config.inputModeHotkey : "";
     learningEnabled_ = config.learningEnabled;
     sessionSettings_.conversionLog = config.conversionLog;
     sessionSettings_.typoCorrection = config.typoCorrection;
@@ -386,6 +390,30 @@ std::vector<InputHistoryEntry> EngineHost::PredictionCandidates(const std::u32st
 
 void EngineHost::RecordInputHistory(const std::u32string& reading, const std::u32string& text) {
     if (inputHistory_) inputHistory_->Record(reading, text, InputHistoryStore::NowSeconds());
+}
+
+menu::State EngineHost::MenuState() const {
+    menu::State state;
+    state.privateMode = sessionSettings_.privateMode;
+    state.liveConversion = sessionSettings_.liveConversion;
+    state.predictive = sessionSettings_.predictive;
+    state.punctuation = Utf32ToUtf8(sessionSettings_.punctuation);
+    state.inputModeShortcut = inputModeShortcutLabel_;
+    state.privateModeShortcut = privateModeShortcutLabel_;
+    std::error_code error;
+    state.modelMissing = modelPath_.empty() || !std::filesystem::exists(PathFromUtf8(modelPath_), error);
+    return state;
+}
+
+void EngineHost::ChangeConfig(const std::function<void(Config&)>& change) {
+    const std::filesystem::path path = ConfigPath();
+    Config config = LoadConfig(path);
+    change(config);
+    if (!SaveConfig(path, config)) {
+        Log("cannot save the settings: " + PathToUtf8(path));
+        return;
+    }
+    platform::RequestReload();
 }
 
 // プライベートモードの切り替えを設定に保存する（次に起動したときも同じにする。macOS版と同じ）

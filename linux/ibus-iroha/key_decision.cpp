@@ -77,7 +77,13 @@ KeyDecision DecideKey(uint32_t keyval, uint32_t modifiers, const KeyContext& con
     KeyDecision decision;
     const bool alt = (modifiers & kAlt) != 0;
     // 入力モードの切り替えキーは英数モード中でも受ける。
-    //   半角/全角（Zenkaku_Hankaku・Kanji、US配列は Alt+`）、ひらがなキー、英数キー
+    //   設定のキー（inputModeHotkey。既定 Ctrl+Space）、半角/全角（Zenkaku_Hankaku・Kanji、US配列は Alt+`）、
+    //   ひらがなキー、英数キー
+    if (context.inputModeShortcut != 0 &&
+        KeyShortcut::Decode(context.inputModeShortcut).Matches(keyval, modifiers)) {
+        decision.kind = KeyDecision::Kind::ToggleDirectMode;
+        return decision;
+    }
     switch (keyval) {
         case key::Zenkaku_Hankaku:
         case key::Kanji:

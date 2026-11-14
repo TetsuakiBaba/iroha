@@ -307,6 +307,8 @@ struct App {
     GtkWidget* spaceCheck = nullptr;
     GtkWidget* punctuationDrop = nullptr;
     GtkWidget* countDrop = nullptr;
+    GtkWidget* modeKeyEntry = nullptr;
+    GtkWidget* modeKeyStatus = nullptr;
     GtkWidget* privateCheck = nullptr;
     GtkWidget* delimitedCheck = nullptr;
     GtkWidget* aiFixCheck = nullptr;
@@ -728,6 +730,13 @@ GtkWidget* App::BuildInputPage() {
     gtk_grid_attach(GTK_GRID(grid), punctuationDrop, 1, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), Label("候補ウィンドウの候補の数:"), 0, 1, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), countDrop, 1, 1, 1, 1);
+    // かな・英数の切り替え（入力メニューの「かな」「英数」と同じ）。半角/全角キー・Alt+` はこれと別に常に効く
+    modeKeyEntry = Entry("例: Ctrl+Space", 16);
+    modeKeyStatus = Label("空にすると割り当てません。半角/全角キー・Alt+` でも切り替わります", true);
+    gtk_widget_add_css_class(modeKeyStatus, "dim-label");
+    gtk_grid_attach(GTK_GRID(grid), Label("かな・英数を切り替えるキー:"), 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), modeKeyEntry, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), modeKeyStatus, 2, 2, 1, 1);
     privateCheck = CheckButton("プライベートモード（Ctrl+Alt+P でも切り替え）");
     // macOS版では開発者モードの項目。記号・キーは config.json の delimitedAlphabetStart / End・aiFixShortcut で変えられる
     delimitedCheck = CheckButton("区切り記号で囲んだ英字入力（kyouha_iPhone_wo → 今日はiPhoneを）");
@@ -762,6 +771,16 @@ GtkWidget* App::BuildInputPage() {
             if (!updating) SaveInputPage();
         });
     }
+    // 読めるキー（か空）になったときだけ保存する（打っている途中の「Ctrl+」で割り当てを消さない）
+    Connect(modeKeyEntry, "changed", [this] {
+        if (updating) return;
+        const std::string hotkey = Trimmed(EditableText(modeKeyEntry));
+        const bool valid = hotkey.empty() || iroha::KeyShortcut::Parse(hotkey).has_value();
+        gtk_label_set_text(GTK_LABEL(modeKeyStatus),
+                           valid ? (hotkey.empty() ? "割り当てません（半角/全角キー・Alt+` は効きます）" : "保存しました")
+                                 : "読めないキーです（Ctrl・Alt・Shift のどれかと 1 つのキーを + でつなぐ）");
+        if (valid) SaveInputPage();
+    });
     Connect(typoCheck, "toggled", [this] {
         if (!updating) OnTypoToggled();
     });
@@ -784,6 +803,7 @@ void App::RefreshInputPage() {
     gtk_drop_down_set_selected(GTK_DROP_DOWN(punctuationDrop), U8(config.punctuation) == kPunctuations[1] ? 1 : 0);
     const int count = std::clamp(config.candidateCount, kMinCandidateCount, kMaxCandidateCount);
     gtk_drop_down_set_selected(GTK_DROP_DOWN(countDrop), static_cast<guint>(count - kMinCandidateCount));
+    gtk_editable_set_text(GTK_EDITABLE(modeKeyEntry), config.inputModeHotkey.c_str());
     updating = false;
     RefreshTypoStatus();
     // ON なら、開いたときに 1 回だけ新しい版のモデルが出ていないか確かめる（macOS版・Windows版と同じ）
@@ -807,6 +827,9 @@ void App::SaveInputPage() {
     config.punctuation = U32(kPunctuations[Selected(punctuationDrop) == 1 ? 1 : 0]);
     const int count = Selected(countDrop);
     if (count >= 0) config.candidateCount = kMinCandidateCount + count;
+    // かな・英数のキーは読めるとき（か空）だけ書く。読めなければ前の値のまま
+    const std::string modeKey = Trimmed(EditableText(modeKeyEntry));
+    if (modeKey.empty() || iroha::KeyShortcut::Parse(modeKey)) config.inputModeHotkey = modeKey;
     if (!iroha::SaveConfig(iroha::settings::ConfigPath(), config)) {
         ShowDialog("設定の保存に失敗しました");
         return;

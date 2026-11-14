@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "ai_client.h"
+#include "input_menu.h"
 #include "iroha/ai_conversion.h"
 #include "iroha/chunked_conversion_engine.h"
 #include "iroha/config.h"
@@ -63,6 +64,13 @@ public:
     void ApplyTo(SessionManager& sessions);
 
     const SessionSettings& Settings() const { return sessionSettings_; }
+    // かな・英数を切り替えるキー（KeyShortcut::Encode。0 なら割り当てなし。設定 inputModeHotkey）
+    uint32_t InputModeShortcut() const { return inputModeShortcut_; }
+    // 入力メニューを組むのに使う今の状態（入力モード・版は呼ぶ側で入れる）
+    menu::State MenuState() const;
+    // 入力メニューから設定を変える（config.json を書き換えて、読み直しを頼む。
+    // 読み直しは reload-request の見張りが行う。設定画面から変えたときと同じ経路）
+    void ChangeConfig(const std::function<void(Config&)>& change);
     const std::string& ModelPath() const { return modelPath_; }
     ConversionEngine* Engine() { return engine_.get(); }
 
@@ -138,6 +146,9 @@ private:
     std::atomic<bool> privateMode_{false};
     // 変換の学習を使うか（設定 learningEnabled。OFF なら記録も適用もしない）
     std::atomic<bool> learningEnabled_{true};
+    uint32_t inputModeShortcut_ = 0;
+    std::string inputModeShortcutLabel_;
+    std::string privateModeShortcutLabel_;
     std::unique_ptr<UserRewriteRuleStore> rewriteRules_;
     std::shared_ptr<const UserRewriteRuleSet> rewriteRuleSet_;
     std::unique_ptr<UserDictionaryEngine> dictionaryEngine_;

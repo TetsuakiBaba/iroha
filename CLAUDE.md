@@ -617,6 +617,10 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   NN の時間は `iroha/inference_timer.h`（スレッドローカル）で測り、窓は `linux/shared/debug_overlay_window`（X11・Pango）が描く。
   **macOS版の行の文面・測り方を変えたら Linux版も合わせる**。IBus を通した確かめ方は `linux/README.md` の「デバッグ表示」節
   （利用者の IBus に触れない別の ibus-daemon を Xvfb の上に立てる）
+- 入力メニュー（GNOME の上のバーの入力ソースのメニュー・fcitx5 のステータスの領域）は macOS版の入力メニュー
+  （`IrohaInputController.menu`）と同じ並びにする（ユーザの要望。2026-11-14）。項目と並びは `linux/shared/input_menu.cpp` の
+  1 か所にあり、IBus と fcitx5 のエンジンが使う。**macOS版の入力メニューの項目を変えたら、ここも合わせる**。
+  かな ⇄ 英数は設定のキー（`inputModeHotkey`、既定 Ctrl+Space。Linux版だけの設定）でも切り替える（`key_decision`）
 - 「こえ」モードは Linux版では未実装（計画は `linux/README.md`）。進み具合と未対応のものも `linux/README.md`
 
 ## 自作変換モデル（文字単位T5）の学習（training/t5/、2026-09-11設計）

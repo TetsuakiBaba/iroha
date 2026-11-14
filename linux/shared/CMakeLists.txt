@@ -6,6 +6,7 @@
 #   emoji_renderability    描けない絵文字の判定（fontconfig・FreeType・HarfBuzz）
 #   launch_log             起動・終了・異常終了の記録
 #   key_shortcut.h         ショートカットの文字列
+#   input_menu             入力メニューの項目と並び（macOS版の入力メニューと同じ並び。IBus と fcitx5 のエンジンが使う）
 #   debug_overlay_window   デバッグ表示の窓（iroha-overlay。X11・Pango。IBus と fcitx5 のエンジンが使う）
 cmake_minimum_required(VERSION 3.21)
 project(iroha-shared LANGUAGES CXX)
@@ -19,6 +20,7 @@ add_library(iroha-shared STATIC
     ai_client.cpp
     emoji_renderability.cpp
     engine_host.cpp
+    input_menu.cpp
     launch_log.cpp
     secret_store.cpp
     term_dictionary_fetcher.cpp
