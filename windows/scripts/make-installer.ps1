@@ -62,7 +62,19 @@ foreach ($file in @("symbol.tsv", "emoticon.tsv", "categorized.tsv", "emoji_data
 $Licenses = Join-Path $stage "licenses"
 New-Item -ItemType Directory -Force $Licenses | Out-Null
 Copy-Item (Join-Path $RepoRoot "LICENSE") (Join-Path $Licenses "LICENSE-iroha.txt")
-Copy-Item (Join-Path $RepoRoot "vendor\llama.cpp\LICENSE") (Join-Path $Licenses "LICENSE-llama.cpp.txt")
+# llama.cpp のソースが無い（CI でビルド結果をキャッシュから取った）ときは、ビルドに使う版の LICENSE を取る
+$LlamaLicense = Join-Path $RepoRoot "vendor\llama.cpp\LICENSE"
+if (Test-Path $LlamaLicense) {
+    Copy-Item $LlamaLicense (Join-Path $Licenses "LICENSE-llama.cpp.txt")
+} else {
+    $tagLine = Select-String -Path (Join-Path $PSScriptRoot "build-llama.ps1") -Pattern '^\$LlamaTag\s*=\s*"([^"]+)"' | Select-Object -First 1
+    if (-not $tagLine) { throw "build-llama.ps1 から llama.cpp の版を読めません" }
+    $llamaTag = $tagLine.Matches[0].Groups[1].Value
+    Write-Host "==> llama.cpp ($llamaTag) の LICENSE を取得"
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/ggml-org/llama.cpp/$llamaTag/LICENSE" `
+        -OutFile (Join-Path $Licenses "LICENSE-llama.cpp.txt")
+}
 Copy-Item (Join-Path $RepoRoot "windows\iroha-core\src\lattice\LICENSE-AzooKeyKanaKanjiConverter.txt") $Licenses
 Copy-Item (Join-Path $DictionaryRoot "LICENSE") (Join-Path $Licenses "LICENSE-azooKey_dictionary_storage.txt")
 Copy-Item (Join-Path $SymbolsRoot "LICENSE") (Join-Path $Licenses "LICENSE-mozc.txt")
