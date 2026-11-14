@@ -1,5 +1,7 @@
 #include "TextService.h"
 
+#include <shellapi.h>
+
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -522,6 +524,9 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
     idleFullWidthSpace_ = output.fullWidthSpace;
     voiceKey_ = output.voiceKey;
     privateShortcut_ = output.privateModeShortcut;
+    liveConversion_ = output.liveConversion;
+    predictive_ = output.predictive;
+    punctuation_ = output.punctuation;
     if (privateMode_ != output.privateMode) {
         privateMode_ = output.privateMode;
         if (langBarButton_) langBarButton_->NotifyUpdate();
@@ -975,6 +980,10 @@ void TextService::LoadVoiceKeyFromConfig() {
     voiceKey_ = !config.voiceInput ? 0 : config.voiceInputHoldKey == "rightShift" ? VK_RSHIFT : VK_RCONTROL;
     const auto privateShortcut = iroha::KeyShortcut::Parse(config.privateModeHotkey);
     privateShortcut_ = privateShortcut ? privateShortcut->Encode() : 0;
+    liveConversion_ = config.liveConversion;
+    predictive_ = config.predictive;
+    punctuation_ = config.punctuation;
+    privateMode_ = config.privateMode;
 }
 
 STDMETHODIMP TextService::OnTestKeyDown(ITfContext* context, WPARAM wParam,
@@ -1053,6 +1062,145 @@ STDMETHODIMP TextService::OnPreservedKey(ITfContext*, REFGUID, BOOL* eaten) {
 void TextService::OnModeButtonClicked() {
     // クリックはキーイベント外なのでコンポジションには触らず、モードだけ切り替える
     SetDirectModeInternal(!directMode_);
+}
+
+// ---- 言語バーのメニュー ----
+
+namespace {
+
+enum MenuId : UINT {
+    kMenuHiragana = 1,
+    kMenuAlphanumeric,
+    kMenuSettings,
+    kMenuUserDictionary,
+    kMenuRewriteRules,
+    kMenuPrivateMode,
+    kMenuLiveConversion,
+    kMenuPredictive,
+    kMenuPunctuation,
+    kMenuModelFolder,
+    kMenuCheckUpdate,
+    kMenuVersion,
+};
+
+// DLL と同じフォルダの iroha-settings.exe を引数つきで起動する
+void LaunchSettings(const wchar_t* arguments) {
+    wchar_t path[MAX_PATH];
+    const DWORD length = GetModuleFileNameW(g_hInst, path, ARRAYSIZE(path));
+    if (length == 0 || length >= ARRAYSIZE(path)) return;
+    std::wstring exe(path, length);
+    const size_t slash = exe.find_last_of(L'\\');
+    if (slash == std::wstring::npos) return;
+    exe = exe.substr(0, slash + 1) + L"iroha-settings.exe";
+    ShellExecuteW(nullptr, L"open", exe.c_str(), arguments, nullptr, SW_SHOWNORMAL);
+}
+
+std::wstring ShortcutSuffix(uint32_t encoded) {
+    if (encoded == 0) return L"";
+    const std::string key = iroha::KeyShortcut::Decode(encoded).Text();
+    return L"（" + std::wstring(key.begin(), key.end()) + L"）";
+}
+
+} // namespace
+
+// 項目は macOS版の入力メニュー（IrohaInputController.menu）に合わせ、先頭に Windows の IME と同じ入力モードを置く。
+// macOS版の「原稿に合わせる」は Windows に無い機能、変換モデルの取得状況は TIP から分からないので出さない
+std::vector<TextService::MenuEntry> TextService::MenuEntries() const {
+    std::vector<MenuEntry> entries;
+    entries.push_back({kMenuHiragana, L"ひらがな", !directMode_, true});
+    entries.push_back({kMenuAlphanumeric, L"半角英数", directMode_, true});
+    entries.push_back({});
+    entries.push_back({kMenuSettings, L"設定..."});
+    entries.push_back({kMenuUserDictionary, L"ユーザ辞書..."});
+    entries.push_back({kMenuRewriteRules, L"変換ルール..."});
+    entries.push_back({});
+    entries.push_back({kMenuPrivateMode, L"プライベートモード" + ShortcutSuffix(privateShortcut_), privateMode_});
+    entries.push_back({kMenuLiveConversion, L"ライブ変換", liveConversion_});
+    entries.push_back({kMenuPredictive, L"予測変換", predictive_});
+    entries.push_back({kMenuPunctuation, L"句読点スタイル: " + iroha::Utf32ToUtf16(punctuation_) + L"（Ctrl+.）"});
+    entries.push_back({});
+    entries.push_back({kMenuModelFolder, L"モデルフォルダを開く"});
+    entries.push_back({kMenuCheckUpdate, L"アップデートを確認..."});
+    entries.push_back({});
+    entries.push_back({kMenuVersion, L"iroha " + iroha::Utf32ToUtf16(iroha::Utf8ToUtf32(IROHA_VERSION)), false, false, true});
+    return entries;
+}
+
+void TextService::OnMenuCommand(UINT id) {
+    // 変換サーバに送る切り替え。合成中ならその文書、無ければフォーカスのある文書に返事を反映する
+    const auto sendKey = [this](iroha::SessionKey key) {
+        if (sessionId_ == 0) return;
+        ITfContext* context = composition_ ? compositionContext_ : nullptr;
+        ITfDocumentMgr* document = nullptr;
+        ITfContext* focused = nullptr;
+        if (!context && threadMgr_ && SUCCEEDED(threadMgr_->GetFocus(&document)) && document) {
+            document->GetTop(&focused);
+            context = focused;
+        }
+        iroha::SessionOutput output;
+        if (ConvertClient::SendKey(sessionId_, key, 0, false, nullptr, &output)) {
+            if (context) {
+                context->AddRef();
+                ApplyOutput(context, output, /*synchronous=*/false);
+                context->Release();
+            } else {
+                // 文書が無くても印だけはそろえる
+                liveConversion_ = output.liveConversion;
+                predictive_ = output.predictive;
+                punctuation_ = output.punctuation;
+                privateMode_ = output.privateMode;
+            }
+        }
+        if (focused) focused->Release();
+        if (document) document->Release();
+        if (langBarButton_) langBarButton_->NotifyUpdate();
+    };
+    switch (id) {
+    case kMenuHiragana:
+        SetDirectModeInternal(false);
+        break;
+    case kMenuAlphanumeric:
+        SetDirectModeInternal(true);
+        break;
+    case kMenuSettings:
+        LaunchSettings(nullptr);
+        break;
+    case kMenuUserDictionary:
+        LaunchSettings(L"--tab dictionary");
+        break;
+    case kMenuRewriteRules:
+        LaunchSettings(L"--tab rules");
+        break;
+    case kMenuPrivateMode:
+        sendKey(iroha::SessionKey::TogglePrivateMode);
+        break;
+    case kMenuLiveConversion:
+        sendKey(iroha::SessionKey::ToggleLiveConversion);
+        break;
+    case kMenuPredictive:
+        sendKey(iroha::SessionKey::TogglePredictive);
+        break;
+    case kMenuPunctuation:
+        sendKey(iroha::SessionKey::TogglePunctuation);
+        break;
+    case kMenuModelFolder: {
+        wchar_t* localAppData = nullptr;
+        size_t length = 0;
+        if (_wdupenv_s(&localAppData, &length, L"LOCALAPPDATA") == 0 && localAppData) {
+            const std::wstring folder = std::wstring(localAppData) + L"\\iroha\\models";
+            free(localAppData);
+            CreateDirectoryW((folder.substr(0, folder.size() - 7)).c_str(), nullptr);
+            CreateDirectoryW(folder.c_str(), nullptr);
+            ShellExecuteW(nullptr, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        break;
+    }
+    case kMenuCheckUpdate:
+        LaunchSettings(L"--check-update-now");
+        break;
+    default:
+        break;
+    }
 }
 
 // ---- ITfCompositionSink ----

@@ -2508,11 +2508,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES | ICC_STANDARD_CLASSES};
     InitCommonControlsEx(&icc);
     const std::wstring arguments = commandLine ? commandLine : L"";
-    // --check-update: 変換サーバが 1 日 1 回呼ぶ自動の確認（設定の窓は開かない。新しい版があれば知らせるだけ）
+    // --check-update: 変換サーバが 1 日 1 回呼ぶ自動の確認（設定の窓は開かない。新しい版があれば知らせるだけ）。
+    // --check-update-now: 言語バーのメニューの「アップデートを確認...」（手動の確認。結果を必ず知らせる）
     if (arguments.find(L"--check-update") != std::wstring::npos) {
+        const bool manual = arguments.find(L"--check-update-now") != std::wstring::npos;
         const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         updater::CheckAndOffer(nullptr, iroha::LoadConfig(ConfigPath()), std::filesystem::path(DataDir()), IROHA_VERSION,
-                               /*manual=*/false);
+                               manual);
         if (SUCCEEDED(com)) CoUninitialize();
         return 0;
     }

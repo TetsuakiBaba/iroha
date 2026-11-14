@@ -669,6 +669,17 @@ public:
         if (state_->voice) state_->voice->Cancel();
     }
 
+    // 言語バーのメニューで切り替えたライブ変換・予測変換を設定に保存する（設定画面にも同じ値が出る）
+    void ConversionOptionsChanged(bool liveConversion, bool predictive) override {
+        const std::filesystem::path path(DataDir() + L"\\config.json");
+        iroha::Config config = iroha::LoadConfig(path);
+        config.liveConversion = liveConversion;
+        config.predictive = predictive;
+        iroha::SaveConfig(path, config);
+        state_->sessionSettings.liveConversion = liveConversion;
+        state_->sessionSettings.predictive = predictive;
+    }
+
     // Ctrl+. で切り替えた句読点を設定に保存する（次に起動したときも同じにする。macOS版と同じ）
     void PunctuationChanged(const std::u32string& punctuation) override {
         const std::filesystem::path path(DataDir() + L"\\config.json");

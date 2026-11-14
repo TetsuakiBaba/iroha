@@ -114,6 +114,15 @@ struct SessionManager::Entry : InputSession::Host {
         }
         manager->backend_->PrivateModeChanged(enabled);
     }
+    // ライブ変換・予測変換の切り替えも、ほかのセッションにも効かせて設定に保存する（stateMutex_ を持った状態で呼ばれる）
+    void ConversionOptionsChanged(bool liveConversion, bool predictive) override {
+        manager->settings_.liveConversion = liveConversion;
+        manager->settings_.predictive = predictive;
+        for (auto& item : manager->sessions_) {
+            if (item.first != id) item.second->session.SetSettings(manager->settings_);
+        }
+        manager->backend_->ConversionOptionsChanged(liveConversion, predictive);
+    }
     // 句読点の切り替えは、ほかのセッションにも効かせて設定に保存する（stateMutex_ を持った状態で呼ばれる）
     void PunctuationChanged(const std::u32string& punctuation) override {
         manager->settings_.punctuation = punctuation;

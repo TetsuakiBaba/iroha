@@ -218,6 +218,21 @@ SessionOutput InputSession::Handle(SessionKey key, char32_t character, bool shif
             if (!IsComposing()) state_.composer = MakeComposer();
             notice_ = U"句読点: " + settings_.punctuation;
             break;
+        case SessionKey::ToggleLiveConversion:
+            settings_.liveConversion = !settings_.liveConversion;
+            host_->ConversionOptionsChanged(settings_.liveConversion, settings_.predictive);
+            notice_ = settings_.liveConversion ? U"ライブ変換: オン" : U"ライブ変換: オフ";
+            // 入力中なら、OFF で読みに戻し、ON で今の読みを変換する（macOS版 toggleLiveConversion）
+            if (state_.mode == Mode::Composing && StateComposing()) {
+                if (!settings_.liveConversion) state_.lastConversion.reset();
+                ComposerDidChange();
+            }
+            break;
+        case SessionKey::TogglePredictive:
+            settings_.predictive = !settings_.predictive;
+            host_->ConversionOptionsChanged(settings_.liveConversion, settings_.predictive);
+            notice_ = settings_.predictive ? U"予測変換: オン" : U"予測変換: オフ";
+            break;
         case SessionKey::AICommit:
             if (IsComposing()) StartAICommit(static_cast<size_t>(character), &commit);
             break;
@@ -2482,6 +2497,9 @@ SessionOutput InputSession::Current() const {
     output.livePending = livePending_;
     output.fullWidthSpace = settings_.fullWidthSpace;
     output.privateMode = settings_.privateMode;
+    output.liveConversion = settings_.liveConversion;
+    output.predictive = settings_.predictive;
+    output.punctuation = settings_.punctuation;
     output.notice = notice_;
     output.typoPending = typoPending_;
     output.aiShortcuts = settings_.aiShortcuts;

@@ -74,8 +74,8 @@ STDMETHODIMP LangBarButton::GetInfo(TF_LANGBARITEMINFO* info) {
     info->clsidService = CLSID_IROHA_TIP;
     info->guidItem = GUID_LBI_INPUTMODE;
     // TEXTCOLORICON: モノクロのアイコンをホストがテーマの文字色で塗る
-    info->dwStyle = TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY |
-                    TF_LBI_STYLE_TEXTCOLORICON;
+    // BTN_MENU: クリックでメニューを開く（Windows の IME と同じ。メニューはシステムが出し、InitMenu で中身を渡す）
+    info->dwStyle = TF_LBI_STYLE_BTN_MENU | TF_LBI_STYLE_SHOWNINTRAY | TF_LBI_STYLE_TEXTCOLORICON;
     info->ulSort = 0;
     wcscpy_s(info->szDescription, L"iroha 入力モード");
     return S_OK;
@@ -95,8 +95,8 @@ STDMETHODIMP LangBarButton::GetTooltipString(BSTR* tooltip) {
     if (!tooltip) return E_INVALIDARG;
     const bool direct = owner_ && owner_->IsDirectMode();
     const bool privateMode = owner_ && owner_->IsPrivateMode();
-    std::wstring text = direct ? L"iroha: 英数（クリックでかなに切替）" : L"iroha: かな（クリックで英数に切替）";
-    text += L"\n右クリックで設定を開く";
+    std::wstring text = direct ? L"iroha: 半角英数" : L"iroha: ひらがな";
+    text += L"\nクリックでメニュー（入力モードの切り替え・設定）";
     if (privateMode) {
         const uint32_t shortcut = owner_->PrivateShortcut();
         text += L"\nプライベートモード";
@@ -109,32 +109,52 @@ STDMETHODIMP LangBarButton::GetTooltipString(BSTR* tooltip) {
     return *tooltip ? S_OK : E_OUTOFMEMORY;
 }
 
-STDMETHODIMP LangBarButton::OnClick(TfLBIClick click, POINT, const RECT*) {
-    if (click == TF_LBI_CLK_RIGHT) {
-        // 右クリックで設定ウィンドウ（DLLと同じディレクトリのiroha-settings.exe）
-        wchar_t path[MAX_PATH];
-        const DWORD length = GetModuleFileNameW(g_hInst, path, ARRAYSIZE(path));
-        if (length > 0) {
-            std::wstring exe(path, length);
-            const size_t slash = exe.find_last_of(L'\\');
-            if (slash != std::wstring::npos) {
-                exe = exe.substr(0, slash + 1) + L"iroha-settings.exe";
-                ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, nullptr,
-                              SW_SHOWNORMAL);
-            }
+// メニューの形のボタンでは、ふつうはシステムが InitMenu でメニューを出すので呼ばれない。
+// 呼ばれたとき（ホストによっては右クリックなど）は、同じ項目のメニューを自分で出す
+STDMETHODIMP LangBarButton::OnClick(TfLBIClick, POINT point, const RECT*) {
+    if (!owner_) return S_OK;
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return S_OK;
+    for (const TextService::MenuEntry& entry : owner_->MenuEntries()) {
+        if (entry.id == 0) {
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            continue;
         }
-        return S_OK;
+        UINT flags = MF_STRING | (entry.checked ? MF_CHECKED : 0) | (entry.grayed ? MF_GRAYED : 0);
+        AppendMenuW(menu, flags, entry.id, entry.text.c_str());
+        if (entry.radio && entry.checked) CheckMenuRadioItem(menu, entry.id, entry.id, entry.id, MF_BYCOMMAND);
     }
-    if (owner_) owner_->OnModeButtonClicked();
+    // メニューの持ち主にする見えない窓（このスレッドの窓が要る）
+    HWND owner = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"", WS_POPUP, point.x, point.y, 0, 0, nullptr, nullptr,
+                                 g_hInst, nullptr);
+    const UINT chosen = owner ? TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN,
+                                                 point.x, point.y, owner, nullptr)
+                              : 0;
+    if (owner) DestroyWindow(owner);
+    DestroyMenu(menu);
+    if (chosen != 0 && owner_) owner_->OnMenuCommand(chosen);
     return S_OK;
 }
 
-STDMETHODIMP LangBarButton::InitMenu(ITfMenu*) {
-    return E_NOTIMPL;
+STDMETHODIMP LangBarButton::InitMenu(ITfMenu* menu) {
+    if (!menu || !owner_) return E_INVALIDARG;
+    for (const TextService::MenuEntry& entry : owner_->MenuEntries()) {
+        if (entry.id == 0) {
+            menu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
+            continue;
+        }
+        DWORD flags = 0;
+        if (entry.checked) flags |= entry.radio ? TF_LBMENUF_RADIOCHECKED : TF_LBMENUF_CHECKED;
+        if (entry.grayed) flags |= TF_LBMENUF_GRAYED;
+        menu->AddMenuItem(entry.id, flags, nullptr, nullptr, entry.text.c_str(), static_cast<ULONG>(entry.text.size()),
+                          nullptr);
+    }
+    return S_OK;
 }
 
-STDMETHODIMP LangBarButton::OnMenuSelect(UINT) {
-    return E_NOTIMPL;
+STDMETHODIMP LangBarButton::OnMenuSelect(UINT id) {
+    if (owner_) owner_->OnMenuCommand(id);
+    return S_OK;
 }
 
 // 「あ」/「A」を描いたアイコンを作る（呼び出し側=システムが破棄する）

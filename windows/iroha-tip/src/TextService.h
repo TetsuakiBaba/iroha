@@ -65,6 +65,17 @@ public:
     uint32_t PrivateShortcut() const { return privateShortcut_; }
     void OnModeButtonClicked();
 
+    // 言語バーのメニュー（macOS版の入力メニュー。LangBarButton が出し、選んだ項目をここで処理する）
+    struct MenuEntry {
+        UINT id = 0;           // 0 なら区切り線
+        std::wstring text;
+        bool checked = false;  // 印（radio なら丸）
+        bool radio = false;
+        bool grayed = false;   // 押せない（版の表示）
+    };
+    std::vector<MenuEntry> MenuEntries() const;
+    void OnMenuCommand(UINT id);
+
 private:
     // 入力モード（かな/英数）の切替を1箇所に集約する。
     // タスクバーの入力インジケーターはコンパートメント値を見て「あ/A」を描くため、
@@ -176,6 +187,10 @@ private:
     uint32_t voiceKey_ = 0;
     // プライベートモードを切り替えるキー（KeyShortcut::Encode。既定は Ctrl+Alt+P。0 なら割り当てなし）
     uint32_t privateShortcut_ = 0x30050;
+    // ライブ変換・予測変換・句読点（言語バーのメニューの印。設定と変換サーバの返事で更新する）
+    bool liveConversion_ = true;
+    bool predictive_ = false;
+    std::u32string punctuation_ = U"、。";
     bool voiceHeld_ = false;
     ITfContext* voiceContext_ = nullptr;
     // 予測変換の候補の小窓と、知らせの小窓

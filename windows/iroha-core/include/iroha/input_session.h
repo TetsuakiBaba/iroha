@@ -62,8 +62,11 @@ enum class SessionKey : uint32_t {
     VoiceStart = 23,
     VoiceStop = 24,
     VoiceCancel = 25,
+    // ライブ変換・予測変換の ON/OFF（言語バーのメニュー。macOS版の入力メニューの「ライブ変換」「予測変換」）
+    ToggleLiveConversion = 26,
+    TogglePredictive = 27,
 };
-constexpr uint32_t kMaxSessionKey = static_cast<uint32_t>(SessionKey::VoiceCancel);
+constexpr uint32_t kMaxSessionKey = static_cast<uint32_t>(SessionKey::TogglePredictive);
 
 // キー 1 つを処理したあと（またはライブ変換が届いたあと）に TIP が画面へ反映する内容
 struct SessionOutput {
@@ -135,6 +138,10 @@ struct SessionOutput {
     uint32_t privateModeShortcut = 0;
     // デバッグ表示（開発者モード）: カーソルの右下に出す行（改行で区切る。空なら出さない）
     std::u32string debugOverlay;
+    // 今の設定（言語バーのメニューの印に使う）: ライブ変換・予測変換・句読点の組
+    bool liveConversion = true;
+    bool predictive = false;
+    std::u32string punctuation = U"、。";
 
     bool Composing() const { return !preedit.empty(); }
     // 未確定文字列をつなげたもの
@@ -253,6 +260,11 @@ public:
         }
         // プライベートモードを切り替えた（設定に保存して、ほかのセッションと変換エンジンにも効かせる）
         virtual void PrivateModeChanged(bool enabled) { (void)enabled; }
+        // ライブ変換・予測変換を切り替えた（設定に保存して、ほかのセッションにも効かせる）
+        virtual void ConversionOptionsChanged(bool liveConversion, bool predictive) {
+            (void)liveConversion;
+            (void)predictive;
+        }
         // 確定を変換記録に書く（モデルの名前は変換サーバが入れる）
         virtual void RecordConversion(const ConversionLogEntry& entry) { (void)entry; }
         // 打ち間違いの訂正モデルが使えるか（入っているか）

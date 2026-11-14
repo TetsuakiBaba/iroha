@@ -75,6 +75,11 @@ public:
         }
         // プライベートモードを切り替えた（設定に保存し、変換エンジンの学習・ユーザ辞書を止める）。エンジンを持たずに呼ぶ
         virtual void PrivateModeChanged(bool enabled) { (void)enabled; }
+        // ライブ変換・予測変換を切り替えた（設定に保存する）。エンジンを持たずに呼ぶ
+        virtual void ConversionOptionsChanged(bool liveConversion, bool predictive) {
+            (void)liveConversion;
+            (void)predictive;
+        }
         virtual void RecordConversion(const ConversionLogEntry& entry) { (void)entry; }
         // 打ち間違いの訂正（InputSession::Host と同じ。エンジンを持たずに呼ぶ。訂正のモデルは自分で直列化すること）
         virtual bool TypoCorrectionAvailable() { return false; }

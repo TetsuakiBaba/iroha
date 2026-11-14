@@ -1757,7 +1757,30 @@ void TestSessionDebugOverlay() {
     EXPECT_TRUE(output.debugOverlay.rfind(U"左文脈  アプリから読めない（周辺テキストを返さない） → 代わりに確定文字列", 0) == 0);
 }
 
+// 言語バーのメニューのライブ変換・予測変換の切り替え: 返事に今の設定が載り、入力中に OFF にすると読みに戻る
+void TestSessionMenuToggles() {
+    FakeSessionHost host;
+    iroha::InputSession session(&host);
+    auto output = session.Current();
+    EXPECT_TRUE(output.liveConversion && !output.predictive && output.punctuation == U"、。");
+    Type(session, U"kyou");
+    CompleteLatest(session, host, U"今日");
+    EXPECT_EQ(session.Current().PreeditText(), U"今日");
+    output = Press(session, Key::ToggleLiveConversion);
+    EXPECT_TRUE(!output.liveConversion);
+    EXPECT_EQ(output.notice, U"ライブ変換: オフ");
+    EXPECT_EQ(output.PreeditText(), U"きょう");
+    output = Press(session, Key::ToggleLiveConversion);
+    EXPECT_TRUE(output.liveConversion && output.livePending);
+    output = Press(session, Key::TogglePredictive);
+    EXPECT_TRUE(output.predictive);
+    EXPECT_EQ(output.notice, U"予測変換: オン");
+    output = Press(session, Key::TogglePunctuation);
+    EXPECT_TRUE(output.punctuation == U"，．");
+}
+
 void RunSessionTests() {
+    TestSessionMenuToggles();
     TestDebugOverlayLines();
     TestSessionDebugOverlay();
     TestSessionLiveConversionReplacesKana();

@@ -34,7 +34,8 @@
 //                flags: 1 文節変換中 / 2 変換の結果待ち / 4 候補ウィンドウ / 8 入力していないときの Space は全角 /
 //                       16 確定した文字列を未確定文字列に置き換える（UndoCommit への返事） / 32 プライベートモード /
 //                       64 打ち間違いの訂正の結果待ち / 128 AI変換の結果待ち / 256 候補ウィンドウを表に広げる /
-//                       512 AIで直すの判定・依頼の結果待ち / 1024 「こえ」モードの録音・認識の最中
+//                       512 AIで直すの判定・依頼の結果待ち / 1024 「こえ」モードの録音・認識の最中 /
+//                       2048 ライブ変換が ON / 4096 予測変換が ON / 8192 句読点が「，．」（言語バーのメニューの印）
 //                エラー: string message
 //
 // セッションのメッセージは、入力の状態（読み・ライブ変換・文節・候補）をサーバ側に持つためのもの
@@ -225,6 +226,9 @@ constexpr uint32_t kOutputFlagAIPending = 128;
 constexpr uint32_t kOutputFlagCandidatesExpanded = 256;
 constexpr uint32_t kOutputFlagAIFixPending = 512;
 constexpr uint32_t kOutputFlagVoicePending = 1024;
+constexpr uint32_t kOutputFlagLiveConversion = 2048;
+constexpr uint32_t kOutputFlagPredictive = 4096;
+constexpr uint32_t kOutputFlagCommaPeriod = 8192;
 
 // leftContext は、合成していないときにカーソルより前から読んだ文書のテキスト（読めなければ nullptr）
 inline std::vector<char> BuildSessionKeyRequest(uint64_t sessionId, SessionKey key,
@@ -278,7 +282,10 @@ inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
                      (output->aiPending ? kOutputFlagAIPending : 0) |
                      (output->candidatesExpanded ? kOutputFlagCandidatesExpanded : 0) |
                      (output->aiFixPending ? kOutputFlagAIFixPending : 0) |
-                     (output->voicePending ? kOutputFlagVoicePending : 0));
+                     (output->voicePending ? kOutputFlagVoicePending : 0) |
+                     (output->liveConversion ? kOutputFlagLiveConversion : 0) |
+                     (output->predictive ? kOutputFlagPredictive : 0) |
+                     (output->punctuation == U"，．" ? kOutputFlagCommaPeriod : 0));
     PutU32(&buf, static_cast<uint32_t>(output->preedit.size()));
     for (const SessionOutput::Span& span : output->preedit) {
         PutU32(&buf, span.style);
@@ -404,6 +411,9 @@ inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
     output.candidatesExpanded = (flags & kOutputFlagCandidatesExpanded) != 0;
     output.aiFixPending = (flags & kOutputFlagAIFixPending) != 0;
     output.voicePending = (flags & kOutputFlagVoicePending) != 0;
+    output.liveConversion = (flags & kOutputFlagLiveConversion) != 0;
+    output.predictive = (flags & kOutputFlagPredictive) != 0;
+    output.punctuation = (flags & kOutputFlagCommaPeriod) != 0 ? U"，．" : U"、。";
     for (uint32_t i = 0; i < spanCount; ++i) {
         uint32_t style = 0;
         std::string text;

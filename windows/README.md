@@ -452,6 +452,17 @@ $env:IROHA_TERM_DICTIONARIES = "installed"
 windows\build\iroha-cli\iroha-cli.exe lattice goenseihaien
 ```
 
+## 言語バーのメニュー
+
+タスクバーの「あ」「A」をクリックするとメニューを開く（2026-11-14 に、クリックで切り替え・右クリックで設定画面、から変えた。
+ユーザの指定で Windows の IME と同じ形）。ボタンは `TF_LBI_STYLE_BTN_MENU` で、メニューはシステムが出し、項目は
+`LangBarButton::InitMenu` が `TextService::MenuEntries` から渡す（`OnClick` が呼ばれたときは同じ項目を自分で出す）。
+項目は macOS版の入力メニューに合わせた: ひらがな／半角英数（Windows の IME と同じ入力モードの切り替え）・設定...・
+ユーザ辞書...・変換ルール...・プライベートモード・ライブ変換・予測変換・句読点スタイル・モデルフォルダを開く・
+アップデートを確認...・版。macOS版の「原稿に合わせる」（Windows に無い機能）と変換モデルの取得状況は出していない。
+ライブ変換・予測変換・プライベートモード・句読点の切り替えは変換サーバへキー（`ToggleLiveConversion` など）として送り、
+変換サーバが設定に保存してほかのセッションにも効かせる。印に使う今の設定は返事の flags で受け取る
+
 ## デバッグ表示
 
 macOS版の開発者モードの「推論にかかった時間と左文脈をカーソルの右下に表示する」（`DeveloperOverlay`）を移した
@@ -531,9 +542,9 @@ Linux版（f69ceab の段階で `linux/iroha-core` に入ったもの）と同�
 - [x] M5a: ストアアプリ対応と通知領域アイコン
       （パイプにAppContainer/低整合性からの接続を許可、ログオン時のサーバ自動起動
       ［HKCU Run。AppContainer内のTIPはプロセスを起動できないため］、
-      言語バーの入力モードボタン「あ/A」＝クリックで切替・テーマ連動アイコン）
+      言語バーの入力モードボタン「あ/A」・テーマ連動アイコン。2026-11-14 からクリックでメニュー）
 - [x] M6a: 設定ウィンドウ（iroha-settings.exe: モデル選択・ダウンロード・切替、
-      ユーザ辞書の一覧/追加/削除、学習リセット。あ/Aボタン右クリックで起動。
+      ユーザ辞書の一覧/追加/削除、学習リセット。あ/Aボタンのメニューの「設定...」で起動。
       config.json + IPCのReloadでサーバへ即時反映）
 - [x] M7a: 辞書ラティスのC++移植（`iroha-core/src/lattice/`。macOS版の候補の並びと一致を確認）
 - [x] M7b: モデルの採点・T5（iroha-kkc-v1）対応と、辞書ラティスの候補の再採点（`LatticeRescoringEngine`）。
