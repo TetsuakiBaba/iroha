@@ -21,6 +21,7 @@ iroha-core/     変換エンジン（Windows版から写したもの）と Linux
                   engine_assembly  エンジンの重ね方（IBus・fcitx5 のエンジン・iroha-cli・iroha-bench が使う 1 か所）
                   benchmark / benchmark_run / benchmark_catalog  変換のベンチマークの採点・集計・記録・評価セット
                   platform  データフォルダ・実行ファイルの場所・ホスト名・環境変数・設定の読み直しの依頼・入力中の目印
+                  update_check  アップデートの確認の判定（版の比べ方・Release の読み取り・配布物の選び方・確認した記録）
                   sha256    ダウンロードしたモデル・辞書の照合
 shared/         OS の部品に頼る共有の部品（ライブラリ iroha-shared）
                   engine_host            設定からエンジン一式を組み立て、SessionManager に渡す（Windows版 iroha-server の
@@ -32,6 +33,7 @@ shared/         OS の部品に頼る共有の部品（ライブラリ iroha-sha
                   emoji_renderability    描けない絵文字の判定（fontconfig で絵文字のフォントを探し、HarfBuzz で字形を数える）
                   launch_log             起動・終了・異常終了の記録（macOS版の LaunchLog）
                   key_shortcut.h         ショートカットの文字列（IBus / X のキーの値と照合する）
+                  update_schedule        アップデートの自動の確認（1 日 1 回、設定画面を --check-update で起動する）
 iroha-cli/      検証用 CLI（remote は無い。session はこのプロセスの中でセッションを動かす）
 iroha-bench/    変換のベンチマークの計測（設定画面が起動する。下の「変換のベンチマーク」節）
 ibus-iroha/     IBus のエンジン（ibus-engine-iroha）
@@ -40,7 +42,7 @@ ibus-iroha/     IBus のエンジン（ibus-engine-iroha）
                   main          エンジン一式を読み込んでから IBus につなぐ（--ibus なしで起動すると開発用に「iroha-dev」として登録する）
                   tests/        キーの読み替えの単体テストと、IBus を通して試す ibus_e2e.py
 fcitx5-iroha/   fcitx5 のエンジン（アドオン iroha.so。fcitx5 の開発用ファイルがあるときだけ作る）
-iroha-settings/ 設定画面（GTK4。Windows版の設定画面と同じタブ + 情報）
+iroha-settings/ 設定画面（GTK4。Windows版の設定画面と同じタブ + 情報）。updater はアップデートの確認と入れ替え
 iroha-selection/ 選択テキストのAI編集の常駐プログラム（GTK4・X11。ログイン時に自動で起動する）
 scripts/        build-llama.sh・fetch-model.sh・install.sh（開発用）・make-bundle.sh（配布物）・bundle/（配布物の中の install.sh など）
 ```
@@ -117,7 +119,8 @@ GPU マシンの CPU（Xeon E5-1650 v4、6 コア、AVX2 まで。llama.cpp の�
 中身は `install.sh`・`uninstall.sh`・`fetch-model.sh`・`README.txt`・`files.txt`（入れるファイルの一覧）と、入れる先の形のまま
 並べた `root/`。リリース（`.github/workflows/release.yml` の `linux` ジョブ）は、macOS版のジョブが Release を作ったあとに添付する。
 **アセット名は `.tar.gz` にする**（macOS版の `UpdateChecker` は「iroha- で始まり .zip で終わる」最初のアセットを取るので、
-`.zip` にすると macOS版のアップデータが Linux版を取りうる）。Linux版に自動アップデータは無い。
+`.zip` にすると macOS版のアップデータが Linux版を取りうる）。設定画面のアップデートはこの配布物を取って入れ替える
+（下の「アップデート」節）。
 CI（`.github/workflows/ci.yml` の `build-and-test-linux`）は fcitx5 の開発用ファイルも入れてビルドとテストを行う。
 
 ## IBus のエンジン
@@ -153,7 +156,7 @@ IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-
 - 入力メニュー（GNOME の上のバーの入力ソースのメニュー。IBus のプロパティ）は macOS版の入力メニューと同じ並びにしてある
   （`linux/shared/input_menu`。IBus と fcitx5 のエンジンで共有。2026-11-14）: かな / 英数、設定… / ユーザ辞書… / 変換ルール…、
   プライベートモード / ライブ変換 / 予測変換 / 句読点スタイル、モデルフォルダを開く、変換モデルが無いときの知らせ / 版。
-  macOS版にあって無いのは「原稿に合わせる」（未移植）と「アップデートを確認…」（アップデータが無い）。かなの項目のキーは
+  macOS版にあって無いのは「原稿に合わせる」（未移植）。かなの項目のキーは
   `InputMode`（GNOME と IBus のパネルはこのキーの記号「あ」「A」を上のバーに出す）。ライブ変換・予測変換は config.json を
   書き換えて読み直しを頼み、読み直したときにメニューを合わせる。**項目を足すときは `input_menu.cpp` に足し、macOS版の並びに合わせる**
 - 英数モードは、設定のキー（設定 > 入力「かな・英数を切り替えるキー」、config の `inputModeHotkey`、既定 Ctrl+Space。
@@ -196,6 +199,32 @@ IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-
 情報タブ（版・データフォルダ・ライセンスの一覧）を足した。入力タブには、Windows版の設定画面に無い「区切り記号で囲んだ
 英字入力」と「AIで直す」も置いた（記号・キーは config.json の `delimitedAlphabetStart` / `End`・`aiFixShortcut`）。
 時間のかかる処理（取得と照合・AI のモデルの一覧・API キーの読み書き）は裏のスレッドで行う。保存したら `RequestReload()`。
+
+## アップデート
+
+macOS版の UpdateChecker・Windows版の `iroha-settings/updater` を移したもの（2026-11-15）。判定（版の比べ方・GitHub の
+Release の読み取り・確認した記録 `<データフォルダ>/update.json`）は iroha-core の `update_check`（Windows版のものを取り込み、
+Linux版の配布物の選び方 `LinuxBundle` を足した。テストあり）。
+
+- 自動の確認: IBus・fcitx5 のエンジンが、起動の 2 分後とその後 1 時間ごとに確認の時期か（設定 `autoUpdateCheck`、既定 ON。
+  前の確認から 24 時間）を見て、時期なら `iroha-settings --check-update` を起動する（`shared/update_schedule`。開発用の
+  エンジン iroha-dev では動かさない）。設定画面は設定の窓を開かずに GitHub の最新の Release を見て、新しい版があるときだけ
+  知らせの窓を出す。同じ版は 1 度だけ知らせ、「この版をスキップ」を選んだ版は知らせない
+- 手動の確認: 設定 > 情報 > アップデート の「今すぐ確認」と、入力メニューの「アップデートを確認…」（`--check-update-now`）。
+  結果を必ず知らせる
+- 入れ替え: 配布物 `iroha-<版>-linux-x86_64.tar.gz` を一時フォルダ（0700）に落とし、大きさと SHA-256（GitHub の digest）を
+  照合して展開し、中の `install.sh` を 2 回に分けて実行する: `pkexec install.sh --system`（管理者の部分。ファイルを置く）と、
+  利用者として `install.sh --session`（古いエンジンを止めて ibus-daemon を起動し直す。`restart-ibus.sh` の `restart_ibus`）。
+  手順は新しい版の install.sh が決めるので、**配布物の install.sh の `--system` / `--session` は形を変えない**。
+  pkexec の認証を取り消した・失敗したときは、展開したものを残して、そのフォルダの `./install.sh` で入れられることを知らせる。
+  設定の窓が開いていれば、閉じたときに新しい実行ファイルで開き直す（exec）
+- 置くときは `cp --remove-destination`（古いファイルを消してから置く）。動いている実行ファイル（設定画面・エンジン）に
+  上書きすると「Text file busy」で止まり、読み込まれている fcitx5 のアドオンに上書きすると fcitx5 が落ちるため。
+  fcitx5 は起動し直さない（知らせるだけ）
+- 確かめ方（2026-11-15）: 私用の Xvfb と `dbus-run-session` の中で、file:// の Release の JSON（`config.json` の
+  `updateCheckURL`）と、そのまま実行する代わりの pkexec（`PATH` の先頭に置く）を使って、知らせ → 取得と照合 → 展開 →
+  `--system` → `--session` → 開き直し、認証の取り消し（126）、SHA-256 の不一致、自動の確認の時期・スキップを確かめた。
+  本物の pkexec と `--system`（root）は通していない
 
 ## 変換のベンチマーク
 

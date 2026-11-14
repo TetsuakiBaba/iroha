@@ -738,6 +738,9 @@ void RunMenuCommand(IBusEngine* engine, const std::string& key, bool checked) {
                 Spawn({"xdg-open", iroha::PathToUtf8(models)});
                 break;
             }
+            case Command::CheckUpdate:
+                Spawn({iroha::PathToUtf8(iroha::platform::ExecutableDirectory() / "iroha-settings"), "--check-update-now"});
+                break;
         }
         // 押したあとの表示をメニューに戻す（ラジオ・トグルはパネルが先に印を動かしているので、状態が変わらなかったときに合わせ直す）
         UpdateProperties(engine, /*force=*/true);

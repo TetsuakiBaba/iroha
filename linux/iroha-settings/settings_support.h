@@ -70,7 +70,8 @@ using DownloadProgress = std::function<bool(uint64_t received, uint64_t total)>;
 // 大きさと SHA-256 を照合してから置く（照合できなければ置かずに一時ファイルを消す）
 bool DownloadModel(const KnownModel& model, const std::filesystem::path& modelsDirectory,
                    const DownloadProgress& progress, std::string* error);
-// ファイルの大きさと SHA-256 を照合する
+// ファイルの大きさと SHA-256 を照合する（bytes が 0・sha256 が空なら、その照合はしない。アップデートの配布物で
+// GitHub の digest が無いとき用。変換モデルの一覧はどちらも値を持つ）
 bool VerifyFile(const std::filesystem::path& path, uint64_t bytes, const std::string& sha256, std::string* error);
 
 // ---- ライセンス ----

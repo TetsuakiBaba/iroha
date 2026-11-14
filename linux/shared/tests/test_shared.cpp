@@ -12,6 +12,7 @@
 #include "iroha/config.h"
 #include "key_shortcut.h"
 #include "launch_log.h"
+#include "update_schedule.h"
 
 namespace {
 
@@ -116,7 +117,7 @@ void TestInputMenu() {
     for (const auto& item : items) order += (item.type == Type::Separator ? std::string("-") : item.key) + " ";
     EXPECT_TRUE(order ==
                 "InputMode InputMode.Direct - Setup UserDictionary RewriteRules - PrivateMode LiveConversion Predictive "
-                "Punctuation - ModelFolder - Version ");
+                "Punctuation - ModelFolder CheckUpdate - Version ");
     EXPECT_TRUE(items[0].label == "かな" && items[0].checked && items[0].type == Type::Radio);
     EXPECT_TRUE(items[1].label == "英数（Ctrl+Space）" && !items[1].checked);
     EXPECT_TRUE(items[7].label == "プライベートモード（Ctrl+Alt+P）" && !items[7].checked);
@@ -140,6 +141,7 @@ void TestInputMenu() {
     EXPECT_TRUE(iroha::menu::CommandFor("InputMode") == Command::KanaMode);
     EXPECT_TRUE(iroha::menu::CommandFor("InputMode.Direct") == Command::DirectMode);
     EXPECT_TRUE(iroha::menu::CommandFor("Punctuation") == Command::Punctuation);
+    EXPECT_TRUE(iroha::menu::CommandFor("CheckUpdate") == Command::CheckUpdate);
     EXPECT_TRUE(iroha::menu::CommandFor("Version") == Command::None);
     EXPECT_TRUE(iroha::menu::CommandFor("Separator1") == Command::None);
     // かな・英数を切り替えるキーの設定: 既定は Ctrl+Space、空（割り当てなし）も保存して読み戻せる
@@ -155,6 +157,21 @@ void TestInputMenu() {
     std::filesystem::remove(path);
 }
 
+// アップデートの自動の確認: 設定が ON で前の確認から 24 時間たっていれば起動する。起動は 1 時間に 1 回まで
+void TestUpdateSchedule() {
+    using iroha::UpdateSchedule;
+    const int64_t now = 1800000000;
+    const int64_t day = 24 * 60 * 60;
+    EXPECT_TRUE(UpdateSchedule::ShouldLaunch(true, 0, 0, now));            // まだ確認したことがない
+    EXPECT_TRUE(!UpdateSchedule::ShouldLaunch(false, 0, 0, now));          // 自動の確認が OFF
+    EXPECT_TRUE(!UpdateSchedule::ShouldLaunch(true, now - 3600, 0, now));  // 確認してから 1 時間
+    EXPECT_TRUE(UpdateSchedule::ShouldLaunch(true, now - day, 0, now));
+    EXPECT_TRUE(UpdateSchedule::ShouldLaunch(true, now + 60, 0, now));     // 時計が戻った
+    // 設定画面が記録を書けなかった: 起動してから 1 時間は起動し直さない
+    EXPECT_TRUE(!UpdateSchedule::ShouldLaunch(true, 0, now - 600, now));
+    EXPECT_TRUE(UpdateSchedule::ShouldLaunch(true, 0, now - 3600, now));
+}
+
 } // namespace
 
 int main() {
@@ -163,6 +180,7 @@ int main() {
     TestKeyShortcut();
     TestDebugOverlayPlacement();
     TestInputMenu();
+    TestUpdateSchedule();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

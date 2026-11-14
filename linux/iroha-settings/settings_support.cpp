@@ -107,14 +107,14 @@ int OnProgress(void* user, curl_off_t total, curl_off_t received, curl_off_t, cu
 bool VerifyFile(const std::filesystem::path& path, uint64_t bytes, const std::string& sha256, std::string* error) {
     std::error_code sizeError;
     const uintmax_t size = std::filesystem::file_size(path, sizeError);
-    if (sizeError || size != bytes) {
+    if (sizeError || (bytes != 0 && size != bytes)) {
         if (error) {
             *error = "ファイルの大きさが合いません（" + (sizeError ? std::string("読めません") : std::to_string(size)) +
                      " バイト。期待は " + std::to_string(bytes) + " バイト）";
         }
         return false;
     }
-    if (Sha256::FileHex(path) != sha256) {
+    if (!sha256.empty() && Sha256::FileHex(path) != sha256) {
         if (error) *error = "SHA-256 が一致しません（途中で切れたか、配布元のファイルが変わっています）";
         return false;
     }

@@ -47,6 +47,7 @@
 #include "iroha/session_manager.h"
 #include "iroha/unicode.h"
 #include "key_decision.h"
+#include "update_schedule.h"
 
 #ifndef IROHA_RESOURCE_DIR
 #define IROHA_RESOURCE_DIR "/usr/local/lib/iroha"
@@ -164,6 +165,9 @@ public:
             actions_.push_back(std::move(action));
         }
         WatchReloadRequest();
+        // アップデートの自動の確認（1 日 1 回、設定画面を --check-update で起動する）
+        updates_ = std::make_unique<UpdateSchedule>(std::string(IROHA_RESOURCE_DIR) + "/iroha-settings",
+                                                    [this](const std::string& message) { Log(message); });
         // デバッグ表示: カーソルの位置が変わったら追う
         eventHandlers_.push_back(instance_->watchEvent(
             fcitx::EventType::InputContextCursorRectChanged, fcitx::EventWatcherPhase::Default,
@@ -174,6 +178,7 @@ public:
     }
 
     ~IrohaEngine() override {
+        updates_.reset();
         eventHandlers_.clear();
         overlayWatch_.reset();
         reloadWatch_.reset();
@@ -378,6 +383,9 @@ public:
                     fcitx::startProcess({"xdg-open", PathToUtf8(models)});
                     return;
                 }
+                case menu::Command::CheckUpdate:
+                    fcitx::startProcess({settings, "--check-update-now"});
+                    return;
             }
             UpdateMenu(ic);
         } catch (const std::exception& error) {
@@ -712,6 +720,7 @@ private:
     fcitx::FactoryFor<IrohaState> factory_;
     EngineHost host_;
     std::unique_ptr<SessionManager> sessions_;
+    std::unique_ptr<UpdateSchedule> updates_;
     std::vector<std::unique_ptr<IrohaAction>> actions_;
     std::string menuSignature_;
     int inotifyFd_ = -1;

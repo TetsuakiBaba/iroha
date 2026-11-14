@@ -107,6 +107,10 @@ struct Config {
     // "optionMenu" は Windows では Alt を押しながら選んだとき）と、選んだ文字数の表示（既定 OFF）
     std::string selectionTriggerMode = "bubble";
     bool selectionCharacterCount = false;
+    // アップデートを 1 日 1 回自動で確認する（既定 ON。macOS版の autoUpdateCheck）と、確認先の上書き
+    // （空なら GitHub の最新の Release。プレリリースで試すとき用。macOS版の updateCheckURL）
+    bool autoUpdateCheck = true;
+    std::string updateCheckURL;
 };
 
 Config LoadConfig(const std::filesystem::path& path);

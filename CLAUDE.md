@@ -653,6 +653,12 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   入力ソースを iroha だけにすると GNOME が上のバーの表示を出さないので、そのときだけエンジンが自分のアイコンとメニューを
   AppIndicator の拡張機能に出す（`linux/ibus-iroha/tray_icon`。macOS版と同じく、入力ソースは iroha 1 つで中に あ / A がある形）。
   アイコンの絵は macOS版の `main.tiff`（い）・`en.tiff`（A）から `linux/scripts/make-mode-icons.py` で作る（`mode_icons.h`。手で直さない）
+- アップデート（2026-11-15）: 設定画面（`linux/iroha-settings/updater`）が GitHub の最新の Release を見て、配布物
+  `iroha-<版>-linux-x86_64.tar.gz` を取り、大きさと SHA-256 を照合してから中の `install.sh` を `pkexec install.sh --system`
+  （管理者の部分）と `install.sh --session`（IBus の起動し直し）の 2 回に分けて実行する。自動の確認は IBus・fcitx5 のエンジンが
+  1 日 1 回 `iroha-settings --check-update` で起動する（`linux/shared/update_schedule`）。**入れ替えの手順は新しい版の
+  install.sh が決めるので、`linux/scripts/bundle/install.sh` の `--system` / `--session` の形は変えない**（`linux/README.md` の
+  「アップデート」節）
 - 「こえ」モードは Linux版では未実装（計画は `linux/README.md`）。進み具合と未対応のものも `linux/README.md`
 
 ## 自作変換モデル（文字単位T5）の学習（training/t5/、2026-09-11設計）

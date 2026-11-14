@@ -46,6 +46,7 @@ std::vector<Item> Build(const State& state) {
                          Command::Punctuation));
     items.push_back(Separator(3));
     items.push_back(Make(Item::Type::Normal, "ModelFolder", "モデルフォルダを開く", Command::ModelFolder));
+    items.push_back(Make(Item::Type::Normal, "CheckUpdate", "アップデートを確認…", Command::CheckUpdate));
     items.push_back(Separator(4));
     if (state.modelMissing) {
         items.push_back(Make(Item::Type::Status, "ModelStatus", "変換モデルが見つかりません（設定 > モデル）", Command::None));
@@ -70,6 +71,7 @@ Command CommandFor(const std::string& key) {
         {"Predictive", Command::Predictive},
         {"Punctuation", Command::Punctuation},
         {"ModelFolder", Command::ModelFolder},
+        {"CheckUpdate", Command::CheckUpdate},
     };
     for (const auto& entry : kCommands) {
         if (key == entry.key) return entry.command;

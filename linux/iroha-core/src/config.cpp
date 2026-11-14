@@ -89,7 +89,8 @@ Config LoadConfig(const std::filesystem::path& path) {
     for (const auto& flag : {std::make_pair("learningEnabled", &config.learningEnabled),
                              std::make_pair("documentContext", &config.documentContext),
                              std::make_pair("developerMode", &config.developerMode),
-                             std::make_pair("developerOverlay", &config.developerOverlay)}) {
+                             std::make_pair("developerOverlay", &config.developerOverlay),
+                             std::make_pair("autoUpdateCheck", &config.autoUpdateCheck)}) {
         if (const json::Value* value = root.Find(flag.first); value && value->type == json::Value::Type::Bool) {
             *flag.second = value->boolean;
         }
@@ -178,6 +179,7 @@ Config LoadConfig(const std::filesystem::path& path) {
         count && count->type == json::Value::Type::Bool) {
         config.selectionCharacterCount = count->boolean;
     }
+    text("updateCheckURL", &config.updateCheckURL);
     for (size_t i = 0; i < config.selectionPresets.size(); ++i) {
         const std::string prefix = "selPreset" + std::to_string(i);
         auto& preset = config.selectionPresets[i];
@@ -247,6 +249,9 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                       ",\"selectionTriggerMode\":" + json::QuoteString(config.selectionTriggerMode) +
                       ",\"selectionCharacterCount\":" + (config.selectionCharacterCount ? "true" : "false") +
                       EncodeSelectionPresets(config) +
+                      ",\"autoUpdateCheck\":" + (config.autoUpdateCheck ? "true" : "false") +
+                      (config.updateCheckURL.empty() ? std::string()
+                                                     : ",\"updateCheckURL\":" + json::QuoteString(config.updateCheckURL)) +
                       ",\"version\":1}";
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);

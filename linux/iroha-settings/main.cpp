@@ -12,6 +12,7 @@
 // （鍵が掛かっていると答えるまで止まる。CLAUDE.md の SecretStore の注意と同じ）
 
 #include <gtk/gtk.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
@@ -45,6 +46,7 @@
 #include "settings_support.h"
 #include "term_dictionary_fetcher.h"
 #include "typo_normalizer_fetcher.h"
+#include "updater.h"
 
 #ifndef IROHA_VERSION
 #define IROHA_VERSION "dev"
@@ -386,6 +388,7 @@ struct App {
     GtkWidget* logReset = nullptr;
 
     // 情報
+    GtkWidget* autoUpdateCheck = nullptr;
     GtkWidget* developerModeCheck = nullptr;
     GtkWidget* developerOverlayCheck = nullptr;
     GtkWidget* licenseBox = nullptr;
@@ -457,6 +460,22 @@ struct App {
 };
 
 App* g_app = nullptr;
+// アップデートで入れ替えたあと、設定画面を新しい版で開き直す（main で g_application_run が戻ったあとに exec する）
+bool g_relaunch = false;
+
+// アップデートを確かめる（manual: 設定画面のボタン・入力メニューから。結果を必ず知らせる）
+void CheckForUpdates(bool manual) {
+    updater::Host host;
+    host.application = g_app->application;
+    host.parent = [] { return g_windowAlive ? g_app->window : nullptr; };
+    host.relaunch = [] {
+        g_relaunch = true;
+        // 窓を閉じる処理（計測中のベンチマークを止める）を通してから終える
+        if (g_windowAlive) gtk_window_destroy(g_app->window);
+        g_application_quit(G_APPLICATION(g_app->application));
+    };
+    updater::CheckAndOffer(host, iroha::platform::DataDirectory(), IROHA_VERSION, manual);
+}
 
 // フォルダをファイルマネージャで開く
 void OpenFolder(const std::filesystem::path& folder) {
@@ -1913,6 +1932,20 @@ GtkWidget* App::BuildAboutPage() {
     gtk_widget_set_margin_top(licenseTitle, 8);
     licenseBox = Box(GTK_ORIENTATION_VERTICAL, 8);
 
+    // アップデート（macOS版・Windows版の 設定 > 情報 > アップデート。自動の確認は既定 ON）
+    GtkWidget* updateTitle = gtk_label_new(nullptr);
+    gtk_label_set_markup(GTK_LABEL(updateTitle), "<b>アップデート</b>");
+    gtk_label_set_xalign(GTK_LABEL(updateTitle), 0);
+    autoUpdateCheck = CheckButton("アップデートを自動で確認する（1 日 1 回）");
+    GtkWidget* checkUpdate = gtk_button_new_with_label("今すぐ確認");
+    gtk_widget_set_halign(checkUpdate, GTK_ALIGN_START);
+    GtkWidget* updateNote = Label("ON にすると、IBus（または fcitx5）のエンジンが 1 日 1 回 GitHub の最新のリリースを確かめ、"
+                                  "新しい版があれば知らせます。「アップデート」を選ぶと配布物をダウンロードし、大きさと"
+                                  "チェックサムを照合してから入れ替えます（管理者のパスワードを求めます）。入れ替えたあと "
+                                  "IBus を起動し直します。同じ版は 1 度だけ知らせ、「この版をスキップ」を選んだ版は知らせません。",
+                                  true);
+    gtk_widget_add_css_class(updateNote, "dim-label");
+
     // 開発者向け（macOS版の 設定 > 情報 > 開発者モード・デバッグ表示。どちらも既定 OFF。変えたらすぐ保存する）
     GtkWidget* developerTitle = gtk_label_new(nullptr);
     gtk_label_set_markup(GTK_LABEL(developerTitle), "<b>開発者向け</b>");
@@ -1927,10 +1960,19 @@ GtkWidget* App::BuildAboutPage() {
                                      true);
     gtk_widget_add_css_class(developerNote, "dim-label");
     Append(page, {title, version, home, gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), dataLabel, openData, dataNote,
+                  gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), updateTitle, autoUpdateCheck, checkUpdate, updateNote,
                   gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), developerTitle, developerModeCheck,
                   developerOverlayCheck, developerNote, gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), licenseTitle,
                   licenseBox});
     Connect(openData, "clicked", [] { OpenFolder(iroha::platform::DataDirectory()); });
+    Connect(autoUpdateCheck, "toggled", [this] {
+        if (updating) return;
+        iroha::Config config = iroha::LoadConfig(iroha::settings::ConfigPath());
+        config.autoUpdateCheck = Checked(autoUpdateCheck);
+        // エンジンは確認の時期を見るたびに config.json を読むので、読み直しは頼まなくてよい
+        if (!iroha::SaveConfig(iroha::settings::ConfigPath(), config)) ShowDialog("設定の保存に失敗しました");
+    });
+    Connect(checkUpdate, "clicked", [] { CheckForUpdates(/*manual=*/true); });
     const auto saveDeveloper = [this] {
         if (updating) return;
         iroha::Config config = iroha::LoadConfig(iroha::settings::ConfigPath());
@@ -1963,6 +2005,7 @@ GtkWidget* LinkLabel(const std::string& prefix, const std::string& url) {
 void App::RefreshAboutPage() {
     const iroha::Config config = iroha::LoadConfig(iroha::settings::ConfigPath());
     updating = true;
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(autoUpdateCheck), config.autoUpdateCheck);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(developerModeCheck), config.developerMode);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(developerOverlayCheck), config.developerOverlay);
     updating = false;
@@ -2005,39 +2048,52 @@ void PrintUsage(std::FILE* out) {
         tabs += iroha::settings::TabName(static_cast<Tab>(i));
     }
     std::fprintf(out,
-                 "使い方: iroha-settings [--tab %s]\n"
+                 "使い方: iroha-settings [--tab %s] [--check-update | --check-update-now]\n"
                  "  iroha（かな漢字変換）の設定画面を開きます。すでに開いていれば、その窓を前に出します。\n"
-                 "  --tab <名前>  開くタブ（既定は model）\n"
-                 "  --help        この説明を出します\n"
+                 "  --tab <名前>         開くタブ（既定は model）\n"
+                 "  --check-update       アップデートの自動の確認（時期なら確かめ、新しい版があるときだけ知らせる。\n"
+                 "                       IBus・fcitx5 のエンジンが 1 日 1 回呼ぶ。設定の窓は開かない）\n"
+                 "  --check-update-now   アップデートを今すぐ確かめて結果を知らせる（入力メニューの「アップデートを確認…」）\n"
+                 "  --help               この説明を出します\n"
                  "データフォルダ: %s\n",
                  tabs.c_str(), iroha::PathToUtf8(iroha::platform::DataDirectory()).c_str());
 }
 
-// 引数から開くタブを読む（--tab <名前> と --tab=<名前>）。名前が読めなければ error に理由
-std::optional<Tab> ParseArguments(int argc, char** argv, std::string* error) {
+struct Arguments {
     std::optional<Tab> tab;
+    enum class Check { None, Auto, Manual } check = Check::None;
+};
+
+// 引数を読む（--tab <名前>・--tab=<名前>・--check-update・--check-update-now）。読めなければ error に理由
+Arguments ParseArguments(int argc, char** argv, std::string* error) {
+    Arguments parsed;
+    std::optional<Tab>& tab = parsed.tab;
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
         std::string name;
+        if (argument == "--check-update" || argument == "--check-update-now") {
+            parsed.check = argument == "--check-update" ? Arguments::Check::Auto : Arguments::Check::Manual;
+            continue;
+        }
         if (argument == "--tab") {
             if (i + 1 >= argc) {
                 *error = "--tab の後にタブの名前がありません";
-                return std::nullopt;
+                return parsed;
             }
             name = argv[++i];
         } else if (argument.rfind("--tab=", 0) == 0) {
             name = argument.substr(6);
         } else {
             *error = "知らない引数です: " + argument;
-            return std::nullopt;
+            return parsed;
         }
         tab = iroha::settings::ParseTabName(name);
         if (!tab) {
             *error = "知らないタブの名前です: " + name;
-            return std::nullopt;
+            return parsed;
         }
     }
-    return tab;
+    return parsed;
 }
 
 // 起動のたびに（2 つめの起動では、前から動いている方で）呼ばれる
@@ -2045,11 +2101,18 @@ int OnCommandLine(GApplication* application, GApplicationCommandLine* commandLin
     int argc = 0;
     gchar** argv = g_application_command_line_get_arguments(commandLine, &argc);
     std::string error;
-    const std::optional<Tab> tab = ParseArguments(argc, argv, &error);
+    const Arguments arguments = ParseArguments(argc, argv, &error);
+    const std::optional<Tab>& tab = arguments.tab;
     g_strfreev(argv);
     if (!error.empty()) {
         g_application_command_line_printerr(commandLine, "iroha-settings: %s\n", error.c_str());
         return 2;
+    }
+    g_app->application = GTK_APPLICATION(application);
+    // アップデートの確認だけなら設定の窓は開かない（開いていればその上に知らせを出す）
+    if (arguments.check != Arguments::Check::None && !tab) {
+        CheckForUpdates(arguments.check == Arguments::Check::Manual);
+        return 0;
     }
     if (!g_app->window) {
         App& app = *g_app;
@@ -2101,5 +2164,11 @@ int main(int argc, char** argv) {
     g_signal_connect(application, "command-line", G_CALLBACK(OnCommandLine), nullptr);
     const int status = g_application_run(G_APPLICATION(application), argc, argv);
     g_object_unref(application);
+    if (g_relaunch) {
+        // アップデートで置き換わった実行ファイル（/proc/self/exe は消えた古いファイルを指すので、置き場所から引く）
+        const std::string program = iroha::PathToUtf8(iroha::platform::ExecutableDirectory() / "iroha-settings");
+        execl(program.c_str(), program.c_str(), static_cast<char*>(nullptr));
+        std::fprintf(stderr, "iroha-settings: 開き直せませんでした: %s\n", program.c_str());
+    }
     return status;
 }

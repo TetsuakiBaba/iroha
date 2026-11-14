@@ -8,6 +8,7 @@
 #   launch_log             起動・終了・異常終了の記録
 #   key_shortcut.h         ショートカットの文字列
 #   input_menu             入力メニューの項目と並び（macOS版の入力メニューと同じ並び。IBus と fcitx5 のエンジンが使う）
+#   update_schedule        アップデートの自動の確認（1 日 1 回、設定画面を --check-update で起動する。IBus と fcitx5 のエンジンが使う）
 #   debug_overlay_window   デバッグ表示の窓（iroha-overlay。X11・Pango。IBus と fcitx5 のエンジンが使う）
 cmake_minimum_required(VERSION 3.21)
 project(iroha-shared LANGUAGES CXX)
@@ -27,6 +28,7 @@ add_library(iroha-shared STATIC
     secret_store.cpp
     term_dictionary_fetcher.cpp
     typo_normalizer_fetcher.cpp
+    update_schedule.cpp
 )
 target_include_directories(iroha-shared PUBLIC .)
 target_link_libraries(iroha-shared PUBLIC iroha-engine PkgConfig::CURL PkgConfig::SECRET PRIVATE PkgConfig::FONTS)

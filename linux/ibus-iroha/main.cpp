@@ -19,6 +19,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <string>
 
@@ -28,6 +29,7 @@
 #include "engine.h"
 #include "engine_host.h"
 #include "launch_log.h"
+#include "update_schedule.h"
 #include "iroha/platform.h"
 #include "iroha/session_manager.h"
 #include "iroha/unicode.h"
@@ -197,12 +199,19 @@ int main(int argc, char** argv) {
     GFile* reloadFile = g_file_new_for_path(iroha::PathToUtf8(iroha::platform::ReloadRequestPath()).c_str());
     GFileMonitor* reloadMonitor = g_file_monitor_file(reloadFile, G_FILE_MONITOR_NONE, nullptr, nullptr);
     if (reloadMonitor) g_signal_connect(reloadMonitor, "changed", G_CALLBACK(OnReloadRequest), &reloader);
+    // アップデートの自動の確認（1 日 1 回、設定画面を --check-update で起動する）。開発用のエンジン（iroha-dev）では
+    // 確かめない（Windows版の開発用の変換サーバと同じ）
+    std::unique_ptr<iroha::UpdateSchedule> updates;
+    if (launchedByIbus) {
+        updates = std::make_unique<iroha::UpdateSchedule>(iroha::platform::ExecutableDirectory() / "iroha-settings", log);
+    }
     g_unix_signal_add(SIGTERM, OnSignal, const_cast<char*>("SIGTERM"));
     g_unix_signal_add(SIGINT, OnSignal, const_cast<char*>("SIGINT"));
     g_unix_signal_add(SIGHUP, OnSignal, const_cast<char*>("SIGHUP"));
 
     ibus_main();
     log("stop (" + g_exitReason + ")");
+    updates.reset();
     if (reloader.timer) g_source_remove(reloader.timer);
     if (reloadMonitor) g_object_unref(reloadMonitor);
     g_object_unref(reloadFile);

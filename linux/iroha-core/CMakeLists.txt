@@ -52,6 +52,7 @@ add_library(iroha-core STATIC
     src/user_dictionary_engine.cpp
     src/user_dictionary_store.cpp
     src/user_rewrite_rule.cpp
+    src/update_check.cpp
     src/variant_kanji_engine.cpp
 )
 target_compile_features(iroha-core PUBLIC cxx_std_17)
