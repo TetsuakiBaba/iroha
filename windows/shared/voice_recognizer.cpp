@@ -292,6 +292,12 @@ struct VoiceRecognizer::Utterance {
         };
 
         // マイクは認識エンジンより先に開く（エンジンの立ち上げの間の音声もストリームに貯まる）
+        if (!fromFile && waveInGetNumDevs() == 0) {
+            // 録音の機器が 1 つも無い（リモートデスクトップでマイクを転送していないときもこうなる。2026-11-14）
+            cleanup();
+            Send(Kind::Failed, U"マイクが見つかりません（リモートデスクトップでは、接続の設定でマイクを転送してください）");
+            return;
+        }
         if (!fromFile) {
             const MMRESULT opened = waveInOpen(&wave, WAVE_MAPPER, &format, reinterpret_cast<DWORD_PTR>(waveEvent), 0,
                                                CALLBACK_EVENT);
