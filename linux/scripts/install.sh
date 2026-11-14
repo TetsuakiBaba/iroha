@@ -6,7 +6,8 @@
 #   ./linux/scripts/install.sh --uninstall
 #
 # 入るもの: <PREFIX>/lib/iroha に IBus のエンジン（ibus-engine-iroha）・設定画面（iroha-settings）・
-# 選択テキストのAI編集（iroha-selection）・辞書ラティスの辞書（Dictionary/）・記号のデータ（Symbols/）、
+# 選択テキストのAI編集（iroha-selection）・変換のベンチマークの計測（iroha-bench）・辞書ラティスの辞書（Dictionary/）・
+# 記号のデータ（Symbols/）、
 # IBus のコンポーネントの定義（<IBus のデータ>/component/iroha.xml）、設定画面の .desktop、
 # 選択テキストのAI編集の自動起動（/etc/xdg/autostart）、fcitx5 の開発用ファイルがあれば fcitx5 のアドオン（/usr の下）。
 # 変換モデルはデータフォルダに置く（linux/scripts/fetch-model.sh）。

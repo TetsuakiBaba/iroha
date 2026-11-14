@@ -7,7 +7,7 @@ pkg_check_modules(IBUS REQUIRED IMPORTED_TARGET ibus-1.0)
 
 # バージョンは git のタグから（CLAUDE.md: タグが唯一の情報源）
 execute_process(
-    COMMAND git describe --tags --always --dirty
+    COMMAND git describe --tags --match "v[0-9]*" --always --dirty
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_VARIABLE IROHA_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 if(NOT IROHA_VERSION)

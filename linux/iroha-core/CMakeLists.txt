@@ -9,7 +9,11 @@ project(iroha-core LANGUAGES CXX)
 set(IROHA_WARNINGS -Wall -Wextra -Wno-missing-field-initializers)
 
 add_library(iroha-core STATIC
+    src/benchmark.cpp
+    src/benchmark_catalog.cpp
+    src/benchmark_run.cpp
     src/character_count.cpp
+    src/engine_assembly.cpp
     src/chunked_conversion_engine.cpp
     src/ai_conversion.cpp
     src/ai_fix.cpp
@@ -83,8 +87,12 @@ target_link_libraries(iroha-engine PUBLIC
     m
 )
 
-add_executable(iroha-core-tests tests/test_main.cpp)
-target_link_libraries(iroha-core-tests PRIVATE iroha-core)
+add_executable(iroha-core-tests tests/test_main.cpp
+    # 評価セットの取得（大きさと SHA-256 の照合）を確かめるため、shared の取得の部品（libcurl）も入れる
+    ../shared/benchmark_fetcher.cpp ../shared/term_dictionary_fetcher.cpp)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(TEST_CURL REQUIRED IMPORTED_TARGET libcurl)
+target_link_libraries(iroha-core-tests PRIVATE iroha-core PkgConfig::TEST_CURL)
 # 辞書ラティスの部品（src/lattice/ の内部ヘッダ）を直接テストする
 target_include_directories(iroha-core-tests PRIVATE src ../shared)
 target_compile_options(iroha-core-tests PRIVATE ${IROHA_WARNINGS})

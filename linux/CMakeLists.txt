@@ -12,6 +12,7 @@ enable_testing()
 add_subdirectory(iroha-core)
 add_subdirectory(shared)
 add_subdirectory(iroha-cli)
+add_subdirectory(iroha-bench)
 add_subdirectory(ibus-iroha)
 add_subdirectory(fcitx5-iroha)
 # 設定画面と選択テキストのAI編集（GTK4）

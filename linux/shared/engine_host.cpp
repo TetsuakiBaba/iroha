@@ -289,15 +289,6 @@ void EngineHost::Build() {
     }
     LoadTermDictionaries();
     if (lattice_) lattice_->SetTermDictionary(termIndex_);
-    ConversionEngine* core = zenz_.get();
-    if (lattice_) {
-        rescoring_ = std::make_unique<LatticeRescoringEngine>(zenz_.get(), zenz_.get(), lattice_.get());
-        core = rescoring_.get();
-    }
-    // 異体字を候補の末尾に補い、80文字を超える読みは区切って順に変換する
-    variants_ = std::make_unique<VariantKanjiEngine>(core);
-    chunked_ = std::make_unique<ChunkedConversionEngine>(variants_.get());
-    core = chunked_.get();
     userDictionary_ =
         std::make_unique<UserDictionaryStore>(platform::StorePath("IROHA_USER_DICT", "user-dictionary.json"));
     learning_ = std::make_unique<LearningStore>(platform::StorePath("IROHA_LEARNING", "learning.json"));
@@ -308,11 +299,15 @@ void EngineHost::Build() {
         rewriteRules_->Reload();
     }
     rewriteRuleSet_ = std::make_shared<UserRewriteRuleSet>(rewriteRules_->Current());
+    // エンジンの重ね方は iroha-cli・iroha-bench と同じ（EngineAssembly）。辞書ラティスは候補ウィンドウにだけ使い、
+    // 第一候補はモデルの生成のまま（辞書が無ければモデルだけ）。
     // プライベートモードの間はユーザ辞書と学習を使わない（変換を iroha 本来の結果にする。macOS版と同じ）
-    dictionaryEngine_ = std::make_unique<UserDictionaryEngine>(
-        core, [this] { return privateMode_ ? UserDictionary() : userDictionary_->Current(); }, lattice_.get());
-    engine_ = std::make_unique<LearningEngine>(
-        dictionaryEngine_.get(), [this] { return privateMode_ || !learningEnabled_ ? LearningDictionary() : learning_->Current(); });
+    engine_ = nullptr;
+    assembly_ = std::make_unique<EngineAssembly>(
+        zenz_.get(), zenz_.get(), lattice_.get(), LatticeUse::Candidates,
+        [this] { return privateMode_ ? UserDictionary() : userDictionary_->Current(); },
+        [this] { return privateMode_ || !learningEnabled_ ? LearningDictionary() : learning_->Current(); });
+    engine_ = &assembly_->Engine();
 }
 
 void EngineHost::ApplyTo(SessionManager& sessions) {

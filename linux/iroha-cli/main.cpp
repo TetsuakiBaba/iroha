@@ -69,7 +69,9 @@
 #include <thread>
 #include <vector>
 
+#include "iroha/benchmark.h"
 #include "iroha/chunked_conversion_engine.h"
+#include "iroha/engine_assembly.h"
 #include "emoji_renderability.h"
 #include "iroha/config.h"
 #include "engine_host.h"
@@ -194,19 +196,19 @@ std::filesystem::path UserDataPath(UserDataMode mode, const char* envName, const
            ("iroha-cli-empty-" + std::to_string(getpid())) / fileName;
 }
 
-// IME本体と同じ構成（学習 → ユーザ辞書 → 長い読みの区切り → 異体字 → 辞書ラティスの候補を
-// モデルで再採点 → モデル）でエンジンを組み立てる。IROHA_MODEL / IROHA_USER_DICT / IROHA_LEARNING で差し替えられる。
+// IME本体と同じ構成（iroha::EngineAssembly。IBus・fcitx5 のエンジン・iroha-bench と同じもの）でエンジンを組み立てる。
+// IROHA_MODEL / IROHA_USER_DICT / IROHA_LEARNING で差し替えられる。
 // IROHA_LATTICE=off で辞書ラティスを使わずモデル単体、IROHA_LATTICE=always で第一候補も
 // ラティス候補の再採点で決める（既定は候補ウィンドウのみラティス）
 struct EngineStack {
     explicit EngineStack(UserDataMode mode = UserDataMode::Ime)
         : zenz(DefaultModelPath(), ZenzOptions()),
+          lattice(MakeLatticeForStack()),
           userDictionary(UserDataPath(mode, "IROHA_USER_DICT", "user-dictionary.json")),
           learning(UserDataPath(mode, "IROHA_LEARNING", "learning.json")),
-          variants(MakeCore()),
-          chunked(&variants),
-          dictionaryEngine(&chunked, [this] { return userDictionary.Current(); }, lattice.get()),
-          engine(&dictionaryEngine, [this] { return learning.Current(); }) {
+          assembly(&zenz, &zenz, lattice.get(), LatticeUseFromEnvironment(),
+                   [this] { return userDictionary.Current(); }, [this] { return learning.Current(); }),
+          engine(assembly.Engine()) {
         if (mode == UserDataMode::Evaluation) {
             std::fprintf(stderr, "%s\n",
                          EnvEquals("IROHA_WITH_USER_DATA", "1")
@@ -217,27 +219,24 @@ struct EngineStack {
 
     iroha::ZenzEngine zenz;
     std::unique_ptr<iroha::LatticeConverter> lattice;
-    std::unique_ptr<iroha::LatticeRescoringEngine> rescoring;
     iroha::UserDictionaryStore userDictionary;
     iroha::LearningStore learning;
-    // 異体字を候補の末尾に補い、80文字を超える読みは区切って順に変換する
-    iroha::VariantKanjiEngine variants;
-    iroha::ChunkedConversionEngine chunked;
-    iroha::UserDictionaryEngine dictionaryEngine;
-    iroha::LearningEngine engine;
+    iroha::EngineAssembly assembly;
+    iroha::LearningEngine& engine;
 
 private:
-    // 辞書ラティス + モデルの採点。辞書が無い・OFF指定ならモデル単体
-    iroha::ConversionEngine* MakeCore() {
-        if (EnvEquals("IROHA_LATTICE", "off")) return &zenz;
-        const auto dictionary =
-            iroha::LatticeConverter::DefaultDictionaryPath(ExecutableDirectory());
-        if (!dictionary) return &zenz;
-        lattice = std::make_unique<iroha::LatticeConverter>(*dictionary);
+    static iroha::LatticeUse LatticeUseFromEnvironment() {
+        if (EnvEquals("IROHA_LATTICE", "off")) return iroha::LatticeUse::Off;
+        if (EnvEquals("IROHA_LATTICE", "always")) return iroha::LatticeUse::FirstCandidate;
+        return iroha::LatticeUse::Candidates;
+    }
+    // 辞書ラティス（辞書が無ければ nullptr でモデル単体。IROHA_LATTICE=off のときもユーザ辞書の語の境目の判定に使う）
+    static std::unique_ptr<iroha::LatticeConverter> MakeLatticeForStack() {
+        const auto dictionary = iroha::LatticeConverter::DefaultDictionaryPath(ExecutableDirectory());
+        if (!dictionary) return nullptr;
+        auto lattice = std::make_unique<iroha::LatticeConverter>(*dictionary);
         lattice->SetTermDictionary(CliTermIndex(*dictionary));
-        rescoring = std::make_unique<iroha::LatticeRescoringEngine>(
-            &zenz, &zenz, lattice.get(), 10, EnvEquals("IROHA_LATTICE", "always"));
-        return rescoring.get();
+        return lattice;
     }
 };
 
@@ -252,23 +251,8 @@ std::u32string RomajiToKana(const std::u32string& input) {
     return composer.Display();
 }
 
-// レーベンシュタイン距離（CER算出用）
-int EditDistance(const std::u32string& a, const std::u32string& b) {
-    if (a.empty()) return static_cast<int>(b.size());
-    if (b.empty()) return static_cast<int>(a.size());
-    std::vector<int> previous(b.size() + 1);
-    std::vector<int> current(b.size() + 1);
-    for (size_t j = 0; j <= b.size(); ++j) previous[j] = static_cast<int>(j);
-    for (size_t i = 1; i <= a.size(); ++i) {
-        current[0] = static_cast<int>(i);
-        for (size_t j = 1; j <= b.size(); ++j) {
-            const int substitution = previous[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1);
-            current[j] = std::min({previous[j] + 1, current[j - 1] + 1, substitution});
-        }
-        std::swap(previous, current);
-    }
-    return previous[b.size()];
-}
+// レーベンシュタイン距離（CER算出用。ベンチマークの採点と同じもの）
+using iroha::benchmark::EditDistance;
 
 double MillisecondsSince(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::milli>(
@@ -368,121 +352,54 @@ int RunBench(iroha::ConversionEngine& engine, const std::filesystem::path& path,
 // acc@1（許容解のいずれかに完全一致）と MinCER（許容解との最小CERの平均）を報告する。
 // 移植元: macos/Sources/iroha-cli/main.swift の ajimee コマンド
 int RunAjimee(iroha::ConversionEngine& engine, const std::filesystem::path& path) {
-    std::ifstream file(std::filesystem::path(path), std::ios::binary);
-    if (!file) {
-        std::fprintf(stderr,
-                     "JSONが読めません（testdata/ajimee/ に置いてください）\n");
+    // 読み込み・採点・集計はアプリ内のベンチマーク（iroha-bench）と同じ実装（iroha/benchmark.h）。
+    // AJIMEE の JSON の配列のほか、配布用の評価セット（JSON Lines）も読める
+    if (!std::filesystem::exists(path)) {
+        std::fprintf(stderr, "JSONが読めません（testdata/ajimee/ に置いてください）\n");
         return 1;
     }
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    iroha::json::Value root;
-    if (!iroha::json::Parse(buffer.str(), &root) ||
-        root.type != iroha::json::Value::Type::Array) {
-        std::fprintf(stderr, "JSONの解析に失敗しました\n");
+    std::vector<iroha::benchmark::Item> items;
+    std::string loadError;
+    if (!iroha::benchmark::LoadItems(path, &items, &loadError)) {
+        std::fprintf(stderr, "%s\n", loadError.c_str());
         return 1;
     }
-
-    struct Tally {
-        int count = 0;
-        int accAt1 = 0;
-        double minCerSum = 0.0;
-        std::string Summary() const {
-            char buf[128];
-            std::snprintf(buf, sizeof(buf), "acc@1 %d/%d (%.1f%%)  MinCER %.2f%%",
-                          accAt1, count, 100.0 * accAt1 / std::max(count, 1),
-                          100.0 * minCerSum / std::max(count, 1));
-            return buf;
-        }
-    };
-    Tally withContext;
-    Tally withoutContext;
-    double totalMilliseconds = 0.0;
-    // IROHA_TIMINGS=<path> で項目ごとの変換時間を TSV に書く（中央値・パーセンタイル・入力の長さ別の集計用。
-    // experiments/iroha-bench/latency_stats.py）。先頭の 4 列は macOS版と同じ。macOS版の NN の内訳
-    // （prompt_ms 以降）の代わりに、NN の時間の合計と回数（inference_timer）を書く
+    // IROHA_TIMINGS=<path> で項目ごとの変換時間を TSV に書く（macOS版と同じ指定で、先頭の 4 列も同じ。
+    // 集計は testdata/speed/summarize.py）。nn_ms・nn_calls は NN の計算の合計時間と回数（inference_timer）
     const char* timingsPath = std::getenv("IROHA_TIMINGS");
-    std::string timings = "index\treading_length\tcontext_length\tms\tnn_ms\tnn_calls\n";
 
     // ウォームアップ（モデルロードを計測から除外）
-    {
-        std::vector<std::u32string> ignored;
-        ConvertOnce(engine, U"うぉーむあっぷ", U"", 1, &ignored);
-    }
+    iroha::benchmark::WarmUp(engine);
 
-    for (const iroha::json::Value& item : root.array) {
-        const iroha::json::Value* indexValue = item.Find("index");
-        const iroha::json::Value* contextValue = item.Find("context_text");
-        const iroha::json::Value* inputValue = item.Find("input");
-        const iroha::json::Value* expectedValue = item.Find("expected_output");
-        if (!inputValue || !expectedValue ||
-            expectedValue->type != iroha::json::Value::Type::Array) {
-            continue;
-        }
-        const std::u32string input = Utf8ToUtf32(inputValue->AsString());
-        const std::u32string context =
-            contextValue ? Utf8ToUtf32(contextValue->AsString()) : U"";
-
-        iroha::InferenceStats stats;
-        const auto start = std::chrono::steady_clock::now();
-        std::vector<std::u32string> candidates;
-        std::u32string result = input;
-        {
-            const iroha::inference_timer::Scope scope(&stats);
-            if (ConvertOnce(engine, input, context, 1, &candidates) && !candidates.empty()) {
-                result = candidates.front();
-            }
-        }
-        const double elapsed = MillisecondsSince(start);
-        totalMilliseconds += elapsed;
-        if (timingsPath) {
-            char row[160];
-            std::snprintf(row, sizeof(row), "\t%zu\t%zu\t%.3f\t%.3f\t%d\n", input.size(), context.size(), elapsed,
-                          stats.neuralNetworkMicros / 1000.0, stats.neuralNetworkCalls);
-            timings += (indexValue ? indexValue->AsString() : "?") + row;
-        }
-
-        bool hit = false;
-        double minCer = 1.0;
-        for (const iroha::json::Value& reference : expectedValue->array) {
-            const std::u32string expected = Utf8ToUtf32(reference.AsString());
-            if (result == expected) hit = true;
-            const double cer =
-                static_cast<double>(EditDistance(result, expected)) /
-                std::max<size_t>(expected.size(), 1);
-            minCer = std::min(minCer, cer);
-        }
-        Tally& tally = context.empty() ? withoutContext : withContext;
-        ++tally.count;
-        if (hit) ++tally.accAt1;
-        tally.minCerSum += minCer;
-
-        if (!hit) {
+    std::vector<iroha::benchmark::ItemResult> results;
+    results.reserve(items.size());
+    for (const iroha::benchmark::Item& item : items) {
+        std::string error;
+        iroha::benchmark::ItemResult result = iroha::benchmark::Run(item, engine, &error);
+        if (!error.empty()) std::fprintf(stderr, "エラー: %s\n", error.c_str());
+        if (!result.hit) {
             PrintUtf8("  \xE2\x9C\x97 [");
-            PrintUtf8(indexValue ? indexValue->AsString() : "?");
+            PrintUtf8(item.index);
             PrintUtf8("] ");
-            Print32(input);
+            Print32(item.input);
             PrintUtf8(" -> ");
-            Print32(result);
+            Print32(result.output);
             PrintUtf8("\n");
         }
+        results.push_back(std::move(result));
     }
 
-    if (withoutContext.count > 0) {
-        std::printf("文脈なし: %s\n", withoutContext.Summary().c_str());
+    const iroha::benchmark::Summary summary = iroha::benchmark::Summary::Of(results);
+    if (summary.withoutContext.count > 0) {
+        std::printf("文脈なし: %s\n", summary.withoutContext.SummaryText().c_str());
     }
-    if (withContext.count > 0) {
-        std::printf("文脈あり: %s\n", withContext.Summary().c_str());
+    if (summary.withContext.count > 0) {
+        std::printf("文脈あり: %s\n", summary.withContext.SummaryText().c_str());
     }
-    Tally total;
-    total.count = withContext.count + withoutContext.count;
-    total.accAt1 = withContext.accAt1 + withoutContext.accAt1;
-    total.minCerSum = withContext.minCerSum + withoutContext.minCerSum;
-    std::printf("全体: %s  平均 %.1fms/変換\n", total.Summary().c_str(),
-                totalMilliseconds / std::max(total.count, 1));
+    std::printf("全体: %s  平均 %.1fms/変換\n", summary.total.SummaryText().c_str(), summary.latency.mean);
     if (timingsPath) {
         std::ofstream out(iroha::PathFromUtf8(timingsPath), std::ios::binary);
-        out << timings;
+        out << iroha::benchmark::TimingsTsv(results);
         if (!out) std::fprintf(stderr, "IROHA_TIMINGS に書けません: %s\n", timingsPath);
     }
     return 0;

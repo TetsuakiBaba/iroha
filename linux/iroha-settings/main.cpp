@@ -27,6 +27,7 @@
 #include <thread>
 #include <vector>
 
+#include "benchmark_section.h"
 #include "ai_client.h"
 #include "iroha/ai_conversion.h"
 #include "iroha/config.h"
@@ -299,6 +300,8 @@ struct App {
     GtkWidget* modelCancel = nullptr;
     GtkWidget* modelApply = nullptr;
     bool downloading = false;
+    // 変換のベンチマーク（モデルのページ、開発者モード）
+    std::unique_ptr<benchmark_section::Section> bench;
     std::shared_ptr<std::atomic<bool>> downloadCancel;
 
     // 入力
@@ -529,7 +532,11 @@ void App::Build() {
     gtk_window_set_title(window, "iroha の設定");
     gtk_window_set_default_size(window, 900, 660);
     g_windowAlive = true;
-    Connect(window, "destroy", [] { g_windowAlive = false; });
+    Connect(window, "destroy", [] {
+        g_windowAlive = false;
+        // 計測中なら止める（窓を閉じたあとに記録だけが増えないように）
+        if (g_app->bench) g_app->bench->Shutdown();
+    });
     // 項目は左に縦に並べ、右にその中身を出す（GNOME の「設定」と同じ形）。上に横に並べるタブ（GtkNotebook）では
     // 9 つの項目が窓の幅に収まらず、左右に送らないと全部見えなかった
     stack = gtk_stack_new();
@@ -566,6 +573,8 @@ void App::Build() {
     RefreshInputPage();
     RefreshRuleList();
     RefreshLearningPage();
+    // 最初に出るのはモデルのページなので、変換のベンチマーク（開発者モード）もここで読み込む
+    if (bench) bench->Show();
 }
 
 // タブを開くたびに読み直す（件数・設定は、ほかのところ（IBus のエンジン）でも変わる）
@@ -573,6 +582,8 @@ void App::OnTabShown(Tab tab) {
     switch (tab) {
         case Tab::Model:
             RefreshModelPage();
+            // 変換のベンチマーク（開発者モード）: 入れた評価セットと記録を読み直し、初めてなら評価セットの一覧を取りにいく
+            if (bench) bench->Show();
             break;
         case Tab::Input:
             RefreshInputPage();
@@ -624,6 +635,9 @@ GtkWidget* App::BuildModelPage() {
                             true);
     gtk_widget_add_css_class(note, "dim-label");
     Append(page, {Label("変換モデル:"), modelDrop, modelStatus, modelProgress, buttons, note});
+    bench = std::make_unique<benchmark_section::Section>(iroha::platform::DataDirectory(), IROHA_VERSION,
+                                                         [](const std::string& text) { g_app->ShowDialog(text); });
+    gtk_box_append(GTK_BOX(page), bench->Widget());
 
     const iroha::Config config = iroha::LoadConfig(iroha::settings::ConfigPath());
     if (const auto index = iroha::settings::CurrentModelIndex(config)) {
@@ -656,6 +670,14 @@ void App::RefreshModelPage() {
     gtk_widget_set_visible(modelCancel, downloading);
     gtk_widget_set_visible(modelProgress, downloading);
     gtk_widget_set_sensitive(modelApply, downloaded && !downloading);
+    if (bench) {
+        // ベンチマークは IBus のエンジンと同じモデル・アダプタで測る（アダプタはファイルがあるときだけ。エンジンと同じ）
+        const iroha::Config config = iroha::LoadConfig(iroha::settings::ConfigPath());
+        std::filesystem::path adapter = iroha::PathFromUtf8(config.modelAdapterPath);
+        if (!adapter.empty() && !std::filesystem::exists(adapter, ignored)) adapter.clear();
+        bench->SetTarget(iroha::PathFromUtf8(iroha::platform::ResolveModelPath()), adapter);
+        bench->SetVisible(config.developerMode);
+    }
 }
 
 // 取得と照合は裏のスレッドで行い、進み具合を 0.1 秒ごとに画面へ戻す

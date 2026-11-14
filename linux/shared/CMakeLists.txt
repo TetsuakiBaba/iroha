@@ -2,7 +2,8 @@
 #   engine_host            設定からエンジン一式を組み立てる（SessionManager の Backend）
 #   ai_client              AI変換・AIで直す・選択テキストのAI編集の通信（libcurl）
 #   secret_store           API キーの保存（libsecret）
-#   term_dictionary_fetcher / typo_normalizer_fetcher  専門辞書・打ち間違い訂正モデルの取得（libcurl）
+#   term_dictionary_fetcher / typo_normalizer_fetcher / benchmark_fetcher  専門辞書・打ち間違い訂正モデル・
+#                          評価セット（変換のベンチマーク）の取得（libcurl）
 #   emoji_renderability    描けない絵文字の判定（fontconfig・FreeType・HarfBuzz）
 #   launch_log             起動・終了・異常終了の記録
 #   key_shortcut.h         ショートカットの文字列
@@ -18,6 +19,7 @@ pkg_check_modules(FONTS REQUIRED IMPORTED_TARGET fontconfig freetype2 harfbuzz)
 
 add_library(iroha-shared STATIC
     ai_client.cpp
+    benchmark_fetcher.cpp
     emoji_renderability.cpp
     engine_host.cpp
     input_menu.cpp

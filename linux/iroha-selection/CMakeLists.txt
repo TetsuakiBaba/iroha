@@ -12,7 +12,7 @@ pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11 xtst xi xfixes)
 
 # バージョンは git のタグから（CLAUDE.md: タグが唯一の情報源）
 execute_process(
-    COMMAND git describe --tags --always --dirty
+    COMMAND git describe --tags --match "v[0-9]*" --always --dirty
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_VARIABLE IROHA_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 if(NOT IROHA_VERSION)

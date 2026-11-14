@@ -22,7 +22,21 @@ struct Value {
     const Value* Find(const std::string& key) const;
     // 文字列ならその値、それ以外は空
     std::string AsString() const { return type == Type::String ? string : ""; }
+    // オブジェクトにキーを足す（あれば置き換える）
+    void Set(const std::string& key, Value member);
 };
+
+// 値を作る（書き出し用）
+Value MakeString(std::string_view text);
+Value MakeNumber(double number);
+Value MakeBool(bool boolean);
+Value MakeArray();
+Value MakeObject();
+
+// JSON にする。オブジェクトのキーは名前の順（macOS版の JSONEncoder の sortedKeys と同じ）。pretty なら 2 文字の字下げと
+// 「"キー" : 値」（JSONEncoder の prettyPrinted と同じ見た目）。数は元に戻せる最短の表記（整数なら小数点なし）
+std::string Serialize(const Value& value, bool pretty = false);
+std::string FormatNumber(double value);
 
 // 失敗時false。UTF-8入力を想定
 bool Parse(std::string_view text, Value* out);

@@ -8,6 +8,7 @@
 #include <fstream>
 #include <string>
 
+#include "iroha/benchmark_catalog.h"
 #include "iroha/config.h"
 #include "iroha/sha256.h"
 #include "iroha/term_dictionary.h"
@@ -190,6 +191,28 @@ void TestLicenses(const std::filesystem::path& data) {
     CHECK(groups[2].entries[0].note == "専門辞書（医学・工学）");
     CHECK(groups[2].entries[0].licenseUrl == "https://example.com/b/license");
     CHECK(!groups[2].footnote.empty());
+
+    // 変換のベンチマークの評価セット: 入れたものの出典を、出典ごとに 1 行（抜粋と全件で同じ出典は 1 行にまとめる）
+    for (const char* id : {"set-quick", "set-full"}) {
+        iroha::BenchmarkInstall::Record record;
+        record.id = id;
+        record.name = std::string(id) == "set-quick" ? "抜粋" : "全件";
+        record.items = 1;
+        record.license = "CC BY-SA 4.0";
+        record.installedAt = "2026-11-14T00:00:00Z";
+        record.sources = {{"コーパス A", "作者 A", "CC BY 4.0", "https://example.com/a"},
+                          {"コーパス B", "作者 B", "MIT", "https://example.com/b"}};
+        CHECK(iroha::BenchmarkInstall::WriteRecord(data, record));
+        WriteFile(iroha::BenchmarkInstall::FilePath(data, id), "{}\n");
+    }
+    groups = iroha::settings::Licenses(data);
+    CHECK(groups.size() == 4);
+    if (groups.size() < 4) return;
+    CHECK(groups[3].entries.size() == 2);
+    if (groups[3].entries.size() < 2) return;
+    CHECK(groups[3].entries[0].name == "コーパス A");
+    CHECK(groups[3].entries[0].note == "変換のベンチマークの評価セット（全件、CC BY-SA 4.0）の出典");
+    CHECK(groups[3].entries[1].holder == "作者 B");
 }
 
 void TestFormatBytes() {

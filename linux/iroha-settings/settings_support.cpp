@@ -1,5 +1,6 @@
 #include "settings_support.h"
 
+#include <algorithm>
 #include <curl/curl.h>
 
 #include <cstdio>
@@ -7,6 +8,7 @@
 #include <mutex>
 #include <tuple>
 
+#include "iroha/benchmark_catalog.h"
 #include "iroha/platform.h"
 #include "iroha/sha256.h"
 #include "iroha/term_dictionary.h"
@@ -264,6 +266,23 @@ std::vector<LicenseGroup> Licenses(const std::filesystem::path& dataDirectory) {
             groups.push_back(std::move(terms));
         }
     }
+
+    // 変換のベンチマークの評価セットの出典（入れたものだけ。抜粋と全件は同じ出典なので、出典ごとに 1 行。Windows版と同じ）
+    LicenseGroup benchmarks;
+    std::vector<std::string> benchmarkSources;
+    for (const auto& record : BenchmarkInstall::InstalledRecords(dataDirectory)) {
+        for (const auto& source : record.sources) {
+            if (std::find(benchmarkSources.begin(), benchmarkSources.end(), source.name) != benchmarkSources.end()) {
+                continue;
+            }
+            benchmarkSources.push_back(source.name);
+            benchmarks.entries.push_back({source.name, source.holder, source.license,
+                                          "変換のベンチマークの評価セット（" + record.name + "、" + record.license +
+                                              "）の出典",
+                                          source.url, ""});
+        }
+    }
+    if (!benchmarks.entries.empty()) groups.push_back(std::move(benchmarks));
     return groups;
 }
 

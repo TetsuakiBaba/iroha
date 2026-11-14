@@ -88,7 +88,7 @@ struct LicenseGroup {
     std::string footnote; // 一覧の下に出す説明（無ければ空）
 };
 // 情報タブのライセンスの一覧。iroha 本体と同梱のデータに、データフォルダに入れた変換モデル（zenz）・
-// 打ち間違い訂正モデル・専門辞書のものを足す（後ろの 2 つは入れたときの記録から取る）
+// 打ち間違い訂正モデル・専門辞書・変換のベンチマークの評価セットのものを足す（後ろの 3 つは入れたときの記録から取る）
 std::vector<LicenseGroup> Licenses(const std::filesystem::path& dataDirectory);
 
 // ---- 表示の補助 ----

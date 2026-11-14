@@ -20,22 +20,19 @@
 #include "ai_client.h"
 #include "input_menu.h"
 #include "iroha/ai_conversion.h"
-#include "iroha/chunked_conversion_engine.h"
 #include "iroha/config.h"
 #include "iroha/conversion_log.h"
+#include "iroha/engine_assembly.h"
 #include "iroha/input_history.h"
 #include "iroha/lattice_converter.h"
-#include "iroha/lattice_rescoring_engine.h"
 #include "iroha/learning_engine.h"
 #include "iroha/learning_store.h"
 #include "iroha/session_manager.h"
 #include "iroha/symbol_candidates.h"
 #include "iroha/term_dictionary.h"
 #include "iroha/typo_normalizer.h"
-#include "iroha/user_dictionary_engine.h"
 #include "iroha/user_dictionary_store.h"
 #include "iroha/user_rewrite_rule.h"
-#include "iroha/variant_kanji_engine.h"
 #include "iroha/zenz_engine.h"
 
 namespace iroha {
@@ -74,7 +71,7 @@ public:
     // 読み直しは reload-request の見張りが行う。設定画面から変えたときと同じ経路）
     void ChangeConfig(const std::function<void(Config&)>& change);
     const std::string& ModelPath() const { return modelPath_; }
-    ConversionEngine* Engine() { return engine_.get(); }
+    ConversionEngine* Engine() { return engine_; }
 
     // ---- SessionManager::Backend ----
     bool Convert(const std::u32string& reading, const std::u32string& context, int candidateCount,
@@ -131,9 +128,6 @@ private:
     std::string adapterPath_;
     std::unique_ptr<ZenzEngine> zenz_;
     std::unique_ptr<LatticeConverter> lattice_;
-    std::unique_ptr<LatticeRescoringEngine> rescoring_;
-    std::unique_ptr<VariantKanjiEngine> variants_;
-    std::unique_ptr<ChunkedConversionEngine> chunked_;
     std::unique_ptr<UserDictionaryStore> userDictionary_;
     std::unique_ptr<LearningStore> learning_;
     // 入力履歴（予測変換。<データフォルダ>/input-history/<ホスト名>.json）
@@ -154,8 +148,9 @@ private:
     std::string privateModeShortcutLabel_;
     std::unique_ptr<UserRewriteRuleStore> rewriteRules_;
     std::shared_ptr<const UserRewriteRuleSet> rewriteRuleSet_;
-    std::unique_ptr<UserDictionaryEngine> dictionaryEngine_;
-    std::unique_ptr<LearningEngine> engine_;
+    // エンジンの重ね方（iroha-cli・iroha-bench と同じ）と、その一番外側（学習）
+    std::unique_ptr<EngineAssembly> assembly_;
+    LearningEngine* engine_ = nullptr;
     SessionSettings sessionSettings_;
     // 記号・顔文字・絵文字の表（設定で切ってあれば nullptr。読み込みは初めて要るときに 1 回だけ）
     std::shared_ptr<const SymbolCandidateTable> symbols_;

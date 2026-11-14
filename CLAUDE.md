@@ -540,7 +540,12 @@ cd macos && swift build --build-system native && swift test --build-system nativ
     `windows/iroha-bench/`、設定画面の `iroha-settings/benchmark_section.cpp`。テストは `BenchmarkTests.swift` と 1 対 1 の
     `test_benchmark.h`）。エンジンの重ね方は Windows版も `EngineAssembly`（`windows/iroha-core`）の 1 か所で、変換サーバ・
     iroha-cli・iroha-bench が使う。**採点・集計・記録の形・Event を変えたら Windows版も合わせる**（`windows/README.md` の
-    「変換のベンチマーク」節）。Linux版はまだ無い（第 3 段。カタログ・置き場所・記録の形は同じにする）
+    「変換のベンチマーク」節）
+  ・Linux版も 2026-11-14 に移した（Windows版の `windows/iroha-core` の差分を `linux/iroha-core` に取り込んだもの、計測の
+    `linux/iroha-bench/`、設定画面の `linux/iroha-settings/benchmark_section.cpp`、取得の `linux/shared/benchmark_fetcher`）。
+    エンジンの重ね方は `EngineAssembly`（`linux/iroha-core`）の 1 か所で、IBus・fcitx5 のエンジン（`engine_host`）・iroha-cli・
+    iroha-bench が使う。**採点・集計・記録の形・Event を変えたら Linux版も合わせる**（`linux/README.md` の「変換のベンチマーク」節）。
+    計測中の入力は X11 の XScreenSaver の idle（libXss を実行時に読む）で、Wayland では `inputDuringRun` を書かない
 - 既定のかな漢字変換モデルは **iroha-kkc-v1**（Q5_K_M。2026-11-06 に iroha-t5-alpha から変更。その前は 2026-10-03 まで
   zenz-v3.1-small。文字単位 T5 e12d2、`training/t5/`）。初回起動時に `ModelDownloader` が取得し、大きさと SHA-256 を照合してから
   `<データフォルダ>/models/iroha-kkc-v1-Q5_K_M.gguf`（`DataDirectory.defaultModelFileName`）に置く。重みは CC BY-SA 4.0

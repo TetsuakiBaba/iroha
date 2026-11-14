@@ -2,6 +2,7 @@
 # 変更は config.json・辞書の JSON などへ保存し、platform::RequestReload で IBus のエンジンに読み直してもらう。
 #   settings_support  画面に依存しない部分（タブの名前・変換モデルの一覧と取得・ライセンスの一覧。単体テストする）
 #   main              GTK4 の画面
+#   benchmark_section 設定 > モデル > 変換のベンチマーク（開発者モード。計測は iroha-bench を起動する）
 cmake_minimum_required(VERSION 3.21)
 project(iroha-settings LANGUAGES CXX)
 
@@ -11,7 +12,7 @@ pkg_check_modules(SETTINGS_CURL REQUIRED IMPORTED_TARGET libcurl)
 
 # バージョンは git のタグから（CLAUDE.md: タグが唯一の情報源。ibus-iroha と同じやり方）
 execute_process(
-    COMMAND git describe --tags --always --dirty
+    COMMAND git describe --tags --match "v[0-9]*" --always --dirty
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_VARIABLE IROHA_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 if(NOT IROHA_VERSION)
@@ -26,7 +27,7 @@ target_link_libraries(iroha-settings-support PUBLIC iroha-core PRIVATE PkgConfig
 target_include_directories(iroha-settings-support PUBLIC .)
 target_compile_options(iroha-settings-support PRIVATE ${IROHA_SETTINGS_WARNINGS})
 
-add_executable(iroha-settings main.cpp)
+add_executable(iroha-settings main.cpp benchmark_section.cpp)
 target_link_libraries(iroha-settings PRIVATE iroha-settings-support iroha-shared PkgConfig::SETTINGS_GTK4)
 target_compile_definitions(iroha-settings PRIVATE IROHA_VERSION="${IROHA_VERSION}")
 target_compile_options(iroha-settings PRIVATE ${IROHA_SETTINGS_WARNINGS})

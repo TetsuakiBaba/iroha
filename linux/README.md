@@ -18,6 +18,8 @@ Linux の IME。方針（2026-11-13 決定）:
 
 ```
 iroha-core/     変換エンジン（Windows版から写したもの）と Linux で足した部品
+                  engine_assembly  エンジンの重ね方（IBus・fcitx5 のエンジン・iroha-cli・iroha-bench が使う 1 か所）
+                  benchmark / benchmark_run / benchmark_catalog  変換のベンチマークの採点・集計・記録・評価セット
                   platform  データフォルダ・実行ファイルの場所・ホスト名・環境変数・設定の読み直しの依頼・入力中の目印
                   sha256    ダウンロードしたモデル・辞書の照合
 shared/         OS の部品に頼る共有の部品（ライブラリ iroha-shared）
@@ -25,11 +27,13 @@ shared/         OS の部品に頼る共有の部品（ライブラリ iroha-sha
                                          ServerState / ServerBackend を移したもの。AI の依頼もここ）
                   ai_client              AI変換・AIで直す・選択テキストのAI編集の通信（libcurl。Windows版の WinHTTP を置き換え）
                   secret_store           API キーの保存（libsecret。main thread では呼ばない）
-                  term_dictionary_fetcher / typo_normalizer_fetcher  専門辞書・打ち間違い訂正モデルの取得（libcurl）
+                  term_dictionary_fetcher / typo_normalizer_fetcher / benchmark_fetcher  専門辞書・打ち間違い訂正モデル・
+                                         評価セットの取得（libcurl）
                   emoji_renderability    描けない絵文字の判定（fontconfig で絵文字のフォントを探し、HarfBuzz で字形を数える）
                   launch_log             起動・終了・異常終了の記録（macOS版の LaunchLog）
                   key_shortcut.h         ショートカットの文字列（IBus / X のキーの値と照合する）
 iroha-cli/      検証用 CLI（remote は無い。session はこのプロセスの中でセッションを動かす）
+iroha-bench/    変換のベンチマークの計測（設定画面が起動する。下の「変換のベンチマーク」節）
 ibus-iroha/     IBus のエンジン（ibus-engine-iroha）
                   key_decision  キーの読み替え（IBus に依存しない。fcitx5 のエンジンと共有。Windows版 TIP の DecideKey と同じ規則）
                   engine        IBusEngine のサブクラス
@@ -43,7 +47,7 @@ scripts/        build-llama.sh・fetch-model.sh・install.sh（開発用）・ma
 
 データフォルダは `IROHA_DATA_DIR` > `$XDG_DATA_HOME/iroha` > `~/.local/share/iroha`。中のファイル
 （`config.json`・`models/`・`learning.json`・`user-dictionary.json`・`dictionaries/` など）の形式は macOS版・Windows版と同じ。
-インストール先は `/usr/local/lib/iroha`（エンジン・設定画面・選択テキストのAI編集・`Dictionary`・`Symbols`）。
+インストール先は `/usr/local/lib/iroha`（エンジン・設定画面・選択テキストのAI編集・ベンチマークの計測・`Dictionary`・`Symbols`）。
 fcitx5 のエンジンは fcitx5 本体と同じ場所（`/usr/lib/x86_64-linux-gnu/fcitx5`・`/usr/share/fcitx5`）に入れ、辞書は
 `/usr/local/lib/iroha` から読む（ビルド時に `IROHA_RESOURCE_DIR` として埋め込む）。
 
@@ -192,6 +196,44 @@ IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-
 情報タブ（版・データフォルダ・ライセンスの一覧）を足した。入力タブには、Windows版の設定画面に無い「区切り記号で囲んだ
 英字入力」と「AIで直す」も置いた（記号・キーは config.json の `delimitedAlphabetStart` / `End`・`aiFixShortcut`）。
 時間のかかる処理（取得と照合・AI のモデルの一覧・API キーの読み書き）は裏のスレッドで行う。保存したら `RequestReload()`。
+
+## 変換のベンチマーク
+
+macOS版の「変換のベンチマーク」（設定 > モデル、開発者モード）を移した（2026-11-14。正は macOS版、Windows版はその移植。
+CLAUDE.md の「変換のベンチマーク」の項）。評価セットを今使っているモデル・アダプタで 1 件ずつ変換し、精度（acc@1・MinCER。
+全体・文脈あり／なし・出典別）と 1 回の変換の時間を測る。
+
+- 採点・集計（`iroha/benchmark.h`）、記録・進み具合・Markdown（`iroha/benchmark_run.h`）、カタログと入れた評価セット
+  （`iroha/benchmark_catalog.h`）、エンジンの重ね方（`iroha/engine_assembly.h`）は Windows版のコミット 80c210b の
+  `windows/iroha-core` の差分を `git apply --3way` で取り込んだ。テストも Windows版と同じ（`tests/test_benchmark.h`）。
+  取得（libcurl と SHA-256 の照合）は `shared/benchmark_fetcher`（専門辞書と同じ手順）
+- エンジンの重ね方は `EngineAssembly` の 1 か所で、IBus・fcitx5 のエンジン（`shared/engine_host`）・iroha-cli・iroha-bench が使う。
+  `iroha-cli ajimee` も同じ採点・集計を使う（表示は前と同じ。配布用の JSON Lines も読める）
+- 計測は別プロセス `iroha-bench`（macOS版と同じ引数。標準出力に進み具合を JSON Lines で出す）。設定画面
+  （`iroha-settings/benchmark_section.cpp`）が `GSubprocess` で優先度を下げて（nice 10）起動し、標準エラー（llama.cpp の
+  ログ）は `<データフォルダ>/logs/bench-<ホスト名>.log` に残す。中止は SIGTERM。設定の窓を閉じると止める
+- 記録の形は macOS版・Windows版と同じ（形式 2。`testdata/speed/README.md` の「アプリ内のベンチマークの記録」の Linux の列）。
+  機種は `/sys/class/dmi/id` の `sys_vendor`・`product_name`、CPU は `/proc/cpuinfo` の `model name`、OS は
+  `/etc/os-release` の `PRETTY_NAME`、電源は `/sys/class/power_supply` の種類 Mains の `online`（Mains が無い機械では書かない）、
+  省電力は power-profiles-daemon（システムバスの `org.freedesktop.UPower.PowerProfiles` か `net.hadess.PowerProfiles`）の
+  `ActiveProfile` が `power-saver` か（デーモンが無ければ書かない）。発熱の状態は書かない
+- 計測中の入力は X11 なら XScreenSaver の idle（マウスの動きも含む）が計測の時間より短いか。libXss は開発用ファイル
+  （libxss-dev）を要らなくするため実行時に `dlopen("libXss.so.1")` で読む（無ければ書かない）。Wayland・画面の無い環境では
+  `inputDuringRun` を書かない
+- 評価セットの出典は 設定 > 情報 のライセンス一覧に出す（入れたものだけ。出典ごとに 1 行。`settings_support` の `Licenses`）
+- 版（`appVersion`）は `git describe --tags --match "v[0-9]*"`（データの Release のタグ `benchmarks-v1` を拾わないよう、
+  ほかの CMake も同じ指定にした）
+- 確認（2026-11-14、GPU マシンの CPU Xeon E5-1650 v4・4 スレッド、iroha-kkc-v1 Q5_K_M、iroha-bench-v1-quick 360 件。
+  学習が 4 コアを使っている状態）: iroha-bench と `iroha-cli ajimee` の正解数は off 252・always 253 で一致（Windows版も
+  off 252・always 253）。`.tsv` を `testdata/speed/summarize.py` に渡した値（平均・中央値・90/99%・最大・NN の割合・
+  文字数別の中央値と件数）は記録の `summary` と表示の桁で一致（off: 平均 191.2・中央値 152.6 ms、always: 336.5・293.8 ms）。
+  記録には電源（この機械は `/sys/class/power_supply` が空）と発熱の状態が無く、`powerSaving` は false、`inputDuringRun` は false。
+  設定画面の節は Xvfb で見た目と評価セットの一覧の取得（https）までを確かめた。画面からの取得・計測・中止は未確認
+
+```sh
+# 設定画面を通さずに測る（記録は IROHA_DATA_DIR かデータフォルダの logs/bench/ に書く）
+linux/build/iroha-bench/iroha-bench run --set <評価セット.jsonl> --model <model.gguf> --lattice off|always [--limit N]
+```
 
 ## 選択テキストのAI編集（iroha-selection）
 
