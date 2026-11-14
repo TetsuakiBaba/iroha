@@ -100,6 +100,8 @@ struct ZenzEngine::Runtime {
     const llama_vocab* vocab = nullptr;
     // 追加学習で作った LoRA アダプタ（adapterPath 指定時。context に適用済み）
     llama_adapter_lora* adapter = nullptr;
+    // GPU に載せると指定した層の数（RuntimeInfo の実行先に使う）
+    int gpuLayers = 0;
     // トークンID → 出力文字列（UTF-8として不正なバイト断片・制御トークンは無効=空のoptional）
     std::vector<std::optional<std::u32string>> tokenTexts;
     // トークンID → 生成終了とみなすトークンか（EOG・zenzの特殊トークン）
@@ -256,6 +258,23 @@ bool ZenzEngine::EnsureLoadedMeasured(std::string* error) {
     return EnsureLoaded(error);
 }
 
+bool ZenzEngine::GetRuntimeInfo(RuntimeInfo* info) const {
+    if (!runtime_ || !runtime_->context || !info) return false;
+    info->device = "CPU";
+    if (runtime_->gpuLayers != 0) {
+        for (size_t index = 0; index < ggml_backend_dev_count(); ++index) {
+            ggml_backend_dev_t device = ggml_backend_dev_get(index);
+            if (!device) continue;
+            const enum ggml_backend_dev_type type = ggml_backend_dev_type(device);
+            if (type != GGML_BACKEND_DEVICE_TYPE_GPU && type != GGML_BACKEND_DEVICE_TYPE_IGPU) continue;
+            info->device = std::string(ggml_backend_dev_name(device)) + ": " + ggml_backend_dev_description(device);
+            break;
+        }
+    }
+    info->threads = static_cast<int>(llama_n_threads(runtime_->context));
+    return true;
+}
+
 bool ZenzEngine::EnsureLoaded(std::string* error) {
     if (runtime_) return true;
 
@@ -276,6 +295,7 @@ bool ZenzEngine::EnsureLoaded(std::string* error) {
     }
 
     auto runtime = std::make_unique<Runtime>();
+    runtime->gpuLayers = modelParams.n_gpu_layers;
     runtime->model = llama_model_load_from_file(modelPath_.c_str(), modelParams);
     if (!runtime->model) {
         if (error) *error = "モデルの読み込みに失敗: " + modelPath_;

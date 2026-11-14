@@ -41,6 +41,7 @@ function(iroha_version_resource target description filename filetype with_icon)
 endfunction()
 
 add_subdirectory(iroha-core)
+add_subdirectory(iroha-bench)
 add_subdirectory(iroha-cli)
 add_subdirectory(iroha-server)
 add_subdirectory(iroha-settings)

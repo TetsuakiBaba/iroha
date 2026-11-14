@@ -47,6 +47,15 @@ public:
     // モデルを事前にロードしておく（初回変換のもたつき防止）
     bool Prewarm(std::string* error);
 
+    // 推論の実行先とスレッド数（macOS版 runtimeInfo。ベンチマークの記録に残す）。device は "CPU" か
+    // 「ggml の装置名: 説明」（GPU に載せる層が 0 でなく、種類が GPU か IGPU の最初の装置）、threads は
+    // llama_n_threads。モデルを読み込んだあとでないと分からないので、読み込む前は偽
+    struct RuntimeInfo {
+        std::string device;
+        int threads = 0;
+    };
+    bool GetRuntimeInfo(RuntimeInfo* info) const;
+
     // ひらがな読みを仮名漢字混じり文候補（尤度順）に変換する。
     // candidateCountが1ならグリーディ、2以上で先頭トークン分岐のn-best
     // （最良の候補から kNbestLogProbWindow 以上離れた候補は捨てる）

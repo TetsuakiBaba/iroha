@@ -1,6 +1,9 @@
 #include "iroha/json.h"
 
+#include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -248,6 +251,108 @@ std::string QuoteString(std::string_view s) {
     }
     out += "\"";
     return out;
+}
+
+std::string FormatNumber(double value) {
+    if (!std::isfinite(value)) return "0";
+    char buffer[64];
+    const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+    return result.ec == std::errc() ? std::string(buffer, result.ptr) : "0";
+}
+
+namespace {
+
+void SerializeInto(const Value& value, bool pretty, int depth, std::string* out) {
+    const auto newline = [&](int level) {
+        if (!pretty) return;
+        out->push_back('\n');
+        out->append(static_cast<size_t>(level) * 2, ' ');
+    };
+    switch (value.type) {
+    case Value::Type::Null: *out += "null"; break;
+    case Value::Type::Bool: *out += value.boolean ? "true" : "false"; break;
+    case Value::Type::Number: *out += FormatNumber(value.number); break;
+    case Value::Type::String: *out += QuoteString(value.string); break;
+    case Value::Type::Array:
+        out->push_back('[');
+        for (size_t i = 0; i < value.array.size(); ++i) {
+            if (i > 0) out->push_back(',');
+            newline(depth + 1);
+            SerializeInto(value.array[i], pretty, depth + 1, out);
+        }
+        if (!value.array.empty()) newline(depth);
+        out->push_back(']');
+        break;
+    case Value::Type::Object: {
+        std::vector<const std::pair<std::string, Value>*> members;
+        for (const auto& member : value.object) members.push_back(&member);
+        std::stable_sort(members.begin(), members.end(),
+                         [](const auto* a, const auto* b) { return a->first < b->first; });
+        out->push_back('{');
+        for (size_t i = 0; i < members.size(); ++i) {
+            if (i > 0) out->push_back(',');
+            newline(depth + 1);
+            *out += QuoteString(members[i]->first);
+            *out += pretty ? " : " : ":";
+            SerializeInto(members[i]->second, pretty, depth + 1, out);
+        }
+        if (!members.empty()) newline(depth);
+        out->push_back('}');
+        break;
+    }
+    }
+}
+
+} // namespace
+
+std::string Serialize(const Value& value, bool pretty) {
+    std::string out;
+    SerializeInto(value, pretty, 0, &out);
+    return out;
+}
+
+Value MakeString(std::string_view text) {
+    Value value;
+    value.type = Value::Type::String;
+    value.string = std::string(text);
+    return value;
+}
+
+Value MakeNumber(double number) {
+    Value value;
+    value.type = Value::Type::Number;
+    value.number = number;
+    return value;
+}
+
+Value MakeBool(bool boolean) {
+    Value value;
+    value.type = Value::Type::Bool;
+    value.boolean = boolean;
+    return value;
+}
+
+Value MakeArray() {
+    Value value;
+    value.type = Value::Type::Array;
+    return value;
+}
+
+Value MakeObject() {
+    Value value;
+    value.type = Value::Type::Object;
+    return value;
+}
+
+void Value::Set(const std::string& key, Value member) {
+    type = Type::Object;
+    for (auto& entry : object) {
+        if (entry.first == key) {
+            entry.second = std::move(member);
+            return;
+        }
+    }
+    object.emplace_back(key, std::move(member));
 }
 
 } // namespace iroha::json

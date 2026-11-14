@@ -516,7 +516,7 @@ void Page::Relayout() {
     const auto setControl = [&](const Control& control, int x, int y, int w, int h, bool show, bool enable) {
         if (!control.hwnd) return;
         MoveWindow(control.hwnd, x, y - scroll_, w, h + t.S(control.dropHeight), FALSE);
-        EnableWindow(control.hwnd, enable);
+        EnableWindow(control.hwnd, enable && (!control.enabled || control.enabled()));
         ShowWindow(control.hwnd, show ? SW_SHOWNA : SW_HIDE);
     };
 

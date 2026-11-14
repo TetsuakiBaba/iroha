@@ -71,6 +71,7 @@ japanese.FinishedLabel=iroha をインストールしました。%n%n設定 > �
 Source: "{#StageDir}\iroha-tip.dll"; DestDir: "{app}"; Flags: ignoreversion regserver uninsrestartdelete
 Source: "{#StageDir}\iroha-server.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\iroha-settings.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\iroha-bench.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\Dictionary\*"; DestDir: "{app}\Dictionary"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#StageDir}\Symbols\*"; DestDir: "{app}\Symbols"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -101,6 +102,7 @@ Filename: "{app}\iroha-settings.exe"; Description: "iroha の設定を開く"; F
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM iroha-server.exe"; Flags: runhidden; RunOnceId: "StopServer"
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM iroha-settings.exe"; Flags: runhidden; RunOnceId: "StopSettings"
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM iroha-bench.exe"; Flags: runhidden; RunOnceId: "StopBench"
 
 [UninstallDelete]
 Type: files; Name: "{app}\iroha-tip.dll.old-*"
@@ -147,6 +149,7 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopProcess('iroha-server.exe');
   StopProcess('iroha-settings.exe');
+  StopProcess('iroha-bench.exe');
   SetAsideLoadedDll();
   Result := '';
 end;

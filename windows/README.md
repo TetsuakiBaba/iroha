@@ -20,6 +20,7 @@ iroha-core/     変換エンジンのC++移植
                 input_session / session_manager は入力の状態（下の「入力の状態とライブ変換」節）
 iroha-cli/      検証用CLI（kana / convert / segment / bench / ajimee / lattice /
                 lattice-dump / lattice-parity / remote / session / symbols / repl）
+iroha-bench/    変換のベンチマークを測るヘルパー（設定画面が起動する。下の「変換のベンチマーク」節）
 shared/         TIP⇔サーバの名前付きパイプIPCプロトコル（ipc_protocol.h）と、
                 サーバ・CLI で使う Windows 専用の部品（emoji_renderability）
 scripts/        ビルド・インストールスクリプト
@@ -135,7 +136,10 @@ $env:IROHA_LATTICE = "always"; windows\build\iroha-cli\iroha-cli.exe ajimee test
   あればそれを使う。差し替えるときは `fetch-model.ps1`・`iroha-settings` のモデル一覧と、macOS版の
   `ModelDownloader.swift`・`fetch-model.sh` を合わせる
 - 変換サーバは「学習 → ユーザ辞書 → 長い読みの区切り（`ChunkedConversionEngine`、80文字超）→ 異体字（`VariantKanjiEngine`）→
-  辞書ラティスの候補をモデルで再採点（`LatticeRescoringEngine`）→ モデル」の順に重ねる（macOS版 iroha-cli の makeEngine と同じ順）。
+  辞書ラティスの候補をモデルで再採点（`LatticeRescoringEngine`）→ モデル」の順に重ねる（macOS版の `EngineAssembly` と同じ順）。
+  **重ね方は `iroha-core` の `EngineAssembly`（`iroha/engine_assembly.h`）の 1 か所にあり、変換サーバ・iroha-cli・iroha-bench が
+  使う**（2026-11-14。それまでは変換サーバの ServerState と iroha-cli の EngineStack に分かれていた）。デコレータを足す・
+  並べ替えるときはここを変える（変換サーバだけに足すと、ベンチマークの数字が実際の入力の変換と合わなくなる）。
   候補を複数求められたとき（候補ウィンドウ）だけ辞書ラティスを使い、全体の変換（候補1つ）はモデルの生成に任せる。
   辞書は実行ファイルと同じフォルダの `Dictionary`（`install-tip.ps1`・インストーラーが置く）。
   学習とユーザ辞書は macOS版の今の仕様（2026-11-13 に合わせた）:
@@ -148,6 +152,40 @@ $env:IROHA_LATTICE = "always"; windows\build\iroha-cli\iroha-cli.exe ajimee test
 
 インストール後、設定 > 時刻と言語 > 言語と地域 > 日本語 > キーボード に
 「iroha」が現れ、Win+Space で切り替えられる（出ない場合はサインアウト）。
+
+## 変換のベンチマーク
+
+macOS版の「変換のベンチマーク」（設定 > モデル、開発者モード）を移した（2026-11-14。正は macOS版。CLAUDE.md の
+「変換のベンチマーク」の項）。評価セットを今使っているモデル・アダプタで 1 件ずつ変換し、精度（acc@1・MinCER。全体・
+文脈あり／なし・出典別）と 1 回の変換の時間を測る。
+
+- 採点・集計（`iroha/benchmark.h`）、記録・進み具合・Markdown（`iroha/benchmark_run.h`）、カタログと入れた評価セット
+  （`iroha/benchmark_catalog.h`）は `iroha-core` にある。`iroha-cli ajimee` も同じ採点・集計を使う（表示は前と同じ。
+  配布用の JSON Lines も読めるようになった）。取得（ダウンロードと SHA-256 の照合）は Windows の API を使うので
+  `shared/benchmark_fetcher`（専門辞書と同じ手順）
+- 計測は別プロセス `iroha-bench.exe`（macOS版と同じ引数。標準出力に進み具合を JSON Lines で出す。Event の形も同じ）。
+  設定画面（`iroha-settings/benchmark_section.cpp`）が優先度を下げて起動し、標準エラー（llama.cpp のログ）は
+  `<データフォルダ>\logs\bench-<ホスト名>.log` に残す。中止は TerminateProcess（終了コード 15）。設定の窓を閉じると止める
+- カタログ `models/benchmarks.json`・置き場所 `<データフォルダ>\benchmarks\<ID>.jsonl`・`<ID>.json`・記録
+  `<データフォルダ>\logs\bench\<日時>-<ホスト名>.json`・`.tsv` は macOS版と同じ形（形式 2。キーと Windows での値の取り方は
+  `testdata/speed/README.md` の「アプリ内のベンチマークの記録」）。発熱の状態は Windows では取れないので書かない。
+  計測中の入力は `GetLastInputInfo`（マウスの動きも含む）。`condition.device` は `ZenzEngine::GetRuntimeInfo`
+  （"CPU" か「ggml の装置名: 説明」）、`threads` は `llama_n_threads`
+- 条件は `off`（モデルだけ）と `always`（辞書ラティス + 再採点）。ユーザ辞書・学習・専門辞書は使わない。
+  最初の 1 件（「うぉーむあっぷ」）はモデルの読み込みを含むので集計から外し、`warmUpMilliseconds` に残す
+- 文字数と編集距離はコードポイントで数える（macOS版は書記素。評価セットの読みはカタカナなので同じ値）
+- 評価セットの出典は 設定 > 情報 のライセンス一覧に出す（入れたものだけ。抜粋と全件は同じ出典なので出典ごとに 1 行）
+- 設定画面の部品は、ページを並べ直すたびに行の enabled で EnableWindow し直されるので、同じ行で部品ごとに
+  操作できるかが違うときは `ui::Page::Control::enabled` に書く（EnableWindow だけだと並べ直しで戻る）
+- 確認（2026-11-14、このWindows機、iroha-kkc-v1 Q5_K_M、CPU 4 スレッド、iroha-bench-v1-quick 360 件）:
+  iroha-bench.exe と `iroha-cli ajimee` の正解数は off 252・always 253 で一致（macOS M2・Metal は off 251・always 253）。
+  `.tsv` を `testdata/speed/summarize.py` に渡した値（平均・中央値・90/99%・最大・NN の割合・文字数別の中央値）は
+  記録の `summary` と表示の桁で一致。設定画面からの取得・計測・結果の表示・中止も、別のデータフォルダで動かして確かめた
+
+```powershell
+# 設定画面を通さずに測る（記録は IROHA_DATA_DIR か %LOCALAPPDATA%\iroha の logs\bench\ に書く）
+windows\build\iroha-bench\iroha-bench.exe run --set <評価セット.jsonl> --model <model.gguf> --lattice off|always [--limit N]
+```
 
 ## 入力の状態とライブ変換
 

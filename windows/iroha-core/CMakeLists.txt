@@ -5,7 +5,11 @@ cmake_minimum_required(VERSION 3.21)
 project(iroha-core LANGUAGES CXX)
 
 add_library(iroha-core STATIC
+    src/benchmark.cpp
+    src/benchmark_catalog.cpp
+    src/benchmark_run.cpp
     src/character_count.cpp
+    src/engine_assembly.cpp
     src/chunked_conversion_engine.cpp
     src/ai_conversion.cpp
     src/ai_fix.cpp
@@ -94,8 +98,11 @@ if(MSVC)
     target_compile_definitions(iroha-engine PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 
-add_executable(iroha-core-tests tests/test_main.cpp)
-target_link_libraries(iroha-core-tests PRIVATE iroha-core)
+add_executable(iroha-core-tests tests/test_main.cpp
+    # 評価セットの取得（大きさと SHA-256 の照合）を確かめるため、Windows の取得の部品も入れる
+    ../shared/benchmark_fetcher.cpp ../shared/term_dictionary_fetcher.cpp)
+target_link_libraries(iroha-core-tests PRIVATE iroha-core urlmon wininet bcrypt)
+target_include_directories(iroha-core-tests PRIVATE ../shared)
 # 辞書ラティスの部品（src/lattice/ の内部ヘッダ）を直接テストする
 target_include_directories(iroha-core-tests PRIVATE src)
 if(MSVC)

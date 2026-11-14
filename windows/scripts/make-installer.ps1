@@ -44,6 +44,8 @@ New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item (Join-Path $BuildDir "iroha-tip\iroha-tip.dll") $stage
 Copy-Item (Join-Path $BuildDir "iroha-server\iroha-server.exe") $stage
 Copy-Item (Join-Path $BuildDir "iroha-settings\iroha-settings.exe") $stage
+# 変換のベンチマークを測るヘルパー（設定 > モデル > 変換のベンチマーク、開発者モードが起動する）
+Copy-Item (Join-Path $BuildDir "iroha-bench\iroha-bench.exe") $stage
 Copy-Item (Join-Path $RepoRoot "windows\resources\iroha.ico") $stage
 
 # 辞書ラティスの辞書データ（azooKey_dictionary_storage、Apache-2.0）。LICENSE も一緒に置く

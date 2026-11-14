@@ -71,6 +71,9 @@ public:
         int height = 32; // DIP
         // コンボボックスの一覧を開いたときの高さ（DIP。並べる高さには使わない）
         int dropHeight = 0;
+        // この部品だけを操作できるか（無ければ行の enabled に従う）。並べ直すたびに EnableWindow し直すので、
+        // 同じ行で部品ごとに操作できるかが違うときはここに書く（EnableWindow だけだと並べ直しで戻る）
+        std::function<bool()> enabled;
     };
     struct Row {
         enum class Kind { Header, Item, Note, Fill };

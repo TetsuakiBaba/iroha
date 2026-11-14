@@ -40,6 +40,7 @@ using std::min;
 #include <gdiplus.h>
 
 #include "ai_client.h"
+#include "benchmark_section.h"
 #include "ipc_protocol.h"
 #include "iroha/ai_conversion.h"
 #include "iroha/config.h"
@@ -410,10 +411,12 @@ struct App {
     Row* modelPathRow = nullptr;
     Row* adapterRow = nullptr;
     bool downloading = false;
+    // 変換のベンチマーク（モデルのページ、開発者モード）
+    benchmark_section::Section bench;
     // 情報
     HWND gitHub = nullptr, dataFolder = nullptr, developerToggle = nullptr;
     HWND autoUpdateToggle = nullptr, checkUpdate = nullptr, developerOverlayToggle = nullptr;
-    Row* licenseTypoRows[16] = {};
+    Row* licenseTypoRows[40] = {};
     std::vector<Row*> licenseRows;
 
     std::unique_ptr<iroha::UserDictionaryStore> dictionary;
@@ -1025,6 +1028,15 @@ void App::BuildModelPage() {
                                /*developer=*/true);
     adapterRow->below = {{{adapterFile, 140}, {adapterClear, 100}}};
     adapterRow->visible = dev;
+
+    bench.Build(window, page, dev, std::filesystem::path(DataDir()), IROHA_VERSION);
+}
+
+// 変換サーバが使うモデルのパス（iroha-server の ResolveModelPath と同じ決め方。IROHA_MODEL は見ない）
+std::filesystem::path ServerModelPath(const iroha::Config& config) {
+    if (config.model.empty()) return iroha::DefaultModelPath(ModelPath(L"").parent_path());
+    const std::filesystem::path path(Wide(config.model));
+    return path.is_absolute() ? path : ModelPath(L"").parent_path() / path;
 }
 
 void App::BuildAboutPage() {
@@ -1109,6 +1121,17 @@ void App::RefreshLicenses() {
         for (const auto& source : record.sources) {
             entries.push_back({Wide(source.name), L"専門辞書（" + Wide(record.name) + L"）  © " + Wide(source.holder) + L"  " +
                                                       Wide(source.license) + L"\n" + Wide(source.url)});
+        }
+    }
+    // 変換のベンチマークの評価セット（入れたものだけ。抜粋と全件は同じ出典なので、出典ごとに 1 行）
+    std::vector<std::string> benchmarkSources;
+    for (const auto& record : bench.InstalledRecords()) {
+        for (const auto& source : record.sources) {
+            if (std::find(benchmarkSources.begin(), benchmarkSources.end(), source.name) != benchmarkSources.end()) continue;
+            benchmarkSources.push_back(source.name);
+            entries.push_back({Wide(source.name), L"変換のベンチマークの評価セット（" + Wide(record.name) + L"、" +
+                                                      Wide(record.license) + L"）の出典  © " + Wide(source.holder) +
+                                                      L"  " + Wide(source.license) + L"\n" + Wide(source.url)});
         }
     }
     for (size_t i = 0; i < ARRAYSIZE(licenseTypoRows); ++i) {
@@ -1197,6 +1220,8 @@ void App::ShowPage(int index) {
         StartTermTask(L"辞書の一覧を取得しています…", true, {}, {});
     }
     if (key == L"about") RefreshLicenses();
+    // 変換のベンチマーク（開発者モード）: 入れた評価セットと記録を読み直し、初めてなら評価セットの一覧を取りにいく
+    if (key == L"model") bench.Show();
     RECT pane = {0, 0, S(260), 10000};
     InvalidateRect(window, &pane, FALSE);
 }
@@ -2049,6 +2074,10 @@ void App::RefreshModelPage() {
                          adapterMissing);
     EnableWindow(adapterClear, !config.modelAdapterPath.empty());
     EnableWindow(modelFileDefault, !config.model.empty());
+    // ベンチマークは変換サーバと同じモデル・アダプタで測る（アダプタはファイルがあるときだけ。変換サーバと同じ）
+    bench.SetTarget(ServerModelPath(config),
+                    config.modelAdapterPath.empty() || adapterMissing ? std::filesystem::path()
+                                                                      : std::filesystem::path(Wide(config.modelAdapterPath)));
 }
 
 struct DownloadContext {
@@ -2136,6 +2165,7 @@ void App::OnCommand(int id, int code, HWND control) {
     const bool left = code == EN_KILLFOCUS;
     const auto comboIndex = [control] { return static_cast<int>(SendMessageW(control, CB_GETCURSEL, 0, 0)); };
     ui::Page* input = PageFor(L"input");
+    if (bench.OnCommand(id, code)) return;
     switch (id) {
     // 入力
     case kIdLive:
@@ -2521,6 +2551,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_NOTIFY: {
         const NMHDR* header = reinterpret_cast<NMHDR*>(lParam);
         if (header->hwndFrom == app.termList && header->code == LVN_ITEMCHANGED) app.ShowTermDetail();
+        if (app.bench.OnNotify(header)) return 0;
         if (header->hwndFrom == app.ruleList && header->code == LVN_ITEMCHANGED) {
             const auto* change = reinterpret_cast<const NMLISTVIEW*>(lParam);
             if ((change->uChanged & LVIF_STATE) && ((change->uNewState ^ change->uOldState) & LVIS_STATEIMAGEMASK)) {
@@ -2554,7 +2585,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             MessageBoxW(hwnd, L"ダウンロードに失敗しました。ネットワークを確認してください。", L"iroha", MB_ICONERROR);
         }
         return 0;
+    case benchmark_section::WM_APP_BENCH_TASK:
+    case benchmark_section::WM_APP_BENCH_LINE:
+    case benchmark_section::WM_APP_BENCH_EXIT:
+        app.bench.OnMessage(message, wParam, lParam);
+        // 評価セットを入れ外ししたら、情報のライセンス一覧も合わせる
+        if (message == benchmark_section::WM_APP_BENCH_TASK) app.RefreshLicenses();
+        return 0;
     case WM_DESTROY:
+        // 計測中なら止める（窓を閉じたあとに記録だけが増えないように）
+        app.bench.Shutdown();
         PostQuitMessage(0);
         return 0;
     default:

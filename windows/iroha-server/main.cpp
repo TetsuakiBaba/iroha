@@ -27,6 +27,7 @@
 #include <thread>
 
 #include "iroha/chunked_conversion_engine.h"
+#include "iroha/engine_assembly.h"
 #include "iroha/config.h"
 #include "ai_client.h"
 #include "iroha/ai_conversion.h"
@@ -149,9 +150,6 @@ struct ServerState {
     std::string adapterPath;
     std::unique_ptr<iroha::ZenzEngine> zenz;
     std::unique_ptr<iroha::LatticeConverter> lattice;
-    std::unique_ptr<iroha::LatticeRescoringEngine> rescoring;
-    std::unique_ptr<iroha::VariantKanjiEngine> variants;
-    std::unique_ptr<iroha::ChunkedConversionEngine> chunked;
     std::unique_ptr<iroha::UserDictionaryStore> userDictionary;
     std::unique_ptr<iroha::LearningStore> learning;
     // 入力履歴（予測変換。<データフォルダ>/input-history/<コンピュータ名>.json）
@@ -302,8 +300,9 @@ struct ServerState {
     // 変換ルール（設定画面が書き換えたら Reload で読み直す。初回は既定のルールを足す。macOS版と同じ）
     std::unique_ptr<iroha::UserRewriteRuleStore> rewriteRules;
     std::shared_ptr<const iroha::UserRewriteRuleSet> rewriteRuleSet;
-    std::unique_ptr<iroha::UserDictionaryEngine> dictionaryEngine;
-    std::unique_ptr<iroha::LearningEngine> engine;
+    // エンジンの重ね方は iroha-cli・iroha-bench と同じ（EngineAssembly）。engine はその一番外側（学習）
+    std::unique_ptr<iroha::EngineAssembly> assembly;
+    iroha::LearningEngine* engine = nullptr;
     // セッションの設定（ライブ変換・句読点・全角スペース・候補数）
     iroha::SessionSettings sessionSettings;
     // 記号・顔文字・絵文字の表（設定で切ってあれば nullptr。読み込みは初めて要るときに 1 回だけ）
@@ -461,16 +460,6 @@ struct ServerState {
         }
         LoadTermDictionaries();
         if (lattice) lattice->SetTermDictionary(termIndex);
-        iroha::ConversionEngine* core = zenz.get();
-        if (lattice) {
-            rescoring = std::make_unique<iroha::LatticeRescoringEngine>(
-                zenz.get(), zenz.get(), lattice.get());
-            core = rescoring.get();
-        }
-        // 異体字を候補の末尾に補い、80文字を超える読みは区切って順に変換する
-        variants = std::make_unique<iroha::VariantKanjiEngine>(core);
-        chunked = std::make_unique<iroha::ChunkedConversionEngine>(variants.get());
-        core = chunked.get();
         userDictionary = std::make_unique<iroha::UserDictionaryStore>(
             StorePath(L"IROHA_USER_DICT", L"user-dictionary.json"));
         learning = std::make_unique<iroha::LearningStore>(
@@ -483,13 +472,13 @@ struct ServerState {
         }
         rewriteRuleSet = std::make_shared<iroha::UserRewriteRuleSet>(rewriteRules->Current());
         // プライベートモードの間はユーザ辞書と学習を使わない（変換を iroha 本来の結果にする。macOS版と同じ）
-        dictionaryEngine = std::make_unique<iroha::UserDictionaryEngine>(
-            core,
+        // 辞書ラティスは候補ウィンドウにだけ使い、第一候補はモデルの生成のまま（辞書が無ければモデルだけ）
+        engine = nullptr;
+        assembly = std::make_unique<iroha::EngineAssembly>(
+            zenz.get(), zenz.get(), lattice.get(), iroha::LatticeUse::Candidates,
             [this] { return privateMode ? iroha::UserDictionary() : userDictionary->Current(); },
-            lattice.get());
-        engine = std::make_unique<iroha::LearningEngine>(
-            dictionaryEngine.get(),
             [this] { return privateMode || !learningEnabled ? iroha::LearningDictionary() : learning->Current(); });
+        engine = &assembly->Engine();
     }
 };
 
