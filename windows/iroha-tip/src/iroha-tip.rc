@@ -1,3 +1,4 @@
 // iroha-tip のリソース。
-// アイコン1番はプロファイルアイコン（言語切替UI・タスクバーの入力インジケーターに出る）
-1 ICON "..\\resources\\iroha.ico"
+// アイコン1番はプロファイルアイコン（言語切替UI・タスクバーの入力インジケーターに出る）。
+// 設定画面・変換サーバ・インストーラーと同じもの（windows/scripts/make-icon.py が macOS版のアイコンから作る）
+1 ICON "..\\..\\resources\\iroha.ico"

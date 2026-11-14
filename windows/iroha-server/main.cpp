@@ -22,7 +22,9 @@
 
 #include <memory>
 #include <array>
+#include <chrono>
 #include <mutex>
+#include <thread>
 
 #include "iroha/chunked_conversion_engine.h"
 #include "iroha/config.h"
@@ -45,6 +47,7 @@
 #include "iroha/symbol_candidates.h"
 #include "iroha/term_dictionary.h"
 #include "iroha/input_history.h"
+#include "iroha/update_check.h"
 #include "iroha/user_rewrite_rule.h"
 #include "iroha/unicode.h"
 #include "iroha/user_dictionary_engine.h"
@@ -838,6 +841,44 @@ bool HandleRequest(ServerState& state, iroha::SessionManager& sessions,
     }
 }
 
+// アップデートの自動の確認（macOS版 UpdateChecker.autoCheckIfDue）。1 時間ごとに確認の時期かを見て、
+// 時期なら設定画面を --check-update で起動する（GitHub に問い合わせ、新しい版があれば知らせる窓を出すのは設定画面）。
+// 設定画面は確認した時刻を update.json に書くので、ここは読むだけ
+void StartUpdateChecks() {
+    // 開発用の変換サーバ（IROHA_PIPE_SUFFIX）では確かめない
+    if (const wchar_t* suffix = _wgetenv(L"IROHA_PIPE_SUFFIX"); suffix && *suffix) return;
+    std::thread([] {
+        // ログオンの直後は避ける
+        std::this_thread::sleep_for(std::chrono::minutes(2));
+        int64_t launched = 0;
+        for (;;) {
+            const int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+                                    std::chrono::system_clock::now().time_since_epoch())
+                                    .count();
+            const iroha::Config config = iroha::LoadConfig(std::filesystem::path(DataDir() + L"\\config.json"));
+            const iroha::Update::State state =
+                iroha::Update::LoadState(iroha::Update::StatePath(std::filesystem::path(DataDir())));
+            // 設定画面が記録を書けなかったときに起動し続けないよう、起動は 1 時間に 1 回まで
+            if (config.autoUpdateCheck && iroha::Update::IsDue(state, now) && now - launched >= 60 * 60) {
+                launched = now;
+                const std::wstring exe = (ExecutableDirectory() / L"iroha-settings.exe").wstring();
+                std::wstring commandLine = L"\"" + exe + L"\" --check-update";
+                STARTUPINFOW startupInfo = {sizeof(startupInfo)};
+                PROCESS_INFORMATION process = {};
+                if (CreateProcessW(exe.c_str(), commandLine.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr,
+                                   &startupInfo, &process)) {
+                    CloseHandle(process.hThread);
+                    CloseHandle(process.hProcess);
+                    Log("update check started");
+                } else {
+                    Log(("update check failed to start: " + std::to_string(GetLastError())).c_str());
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::hours(1));
+        }
+    }).detach();
+}
+
 } // namespace
 
 int wmain() {
@@ -882,6 +923,7 @@ int wmain() {
         [&sessions] { return sessions.AnyComposing(); }, [](const std::string& message) { Log(message.c_str()); });
     state.selection = &selection;
     selection.Configure(state.selectionSettings);
+    StartUpdateChecks();
     // 「こえ」モードの録音と認識（裏のスレッドから sessions に知らせるので、sessions より先に片付ける）
     iroha::VoiceRecognizer voice;
     state.voice = &voice;

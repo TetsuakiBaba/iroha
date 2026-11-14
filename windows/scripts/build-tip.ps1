@@ -2,10 +2,11 @@
 # 成果物: windows/build/iroha-tip/iroha-tip.dll (x64)
 # -Vulkan でVulkan版llama（vendor/dist-windows-vulkan）とリンクした一式を
 # windows/build-vulkan に作る（A/B比較用）。
+# -Version 0.18.0 で実行ファイルに入れる版を決める（無ければ git describe。make-installer.ps1 と CI が渡す）。
 #
 # EAPをContinueにする理由はbuild-llama.ps1のコメントを参照
 # （cmake等のstderr警告がリダイレクト環境でErrorRecord化するため）
-param([switch]$Vulkan)
+param([switch]$Vulkan, [string]$Version = "")
 
 $ErrorActionPreference = "Continue"
 
@@ -26,6 +27,7 @@ Write-Host "==> CMake configure"
 cmake -S $SrcDir -B $BuildDir -G Ninja `
     -DCMAKE_BUILD_TYPE=RelWithDebInfo `
     -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY `
+    "-DIROHA_VERSION=$Version" `
     @vulkanFlags
 if ($LASTEXITCODE -ne 0) { throw "CMake configure に失敗しました" }
 

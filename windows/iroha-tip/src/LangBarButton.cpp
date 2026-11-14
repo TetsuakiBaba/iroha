@@ -8,6 +8,7 @@
 #include <string>
 
 #include "TextService.h"
+#include "key_shortcut.h"
 
 namespace {
 
@@ -95,7 +96,15 @@ STDMETHODIMP LangBarButton::GetTooltipString(BSTR* tooltip) {
     const bool direct = owner_ && owner_->IsDirectMode();
     const bool privateMode = owner_ && owner_->IsPrivateMode();
     std::wstring text = direct ? L"iroha: 英数（クリックでかなに切替）" : L"iroha: かな（クリックで英数に切替）";
-    if (privateMode) text += L"\nプライベートモード（Ctrl+Alt+P で戻す）";
+    text += L"\n右クリックで設定を開く";
+    if (privateMode) {
+        const uint32_t shortcut = owner_->PrivateShortcut();
+        text += L"\nプライベートモード";
+        if (shortcut != 0) {
+            const std::string key = iroha::KeyShortcut::Decode(shortcut).Text();
+            text += L"（" + std::wstring(key.begin(), key.end()) + L" で戻す）";
+        }
+    }
     *tooltip = SysAllocString(text.c_str());
     return *tooltip ? S_OK : E_OUTOFMEMORY;
 }

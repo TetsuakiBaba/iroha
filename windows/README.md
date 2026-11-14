@@ -101,7 +101,7 @@ windows\build\iroha-cli\iroha-cli.exe lattice-parity <macOS版の出力.jsonl> -
 `iroha-engine` の `ZenzEngine` は macOS版の `ZenzEngine.swift` を移したもの。デコーダ専用のモデル（zenz）と
 エンコーダ・デコーダ型のモデル（既定の iroha-kkc-v1、文字単位 T5）を同じプロンプト形式で動かす。
 生成（第一候補・n-best）・候補の採点（`Score`）・LoRA アダプタ・読み制約の設定に対応。
-文字ごとの自信度（`convertWithConfidence`。「AIで直す」の判定に使う）は未移植。
+文字ごとの自信度（macOS版の `convertWithConfidence`。「AIで直す」の判定に使う）は `ConvertScored` が返す。
 
 ```powershell
 # モデルの生成と採点を macOS版の出力（iroha-cli ajimee-dump）と突き合わせる。同じモデルを IROHA_MODEL で指定する
@@ -137,7 +137,7 @@ $env:IROHA_LATTICE = "always"; windows\build\iroha-cli\iroha-cli.exe ajimee test
 - 変換サーバは「学習 → ユーザ辞書 → 長い読みの区切り（`ChunkedConversionEngine`、80文字超）→ 異体字（`VariantKanjiEngine`）→
   辞書ラティスの候補をモデルで再採点（`LatticeRescoringEngine`）→ モデル」の順に重ねる（macOS版 iroha-cli の makeEngine と同じ順）。
   候補を複数求められたとき（候補ウィンドウ）だけ辞書ラティスを使い、全体の変換（候補1つ）はモデルの生成に任せる。
-  辞書は実行ファイルと同じフォルダの `Dictionary`（`install-tip.ps1`・配布zipの `install.ps1` がコピーする）。
+  辞書は実行ファイルと同じフォルダの `Dictionary`（`install-tip.ps1`・インストーラーが置く）。
   学習とユーザ辞書は macOS版の今の仕様（2026-11-13 に合わせた）:
   学習は「読み全体 → 確定文字列」と「直す前にエンジンが出していた結果」を覚え、エンジンがまた同じ結果を出したときだけ
   差し替える（差し替えた結果をエンジンの結果に戻して確定したら消す。文節単位の学習は読み込み時に捨てる）。
@@ -209,7 +209,7 @@ windows\build\iroha-cli\iroha-cli.exe session --interval 120 "kyouhaiitenkidesun
   全角（`"fullWidthSpace": false` で半角）。合成中の矢印は握りつぶし、IME が扱わないキー（Tab・Ctrl+S など）は
   確定してからアプリに渡す（**TSF で OnKeyDown が「食わない」と返したキーがアプリに届くことは、実機で確かめる**）
 - 候補の数は設定画面の「入力」タブ（`config.json` の `candidateCount`、既定 8。macOS版と同じ）
-- 区切り記号で囲んだ英字入力（macOS版では開発者モードの項目。Windows版は `config.json` の `"delimitedAlphabet": true` で使う）:
+- 区切り記号で囲んだ英字入力（macOS版と同じく開発者モードの項目。設定 > 入力 の「区切り記号で英字を入力」、`delimitedAlphabet`）:
   かな入力のまま「_」から「_」までを打ったとおりの英字にする（「kyouha_iPhone_wo」→「今日はiPhoneを」）。Shift+Space で
   英字の中にスペース、「__」で記号そのもの。記号は `delimitedAlphabetStart`・`delimitedAlphabetEnd` で変えられる
 - 候補ウィンドウは 9 件ずつの列で、候補が 1 列に収まらないときは Tab で列を横に並べた表に広げる（もう 1 度で 1 列に戻す）。
@@ -221,7 +221,7 @@ windows\build\iroha-cli\iroha-cli.exe session --interval 120 "kyouhaiitenkidesun
 ## 予測変換・変換ルール・プライベートモード・変換記録
 
 macOS版の同じ機能を移した（2026-11-13）。ファイルの形式は macOS版と同じで、設定画面の「入力」「変換ルール」
-「学習・記録」タブから切り替え・編集する（変更は Reload で変換サーバにすぐ効く）。
+「辞書・学習」のページから切り替え・編集する（変更は Reload で変換サーバにすぐ効く）。
 
 - 予測変換（既定 OFF）: 入力履歴（`%LOCALAPPDATA%\iroha\input-history\<コンピュータ名>.json`、`InputHistoryStore`）から、
   読みの先頭が一致する語を、読みが 2 文字以上のときにカーソルの下の小窓に出す。Tab・↓ で選び、選んだまま打つと
@@ -312,7 +312,7 @@ macOS版の「選択テキストのAI編集」（ほかのアプリで選んだ�
 
 ### AIで直す
 
-macOS版で開発者モードにだけある「AIで直す」も移した（2026-11-13。`config.json` の `"aiFix": true` で使う。既定 OFF）。
+macOS版で開発者モードにだけある「AIで直す」も移した（2026-11-13。設定 > 入力 の開発者モードの項目、`aiFix`。既定 OFF）。
 入力が止まって 500ms たったら、モデル単体でもう一度変換して文字ごとの自信度（読み制約を満たす 1 位と 2 位の
 トークンの対数確率の差。`ZenzEngine::ConvertScored` が返す）を求め、表示中の変換と同じで最小の差が閾値
 （`aiFixThreshold`、既定 1.0）より小さければ、カーソルの下に「AIで直す（Ctrl+Alt+A）」を出す。キー（`aiFixShortcut`）を押すと、
@@ -452,6 +452,37 @@ $env:IROHA_TERM_DICTIONARIES = "installed"
 windows\build\iroha-cli\iroha-cli.exe lattice goenseihaien
 ```
 
+## 配布（インストーラーと自動アップデート）
+
+2026-11-14 に作った。配布物は `iroha-<版>-windows-x64-setup.exe` だけ（zip は置かない。macOS版のアップデータは
+「iroha- で始まり .zip で終わる」ファイルを取るので、Windows の zip を同じ Release に置くと取り違える）。
+
+- 作り方: `windows\scripts\make-installer.ps1 [-Version 0.18.0]`（ビルドとテストのあと、一式を %TEMP% に集めて
+  Inno Setup 6 の `windows\installer\iroha.iss` でまとめる。出力は `windows\build\installer\`）。Inno Setup は
+  `winget install JRSoftware.InnoSetup`。リリースは `.github/workflows/release.yml` の Windows のジョブがタグの版で作る
+- インストーラーがすること: 変換サーバ・設定画面を止め、読み込まれている `iroha-tip.dll` は名前を変えて退避してから
+  新しいものを置いて TSF に登録（使っているアプリを閉じる仕組みは使わない。TIP はすべてのアプリに読み込まれているため）、
+  辞書・記号のデータ・ライセンスの全文を置き、変換サーバのログオン時の起動を HKLM の Run に登録（以前の手作業の
+  HKCU の登録は消す）、変換モデルが無ければ取得（大きさと SHA-256 は macOS版の `ModelDownloader.swift` と同じ）、
+  変換サーバを普段のユーザの権限で起動する。スタートメニューに「iroha の設定」、「インストールされているアプリ」に
+  アンインストールの項目を作る。アンインストールしても `%LOCALAPPDATA%\iroha`（学習・辞書・設定・モデル）は残す
+- `AppId`（iroha.iss）は変えない（変えると別のアプリとして入り、アップデートで上書きされなくなる）
+- 自動アップデート（macOS版 `UpdateChecker` と同じ考え方）: 変換サーバが 1 時間ごとに確認の時期（前の確認から 24 時間）かを
+  見て、時期なら `iroha-settings.exe --check-update` を起動する。設定画面が GitHub の `releases/latest`（プレリリースと
+  下書きは返らない）を読み、新しい版があれば知らせる（アップデート／リリースノート／閉じる、自動のときは「この版を
+  スキップ」）。「アップデート」でインストーラーを落とし、大きさと SHA-256（GitHub の asset の `digest`）を照合してから
+  `/SILENT` で起動する。インストーラーは自分で管理者の許可を求める（設定画面から昇格させると、変換サーバを普段のユーザで
+  起動し直せない）。確認した記録は `%LOCALAPPDATA%\iroha\update.json`（設定画面が書き、変換サーバは読むだけ）。
+  手動の確認と自動の確認の ON/OFF は 設定 > 情報 > アップデート（`autoUpdateCheck`、既定 ON）。
+  確認先は `updateCheckURL` で差し替えられる（プレリリースで試すとき。`file:///` も読める）
+- 版: `windows/CMakeLists.txt` が `IROHA_VERSION`（無ければ `git describe --match "v[0-9]*"`）を各実行ファイルの
+  VERSIONINFO と `IROHA_VERSION` の定義に入れる（`shared/version.rc.in`）。開発版の「0.17.1-29-gcf75edd」は、
+  アップデートの確認では 0.17.1 として比べる（`Update::ComparableVersion`）
+- アイコン: `windows/resources/iroha.ico`（`windows/scripts/make-icon.py` が macOS版の AppIcon.icns から余白を詰めて作る）。
+  TIP・設定画面・変換サーバ・インストーラーが同じものを使う
+- 署名はしていない（コード署名の証明書が無い）。ブラウザで落としたインストーラーは SmartScreen が「不明な発行元」として
+  止めることがある。アップデートで落としたものは SHA-256 を照合している（GitHub のアカウントが乗っ取られた場合は防げない）
+
 ## 開発メモ
 
 - ビルド環境: VS 2022の「C++によるデスクトップ開発」+ cmake/ninja。
@@ -488,7 +519,7 @@ windows\build\iroha-cli\iroha-cli.exe lattice goenseihaien
       言語バーの入力モードボタン「あ/A」＝クリックで切替・テーマ連動アイコン）
 - [x] M6a: 設定ウィンドウ（iroha-settings.exe: モデル選択・ダウンロード・切替、
       ユーザ辞書の一覧/追加/削除、学習リセット。あ/Aボタン右クリックで起動。
-      config.json + IPCのReloadでサーバへ即時反映）と配布用バンドル（make-bundle.ps1）
+      config.json + IPCのReloadでサーバへ即時反映）
 - [x] M7a: 辞書ラティスのC++移植（`iroha-core/src/lattice/`。macOS版の候補の並びと一致を確認）
 - [x] M7b: モデルの採点・T5（iroha-kkc-v1）対応と、辞書ラティスの候補の再採点（`LatticeRescoringEngine`）。
       変換サーバに組み込み、既定のモデルを iroha-kkc-v1 に変更。候補ウィンドウのページ送り
@@ -509,7 +540,8 @@ windows\build\iroha-cli\iroha-cli.exe lattice goenseihaien
 - [x] M7g: macOS版のキーの扱い（表示形・英字入力・文節の打ち直し・確定の取り消し・句読点の切り替え）、
       予測変換・変換ルール・プライベートモード・変換記録と、設定画面の「入力」「変換ルール」「学習・記録」タブ
 - [ ] M5b: UIlessモード（ITfCandidateListUIElement。タスクバー検索ボックス等）
-- [ ] M6b: 製品化の残り（インストーラ/署名、release.ymlの両OS対応、UIA対応）
+- [x] M6b: インストーラー（Inno Setup）・自動アップデート・release.yml の Windows のジョブ・アイコンと版の情報
+- [ ] M6c: コード署名（証明書が要る）
 
 参考実装: CorvusSKK（構成の手本）、Microsoft textservice step01-06（チュートリアル）、
 SampleIME（登録・UIlessの正解集）、mozc `src/win32/tip/`（完成形）。

@@ -69,6 +69,19 @@ struct KeyShortcut {
         return shortcut;
     }
 
+    // 「Ctrl+Alt+P」の形に書く（Parse の逆。表示用）
+    std::string Text() const {
+        std::string text;
+        if (control) text += "Ctrl+";
+        if (alt) text += "Alt+";
+        if (shift) text += "Shift+";
+        if (vk == 0x0D) return text + "Enter";
+        if (vk == 0x20) return text + "Space";
+        if (vk == 0x09) return text + "Tab";
+        if (vk >= 0x70 && vk <= 0x7B) return text + "F" + std::to_string(vk - 0x70 + 1);
+        return text + static_cast<char>(vk);
+    }
+
     uint32_t Encode() const {
         return vk | (control ? 1u << 16 : 0) | (alt ? 1u << 17 : 0) | (shift ? 1u << 18 : 0);
     }

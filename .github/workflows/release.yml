@@ -7,8 +7,27 @@ on:
 permissions:
   contents: write # gh release create
 
+# 1 つのタグで macOS・Windows・Linux を作り、1 つの Release に載せる（CLAUDE.md「両プラットフォームのリリース方針」）。
+# 下書きの Release を作る → 各 OS のジョブが成果物を載せる → 全部そろったら公開する。
+# 公開の前に片方の OS の分しか無い状態を作らない（アップデータが自分の OS の配布物を見つけられなくなるため）。
+# 配布物の名前: macOS は iroha-<版>.zip（配布済みの UpdateChecker が「iroha- で始まり .zip で終わる」ものを取るので変えない）、
+# Windows は iroha-<版>-windows-x64-setup.exe（.zip にしない）
 jobs:
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          PRERELEASE=""
+          case "$GITHUB_REF_NAME" in *-*) PRERELEASE="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "iroha ${GITHUB_REF_NAME#v}" --generate-notes $PRERELEASE
+
   release:
+    needs: draft
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -104,11 +123,72 @@ jobs:
       - name: Verify Gatekeeper acceptance
         run: spctl --assess --type execute --verbose=4 macos/.build/iroha.app
 
-      - name: Create GitHub Release
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "iroha-$VERSION.zip" --clobber
+
+  # Windows版（iroha-<版>-windows-x64-setup.exe。Inno Setup のインストーラー。設定画面のアップデータがこれを取る）
+  windows:
+    needs: draft
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache llama.cpp static libs
+        id: llama-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/dist-windows
+          key: llama-${{ runner.os }}-${{ runner.arch }}-b10689-${{ hashFiles('patches/llama-cpp-zenz-pretokenizer.patch', 'windows/scripts/build-llama.ps1') }}
+
+      - name: Build llama.cpp
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File windows/scripts/build-llama.ps1 2>&1
+          $out | ForEach-Object { Write-Host $_ }
+          if ($LASTEXITCODE -ne 0) {
+            ($out | Select-Object -Last 25) | ForEach-Object { Write-Host "::error::$_" }
+            exit 1
+          }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+
+      # ビルド・単体テスト・辞書と記号のデータの取得・インストーラーの作成（版はタグから）
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = "$env:GITHUB_REF_NAME" -replace "^v", ""
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File windows/scripts/make-installer.ps1 -Version $version 2>&1
+          $out | ForEach-Object { Write-Host $_ }
+          if ($LASTEXITCODE -ne 0) {
+            ($out | Select-Object -Last 25) | ForEach-Object { Write-Host "::error::$_" }
+            exit 1
+          }
+
+      - name: Upload to GitHub Release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          PRERELEASE=""
-          case "$GITHUB_REF_NAME" in *-*) PRERELEASE="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" "iroha-$VERSION.zip" \
-            --title "iroha $VERSION" --generate-notes $PRERELEASE
+          gh release upload "$env:GITHUB_REF_NAME" "windows/build/installer/iroha-$env:VERSION-windows-x64-setup.exe" --clobber
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+  # 全部の OS の成果物がそろったら公開する（どれかが失敗したら下書きのまま残る。直してから再実行するか、手で公開する）
+  publish:
+    needs: [release, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false

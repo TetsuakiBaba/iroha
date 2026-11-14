@@ -19,6 +19,8 @@ add_library(iroha-tip SHARED
     src/iroha-tip.rc
 )
 target_include_directories(iroha-tip PRIVATE ../shared)
+# 版の情報（アイコンは iroha-tip.rc の 1 番。TSF のプロファイルのアイコンとして番号で指している）
+iroha_version_resource(iroha-tip "iroha 日本語入力 (TSF)" "iroha-tip.dll" "VFT_DLL" FALSE)
 
 target_compile_features(iroha-tip PRIVATE cxx_std_17)
 target_compile_definitions(iroha-tip PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00)

@@ -61,6 +61,8 @@ public:
     bool IsDirectMode() const { return directMode_; }
     // プライベートモードか（言語バーのアイコンに印を付ける）
     bool IsPrivateMode() const { return privateMode_; }
+    // プライベートモードを切り替えるキー（設定 privateModeHotkey。変換サーバの返事で受け取る）。割り当てが無ければ 0
+    uint32_t PrivateShortcut() const { return privateShortcut_; }
     void OnModeButtonClicked();
 
 private:

@@ -57,6 +57,7 @@ using std::min;
 #include "term_dictionary_fetcher.h"
 #include "typo_normalizer_fetcher.h"
 #include "ui.h"
+#include "updater.h"
 #include "voice_recognizer.h"
 
 #pragma comment(linker, \
@@ -86,17 +87,22 @@ struct KnownModel {
     const wchar_t* label;
     const wchar_t* fileName;
     const wchar_t* url;
+    // 取得したファイルの照合（途中で切れた・差し替わったファイルを置かない）。0・空なら照合しない
+    uintmax_t bytes;
+    const char* sha256;
 };
 const KnownModel kKnownModels[] = {
+    // 大きさ・SHA-256 は macOS版の ModelDownloader.swift・fetch-model.ps1・インストーラー（installer/iroha.iss）と合わせる
     {L"iroha-kkc-v1（既定・文字単位 T5・約 82MB）",
      L"iroha-kkc-v1-Q5_K_M.gguf",
-     L"https://github.com/TetsuakiBaba/iroha/releases/download/iroha-kkc-v1/iroha-kkc-v1-Q5_K_M.gguf"},
+     L"https://github.com/TetsuakiBaba/iroha/releases/download/iroha-kkc-v1/iroha-kkc-v1-Q5_K_M.gguf", 81535360,
+     "f060e259dbed28754f71e1634bc01a5d9d735d519f8ff72c333cac77c859efda"},
     {L"zenz-v3.1-small（以前の既定・約 70MB）",
      L"zenz-v3.1-small-Q5_K_M.gguf",
-     L"https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf/resolve/main/ggml-model-Q5_K_M.gguf"},
+     L"https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf/resolve/main/ggml-model-Q5_K_M.gguf", 0, ""},
     {L"zenz-v3.1-xsmall（高速・軽量・約 21MB）",
      L"zenz-v3.1-xsmall-Q5_K_M.gguf",
-     L"https://huggingface.co/Miwa-Keita/zenz-v3.1-xsmall-gguf/resolve/main/ggml-model-Q5_K_M.gguf"},
+     L"https://huggingface.co/Miwa-Keita/zenz-v3.1-xsmall-gguf/resolve/main/ggml-model-Q5_K_M.gguf", 0, ""},
 };
 
 // 部品の番号
@@ -189,6 +195,8 @@ enum ControlId {
     // 情報
     kIdGitHub,
     kIdDataFolder,
+    kIdAutoUpdate,
+    kIdCheckUpdate,
     kIdDeveloperMode,
 };
 
@@ -396,6 +404,7 @@ struct App {
     bool downloading = false;
     // 情報
     HWND gitHub = nullptr, dataFolder = nullptr, developerToggle = nullptr;
+    HWND autoUpdateToggle = nullptr, checkUpdate = nullptr;
     Row* licenseTypoRows[16] = {};
     std::vector<Row*> licenseRows;
 
@@ -991,6 +1000,16 @@ void App::BuildAboutPage() {
                   L"ユーザ辞書・変換ルール・学習・入力履歴・変換記録・変換モデル・設定をこのフォルダに保存します。")
         ->right = {{dataFolder, 130}};
 
+    page->AddHeader(L"アップデート");
+    autoUpdateToggle = MakeToggle(page, kIdAutoUpdate);
+    page->AddItem(L"アップデートを自動で確認", L"1 日 1 回、新しい版があるかを確かめます",
+                  L"ON にすると、変換サーバが 1 日 1 回 GitHub の最新のリリースを確かめ、新しい版があれば知らせます。"
+                  L"「アップデート」を選ぶとインストーラーをダウンロードし、大きさとチェックサムを照合してから入れ替えます"
+                  L"（管理者の許可を求めます）。同じ版は 1 度だけ知らせ、「この版をスキップ」を選んだ版は知らせません。")
+        ->right = {{autoUpdateToggle, 110}};
+    checkUpdate = MakeButton(page, kIdCheckUpdate, L"今すぐ確認");
+    page->AddItem(L"アップデートを確認", L"新しい版があるかを今すぐ確かめます")->right = {{checkUpdate, 130}};
+
     page->AddHeader(L"ライセンス");
     const struct {
         const wchar_t* name;
@@ -1258,6 +1277,7 @@ void App::Refresh() {
     RefreshModelPage();
     // 情報
     SetCheck(developerToggle, developerMode);
+    SetCheck(autoUpdateToggle, config.autoUpdateCheck);
     RelayoutAll();
 }
 
@@ -1979,6 +1999,8 @@ struct DownloadContext {
     HWND window;
     std::wstring url;
     std::wstring destination;
+    uintmax_t bytes;
+    std::string sha256;
 };
 
 DWORD WINAPI DownloadThread(LPVOID param) {
@@ -1988,6 +2010,8 @@ DWORD WINAPI DownloadThread(LPVOID param) {
     std::filesystem::create_directories(std::filesystem::path(context->destination).parent_path(), ec);
     const HRESULT hr = URLDownloadToFileW(nullptr, context->url.c_str(), temp.c_str(), 0, nullptr);
     bool ok = SUCCEEDED(hr);
+    if (ok && context->bytes != 0) ok = std::filesystem::file_size(temp, ec) == context->bytes && !ec;
+    if (ok && !context->sha256.empty()) ok = iroha::TermDictionaryFetcher::Sha256Hex(temp) == context->sha256;
     if (ok) {
         std::filesystem::rename(temp, context->destination, ec);
         ok = !ec;
@@ -2003,7 +2027,8 @@ void App::OnModelDownload() {
     if (index < 0 || index >= static_cast<int>(ARRAYSIZE(kKnownModels))) return;
     downloading = true;
     RefreshModelPage();
-    auto* context = new DownloadContext{window, kKnownModels[index].url, ModelPath(kKnownModels[index].fileName).wstring()};
+    auto* context = new DownloadContext{window, kKnownModels[index].url, ModelPath(kKnownModels[index].fileName).wstring(),
+                                        kKnownModels[index].bytes, kKnownModels[index].sha256};
     HANDLE thread = CreateThread(nullptr, 0, DownloadThread, context, 0, nullptr);
     if (thread) {
         CloseHandle(thread);
@@ -2271,6 +2296,17 @@ void App::OnCommand(int id, int code, HWND control) {
     case kIdDataFolder:
         if (clicked) ShellExecuteW(window, L"open", DataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         return;
+    case kIdAutoUpdate:
+        if (clicked) Update([&](iroha::Config& c) { c.autoUpdateCheck = Checked(control); }, /*reload=*/false);
+        return;
+    case kIdCheckUpdate:
+        if (!clicked) return;
+        if (updater::CheckAndOffer(window, config, std::filesystem::path(DataDir()), IROHA_VERSION, /*manual=*/true) ==
+            updater::Result::Launched) {
+            // インストーラーが設定画面も入れ替えるので閉じる
+            DestroyWindow(window);
+        }
+        return;
     case kIdDeveloperMode:
         if (!clicked) return;
         // 開発者モードは表示だけを変える（変換サーバは読み直さなくてよい）
@@ -2455,6 +2491,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES | ICC_STANDARD_CLASSES};
     InitCommonControlsEx(&icc);
+    const std::wstring arguments = commandLine ? commandLine : L"";
+    // --check-update: 変換サーバが 1 日 1 回呼ぶ自動の確認（設定の窓は開かない。新しい版があれば知らせるだけ）
+    if (arguments.find(L"--check-update") != std::wstring::npos) {
+        const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        updater::CheckAndOffer(nullptr, iroha::LoadConfig(ConfigPath()), std::filesystem::path(DataDir()), IROHA_VERSION,
+                               /*manual=*/false);
+        if (SUCCEEDED(com)) CoUninitialize();
+        return 0;
+    }
     Gdiplus::GdiplusStartupInput gdiplusInput;
     ULONG_PTR gdiplusToken = 0;
     Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusInput, nullptr);
@@ -2473,7 +2518,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.hbrBackground = nullptr;
     wc.lpszClassName = L"IrohaSettings";
-    wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    // アイコンは版の情報と一緒に入れた 1 番（iroha_version_resource）
+    LoadIconMetric(instance, MAKEINTRESOURCEW(1), LIM_LARGE, &wc.hIcon);
+    LoadIconMetric(instance, MAKEINTRESOURCEW(1), LIM_SMALL, &wc.hIconSm);
     RegisterClassExW(&wc);
 
     const UINT dpi = GetDpiForSystem();
@@ -2483,7 +2530,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
                                   nullptr, instance, nullptr);
     if (!window) return 1;
     // --tab <名前> で開くページを選ぶ
-    const std::wstring arguments = commandLine ? commandLine : L"";
     if (const size_t option = arguments.find(L"--tab "); option != std::wstring::npos) {
         const std::wstring name = arguments.substr(option + 6, arguments.find(L' ', option + 6) - option - 6);
         for (size_t i = 0; i < g_app.nav.size(); ++i) {
