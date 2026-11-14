@@ -1,5 +1,6 @@
 import Foundation
 import IrohaCore
+import IrohaEngine
 import IrohaMLX
 
 // 変換エンジンの検証用CLIハーネス。
@@ -107,21 +108,9 @@ func romajiToKana(_ input: String) -> String {
     return composer.display
 }
 
-/// レーベンシュタイン距離（CER算出用）
+/// レーベンシュタイン距離（CER算出用。アプリ内ベンチマークと同じ実装）
 func editDistance(_ a: [Character], _ b: [Character]) -> Int {
-    if a.isEmpty { return b.count }
-    if b.isEmpty { return a.count }
-    var previous = Array(0...b.count)
-    var current = [Int](repeating: 0, count: b.count + 1)
-    for i in 1...a.count {
-        current[0] = i
-        for j in 1...b.count {
-            let substitution = previous[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1)
-            current[j] = min(previous[j] + 1, current[j - 1] + 1, substitution)
-        }
-        swap(&previous, &current)
-    }
-    return previous[b.count]
+    Benchmark.editDistance(a, b)
 }
 
 
@@ -190,27 +179,24 @@ func makeEngine(userData: UserDataMode = .ime) -> any ConversionEngine {
     let lattice = LatticeConverter.defaultDictionaryURL().map {
         LatticeConverter(dictionaryURL: $0) { termDictionary }
     }
-    func withLattice<Base: ConversionEngine & CandidateScorer>(_ base: Base) -> any ConversionEngine {
-        guard latticeMode != "off", let lattice else { return base }
-        return LatticeRescoringEngine(
-            base: base, lattice: lattice, usesLatticeForFirstCandidate: latticeMode == "always")
-    }
-    let core: any ConversionEngine
+    let latticeUse: EngineAssembly.LatticeUse =
+        latticeMode == "off" ? .off : latticeMode == "always" ? .firstCandidate : .candidates
+    let model: EngineAssembly.Model
     if env["IROHA_BACKEND"] == "mlx" {
         FileHandle.standardError.write("推論エンジン: MLX（IROHA_BACKEND=mlx）\n".data(using: .utf8)!)
         let path = env["IROHA_MODEL"].flatMap { $0.isEmpty ? nil : $0 } ?? ZenzEngine.defaultModelPath
-        core = withLattice(withDocumentNotation(MLXConversionEngine(
+        model = .mlx(MLXConversionEngine(
             modelPath: path, adapterPath: env["IROHA_LORA"], restrictLatinToReading: restrictLatin,
-            usesReadingConstraint: usesConstraint)))
+            usesReadingConstraint: usesConstraint))
     } else {
-        // 表記の好み（IROHA_DOCUMENTS）を採点に加える。指定が無ければ素通し（DocumentsCommand.swift）
-        core = withLattice(withDocumentNotation(zenz))
+        model = .llamaCpp(zenz)
     }
-    return LearningEngine(
-        base: UserDictionaryEngine(
-            base: ChunkedConversionEngine(base: VariantKanjiEngine(base: core)), dictionary: { store.current },
-            lattice: lattice),
-        dictionary: { learning.current })
+    // 表記の好み（IROHA_DOCUMENTS）を採点に加える。指定が無ければ素通し（DocumentsCommand.swift）
+    return EngineAssembly.make(
+        model: model, lattice: lattice, latticeUse: latticeUse,
+        notation: { DocumentNotationContext.shared.configuration },
+        userDictionary: { store.current },
+        learning: { learning.current })
 }
 
 func convertAndPrint(engine: any ConversionEngine, reading: String, context: String, count: Int = 1) async {
@@ -310,94 +296,38 @@ case "bench" where arguments.count >= 3:
                  pairs.count, exactMatches, accuracy, cer, totalMilliseconds / Double(pairs.count)))
 
 case "ajimee" where arguments.count >= 3:
-    // AJIMEE-Bench (azooKey/AJIMEE-Bench) 評価。
+    // AJIMEE-Bench (azooKey/AJIMEE-Bench) 形式の評価（iroha-bench-v1 も同じ形）。
     // zenzaiと同じ方式: グリーディ変換1候補を許容解リストと照合し、
     // acc@1（許容解のいずれかに完全一致）と MinCER（許容解との最小CERの平均）を報告する。
-    // MinCERの定義は同リポジトリ utils.py に準拠（CER = 編集距離 / 正解長、項目ごとに最小値をとり平均）。
-    struct AjimeeItem: Decodable {
-        let index: String
-        let contextText: String
-        let input: String
-        let expectedOutput: [String]
-        enum CodingKeys: String, CodingKey {
-            case index
-            case contextText = "context_text"
-            case input
-            case expectedOutput = "expected_output"
-        }
-    }
-    guard let data = FileManager.default.contents(atPath: arguments[2]),
-          let items = try? JSONDecoder().decode([AjimeeItem].self, from: data) else {
-        FileHandle.standardError.write("JSONが読めません: \(arguments[2])（scripts/fetch-ajimee.sh で取得できます）\n".data(using: .utf8)!)
+    // 採点・集計はアプリ内ベンチマーク（iroha-bench）と同じ `Benchmark`（IrohaCore）。
+    // JSON の配列（evaluation_items.json）と JSON Lines（配布用の .jsonl）のどちらも読める
+    let items: [Benchmark.Item]
+    do {
+        items = try Benchmark.loadItems(contentsOf: URL(fileURLWithPath: arguments[2]))
+    } catch {
+        FileHandle.standardError.write("評価セットが読めません: \(arguments[2])（\(error.localizedDescription)。scripts/fetch-ajimee.sh で取得できます）\n".data(using: .utf8)!)
         exit(1)
     }
     let engine = makeEngine(userData: .evaluation)
-    _ = try? await engine.convert(reading: "うぉーむあっぷ", context: "", candidateCount: 1)
+    await Benchmark.warmUp(engine: engine)
 
-    struct Tally {
-        var count = 0
-        var accAt1 = 0
-        var minCERSum = 0.0
-        mutating func add(hit: Bool, minCER: Double) {
-            count += 1
-            if hit { accAt1 += 1 }
-            minCERSum += minCER
-        }
-        var summary: String {
-            String(format: "acc@1 %d/%d (%.1f%%)  MinCER %.2f%%",
-                   accAt1, count, Double(accAt1) / Double(count) * 100,
-                   minCERSum / Double(count) * 100)
-        }
-    }
-    var withContext = Tally()
-    var withoutContext = Tally()
-    var totalMilliseconds = 0.0
-    // IROHA_TIMINGS=<path> で項目ごとの変換時間を TSV に書く（中央値・パーセンタイル・入力の長さ別の集計用）。
-    // prompt_ms 以降は NN の時間の内訳（入力の一括処理・1 トークンずつの llama_decode の合計と回数・
-    // 次のトークンを選ぶ CPU の処理。`InferenceTimer.Snapshot`）
-    var timings = ProcessInfo.processInfo.environment["IROHA_TIMINGS"].map { _ in
-        "index\treading_length\tcontext_length\tms\tprompt_ms\tdecode_ms\tdecode_steps\tselect_ms\n"
-    }
-    func milliseconds(_ duration: Duration) -> Double {
-        Double(duration.components.attoseconds) / 1e15 + Double(duration.components.seconds) * 1e3
-    }
+    var results: [Benchmark.ItemResult] = []
     for item in items {
-        let timer = timings == nil ? nil : InferenceTimer()
-        let start = ContinuousClock.now
-        let result = await InferenceTimer.$current.withValue(timer) {
-            (try? await engine.convert(
-                reading: item.input, context: item.contextText, candidateCount: 1
-            ).first) ?? item.input
-        }
-        let elapsed = milliseconds(start.duration(to: .now))
-        totalMilliseconds += elapsed
-        if let parts = timer?.snapshot {
-            timings?.append("\(item.index)\t\(item.input.count)\t\(item.contextText.count)\t"
-                + String(format: "%.3f\t%.3f\t%.3f\t%d\t%.3f", elapsed, milliseconds(parts.prompt),
-                         milliseconds(parts.decode), parts.decodeSteps, milliseconds(parts.tokenSelection)) + "\n")
-        }
-        let hit = item.expectedOutput.contains(result)
-        let minCER = item.expectedOutput.map { reference in
-            Double(editDistance(Array(result), Array(reference))) / Double(max(reference.count, 1))
-        }.min() ?? 1.0
-        if item.contextText.isEmpty {
-            withoutContext.add(hit: hit, minCER: minCER)
-        } else {
-            withContext.add(hit: hit, minCER: minCER)
-        }
-        if !hit {
-            print("  ✗ [\(item.index)] \(item.input) -> \(result) （正解: \(item.expectedOutput.joined(separator: " / "))）")
+        let result = await Benchmark.run(item, engine: engine)
+        results.append(result)
+        if !result.hit {
+            print("  ✗ [\(item.index)] \(item.input) -> \(result.output) （正解: \(item.expectedOutput.joined(separator: " / "))）")
         }
     }
-    if withoutContext.count > 0 { print("文脈なし: \(withoutContext.summary)") }
-    if withContext.count > 0 { print("文脈あり: \(withContext.summary)") }
-    var total = Tally()
-    total.count = withContext.count + withoutContext.count
-    total.accAt1 = withContext.accAt1 + withoutContext.accAt1
-    total.minCERSum = withContext.minCERSum + withoutContext.minCERSum
-    print(String(format: "全体: %@  平均 %.1fms/変換", total.summary, totalMilliseconds / Double(total.count)))
-    if let path = ProcessInfo.processInfo.environment["IROHA_TIMINGS"], let timings {
-        try? timings.write(toFile: path, atomically: true, encoding: .utf8)
+    let summary = Benchmark.Summary(results)
+    if summary.withoutContext.count > 0 { print("文脈なし: \(summary.withoutContext.summaryText)") }
+    if summary.withContext.count > 0 { print("文脈あり: \(summary.withContext.summaryText)") }
+    print(String(format: "全体: %@  平均 %.1fms/変換", summary.total.summaryText, summary.latency.mean))
+    // IROHA_TIMINGS=<path> で項目ごとの変換時間を TSV に書く（中央値・パーセンタイル・入力の長さ別の集計用。
+    // testdata/speed/summarize.py）。prompt_ms 以降は NN の時間の内訳（入力の一括処理・1 トークンずつの
+    // llama_decode の合計と回数・次のトークンを選ぶ CPU の処理。`InferenceTimer.Snapshot`）
+    if let path = ProcessInfo.processInfo.environment["IROHA_TIMINGS"] {
+        try? Benchmark.timingsTSV(results).write(toFile: path, atomically: true, encoding: .utf8)
     }
 
 case "ajimee-dump" where arguments.count >= 4:

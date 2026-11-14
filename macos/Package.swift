@@ -40,7 +40,7 @@ let package = Package(
         // IME本体（InputMethodKit）。scripts/install.shで.appバンドルに組み立てる
         .executableTarget(
             name: "iroha",
-            dependencies: ["IrohaCore", "IrohaMLX", "IrohaDocuments", "IrohaVoice"],
+            dependencies: ["IrohaCore", "IrohaEngine", "IrohaMLX", "IrohaDocuments", "IrohaVoice"],
             swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
             // sqlite3: macOSのユーザ辞書（TextReplacements.db）の読み取りに使う
             linkerSettings: llamaLinkerSettings + [.linkedLibrary("sqlite3")]
@@ -64,7 +64,7 @@ let package = Package(
         // 変換エンジンをコマンドラインで試す検証用ハーネス
         .executableTarget(
             name: "iroha-cli",
-            dependencies: ["IrohaCore", "IrohaMLX", "IrohaDocuments", "IrohaVoice"],
+            dependencies: ["IrohaCore", "IrohaEngine", "IrohaMLX", "IrohaDocuments", "IrohaVoice"],
             swiftSettings: [.unsafeFlags(llamaHeaderFlags)],
             linkerSettings: llamaLinkerSettings
         ),
@@ -101,6 +101,21 @@ let package = Package(
             ],
             swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
             linkerSettings: llamaLinkerSettings
+        ),
+        // かな漢字変換エンジンの組み立て（デコレータの重ね方）。IME 本体・iroha-cli・iroha-bench が同じものを使う
+        .target(
+            name: "IrohaEngine",
+            dependencies: ["IrohaCore", "IrohaMLX", "IrohaDocuments"],
+            swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
+            linkerSettings: llamaLinkerSettings
+        ),
+        // 変換の精度と速度のベンチマーク（設定 > モデル > ベンチマーク）。計測中も入力を止めないよう、
+        // また MLX のメモリや異常終了を IME から切り離すため別プロセスで動かす（BenchmarkCoordinator）
+        .executableTarget(
+            name: "iroha-bench",
+            dependencies: ["IrohaCore", "IrohaEngine", "IrohaMLX"],
+            swiftSettings: [.swiftLanguageMode(.v5)] + [.unsafeFlags(llamaHeaderFlags)],
+            linkerSettings: llamaLinkerSettings + [.linkedFramework("IOKit")]
         ),
         .testTarget(
             name: "IrohaTrainTests",

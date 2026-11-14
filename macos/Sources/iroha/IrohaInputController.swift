@@ -3,6 +3,7 @@ import Cocoa
 import InputMethodKit
 import IrohaCore
 import IrohaDocuments
+import IrohaEngine
 import IrohaMLX
 import IrohaVoice
 
@@ -65,12 +66,14 @@ final class IrohaInputController: IMKInputController {
     /// 辞書ラティス（azooKey辞書）は候補ウィンドウの候補を読みが正しい語に限るためと、
     /// ユーザ辞書の語を読みの途中に当ててよいか（語の境目か）を決めるために使う。
     /// 辞書がバンドルに無ければzenz単体で動く
-    private static let engine = LearningEngine(
-        base: UserDictionaryEngine(
-            base: ChunkedConversionEngine(base: VariantKanjiEngine(base: makeCoreEngine())),
-            dictionary: { PrivateModeSettings.userDictionary },
-            lattice: lattice),
-        dictionary: { LearningSettings.dictionary })
+    /// 重ね方は iroha-cli・iroha-bench と共通（`EngineAssembly`）
+    private static let engine = EngineAssembly.make(
+        model: engineBackend == .mlx ? .mlx(mlxEngine) : .llamaCpp(zenz),
+        lattice: lattice,
+        latticeUse: .candidates,
+        notation: { DocumentNotationSettings.configuration },
+        userDictionary: { PrivateModeSettings.userDictionary },
+        learning: { LearningSettings.dictionary })
 
     /// 辞書ラティス。辞書がバンドルに無ければ nil
     private static let lattice: LatticeConverter? = {
@@ -116,28 +119,6 @@ final class IrohaInputController: IMKInputController {
         typoNormalizerResolved = false
         typoNormalizerCache = nil
         typoNormalizerLock.unlock()
-    }
-
-    private static func makeCoreEngine() -> any ConversionEngine {
-        switch engineBackend {
-        case .llamaCpp: return withLattice(withDocumentNotation(zenz))
-        case .mlx: return withLattice(withDocumentNotation(mlxEngine))
-        }
-    }
-
-    /// 自分の原稿の表記（`DocumentNotationSettings`）をモデルの採点に加える。
-    /// 設定が OFF・プライベートモード・文書が無いときは素通し（採点を呼ばない）
-    private static func withDocumentNotation<Base: ConversionEngine & CandidateScorer>(
-        _ base: Base
-    ) -> NotationPreferenceEngine<Base> {
-        NotationPreferenceEngine(base: base, tokenizer: SystemReadingTokenizer()) {
-            DocumentNotationSettings.configuration
-        }
-    }
-
-    private static func withLattice<Base: ConversionEngine & CandidateScorer>(_ base: Base) -> any ConversionEngine {
-        guard let lattice else { return base }
-        return LatticeRescoringEngine(base: base, lattice: lattice)
     }
 
     private enum Mode {

@@ -12,6 +12,8 @@ echo "==> ビルド"
 swift build --build-system native -c release --product iroha
 # 追加学習ヘルパー（MLX）。Metal カーネルは swift build では作れないので専用スクリプトで生成する
 swift build --build-system native -c release --product iroha-train
+# 変換のベンチマークのヘルパー（設定 > モデル > 変換のベンチマーク）
+swift build --build-system native -c release --product iroha-bench
 ./scripts/build-mlx-metallib.sh release
 ./scripts/fetch-dictionary.sh
 ./scripts/fetch-symbols.sh

@@ -2108,6 +2108,7 @@ private struct ModelSettingsTab: View {
 
             if developerMode {
                 TrainingSection()
+                BenchmarkSection()
             }
 
             AIServiceSection()
@@ -2507,6 +2508,32 @@ private struct TypoNormalizerLicenseRows: View {
     }
 }
 
+/// 入れている評価セット（変換のベンチマーク）の出典とライセンス（入れているときだけ出す）。入れたときの記録から取る
+private struct BenchmarkLicenseRows: View {
+    @ObservedObject private var coordinator = BenchmarkCoordinator.shared
+
+    var body: some View {
+        Group {
+            ForEach(coordinator.installed) { record in
+                LicenseRow(
+                    name: record.name, holder: "Tetsuaki Baba", license: record.license,
+                    note: "変換のベンチマークの評価セット", url: "https://github.com/TetsuakiBaba/iroha")
+                ForEach(record.sources, id: \.self) { source in
+                    LicenseRow(
+                        name: source.name, holder: source.holder, license: source.license,
+                        note: "\(record.name) の出典", url: source.url)
+                }
+            }
+            if !coordinator.installed.isEmpty {
+                Text("評価セットは、出典の文を文に分け、読みを付けるなど加工して作っています。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { coordinator.refresh() }
+    }
+}
+
 /// 入れている専門辞書の出典とライセンス（入れているときだけ出す）。入れたときの記録から取る
 private struct TermDictionaryLicenseRows: View {
     @ObservedObject private var downloader = TermDictionaryDownloader.shared
@@ -2694,6 +2721,7 @@ private struct AboutSettingsTab: View {
                     url: "https://fonts.google.com/specimen/Tsukimi+Rounded")
                 TypoNormalizerLicenseRows()
                 TermDictionaryLicenseRows()
+                BenchmarkLicenseRows()
             }
 
             Section("開発者向け") {
@@ -2704,7 +2732,7 @@ private struct AboutSettingsTab: View {
                         + "区切り記号で英字を入力・タップ入力（加速度センサを利用するとき）・AIで直す、"
                         + "辞書・学習: 自分の原稿に合わせる・記号・顔文字・絵文字を候補に出す、"
                         + "選択テキスト: 除外するアプリ、モデル: 推論エンジン・モデルファイルの指定・irohaを再起動・"
-                        + "自分の入力で追加学習、情報: 推論の時間の表示・加速度センサを利用する）。"
+                        + "自分の入力で追加学習・変換のベンチマーク、情報: 推論の時間の表示・加速度センサを利用する）。"
                         + "開発者モードの項目には、項目名の右に紫色の「開発者」の印を付けています。"
                         + "見出しに印があるものは、その節全体が開発者モードの項目です。"
                         + "OFFにしても項目が見えなくなるだけで、変えた設定はそのまま効きます"

@@ -25,6 +25,12 @@ if [ ! -f .build/release/iroha-train ] || [ ! -f .build/release/mlx-swift_Cmlx.b
   exit 1
 fi
 cp .build/release/iroha-train "$APP/Contents/MacOS/iroha-train"
+# 変換のベンチマークのヘルパー（設定 > モデル > 変換のベンチマーク が Process で起動する）
+if [ ! -f .build/release/iroha-bench ]; then
+  echo "error: iroha-bench がありません。swift build -c release --product iroha-bench を実行してください" >&2
+  exit 1
+fi
+cp .build/release/iroha-bench "$APP/Contents/MacOS/iroha-bench"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/main.tiff Resources/en.tiff Resources/AppIcon.icns "$APP/Contents/Resources/"
 cp -R Resources/ja.lproj Resources/en.lproj "$APP/Contents/Resources/"
@@ -68,17 +74,19 @@ if [ -n "${BUILD_NUMBER:-}" ]; then
   plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$APP/Contents/Info.plist"
 fi
 
-# ネストした実行ファイル（iroha-train）は外側の署名に含まれないので先に個別に署名する
+# ネストした実行ファイル（iroha-train・iroha-bench）は外側の署名に含まれないので先に個別に署名する
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 if [ "$SIGN_IDENTITY" = "-" ]; then
   echo "==> 署名 (ad-hoc)"
   codesign --force --sign - "$APP/Contents/MacOS/iroha-train"
+  codesign --force --sign - "$APP/Contents/MacOS/iroha-bench"
   codesign --force --sign - "$APP"
 else
   echo "==> 署名 (Developer ID, hardened runtime)"
   TIMESTAMP="--timestamp"
   [ "${SIGN_TIMESTAMP:-1}" = "0" ] && TIMESTAMP="--timestamp=none"
   codesign --force --options runtime "$TIMESTAMP" --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/iroha-train"
+  codesign --force --options runtime "$TIMESTAMP" --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/iroha-bench"
   # 本体にはマイクの権限を付ける（「こえ」モード。hardened runtime では権限ファイルに無い機器は使えない）
   codesign --force --options runtime "$TIMESTAMP" --entitlements Resources/iroha.entitlements \
     --sign "$SIGN_IDENTITY" "$APP"

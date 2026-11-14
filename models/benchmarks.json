@@ -1,0 +1,107 @@
+{
+  "formatVersion": 1,
+  "benchmarks": [
+    {
+      "id": "iroha-bench-v1-quick",
+      "name": "iroha-bench-v1（抜粋）",
+      "summary": "学習データ（zenz-v2.5-dataset の出典）と重ならない文から作った評価セット。書き言葉（科研費の研究概要・法令・特許・青空文庫）と話し言葉（雑談の対話）の 9 出典。正解は 1 項目に 1 つで、表記の揺れも誤答になる。出典ごとに先頭 40 件を抜き出した 360 件。手早く比べるとき用。",
+      "items": 360,
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/benchmarks-v1/iroha-bench-v1-quick.jsonl",
+        "bytes": 173835,
+        "sha256": "4a0e622e05e74c13ce25267838922626528b721ff7f05aa32e1119811c21f39d"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "LLM-jp Corpus v4（ja_kaken・ja_e-gov・ja_patent・ja_aozorabunko）",
+          "holder": "LLM-jp コーパス構築 WG",
+          "license": "CC BY 4.0",
+          "url": "https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4"
+        },
+        {
+          "name": "RealPersonaChat",
+          "holder": "nu-dialogue",
+          "license": "CC BY-SA 4.0",
+          "url": "https://github.com/nu-dialogue/real-persona-chat"
+        },
+        {
+          "name": "Multi-Relational Multi-Party Chat Corpus",
+          "holder": "nu-dialogue",
+          "license": "CC BY-SA 4.0",
+          "url": "https://github.com/nu-dialogue/multi-relational-multi-party-chat-corpus"
+        },
+        {
+          "name": "JMRD",
+          "holder": "京都大学 黒橋・褚・村脇研究室",
+          "license": "CC BY-SA 4.0",
+          "url": "https://github.com/ku-nlp/JMRD"
+        },
+        {
+          "name": "J-CRe3",
+          "holder": "理化学研究所 ほか",
+          "license": "CC BY-SA 4.0",
+          "url": "https://github.com/riken-grp/J-CRe3"
+        },
+        {
+          "name": "感想付きニュース雑談対話コーパス",
+          "holder": "Fuka Narita",
+          "license": "MIT",
+          "url": "https://github.com/fukanarita/newschat-with-impression"
+        }
+      ],
+      "notice": "iroha-bench-v1 の newschat の項目は、感想付きニュース雑談対話コーパス（https://github.com/fukanarita/newschat-with-impression）を加工したもので、次の条件で配布されています。\n\nMIT License\n\nCopyright (c) 2023 Fuka Narita\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
+    },
+    {
+      "id": "iroha-bench-v1",
+      "name": "iroha-bench-v1",
+      "summary": "学習データ（zenz-v2.5-dataset の出典）と重ならない文から作った評価セット。書き言葉（科研費の研究概要・法令・特許・青空文庫）と話し言葉（雑談の対話）の 9 出典。正解は 1 項目に 1 つで、表記の揺れも誤答になる。全 3253 件。モデルどうしの差はこちらで比べる。",
+      "items": 3253,
+      "file": {
+        "url": "https://github.com/TetsuakiBaba/iroha/releases/download/benchmarks-v1/iroha-bench-v1.jsonl",
+        "bytes": 1581445,
+        "sha256": "8283da363445fcce9b39b5081a732f9250005a9839f4cab803e02bbfc3bff1e1"
+      },
+      "license": "CC BY-SA 4.0",
+      "sources": [
+        {
+          "name": "LLM-jp Corpus v4（ja_kaken・ja_e-gov・ja_patent・ja_aozorabunko）",
+          "holder": "LLM-jp コーパス構築 WG",
+          "license": "CC BY 4.0",
+          "url": "https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v4"
+        },
+        {
+          "name": "RealPersonaChat",
+          "holder": "nu-dialogue",
+          "license": "CC BY-SA 4.0",
+          "url": "https://github.com/nu-dialogue/real-persona-chat"
+        },
+        {
+          "name": "Multi-Relational Multi-Party Chat Corpus",
+          "holder": "nu-dialogue",
+          "license": "CC BY-SA 4.0",
+          "url": "https://github.com/nu-dialogue/multi-relational-multi-party-chat-corpus"
+        },
+        {
+          "name": "JMRD",
+          "holder": "京都大学 黒橋・褚・村脇研究室",
+          "license": "CC BY-SA 4.0",
+          "url": "https://github.com/ku-nlp/JMRD"
+        },
+        {
+          "name": "J-CRe3",
+          "holder": "理化学研究所 ほか",
+          "license": "CC BY-SA 4.0",
+          "url": "https://github.com/riken-grp/J-CRe3"
+        },
+        {
+          "name": "感想付きニュース雑談対話コーパス",
+          "holder": "Fuka Narita",
+          "license": "MIT",
+          "url": "https://github.com/fukanarita/newschat-with-impression"
+        }
+      ],
+      "notice": "iroha-bench-v1 の newschat の項目は、感想付きニュース雑談対話コーパス（https://github.com/fukanarita/newschat-with-impression）を加工したもので、次の条件で配布されています。\n\nMIT License\n\nCopyright (c) 2023 Fuka Narita\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
+    }
+  ]
+}

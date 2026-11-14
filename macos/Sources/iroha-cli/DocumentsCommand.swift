@@ -60,12 +60,6 @@ final class DocumentNotationContext: @unchecked Sendable {
     }
 }
 
-/// かな漢字変換のモデルに表記の好みを重ねる（makeEngine から使う。設定が無ければ素通し）
-func withDocumentNotation<Base: ConversionEngine & CandidateScorer>(_ base: Base) -> NotationPreferenceEngine<Base> {
-    NotationPreferenceEngine(base: base, tokenizer: SystemReadingTokenizer()) {
-        DocumentNotationContext.shared.configuration
-    }
-}
 
 func runDocumentsCommand(_ arguments: [String]) async {
     guard let subcommand = arguments.first else {

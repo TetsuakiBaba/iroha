@@ -518,6 +518,22 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   エポック数・学習率は設定画面（`TrainingSettings`、同期しない）→ `iroha-train --epochs/--lr`。
   UI の文言は「記録を貯めるほど効く」を前に出す（少ない記録で効かせる方向に設計を戻さない）。
   zenz-v3.1-small は個人の記録の 96.9% を既に正解するので、学べる差分は少ない（2026-09-18 実測）
+- 変換のベンチマーク（設定 > モデル > 変換のベンチマーク、開発者モード。2026-11-14）は、評価セットを今動いているモデル・
+  推論エンジン・アダプタで 1 件ずつ変換し、精度（acc@1・MinCER。全体・文脈あり／なし・出典別）と 1 回の変換の時間を測る。
+  採点と集計は IrohaCore の `Benchmark`（`iroha-cli ajimee` も同じものを使う。速度の集計は `testdata/speed/summarize.py` と同じ定義）。
+  計測は別プロセス `iroha-bench`（`Contents/MacOS/`。`BenchmarkCoordinator` が起動し、標準出力の JSON Lines を受け取る）。
+  記録は `<データフォルダ>/logs/bench/<日時>-<ホスト名>.json` と `.tsv`（`IROHA_TIMINGS` と同じ列）。守ること:
+  ・**エンジンの重ね方は `EngineAssembly`（`macos/Sources/IrohaEngine/`）の 1 か所**。IME 本体・`iroha-cli`・`iroha-bench` が使う。
+    デコレータを足す・並べ替えるときはここを変える（IME だけに足すと、ベンチマークの数字が IME と合わなくなる）
+  ・ユーザ辞書・学習・自分の原稿の表記・専門辞書は使わない（ほかの Mac と比べるため。`iroha-cli ajimee` と同じ条件）。
+    条件は「モデルだけ」（`IROHA_LATTICE=off`）と「辞書ラティス + 再採点」（`always`）の 2 つ
+  ・速度を左右する状態（機種・チップ・OS・電源・低電力モード・計測前後の発熱の状態・計測中のキー入力の有無）を記録に残す
+  ・`iroha-bench` は終えるときに `_exit` を使う（`exit` だと llama.cpp の Metal の後始末が GGML_ASSERT で落ちる）
+  ・評価セットは .app に入れない。一覧は `models/benchmarks.json`、本体は Release `benchmarks-v1`（**必ず `--prerelease`**）、
+    作り方と公開は `./macos/scripts/publish-benchmarks.sh [--upload]`（全件の iroha-bench-v1 と、出典ごとに先頭 40 件の抜粋 360 件）。
+    入れた評価セットは `<データフォルダ>/benchmarks/<ID>.jsonl` と `<ID>.json`（出典・ライセンス・MIT の出典の許諾文の記録）。
+    **評価セットの中身を変えたら ID を変える**（同じ ID の結果どうしを比べるため）。`IROHA_BENCHMARK_CATALOG` でカタログを差し替えられる
+  ・Windows版・Linux版はまだ無い（第 3 段。カタログ・置き場所・記録の形は同じにする）
 - 既定のかな漢字変換モデルは **iroha-kkc-v1**（Q5_K_M。2026-11-06 に iroha-t5-alpha から変更。その前は 2026-10-03 まで
   zenz-v3.1-small。文字単位 T5 e12d2、`training/t5/`）。初回起動時に `ModelDownloader` が取得し、大きさと SHA-256 を照合してから
   `<データフォルダ>/models/iroha-kkc-v1-Q5_K_M.gguf`（`DataDirectory.defaultModelFileName`）に置く。重みは CC BY-SA 4.0
