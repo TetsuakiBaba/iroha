@@ -690,7 +690,11 @@ void App::BuildInputPage() {
     page->AddHeader(L"「こえ」モード",
                     L"試作中の機能です。音声で話した内容を、キーボードで打った読みと同じようにかな漢字変換へ通します。"
                     L"音声認識の出した表記から読みを求め直すので、読みを取り違えることがあります（人名、「何時」をいつと読む、"
-                    L"など）。そのときは Space の候補やキーボードで直します。");
+                    L"など）。そのときは Space の候補やキーボードで直します。",
+                    /*developer=*/true)
+        ->visible = dev;
+    // Windows版は開発者モードの項目（2026-11-15、ユーザの判断。ウェブサイトでは Mac 版だけの機能として案内する）。
+    // 隠すのは表示だけで、設定の値はそのまま効く
     voiceToggle = MakeToggle(page, kIdVoice);
     voiceRow = page->AddItem(
         L"「こえ」モードを使う", L"",
@@ -702,6 +706,7 @@ void App::BuildInputPage() {
         L"音声認識は Windows の音声認識（SAPI）がこのコンピュータの中で行い、音声を外部に送りません。"
         L"声で入れた文は、変換の学習・変換記録・入力履歴に残しません。");
     voiceRow->right = {{voiceToggle, 110}};
+    voiceRow->visible = dev;
     voiceKeyCombo = MakeCombo(page, kIdVoiceKey, {L"右 Ctrl", L"右 Shift", L"「かな」キー", L"使わない"});
     Row* voiceKey = page->AddItem(
         L"押している間だけ録音するキー", L"",
@@ -712,6 +717,7 @@ void App::BuildInputPage() {
         L"右 Ctrl がありません。リモートデスクトップでは、「かな」を離したことが届かない接続があります（「キーの確認...」で"
         L"「離した」が出るかで確かめられます）。そのときは下の、押して始め・もう一度押して終えるキーを使います。");
     voiceKey->right = {{voiceKeyCombo, 120, 32, 160}};
+    voiceKey->visible = dev;
     voiceKey->enabled = [this] { return config.voiceInput; };
     voiceToggleHotkey = MakeEdit(page, kIdVoiceToggleHotkey, L"例: Ctrl+Alt+K");
     voiceToggleHotkeyRow = page->AddItem(
@@ -720,6 +726,7 @@ void App::BuildInputPage() {
         L"使えます。録音中に Esc などほかのキーを押すと、録音を捨てます。英数モードで押したときは、かなに切り替えてから録音します。"
         L"「Ctrl+Alt+K」のように、Ctrl・Alt・Shift とキーを + でつないで書きます。空にすると使いません。");
     voiceToggleHotkeyRow->right = {{voiceToggleHotkey, 180, 30}};
+    voiceToggleHotkeyRow->visible = dev;
     voiceToggleHotkeyRow->enabled = [this] { return config.voiceInput; };
 
     page->AddHeader(L"区切り記号で英字を入力",
@@ -1083,7 +1090,7 @@ void App::BuildAboutPage() {
     developerToggle = MakeToggle(page, kIdDeveloperMode);
     page->AddItem(L"開発者モード", L"細かな調整や開発者向けの項目を表示します",
                   L"ON にすると、細かな調整や開発者向けの項目を設定画面に表示します（入力: アプリの文章を文脈に使う・"
-                  L"打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ・区切り記号で英字を入力・AIで直す、"
+                  L"打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ・「こえ」モード・区切り記号で英字を入力・AIで直す、"
                   L"辞書・学習: 記号・顔文字・絵文字を候補に出す、選択テキスト: 除外するアプリ、モデル: モデルファイルの指定・"
                   L"LoRA アダプタ、情報: デバッグ表示）。開発者モードの項目には、項目名の右に紫色の「開発者」の印を付けています。見出しに印が"
                   L"あるものは、その節全体が開発者モードの項目です。OFF にしても項目が見えなくなるだけで、変えた設定はそのまま"
