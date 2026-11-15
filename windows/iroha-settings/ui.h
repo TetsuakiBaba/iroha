@@ -59,6 +59,11 @@ HWND CreateHelpButton(HWND parent, const std::wstring& text);
 // 説明の小窓を anchor の下に出す
 void ShowFlyout(HWND anchor, const std::wstring& text);
 
+// 角の丸い小さな印を描く（地 fill に、文字 text を color で。font は g_theme.badge）。rect は印の外形
+void DrawPill(HDC dc, const RECT& rect, const std::wstring& text, COLORREF color, COLORREF fill);
+// font で text を 1 行に描いたときの幅（ピクセル）
+int TextWidthOf(HDC dc, HFONT font, const std::wstring& text);
+
 // 子の部品を作る（文字は g_theme.body）
 HWND CreateControl(HWND parent, const wchar_t* className, const wchar_t* text, DWORD style, int id, DWORD exStyle = 0);
 

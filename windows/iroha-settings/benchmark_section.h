@@ -54,7 +54,8 @@ public:
     void Shutdown();
 
     bool OnCommand(int id, int code);
-    bool OnNotify(const NMHDR* header);
+    // 処理したら真。result は WM_NOTIFY の戻り値（NM_CUSTOMDRAW で使う）
+    bool OnNotify(NMHDR* header, LRESULT* result);
     // WM_APP_BENCH_* を受けたら真
     bool OnMessage(UINT message, WPARAM wParam, LPARAM lParam);
 
@@ -90,6 +91,7 @@ private:
     HWND setList_ = nullptr, setFetch_ = nullptr, setRemove_ = nullptr;
     HWND setCombo_ = nullptr, latticeCombo_ = nullptr;
     HWND start_ = nullptr, cancel_ = nullptr;
+    HWND heading_ = nullptr; // 結果の見出し（題と推論エンジン・実行先の印）
     HWND result_ = nullptr, copy_ = nullptr, folder_ = nullptr, misses_ = nullptr;
     HWND history_ = nullptr, deleteRecord_ = nullptr;
     ui::Page::Row* setRow_ = nullptr;

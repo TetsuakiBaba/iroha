@@ -81,6 +81,173 @@ void SetListRow(HWND list, int row, const std::vector<std::wstring>& cells) {
 
 int SelectedRow(HWND list) { return ListView_GetNextItem(list, -1, LVNI_SELECTED); }
 
+// ---- 推論エンジン（llama.cpp / MLX）と実行先（GPU / CPU）の印。過去の結果の一覧と結果の見出しに出す ----
+
+// 過去の結果の一覧で印を描く列
+constexpr int kBadgeColumn = 3;
+
+struct Badge {
+    std::wstring text;
+    COLORREF color;
+};
+
+// 色は macOS版と同じ組（llama.cpp 青・MLX 橙・GPU 緑・CPU 灰色）。白地で読める濃さにしてある
+std::vector<Badge> EngineBadges(const iroha::benchmark_run::Condition& condition) {
+    std::vector<Badge> badges;
+    badges.push_back({Wide(condition.EngineName()),
+                      condition.backend == "mlx" ? RGB(0xC2, 0x5E, 0x00) : RGB(0x00, 0x67, 0xC0)});
+    if (const auto kind = condition.ProcessorKind()) {
+        badges.push_back({Wide(*kind), *kind == "GPU" ? RGB(0x10, 0x7C, 0x10) : RGB(0x6E, 0x6E, 0x6E)});
+    }
+    return badges;
+}
+
+// 文字色を地に 15% だけ混ぜた色（印の地）
+COLORREF Tint(COLORREF color, COLORREF base) {
+    const auto mix = [](int c, int b) { return static_cast<BYTE>((c * 15 + b * 85 + 50) / 100); };
+    return RGB(mix(GetRValue(color), GetRValue(base)), mix(GetGValue(color), GetGValue(base)),
+               mix(GetBValue(color), GetBValue(base)));
+}
+
+int BadgeWidth(HDC dc, const Badge& badge) {
+    return ui::TextWidthOf(dc, ui::g_theme.badge, badge.text) + ui::g_theme.S(10);
+}
+
+int BadgesWidth(HDC dc, const std::vector<Badge>& badges) {
+    int width = 0;
+    for (size_t i = 0; i < badges.size(); ++i) width += BadgeWidth(dc, badges[i]) + (i > 0 ? ui::g_theme.S(4) : 0);
+    return width;
+}
+
+// 印を x から右へ並べ、top〜bottom の縦の中央に描く
+void DrawBadges(HDC dc, int x, int top, int bottom, const std::vector<Badge>& badges, COLORREF base) {
+    const ui::Theme& t = ui::g_theme;
+    const int height = t.S(16);
+    const int y = top + (bottom - top - height) / 2;
+    int left = x;
+    for (size_t i = 0; i < badges.size(); ++i) {
+        if (i > 0) left += t.S(4);
+        const int width = BadgeWidth(dc, badges[i]);
+        const RECT pill = {left, y, left + width, y + height};
+        ui::DrawPill(dc, pill, badges[i].text, badges[i].color, Tint(badges[i].color, base));
+        left += width;
+    }
+}
+
+// 結果の見出し: 題（左）と印。印にマウスを載せると条件の全文を出す
+constexpr wchar_t kHeadingClass[] = L"IrohaBenchmarkHeading";
+
+struct HeadingData {
+    std::wstring title;
+    std::vector<Badge> badges;
+    std::wstring tip;
+    HWND tooltip = nullptr;
+    RECT badgeRect = {};
+};
+
+LRESULT CALLBACK HeadingProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    auto* data = reinterpret_cast<HeadingData*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (message) {
+    case WM_NCCREATE: {
+        auto* created = new HeadingData();
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(created));
+        created->tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP,
+                                           CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwnd, nullptr,
+                                           GetModuleHandleW(nullptr), nullptr);
+        if (created->tooltip) {
+            TTTOOLINFOW tool = {sizeof(tool)};
+            tool.uFlags = TTF_SUBCLASS;
+            tool.hwnd = hwnd;
+            tool.uId = 1;
+            tool.lpszText = const_cast<wchar_t*>(L"");
+            SendMessageW(created->tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+            SendMessageW(created->tooltip, TTM_SETMAXTIPWIDTH, 0, ui::g_theme.S(480));
+        }
+        break;
+    }
+    case WM_NCDESTROY:
+        if (data) {
+            if (data->tooltip) DestroyWindow(data->tooltip);
+            delete data;
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+        }
+        break;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT paint;
+        HDC dc = BeginPaint(hwnd, &paint);
+        RECT client = {};
+        GetClientRect(hwnd, &client);
+        // 地は親（ページ）に尋ねる（カードの中に置く）
+        HBRUSH background = reinterpret_cast<HBRUSH>(
+            SendMessageW(GetParent(hwnd), WM_CTLCOLORSTATIC, reinterpret_cast<WPARAM>(dc), reinterpret_cast<LPARAM>(hwnd)));
+        FillRect(dc, &client, background ? background : ui::g_theme.cardBrush);
+        if (data) {
+            const ui::Theme& t = ui::g_theme;
+            const int badgesWidth = BadgesWidth(dc, data->badges);
+            const int gap = data->badges.empty() ? 0 : t.S(8);
+            const int titleWidth = std::min(ui::TextWidthOf(dc, t.body, data->title),
+                                            std::max(0, static_cast<int>(client.right) - badgesWidth - gap));
+            RECT titleRect = {0, 0, titleWidth, client.bottom};
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, t.text);
+            HGDIOBJ oldFont = SelectObject(dc, t.body);
+            DrawTextW(dc, data->title.c_str(), -1, &titleRect,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+            SelectObject(dc, oldFont);
+            const int x = titleWidth + gap;
+            DrawBadges(dc, x, 0, client.bottom, data->badges, t.card);
+            const RECT badgeRect = {x, 0, x + badgesWidth, client.bottom};
+            if (!EqualRect(&badgeRect, &data->badgeRect) && data->tooltip) {
+                data->badgeRect = badgeRect;
+                TTTOOLINFOW tool = {sizeof(tool)};
+                tool.hwnd = hwnd;
+                tool.uId = 1;
+                tool.rect = badgeRect;
+                SendMessageW(data->tooltip, TTM_NEWTOOLRECTW, 0, reinterpret_cast<LPARAM>(&tool));
+            }
+        }
+        EndPaint(hwnd, &paint);
+        return 0;
+    }
+    default:
+        break;
+    }
+    return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+HWND CreateHeading(HWND parent) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW windowClass = {sizeof(windowClass)};
+        windowClass.lpfnWndProc = HeadingProc;
+        windowClass.hInstance = GetModuleHandleW(nullptr);
+        windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        windowClass.lpszClassName = kHeadingClass;
+        RegisterClassExW(&windowClass);
+        registered = true;
+    }
+    return CreateWindowExW(0, kHeadingClass, L"", WS_CHILD, 0, 0, 10, 10, parent, nullptr, GetModuleHandleW(nullptr),
+                           nullptr);
+}
+
+void SetHeading(HWND heading, std::wstring title, std::vector<Badge> badges, std::wstring tip) {
+    auto* data = reinterpret_cast<HeadingData*>(GetWindowLongPtrW(heading, GWLP_USERDATA));
+    if (!data) return;
+    data->title = std::move(title);
+    data->badges = std::move(badges);
+    data->tip = std::move(tip);
+    if (data->tooltip) {
+        TTTOOLINFOW tool = {sizeof(tool)};
+        tool.hwnd = heading;
+        tool.uId = 1;
+        tool.lpszText = const_cast<wchar_t*>(data->tip.c_str());
+        SendMessageW(data->tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+    }
+    InvalidateRect(heading, nullptr, FALSE);
+}
+
 // 操作できるかを flag から読む部品（ページを並べ直しても EnableWindow の状態を保つ）
 ui::Page::Control Gated(HWND hwnd, int width, const bool* flag, int height = 32, int dropHeight = 0) {
     ui::Page::Control control;
@@ -138,8 +305,7 @@ std::wstring RecordTitle(const iroha::benchmark_run::Record& record) {
 std::wstring RecordText(const iroha::benchmark_run::Record& record) {
     const auto& s = record.summary;
     const auto& e = record.environment;
-    std::wstring text = RecordTitle(record) + L"\r\n";
-    text += Wide(record.condition.SummaryText()) + L"\r\n";
+    std::wstring text = Wide(record.condition.SummaryText()) + L"\r\n";
     text += Wide(e.cpu) + (e.machineModel ? L"（" + Wide(*e.machineModel) + L"）" : L"") + L"・" + Wide(e.osVersion) +
             L"・iroha " + Wide(e.appVersion) + L"\r\n";
     if (record.inputDuringRun && *record.inputDuringRun) {
@@ -282,6 +448,7 @@ void Section::Build(HWND window, ui::Page* page, std::function<bool()> visible, 
     runRow_->visible = visible_;
 
     // 結果は写せるよう、読み取り専用の入力欄に出す（表の列はタブで区切る）
+    heading_ = CreateHeading(parent);
     result_ = ui::CreateControl(parent, WC_EDITW, L"", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, kIdResult);
     const int tabs[] = {64, 108, 152, 196, 240, 284, 328};
     SendMessageW(result_, EM_SETTABSTOPS, ARRAYSIZE(tabs), reinterpret_cast<LPARAM>(tabs));
@@ -289,12 +456,14 @@ void Section::Build(HWND window, ui::Page* page, std::function<bool()> visible, 
     folder_ = ui::CreateControl(parent, WC_BUTTONW, L"記録のフォルダを開く", WS_TABSTOP, kIdFolder);
     misses_ = ui::CreateControl(parent, WC_BUTTONW, L"間違えた項目", WS_TABSTOP, kIdMisses);
     resultRow_ = page->AddItem(L"結果", L"", L"", /*developer=*/true);
-    resultRow_->below = {{{result_, -1, 330}}, {{copy_, 170}, {folder_, 180}, Gated(misses_, 190, &canMisses_)}};
+    resultRow_->below = {{{heading_, -1, 24}}, {{result_, -1, 330}}, {{copy_, 170}, {folder_, 180}, Gated(misses_, 190, &canMisses_)}};
     resultRow_->visible = [this] { return visible_() && !records_.empty(); };
 
     history_ = MakeList(parent, kIdHistory,
-                        {{L"日時", 120}, {L"評価セット", 150}, {L"条件", 150}, {L"モデル", 160}, {L"acc@1", 64},
-                         {L"中央値", 70}, {L"機械", 200}});
+                        {{L"日時", 130}, {L"評価セット", 140}, {L"条件", 140}, {L"推論", 110}, {L"モデル", 160},
+                         {L"acc@1", 64}, {L"中央値", 70}, {L"機械", 200}});
+    // 行にマウスを載せると条件の全文を出す（LVN_GETINFOTIP）
+    ListView_SetExtendedListViewStyle(history_, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_INFOTIP);
     deleteRecord_ = ui::CreateControl(parent, WC_BUTTONW, L"選んだ結果を削除", WS_TABSTOP, kIdDeleteRecord);
     historyRow_ = page->AddItem(L"過去の結果", L"選ぶと上の結果に出します", L"", /*developer=*/true);
     historyRow_->below = {{{history_, -1, 150}}, {Gated(deleteRecord_, 170, &canDeleteRecord_)}};
@@ -406,7 +575,7 @@ void Section::RefreshRecords() {
         SetListRow(history_, i,
                    {Wide(iroha::benchmark_run::FormatLocalDateTime(record.startedAt)), Wide(record.benchmarkName),
                     Wide(iroha::benchmark_run::LatticeDisplayName(record.condition.lattice)),
-                    std::filesystem::path(Wide(record.condition.model)).stem().wstring(),
+                    L"", std::filesystem::path(Wide(record.condition.model)).stem().wstring(),
                     Percent(record.summary.total.Accuracy(), 1), Format(L"%.1f ms", record.summary.latency.p50),
                     Wide(record.environment.cpu) + L"（" + Wide(record.environment.hostName) + L"）"});
     }
@@ -424,11 +593,13 @@ void Section::ShowRecord() {
         }
     }
     if (!record) {
+        SetHeading(heading_, L"", {}, L"");
         SetWindowTextW(result_, L"");
         canMisses_ = false;
         EnableWindow(misses_, FALSE);
         return;
     }
+    SetHeading(heading_, RecordTitle(*record), EngineBadges(record->condition), Wide(record->condition.SummaryText()));
     SetWindowTextW(result_, (showingMisses_ ? MissesText(*record) : RecordText(*record)).c_str());
     SetWindowTextW(misses_, showingMisses_ ? L"結果に戻る"
                                            : (L"間違えた項目（" + std::to_wstring(record->misses.size()) + L" 件）").c_str());
@@ -824,7 +995,45 @@ bool Section::OnCommand(int id, int code) {
     }
 }
 
-bool Section::OnNotify(const NMHDR* header) {
+bool Section::OnNotify(NMHDR* header, LRESULT* result) {
+    if (header->hwndFrom == history_ && header->code == NM_CUSTOMDRAW) {
+        // 行を描き終えてから「推論」の列に印を重ねる
+        auto* draw = reinterpret_cast<NMLVCUSTOMDRAW*>(header);
+        switch (draw->nmcd.dwDrawStage) {
+        case CDDS_PREPAINT:
+            *result = CDRF_NOTIFYITEMDRAW;
+            return true;
+        case CDDS_ITEMPREPAINT:
+            *result = CDRF_NOTIFYPOSTPAINT;
+            return true;
+        case CDDS_ITEMPOSTPAINT: {
+            const int row = static_cast<int>(draw->nmcd.dwItemSpec);
+            RECT cell = {};
+            if (row >= 0 && row < static_cast<int>(records_.size()) &&
+                ListView_GetSubItemRect(history_, row, kBadgeColumn, LVIR_BOUNDS, &cell)) {
+                HDC dc = draw->nmcd.hdc;
+                const int saved = SaveDC(dc);
+                IntersectClipRect(dc, cell.left, cell.top, cell.right, cell.bottom);
+                DrawBadges(dc, cell.left + ui::g_theme.S(6), cell.top, cell.bottom, EngineBadges(records_[row].condition),
+                           ui::g_theme.card);
+                RestoreDC(dc, saved);
+            }
+            *result = CDRF_DODEFAULT;
+            return true;
+        }
+        default:
+            *result = CDRF_DODEFAULT;
+            return true;
+        }
+    }
+    if (header->hwndFrom == history_ && header->code == LVN_GETINFOTIPW) {
+        auto* tip = reinterpret_cast<NMLVGETINFOTIPW*>(header);
+        if (tip->iItem >= 0 && tip->iItem < static_cast<int>(records_.size()) && tip->pszText && tip->cchTextMax > 0) {
+            wcsncpy_s(tip->pszText, tip->cchTextMax, Wide(records_[tip->iItem].condition.SummaryText()).c_str(), _TRUNCATE);
+        }
+        *result = 0;
+        return true;
+    }
     if (header->hwndFrom == setList_ && header->code == LVN_ITEMCHANGED) {
         if (!taskBusy_ && !catalogFailed_) catalogMessage_.clear();
         UpdateControls();

@@ -368,6 +368,20 @@ void RegisterClasses(HINSTANCE instance) {
     RegisterClassExW(&page);
 }
 
+void DrawPill(HDC dc, const RECT& rect, const std::wstring& text, COLORREF color, COLORREF fill) {
+    FillRoundRect(dc, rect, (rect.bottom - rect.top) / 2, fill, fill, false);
+    const int oldMode = SetBkMode(dc, TRANSPARENT);
+    const COLORREF oldColor = SetTextColor(dc, color);
+    HGDIOBJ oldFont = SelectObject(dc, g_theme.badge);
+    RECT textRect = rect;
+    DrawTextW(dc, text.c_str(), -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    SelectObject(dc, oldFont);
+    SetTextColor(dc, oldColor);
+    SetBkMode(dc, oldMode);
+}
+
+int TextWidthOf(HDC dc, HFONT font, const std::wstring& text) { return TextWidth(dc, font, text); }
+
 HWND CreateControl(HWND parent, const wchar_t* className, const wchar_t* text, DWORD style, int id, DWORD exStyle) {
     HWND control = CreateWindowExW(exStyle, className, text, WS_CHILD | style, 0, 0, 10, 10, parent,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);

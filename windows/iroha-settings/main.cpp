@@ -2549,9 +2549,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_NOTIFY: {
-        const NMHDR* header = reinterpret_cast<NMHDR*>(lParam);
+        NMHDR* header = reinterpret_cast<NMHDR*>(lParam);
         if (header->hwndFrom == app.termList && header->code == LVN_ITEMCHANGED) app.ShowTermDetail();
-        if (app.bench.OnNotify(header)) return 0;
+        if (LRESULT result = 0; app.bench.OnNotify(header, &result)) return result;
         if (header->hwndFrom == app.ruleList && header->code == LVN_ITEMCHANGED) {
             const auto* change = reinterpret_cast<const NMLISTVIEW*>(lParam);
             if ((change->uChanged & LVIF_STATE) && ((change->uNewState ^ change->uOldState) & LVIS_STATEIMAGEMASK)) {

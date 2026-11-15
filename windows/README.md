@@ -177,6 +177,9 @@ macOS版の「変換のベンチマーク」（設定 > モデル、開発者モ
 - 評価セットの出典は 設定 > 情報 のライセンス一覧に出す（入れたものだけ。抜粋と全件は同じ出典なので出典ごとに 1 行）
 - 設定画面の部品は、ページを並べ直すたびに行の enabled で EnableWindow し直されるので、同じ行で部品ごとに
   操作できるかが違うときは `ui::Page::Control::enabled` に書く（EnableWindow だけだと並べ直しで戻る）
+- 結果の見出しと過去の結果の一覧の「推論」の列に、推論エンジン（llama.cpp）と実行先（GPU / CPU）の印を出す（macOS版 4bbdc3d と同じ。
+  判定はコアの `Condition::EngineName` / `ProcessorKind`、形式 1 の記録には実行先の印を出さない）。一覧は NM_CUSTOMDRAW で
+  行を描いたあとに重ねて描く。条件の全文は、見出しでは印に、一覧では行にマウスを載せると出る（LVN_GETINFOTIP は列を区別できない）
 - 確認（2026-11-14、このWindows機、iroha-kkc-v1 Q5_K_M、CPU 4 スレッド、iroha-bench-v1-quick 360 件）:
   iroha-bench.exe と `iroha-cli ajimee` の正解数は off 252・always 253 で一致（macOS M2・Metal は off 251・always 253）。
   `.tsv` を `testdata/speed/summarize.py` に渡した値（平均・中央値・90/99%・最大・NN の割合・文字数別の中央値）は

@@ -280,6 +280,25 @@ void TestBenchmarkOmitsUnknownFields() {
     EXPECT_TRUE(iroha::benchmark_run::DecodeEnvironment(json) == std::optional<iroha::benchmark_run::Environment>(environment));
 }
 
+// 過去の結果の一覧の印（推論エンジンと実行先）。macOS版・Linux版と同じ文字にする
+void TestBenchmarkEngineBadges() {
+    const auto condition = [](const std::string& backend, std::optional<std::string> device) {
+        iroha::benchmark_run::Condition c;
+        c.lattice = iroha::benchmark_run::Lattice::Off;
+        c.backend = backend;
+        c.model = "m.gguf";
+        c.device = std::move(device);
+        return c;
+    };
+    EXPECT_TRUE(condition("llama", "MTL0: Apple M2").EngineName() == "llama.cpp");
+    EXPECT_TRUE(condition("llama", "MTL0: Apple M2").ProcessorKind() == std::optional<std::string>("GPU"));
+    EXPECT_TRUE(condition("llama", "Vulkan0: NVIDIA GeForce RTX 4060").ProcessorKind() == std::optional<std::string>("GPU"));
+    EXPECT_TRUE(condition("llama", "CPU").ProcessorKind() == std::optional<std::string>("CPU"));
+    EXPECT_TRUE(condition("mlx", "MLX: Apple M2").EngineName() == "MLX");
+    EXPECT_TRUE(condition("mlx", "MLX: Apple M2").ProcessorKind() == std::optional<std::string>("GPU"));
+    EXPECT_TRUE(!condition("llama", std::nullopt).ProcessorKind()); // 形式 1 の記録
+}
+
 // ---- 取得 ----
 
 void TestBenchmarkInstallChecksSizeAndChecksum() {
@@ -334,6 +353,7 @@ void RunBenchmarkTests() {
     TestBenchmarkRecordRoundTripAndEvents();
     TestBenchmarkReadsFormatOneRecord();
     TestBenchmarkOmitsUnknownFields();
+    TestBenchmarkEngineBadges();
     TestBenchmarkInstallChecksSizeAndChecksum();
 }
 
