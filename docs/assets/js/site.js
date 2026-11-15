@@ -681,163 +681,6 @@
     io.observe(root);
   }
 
-  // ---------- 文節の打ち直し ----------
-  // 打ってある文を Space で文節に分け、← → で直したい文節を選んで、そのまま打ち直す。打つたびに文全体を新しい読みで
-  // 変換し直すので、前の文節の表記も変わる。変換は iroha-kkc-v1（Q5_K_M）・ユーザ辞書と学習なしで、
-  // 読み全体を iroha-cli に渡した結果（文節の区切りは iroha-cli segment。打ちかけの途中は、打ち直している部分を 1 つの文節として見せる）。
-  // start と steps の文節は [表記] の並び。move は → を押す回数（打ち直す文節の位置）
-  const RETYPE_SAMPLES = [
-    {
-      label: "橋を渡る → 箸を使う",
-      typed: "hasiwowataru",
-      start: [["橋を"], ["渡る"]],
-      move: 1,
-      steps: [
-        ["tu", [["橋を"], ["つ"]]],
-        ["ka", [["橋を"], ["つか"]]],
-        ["u", [["箸を"], ["使う"]]],
-      ],
-      found: "後ろの「渡る」を「つかう」に打ち直すと、前の「橋」も「箸」に変わりました。",
-    },
-    {
-      label: "機械を使う → 機会を逃す",
-      typed: "kikaiwotukau",
-      start: [["機械を"], ["使う"]],
-      move: 1,
-      steps: [
-        ["no", [["機械を"], ["の"]]],
-        ["ga", [["機会を"], ["逃"]]],
-        ["su", [["機会を"], ["逃す"]]],
-      ],
-      found: "後ろの「使う」を「のがす」に打ち直すと、前の「機械」も「機会」に変わりました。",
-    },
-    {
-      label: "子どもの公演 → 大学の講演",
-      typed: "kodomonokouennnisannkasuru",
-      start: [["子どもの"], ["公演に"], ["参加する"]],
-      move: 0,
-      steps: [
-        ["da", [["だ"], ["公演に"], ["参加する"]]],
-        ["i", [["台"], ["公演に"], ["参加する"]]],
-        ["ga", [["台が"], ["公演に"], ["参加する"]]],
-        ["ku", [["大学"], ["公演に"], ["参加する"]]],
-        ["no", [["大学の"], ["講演に"], ["参加する"]]],
-      ],
-      found: "最初の文節を「だいがくの」に打ち直すと、後ろの「公演」も「講演」に変わりました。",
-    },
-  ];
-
-  function runRetype() {
-    const root = document.getElementById("retype-demo");
-    if (!root) return;
-    const v = demoView(root);
-    const status = document.querySelector("#retype .demo-status");
-    const picker = document.querySelector("#retype .retype-steps");
-    let token = 0;
-    let current = 0;
-
-    const buttons = RETYPE_SAMPLES.map((ex, idx) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = ex.label;
-      b.addEventListener("click", () => { current = idx; loop(); });
-      picker.appendChild(b);
-      return b;
-    });
-
-    // prev と表記が違う、選んでいない文節には changed を付けて、変わったことを見せる
-    function segments(list, sel, prev) {
-      v.composing.innerHTML = "";
-      list.forEach(([text], i) => {
-        const span = document.createElement("span");
-        span.className = "seg" + (i === sel ? " sel" : "");
-        if (prev && i !== sel && prev[i] && prev[i][0] !== text) span.classList.add("changed");
-        span.textContent = text;
-        v.composing.append(span);
-      });
-    }
-
-    function reset() {
-      v.done.textContent = "";
-      v.composing.textContent = "";
-      v.setKey("");
-      status.textContent = "";
-    }
-
-    const joined = (list) => list.map(([t]) => t).join("");
-    holdDemoHeights(root, v, status, {
-      texts: RETYPE_SAMPLES.map((ex) => joined(ex.start)),
-      dones: RETYPE_SAMPLES.map((ex) => joined(ex.steps[ex.steps.length - 1][1])),
-      segs: RETYPE_SAMPLES.flatMap((ex) => [ex.start, ...ex.steps.map(([, list]) => list)].map((list) => list.map(([t]) => t))),
-      keys: RETYPE_SAMPLES.flatMap((ex) => [[ex.typed], ...ex.steps.map(([k]) => [k]), ["→".repeat(ex.move), "直したい文節を選ぶ"]])
-        .concat([["space", "文節に分ける"], ["return", "全体を確定"]]),
-      statuses: RETYPE_SAMPLES.flatMap((ex) => [`「${joined(ex.start)}」と打ってあるところから…`, ex.found])
-        .concat(["選んだ文節を、そのまま打ち直します。"]),
-    });
-
-    function showResult(ex) {
-      const last = ex.steps[ex.steps.length - 1][1];
-      segments(last, ex.move, ex.start);
-      status.textContent = ex.found;
-    }
-
-    async function play(ex, my) {
-      const alive = () => my === token;
-      reset();
-      v.setKey(ex.typed);
-      v.composing.textContent = ex.start.map(([t]) => t).join("");
-      status.textContent = `「${v.composing.textContent}」と打ってあるところから…`;
-      await wait(1800);
-      if (!alive()) return false;
-      v.setKey("space", "文節に分ける");
-      segments(ex.start, 0);
-      await wait(1300);
-      if (!alive()) return false;
-      if (ex.move > 0) {
-        v.setKey("→".repeat(ex.move), "直したい文節を選ぶ");
-        segments(ex.start, ex.move);
-        await wait(1300);
-        if (!alive()) return false;
-      }
-      status.textContent = "選んだ文節を、そのまま打ち直します。";
-      let prev = ex.start;
-      for (const [key, list] of ex.steps) {
-        if (!alive()) return false;
-        v.setKey(key);
-        segments(list, ex.move, prev);
-        prev = list;
-        await wait(650);
-      }
-      if (!alive()) return false;
-      status.textContent = ex.found;
-      await wait(2600);
-      if (!alive()) return false;
-      v.setKey("return", "全体を確定");
-      v.done.textContent = prev.map(([t]) => t).join("");
-      v.composing.textContent = "";
-      await wait(2200);
-      return alive();
-    }
-
-    async function loop() {
-      const my = ++token;
-      for (;;) {
-        buttons.forEach((b, idx) => b.setAttribute("aria-pressed", String(idx === current)));
-        const ex = RETYPE_SAMPLES[current];
-        if (reduceMotion) { reset(); showResult(ex); return; }
-        const ok = await play(ex, my);
-        if (!ok) return;
-        current = (current + 1) % RETYPE_SAMPLES.length;
-      }
-    }
-
-    if (!("IntersectionObserver" in window)) return loop();
-    const io = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) { loop(); io.disconnect(); }
-    }, { threshold: 0.3 });
-    io.observe(root);
-  }
-
   // ---------- 「こえ」モード ----------
   // キーを押している間に話した内容が入力中の文字として見え、離すと iroha の変換に置き換わる。そのあとは打った文と同じで、
   // Space で文節に分け、選んだ文節を打ち直すと文全体を変換し直す。
@@ -1030,12 +873,28 @@
     select(document.getElementById(guess) || tabs[0], false);
   }
 
+  // ---------- ヘッダの目次（折りたたみ） ----------
+  // リンクを押したとき・Esc・目次の外を押したときに閉じる（開閉そのものは details が行う）
+  function setupNavMenu() {
+    const menu = document.querySelector(".nav-menu");
+    if (!menu) return;
+    const close = () => { menu.open = false; };
+    menu.querySelectorAll(".nav-menu-panel a").forEach((a) => a.addEventListener("click", close));
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && menu.open) { close(); menu.querySelector("summary").focus(); }
+    });
+    document.addEventListener("click", (e) => { if (menu.open && !menu.contains(e.target)) close(); });
+    menu.addEventListener("toggle", () => {
+      menu.querySelector("summary").setAttribute("aria-label", menu.open ? "目次を閉じる" : "目次を開く");
+    });
+  }
+
+  setupNavMenu();
   setupOsTabs();
   runHero();
   runSpeed();
   runTypo();
   runTerms();
-  runRetype();
   runKoe();
   setupDevmode();
   setupReveal();
