@@ -253,8 +253,15 @@ const char* LatticeDisplayName(Lattice lattice) {
     return lattice == Lattice::Always ? "辞書ラティス + 再採点" : "モデルだけ";
 }
 
+std::string Condition::EngineName() const { return backend == "mlx" ? "MLX" : "llama.cpp"; }
+
+std::optional<std::string> Condition::ProcessorKind() const {
+    if (!device) return std::nullopt;
+    return std::string(*device == "CPU" ? "CPU" : "GPU");
+}
+
 std::string Condition::SummaryText() const {
-    std::string engine = backend == "mlx" ? "MLX" : "llama.cpp";
+    std::string engine = EngineName();
     std::vector<std::string> detail;
     if (device) detail.push_back(*device);
     if (threads) detail.push_back(std::to_string(*threads) + " スレッド");

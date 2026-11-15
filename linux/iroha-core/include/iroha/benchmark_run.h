@@ -42,6 +42,11 @@ struct Condition {
     // llama.cpp が生成に使う CPU のスレッド数（llama_n_threads）。形式 1 の記録には無い
     std::optional<int> threads;
 
+    // 推論エンジンの表示名（"llama.cpp" / "MLX"）。過去の結果の一覧の印にも使う
+    std::string EngineName() const;
+    // 推論の実行先の種類（"GPU" / "CPU"）。過去の結果の一覧の印に使う。実行先を記録していない形式 1 の記録では無し。
+    // MLX は GPU で動かす（MLX の既定の装置）
+    std::optional<std::string> ProcessorKind() const;
     // 「辞書ラティス + 再採点、llama.cpp（CPU、4 スレッド）、モデル …」の形の 1 行
     std::string SummaryText() const;
     bool operator==(const Condition& other) const {

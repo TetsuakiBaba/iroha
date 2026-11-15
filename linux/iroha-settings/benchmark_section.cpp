@@ -233,6 +233,61 @@ void SetStatus(GtkWidget* label, const std::string& text, bool warning) {
     }
 }
 
+// ---- 推論エンジンと実行先の印 ----
+
+// 印の見た目（小さな角丸の印。文字色と同じ色を薄く敷く。macOS版の BenchmarkEngineBadges と同じ色分け:
+// llama.cpp 青・MLX 橙・GPU 緑・CPU 灰色）。画面に 1 度だけ登録する
+void InstallBadgeStyle() {
+    static bool installed = false;
+    if (installed) return;
+    installed = true;
+    static const char css[] =
+        ".iroha-badge { font-size: smaller; font-weight: bold; padding: 0 5px; border-radius: 999px; }"
+        ".iroha-badge.llama { color: #1c71d8; background-color: alpha(#1c71d8, 0.15); }"
+        ".iroha-badge.mlx { color: #e66100; background-color: alpha(#e66100, 0.15); }"
+        ".iroha-badge.gpu { color: #26a269; background-color: alpha(#26a269, 0.15); }"
+        ".iroha-badge.cpu { color: #77767b; background-color: alpha(#77767b, 0.15); }";
+    GtkCssProvider* provider = gtk_css_provider_new();
+#if GTK_CHECK_VERSION(4, 12, 0)
+    gtk_css_provider_load_from_string(provider, css);
+#else
+    gtk_css_provider_load_from_data(provider, css, -1);
+#endif
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(provider),
+                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(provider);
+}
+
+GtkWidget* Badge(const std::string& text, const char* style) {
+    GtkWidget* label = gtk_label_new(text.c_str());
+    gtk_widget_add_css_class(label, "iroha-badge");
+    gtk_widget_add_css_class(label, style);
+    gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
+    return label;
+}
+
+// 推論エンジン（llama.cpp / MLX）と実行先（GPU / CPU）の印。過去の結果の一覧と結果の見出しに出す。
+// マウスを載せると条件の全文を出す
+GtkWidget* EngineBadges(const iroha::benchmark_run::Condition& condition) {
+    InstallBadgeStyle();
+    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(box), Badge(condition.EngineName(), condition.backend == "mlx" ? "mlx" : "llama"));
+    if (const auto kind = condition.ProcessorKind()) {
+        gtk_box_append(GTK_BOX(box), Badge(*kind, *kind == "GPU" ? "gpu" : "cpu"));
+    }
+    gtk_widget_set_tooltip_text(box, condition.SummaryText().c_str());
+    return box;
+}
+
+// 表の行の 4 列目（モデル）の後ろに印の列を差し込む（列の幅は見出しと size group でそろえる）
+void InsertBadgeColumn(GtkWidget* row, GtkWidget* column, GtkSizeGroup* group) {
+    GtkWidget* after = gtk_widget_get_first_child(row);
+    for (int i = 0; i < 3 && after; ++i) after = gtk_widget_get_next_sibling(after);
+    gtk_box_insert_child_after(GTK_BOX(row), column, after);
+    gtk_size_group_add_widget(group, column);
+}
+
 // 計測ヘルパーの子プロセス: 優先度を下げる（計測中も入力の変換を優先させる。macOS版・Windows版と同じ考え方）
 void LowerPriority(gpointer) { setpriority(PRIO_PROCESS, 0, 10); }
 
@@ -263,10 +318,13 @@ struct Section::Impl {
     GtkWidget* progress = nullptr;
     GtkWidget* resultBox = nullptr;
     GtkWidget* resultTitle = nullptr;
+    GtkWidget* resultBadges = nullptr;
     GtkWidget* result = nullptr;
     GtkWidget* misses = nullptr;
     GtkWidget* historyBox = nullptr;
     GtkWidget* history = nullptr;
+    // 過去の結果の表の印の列の幅をそろえる（見出しの列が参照を持つ）
+    GtkSizeGroup* badgeColumn = nullptr;
     GtkWidget* deleteRecord = nullptr;
 
     std::unique_ptr<iroha::BenchmarkCatalog> catalog;
@@ -387,7 +445,11 @@ void Section::Impl::Build(GtkWidget* root) {
     GtkWidget* copy = gtk_button_new_with_label("Markdown でコピー");
     GtkWidget* folder = gtk_button_new_with_label("記録のフォルダを開く");
     misses = gtk_button_new_with_label("間違えた項目");
-    gtk_box_append(GTK_BOX(resultBox), resultTitle);
+    resultBadges = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    GtkWidget* resultHeading = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_box_append(GTK_BOX(resultHeading), resultTitle);
+    gtk_box_append(GTK_BOX(resultHeading), resultBadges);
+    gtk_box_append(GTK_BOX(resultBox), resultHeading);
     gtk_box_append(GTK_BOX(resultBox), resultScrolled);
     gtk_box_append(GTK_BOX(resultBox), Buttons({copy, folder, misses}));
 
@@ -397,9 +459,16 @@ void Section::Impl::Build(GtkWidget* root) {
     history = ListBox(&historyScrolled, 140);
     deleteRecord = gtk_button_new_with_label("選んだ結果を削除");
     gtk_box_append(GTK_BOX(historyBox), Label("過去の結果（選ぶと上の結果に出します）"));
-    gtk_box_append(GTK_BOX(historyBox), ListRow({{"日時", 14}, {"評価セット", 14}, {"条件", 16}, {"モデル", 18},
-                                                 {"acc@1", 6}, {"中央値", 9}, {"機械", 0}},
-                                                /*heading=*/true));
+    GtkWidget* historyHeading = ListRow({{"日時", 14}, {"評価セット", 14}, {"条件", 16}, {"モデル", 18},
+                                         {"acc@1", 6}, {"中央値", 9}, {"機械", 0}},
+                                        /*heading=*/true);
+    GtkWidget* badgeHeading = gtk_label_new(nullptr);
+    gtk_label_set_markup(GTK_LABEL(badgeHeading), "<b>推論</b>");
+    gtk_label_set_xalign(GTK_LABEL(badgeHeading), 0);
+    badgeColumn = gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL);
+    InsertBadgeColumn(historyHeading, badgeHeading, badgeColumn);
+    g_object_unref(badgeColumn); // 列の部品が参照を持つ
+    gtk_box_append(GTK_BOX(historyBox), historyHeading);
     gtk_box_append(GTK_BOX(historyBox), historyScrolled);
     gtk_box_append(GTK_BOX(historyBox), Buttons({deleteRecord}));
 
@@ -562,15 +631,15 @@ void Section::Impl::RefreshRecords() {
     }
     ClearList(history);
     for (const auto& record : records) {
-        gtk_list_box_append(
-            GTK_LIST_BOX(history),
-            ListRow({{iroha::benchmark_run::FormatLocalDateTime(record.startedAt), 14},
-                     {record.benchmarkName, 14},
-                     {iroha::benchmark_run::LatticeDisplayName(record.condition.lattice), 16},
-                     {Stem(record.condition.model), 18},
-                     {Percent(record.summary.total.Accuracy(), 1), 6},
-                     {Format("%.1f ms", record.summary.latency.p50), 9},
-                     {record.environment.cpu + "（" + record.environment.hostName + "）", 0}}));
+        GtkWidget* row = ListRow({{iroha::benchmark_run::FormatLocalDateTime(record.startedAt), 14},
+                                  {record.benchmarkName, 14},
+                                  {iroha::benchmark_run::LatticeDisplayName(record.condition.lattice), 16},
+                                  {Stem(record.condition.model), 18},
+                                  {Percent(record.summary.total.Accuracy(), 1), 6},
+                                  {Format("%.1f ms", record.summary.latency.p50), 9},
+                                  {record.environment.cpu + "（" + record.environment.hostName + "）", 0}});
+        InsertBadgeColumn(row, EngineBadges(record.condition), badgeColumn);
+        gtk_list_box_append(GTK_LIST_BOX(history), row);
     }
     showingMisses = false;
     ShowRecord();
@@ -581,6 +650,8 @@ void Section::Impl::ShowRecord() {
     gtk_widget_set_visible(resultBox, visible && record != nullptr);
     gtk_widget_set_visible(historyBox, visible && records.size() > 1);
     GtkTextBuffer* buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(result));
+    while (GtkWidget* child = gtk_widget_get_first_child(resultBadges)) gtk_box_remove(GTK_BOX(resultBadges), child);
+    if (record) gtk_box_append(GTK_BOX(resultBadges), EngineBadges(record->condition));
     if (!record) {
         gtk_text_buffer_set_text(buffer, "", -1);
         gtk_widget_set_sensitive(misses, FALSE);
