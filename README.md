@@ -660,6 +660,7 @@ git tag v0.4.0 && git push origin v0.4.0
 
 - [shiratsumu](https://github.com/shiratsumu)
 - [onoryu](https://github.com/onoryu)
+- [kaishiraishi](https://github.com/kaishiraishi)
 - Taisei Kato
 - Ryusei Akaike
 
