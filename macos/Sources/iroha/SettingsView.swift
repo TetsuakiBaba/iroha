@@ -1988,7 +1988,7 @@ private struct PathDisplay: View {
 
 private struct ModelSettingsTab: View {
     @AppStorage("modelPath") private var modelPath = ""
-    @AppStorage(InferenceBackend.userDefaultsKey) private var backend = InferenceBackend.llamaCpp.rawValue
+    @AppStorage(InferenceBackend.userDefaultsKey) private var backend = InferenceBackend.defaultBackend.rawValue
     @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
     @ObservedObject private var modelDownloader = ModelDownloader.shared
 
@@ -2001,7 +2001,9 @@ private struct ModelSettingsTab: View {
                 return ("MLX は Apple Silicon の Mac でだけ使えます。llama.cpp で動きます。", true)
             }
             if FileManager.default.fileExists(atPath: path), !MLXConversionEngine.supports(modelPath: path) {
-                return ("MLX は T5 のモデルにだけ対応しています。このモデルは llama.cpp で動きます。", true)
+                // 既定のまま（MLX を自分で選んでいない）なら警告にしない
+                return ("MLX は T5 のモデルにだけ対応しています。このモデルは llama.cpp で動きます。",
+                        InferenceBackend.isExplicitlySelected)
             }
         }
         if InferenceBackend.resolve(modelPath: path) != running {
@@ -2035,8 +2037,9 @@ private struct ModelSettingsTab: View {
                     } label: {
                         HelpLabel(
                             title: "推論エンジン",
-                            help: "モデルを動かす仕組みです。既定は llama.cpp です。"
-                                + "MLX は T5 のモデルにだけ対応していて、1 回の変換が 2 割ほど速くなります（変換の結果は同じです）。"
+                            help: "モデルを動かす仕組みです。既定は MLX です（Apple シリコンの Mac）。"
+                                + "MLX は T5 のモデル（iroha-kkc など）にだけ対応していて、llama.cpp より 1 回の変換が 2 割ほど速くなります"
+                                + "（変換の結果はほぼ同じです）。代わりに、iroha が使うメモリは llama.cpp より多くなります。"
                                 + "zenz のモデルでは MLX を選んでも llama.cpp で動きます。"
                                 + "変更は iroha の再起動後に反映されます。",
                             developer: true)

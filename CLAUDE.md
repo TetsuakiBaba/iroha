@@ -504,8 +504,11 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   アーキごとの既定（`TrainableLM.defaultLoRATargets`、ブロック内の線形層すべて）。
   `T5ParityTests` は training/t5/ の GGUF（リポジトリ外）が無ければスキップする。
   別アーキ（llama など）を足すときは `TrainableLM` の実装を追加して `TrainableModels.load` に登録する
-- かな漢字変換の推論は llama.cpp（`ZenzEngine`、既定）と MLX（`MLXConversionEngine`、`macos/Sources/IrohaMLX/`）から
-  選べる（設定 > モデル > 推論エンジン、キー `inferenceBackend`。機械ごとの設定で同期しない・再起動で反映。2026-10-01 追加）。
+- かな漢字変換の推論は llama.cpp（`ZenzEngine`）と MLX（`MLXConversionEngine`、`macos/Sources/IrohaMLX/`）から
+  選べる（設定 > モデル > 推論エンジン、開発者モード、キー `inferenceBackend`。機械ごとの設定で同期しない・再起動で反映。2026-10-01 追加）。
+  **既定は Apple シリコンの Mac では MLX**（`InferenceBackend.defaultBackend`。2026-11-15 にユーザの判断で llama.cpp から変更。
+  設定画面で選んだ値が保存されていればそちらを使う）。iroha-kkc-v1・Apple M4 Pro・iroha-bench-v1 全問で変換 1 回の中央値
+  14.6ms → 12.1ms、正解 2,248 → 2,244 問（bf16 のため）。代わりにプロセスのメモリは大きい（下の数字）。
   **MLX は T5 だけ**。デコーダ 2 層の T5 では 1 ステップの手間が llama.cpp より小さく、生成が約 2 割速い
   （T5 e12d2 最終で 30.6 → 24.0ms、AJIMEE 2 条件とも出力が全問一致。`training/t5/MAC-AJIMEE-MLX-2026-10-01.md`・
   `MAC-SPEED-MLX-vs-LLAMA-2026-10-01.md`）。12 層の zenz では逆に遅かったので IME では使わない（MLX を選んでいても
