@@ -187,8 +187,11 @@ struct BenchmarkSection: View {
                         shownRecordID = record.id
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(BenchmarkResultView.title(record))
-                                .fontWeight(record.id == shownRecord?.id ? .semibold : .regular)
+                            HStack(spacing: 6) {
+                                Text(BenchmarkResultView.title(record))
+                                    .fontWeight(record.id == shownRecord?.id ? .semibold : .regular)
+                                BenchmarkEngineBadges(condition: record.condition)
+                            }
                             Text(String(format: "acc@1 %.1f%%・中央値 %.1f ms", record.summary.total.accuracy * 100,
                                         record.summary.latency.p50)
                                 + "・\(record.environment.cpu)（\(record.environment.hostName)）")
@@ -205,6 +208,31 @@ struct BenchmarkSection: View {
     }
 }
 
+/// 推論エンジン（llama.cpp / MLX）と実行先（GPU / CPU）の印。過去の結果の一覧と結果の見出しに出す
+struct BenchmarkEngineBadges: View {
+    let condition: BenchmarkRun.Condition
+
+    var body: some View {
+        HStack(spacing: 4) {
+            badge(condition.engineName, color: condition.backend == "mlx" ? .orange : .blue)
+            if let kind = condition.processorKind {
+                badge(kind, color: kind == "GPU" ? .green : .gray)
+            }
+        }
+        .help(condition.summaryText)
+    }
+
+    private func badge(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(Capsule().fill(color.opacity(0.15)))
+            .fixedSize()
+    }
+}
+
 /// 1 回の計測の結果（精度の表・速度の表・読みの長さ別の中央値）
 struct BenchmarkResultView: View {
     let record: BenchmarkRun.Record
@@ -217,7 +245,10 @@ struct BenchmarkResultView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(Self.title(record)).fontWeight(.medium)
+            HStack(spacing: 6) {
+                Text(Self.title(record)).fontWeight(.medium)
+                BenchmarkEngineBadges(condition: record.condition)
+            }
             Text(record.condition.summaryText + "\n" + "\(record.environment.cpu)・\(record.environment.osVersion)・"
                  + "iroha \(record.environment.appVersion)")
                 .font(.caption)

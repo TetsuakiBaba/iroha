@@ -46,9 +46,19 @@ public enum BenchmarkRun {
             self.threads = threads
         }
 
+        /// 推論エンジンの表示名（"llama.cpp" / "MLX"）。過去の結果の一覧の印にも使う
+        public var engineName: String { backend == "mlx" ? "MLX" : "llama.cpp" }
+
+        /// 推論の実行先の種類（"GPU" / "CPU"）。過去の結果の一覧の印に使う。実行先を記録していない形式 1 の記録では nil。
+        /// MLX は GPU で動かす（MLX の既定の装置）
+        public var processorKind: String? {
+            guard let device else { return nil }
+            return device == "CPU" ? "CPU" : "GPU"
+        }
+
         /// 「辞書ラティス + 再採点、llama.cpp（MTL0: Apple M2、4 スレッド）、モデル …」の形の 1 行
         public var summaryText: String {
-            var engine = backend == "mlx" ? "MLX" : "llama.cpp"
+            var engine = engineName
             let detail = [device, threads.map { "\($0) スレッド" }].compactMap { $0 }
             if !detail.isEmpty { engine += "（" + detail.joined(separator: "、") + "）" }
             return "\(lattice.displayName)、\(engine)、モデル \(model)" + (adapter.map { "＋アダプタ \($0)" } ?? "")

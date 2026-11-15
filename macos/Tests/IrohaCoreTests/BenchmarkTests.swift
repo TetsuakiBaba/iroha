@@ -215,6 +215,20 @@ final class BenchmarkTests: XCTestCase {
         XCTAssertEqual(try BenchmarkRun.decoder.decode(BenchmarkRun.Environment.self, from: Data(json.utf8)), environment)
     }
 
+    /// 過去の結果の一覧の印（推論エンジンと実行先）。Windows版・Linux版も同じ文字にする
+    func testEngineBadges() {
+        func condition(_ backend: String, _ device: String?) -> BenchmarkRun.Condition {
+            BenchmarkRun.Condition(lattice: .off, backend: backend, model: "m.gguf", adapter: nil, device: device)
+        }
+        XCTAssertEqual(condition("llama", "MTL0: Apple M2").engineName, "llama.cpp")
+        XCTAssertEqual(condition("llama", "MTL0: Apple M2").processorKind, "GPU")
+        XCTAssertEqual(condition("llama", "Vulkan0: NVIDIA GeForce RTX 4060").processorKind, "GPU")
+        XCTAssertEqual(condition("llama", "CPU").processorKind, "CPU")
+        XCTAssertEqual(condition("mlx", "MLX: Apple M2").engineName, "MLX")
+        XCTAssertEqual(condition("mlx", "MLX: Apple M2").processorKind, "GPU")
+        XCTAssertNil(condition("llama", nil).processorKind)  // 形式 1 の記録
+    }
+
     // MARK: - 取得
 
     func testInstallChecksSizeAndChecksum() async throws {
