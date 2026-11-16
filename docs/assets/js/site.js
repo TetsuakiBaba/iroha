@@ -13,8 +13,8 @@
   // 例: url: "https://jxiv.jst.go.jp/index.php/jxiv/preprint/view/XXXX", doi: "10.51094/jxiv.XXXX", year: 2026
   const PAPERS = {
     kkc: {
-      url: null,
-      doi: null,
+      url: "https://jxiv.jst.go.jp/index.php/jxiv/preprint/view/7043",
+      doi: "10.51094/jxiv.7043",
       year: 2026,
       key: "baba2026irohakkc",
       title: "自動変換に向けた浅いデコーダを持つ文字単位エンコーダ・デコーダモデルによるニューラルかな漢字変換の高速化",
