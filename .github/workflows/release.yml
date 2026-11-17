@@ -141,7 +141,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: vendor/dist-windows
-          key: llama-${{ runner.os }}-${{ runner.arch }}-b10689-${{ hashFiles('patches/llama-cpp-zenz-pretokenizer.patch', 'windows/scripts/build-llama.ps1') }}
+          key: llama-${{ runner.os }}-${{ runner.arch }}-b10689-${{ hashFiles('patches/llama-cpp-zenz-pretokenizer.patch', 'patches/llama-cpp-t5-cross-kv.patch', 'windows/scripts/build-llama.ps1') }}
 
       - name: Build llama.cpp
         if: steps.llama-cache.outputs.cache-hit != 'true'

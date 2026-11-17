@@ -1,0 +1,230 @@
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 9aed801..62567fa 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -1570,6 +1570,25 @@ int llama_context::encode(const llama_batch & batch_inp) {
+         cross.v_embd.resize(cross.n_embd*cross.n_enc);
+         memcpy(cross.v_embd.data(), embd.data, ggml_nbytes(t_embd));
+ 
++        // iroha: keep the cross-attention K/V the encoder graph computed (patches/llama-cpp-t5-cross-kv.patch)
++        cross.k_cross.clear();
++        cross.v_cross.clear();
++        if (!res->t_cross_k.empty() && res->t_cross_k.size() == res->t_cross_v.size()) {
++            const size_t n_layer_dec = res->t_cross_k.size();
++            cross.k_cross.resize(n_layer_dec);
++            cross.v_cross.resize(n_layer_dec);
++            for (size_t il = 0; il < n_layer_dec; ++il) {
++                ggml_tensor * k = res->t_cross_k[il];
++                ggml_tensor * v = res->t_cross_v[il];
++                GGML_ASSERT(k->type == GGML_TYPE_F32 && v->type == GGML_TYPE_F32);
++                GGML_ASSERT(k->ne[1] == cross.n_enc && v->ne[1] == cross.n_enc);
++                cross.k_cross[il].resize(ggml_nelements(k));
++                cross.v_cross[il].resize(ggml_nelements(v));
++                ggml_backend_tensor_get(k, cross.k_cross[il].data(), 0, ggml_nbytes(k));
++                ggml_backend_tensor_get(v, cross.v_cross[il].data(), 0, ggml_nbytes(v));
++            }
++        }
++
+         const auto & batch = balloc->get_batch();
+ 
+         // remember the sequence ids used during the encoding - needed for cross attention later
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index 8fca8e1..93a8738 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -370,6 +370,17 @@ void llm_graph_input_cross_embd::set_input(const llama_ubatch * ubatch) {
+     }
+ }
+ 
++void llm_graph_input_cross_kv::set_input(const llama_ubatch * ubatch) {
++    GGML_UNUSED(ubatch);
++
++    for (size_t il = 0; il < k.size(); ++il) {
++        GGML_ASSERT(cross->k_cross[il].size()*sizeof(float) == ggml_nbytes(k[il]));
++        GGML_ASSERT(cross->v_cross[il].size()*sizeof(float) == ggml_nbytes(v[il]));
++        ggml_backend_tensor_set(k[il], cross->k_cross[il].data(), 0, ggml_nbytes(k[il]));
++        ggml_backend_tensor_set(v[il], cross->v_cross[il].data(), 0, ggml_nbytes(v[il]));
++    }
++}
++
+ template <typename T>
+ static void print_mask(const T * data, int64_t n_tokens, int64_t n_kv, int64_t n_swa, llama_swa_type swa_type) {
+     LLAMA_LOG_DEBUG("%s: === Attention mask ===\n", __func__);
+@@ -1324,6 +1335,9 @@ void llm_graph_result::reset() {
+     t_embd_pooled = nullptr;
+     t_h_nextn     = nullptr;
+ 
++    t_cross_k.clear();
++    t_cross_v.clear();
++
+     t_layer_inp.resize(LLAMA_MAX_LAYERS + 1);
+     std::fill(t_layer_inp.begin(), t_layer_inp.end(), nullptr);
+ 
+@@ -2493,6 +2507,30 @@ ggml_tensor * llm_graph_context::build_inp_cross_embd() const {
+     return cur;
+ }
+ 
++llm_graph_input_cross_kv * llm_graph_context::build_inp_cross_kv() const {
++    const size_t dec_n_layer = hparams.dec_n_layer;
++    if (cross->v_embd.empty() || cross->k_cross.size() != dec_n_layer || cross->v_cross.size() != dec_n_layer) {
++        return nullptr;
++    }
++
++    auto inp = std::make_unique<llm_graph_input_cross_kv>(cross);
++    for (size_t il = 0; il < dec_n_layer; ++il) {
++        const int64_t n_k = hparams.n_embd_k_gqa(il);
++        const int64_t n_v = hparams.n_embd_v_gqa(il);
++        ggml_tensor * k = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_k, cross->n_enc);
++        ggml_tensor * v = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_v, cross->n_enc);
++        ggml_set_input(k);
++        ggml_set_input(v);
++        inp->k.push_back(k);
++        inp->v.push_back(v);
++    }
++
++    auto * result = inp.get();
++    res->add_input(std::move(inp));
++
++    return result;
++}
++
+ ggml_tensor * llm_graph_context::build_inp_pos_bucket_enc() const {
+     auto inp = std::make_unique<llm_graph_input_pos_bucket>(hparams);
+ 
+diff --git a/src/llama-graph.h b/src/llama-graph.h
+index b388e02..ce236ea 100644
+--- a/src/llama-graph.h
++++ b/src/llama-graph.h
+@@ -87,6 +87,11 @@ struct llama_cross {
+     // embeddings data copied to host memory (tmp)
+     std::vector<float> v_embd;
+ 
++    // iroha: cross-attention K/V per decoder layer, computed once by the encoder graph
++    // F32 [n_embd_k_gqa, n_enc] each. Empty when not computed (decoder then projects v_embd as before)
++    std::vector<std::vector<float>> k_cross;
++    std::vector<std::vector<float>> v_cross;
++
+     // needed to construct the cross-attention mask in the decoder
+     std::vector<std::set<llama_seq_id>> seq_ids_enc;
+ };
+@@ -294,6 +299,20 @@ public:
+     const llama_cross * cross;
+ };
+ 
++// iroha: precomputed cross-attention K/V (one pair per decoder layer)
++class llm_graph_input_cross_kv : public llm_graph_input_i {
++public:
++    llm_graph_input_cross_kv(const llama_cross * cross) : cross(cross) {}
++    virtual ~llm_graph_input_cross_kv() = default;
++
++    void set_input(const llama_ubatch * ubatch) override;
++
++    std::vector<ggml_tensor *> k; // F32 [n_embd_k_gqa, n_enc]
++    std::vector<ggml_tensor *> v; // F32 [n_embd_v_gqa, n_enc]
++
++    const llama_cross * cross;
++};
++
+ class llm_graph_input_attn_no_cache : public llm_graph_input_i {
+ public:
+     llm_graph_input_attn_no_cache(const llama_hparams & hparams, const llama_cparams & cparams) :
+@@ -936,6 +955,10 @@ public:
+     ggml_tensor * t_embd_pooled = nullptr;
+     ggml_tensor * t_h_nextn     = nullptr; // [n_embd, n_outputs] hidden state before final output norm
+ 
++    // iroha: cross-attention K/V computed by the encoder graph (per decoder layer)
++    std::vector<ggml_tensor *> t_cross_k;
++    std::vector<ggml_tensor *> t_cross_v;
++
+     std::vector<ggml_tensor *> t_layer_inp;
+ 
+     std::vector<ggml_tensor *> t_sampled;
+@@ -1155,6 +1178,8 @@ struct llm_graph_context {
+     ggml_tensor * build_inp_cls() const;
+ 
+     ggml_tensor * build_inp_cross_embd() const;
++    // iroha: nullptr unless the encoder stored K/V for every decoder layer
++    llm_graph_input_cross_kv * build_inp_cross_kv() const;
+     ggml_tensor * build_inp_pos_bucket_enc() const;
+     ggml_tensor * build_inp_pos_bucket_dec() const;
+     ggml_tensor * build_pos_bias(ggml_tensor * pos_bucket, ggml_tensor * attn_rel_b) const;
+diff --git a/src/models/t5.cpp b/src/models/t5.cpp
+index b0e3f06..b72ba5a 100644
+--- a/src/models/t5.cpp
++++ b/src/models/t5.cpp
+@@ -1,5 +1,7 @@
+ #include "models.h"
+ 
++#include <cstdlib>
++
+ void llama_model_t5::load_arch_hparams(llama_model_loader & ml) {
+     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,      hparams.f_norm_rms_eps);
+     ml.get_key(LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT, hparams.n_rel_attn_bkts);
+@@ -130,10 +132,12 @@ llama_model_t5::graph<false>::graph(const llama_model & model, const llm_graph_p
+ 
+     inpL = build_inp_embd(model.tok_embd);
+ 
+-    ggml_tensor * embd_enc       = build_inp_cross_embd();
++    // iroha: use the cross-attention K/V the encoder stored, if any
++    llm_graph_input_cross_kv * cross_kv = build_inp_cross_kv();
++    ggml_tensor * embd_enc       = cross_kv ? nullptr : build_inp_cross_embd();
+     ggml_tensor * pos_bucket_dec = build_inp_pos_bucket_dec();
+ 
+-    const int64_t n_outputs_enc = embd_enc->ne[1];
++    const int64_t n_outputs_enc = cross_kv ? cross->n_enc : embd_enc->ne[1];
+ 
+     auto * inp_attn_self  = build_attn_inp_kv();
+     auto * inp_attn_cross = build_attn_inp_cross();
+@@ -179,10 +183,10 @@ llama_model_t5::graph<false>::graph(const llama_model & model, const llm_graph_p
+             ggml_tensor * Qcur = build_lora_mm(model.layers[il].wq_cross, cur);
+             cb(Qcur, "Qcur", il);
+ 
+-            ggml_tensor * Kcur = build_lora_mm(model.layers[il].wk_cross, embd_enc);
++            ggml_tensor * Kcur = cross_kv ? cross_kv->k[il] : build_lora_mm(model.layers[il].wk_cross, embd_enc);
+             cb(Kcur, "Kcur", il);
+ 
+-            ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv_cross, embd_enc);
++            ggml_tensor * Vcur = cross_kv ? cross_kv->v[il] : build_lora_mm(model.layers[il].wv_cross, embd_enc);
+             cb(Vcur, "Vcur", il);
+ 
+             Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
+@@ -367,4 +371,39 @@ llama_model_t5::graph<true>::graph(const llama_model & model, const llm_graph_pa
+     res->t_embd = cur;
+ 
+     ggml_build_forward_expand(gf, cur);
++
++    // iroha: project the encoder output to the decoder's cross-attention K/V once here, instead of in
++    // every decoder step (patches/llama-cpp-t5-cross-kv.patch). The values are the same either way.
++    // IROHA_CROSS_KV=0 turns it off, =1 turns it on. Default: on, except on Apple platforms
++    // (the macOS build has not been measured with it yet)
++    static const bool precompute_cross_kv = [] {
++        const char * env = getenv("IROHA_CROSS_KV");
++        if (env && env[0]) {
++            return env[0] != '0';
++        }
++#if defined(__APPLE__)
++        return false;
++#else
++        return true;
++#endif
++    }();
++    const int64_t dec_n_layer = hparams.dec_n_layer;
++    bool has_cross_weights = dec_n_layer > 0;
++    for (int il = 0; il < dec_n_layer; ++il) {
++        has_cross_weights = has_cross_weights && model.layers[il].wk_cross && model.layers[il].wv_cross;
++    }
++    if (precompute_cross_kv && has_cross_weights) {
++        for (int il = 0; il < dec_n_layer; ++il) {
++            ggml_tensor * k = build_lora_mm(model.layers[il].wk_cross, cur);
++            cb(k, "cross_k", il);
++            ggml_tensor * v = build_lora_mm(model.layers[il].wv_cross, cur);
++            cb(v, "cross_v", il);
++            ggml_set_output(k);
++            ggml_set_output(v);
++            ggml_build_forward_expand(gf, k);
++            ggml_build_forward_expand(gf, v);
++            res->t_cross_k.push_back(k);
++            res->t_cross_v.push_back(v);
++        }
++    }
+ }

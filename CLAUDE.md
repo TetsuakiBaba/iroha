@@ -619,6 +619,11 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   `patches/llama-cpp-zenz-pretokenizer.patch` の適用が必要）。ただし
   `vendor/dist` はmacOS用（Metal依存）なので**Windows用は別ディレクトリ
   （例 `vendor/dist-windows`）にビルドし、`vendor/dist` を上書きしない**
+- Windows版は T5 の交差注意の K・V を取り置くパッチ `patches/llama-cpp-t5-cross-kv.patch` も当てる（2026-11-18、
+  `build-llama.ps1`。値は変わらず、iroha-bench-v1 で平均 −11%・長い読みで −21%）。`vendor/llama.cpp` は 3 台で共有しているので、
+  Windows機でビルドするとソースに当たった状態になる。中の切り替えは `IROHA_CROSS_KV`（既定は Apple 以外で入れる）なので、
+  macOS版は計測して決めるまで動きが変わらない。Linux版は計測してから `linux/scripts/build-llama.sh` で当てるかを決める
+  （詳細は `windows/README.md` の「変換モデル」節）
 - 変換の仕様（zenzのプロンプト形式・読み制約・学習/ユーザ辞書のデコレータ構成）は
   README.mdの「開発」節と `macos/Sources/IrohaCore/` の実装が正。挙動を合わせること
 - GGUFモデル・評価データ（`testdata/`）・学習パイプライン（`training/`）は

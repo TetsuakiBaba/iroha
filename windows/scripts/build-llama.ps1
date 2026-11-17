@@ -52,6 +52,16 @@ if (-not (Select-String -Path $vocabCpp -Pattern "gpt2-small-japanese-char" -Qui
     if ($LASTEXITCODE -ne 0) { throw "パッチの適用に失敗しました" }
 }
 
+# ---- T5 の交差注意の K・V をエンコードの直後に 1 回だけ計算して取り置くパッチ（適用済みならスキップ） ----
+# llama.cpp は 1 文字出すたびにエンコーダの出力から計算し直していた。値は変わらない（iroha-bench-v1 の生成と採点が
+# すべて一致）。IROHA_CROSS_KV=0 で切れる。経緯と計測は windows/README.md の「変換モデル」節
+$t5Cpp = Join-Path $LlamaDir "src\models\t5.cpp"
+if (-not (Select-String -Path $t5Cpp -Pattern "llama-cpp-t5-cross-kv" -Quiet)) {
+    Write-Host "==> 交差注意の K・V を取り置くパッチを適用"
+    git -C $LlamaDir apply (Join-Path $RepoRoot "patches\llama-cpp-t5-cross-kv.patch")
+    if ($LASTEXITCODE -ne 0) { throw "パッチの適用に失敗しました" }
+}
+
 # ---- MSVC環境の構築（vswhere優先の自動検出。詳細は msvc-env.ps1） ----
 . (Join-Path $PSScriptRoot "msvc-env.ps1")
 Initialize-MsvcEnvironment

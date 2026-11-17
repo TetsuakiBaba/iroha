@@ -135,6 +135,21 @@ $env:IROHA_LATTICE = "always"; windows\build\iroha-cli\iroha-cli.exe ajimee test
   | iroha-kkc-v1 | eval.tsv 40件 | 38 (95.0%)、85ms | （手元に記録なし） |
 
   macOS版（Metal）とは計算機が違うので、採点の値は 2% ほどずれる（順位はほぼ同じ）
+- **T5 の交差注意の K・V は、エンコードの直後に 1 回だけ計算して取り置く**（`patches/llama-cpp-t5-cross-kv.patch`、
+  `build-llama.ps1` が当てる。2026-11-18）。llama.cpp の T5 は、1 文字出すたびにエンコーダの出力から交差注意の K・V を
+  計算し直していた（`src/models/t5.cpp`）。1 つの変換の中では同じ値なので、エンコーダのグラフの最後でデコーダの層ごとに
+  計算して `llama_cross` に持ち、デコーダはそれを入力として読む。計算は同じなので値も変わらない（iroha-bench-v1 全 3,253 項目で
+  生成と採点 23,686 個がビット単位で一致、acc@1 も同じ）。`IROHA_CROSS_KV=0` で切り、`=1` で入れる（既定は Apple 以外で入れる。
+  `vendor/llama.cpp` は 3 台で共有しているので、macOS版は計測するまで既定で切ってある）。
+  計測（i7-1065G7・4 スレッド・Q5_K_M、iroha-bench-v1 全件、1 回の変換の時間）:
+
+  | 条件 | 平均 | 中央値 | 90% | 読み 1〜10 / 31〜40 文字の中央値 |
+  |---|---:|---:|---:|---:|
+  | モデルのみ 取り置かない → 取り置く | 122.5 → 108.6 | 102.2 → 93.2 | 213.8 → 183.4 | −3% / −21% |
+  | ラティス再採点 取り置かない → 取り置く | 252.7 → 222.1 | 221.9 → 198.9 | 414.0 → 351.1 | −7% / −16% |
+
+  省ける計算は「読みと文脈の長さ × 出す文字数」に比例するので、長い読みほど効く（AJIMEE、平均 29 文字では平均 −30%）。
+  llama.cpp の版を上げるときはこのパッチも当て直し、`ajimee-dump` を上げる前に書き出して `model-parity` で突き合わせる
 - 既定のモデルは `iroha-core` の `config.h`（`kDefaultModelFileName`）。未取得で以前の既定（zenz-v3.1-small）が
   あればそれを使う。差し替えるときは `fetch-model.ps1`・`iroha-settings` のモデル一覧と、macOS版の
   `ModelDownloader.swift`・`fetch-model.sh` を合わせる
