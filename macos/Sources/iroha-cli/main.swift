@@ -845,10 +845,15 @@ case "typo":
     var typoThreshold = TypoNormalizer.defaultThreshold
     var typoCount = 300
     var typoMinimumSegmentLength = 1
+    // typo eval / pause: 1 件ずつの結果を JSONL で書き出す先（誤りの型ごとの集計・検定に使う）
+    var typoDumpPath: String?
     var typoPositional: [String] = []
     var typoIndex = 2
     while typoIndex < arguments.count {
         switch arguments[typoIndex] {
+        case "--dump" where typoIndex + 1 < arguments.count:
+            typoDumpPath = arguments[typoIndex + 1]
+            typoIndex += 2
         case "--dir" where typoIndex + 1 < arguments.count:
             typoDirectory = URL(fileURLWithPath: arguments[typoIndex + 1], isDirectory: true)
             typoIndex += 2
@@ -1266,8 +1271,10 @@ case "typo":
                 for (index, segment) in segments.enumerated() {
                     prefix += segment.reading
                     let isFinal = index == segments.count - 1
+                    // --min-length を渡すとアプリと同じく、それより短い読みは訂正しない
                     var correction = try await normalizer.correction(
-                        for: prefix, threshold: typoThreshold)
+                        for: prefix, threshold: typoThreshold,
+                        minimumSegmentLength: typoMinimumSegmentLength)
                     // 入力中の訂正と同じ条件: 末尾に足しただけのものは捨てる
                     if dropTrailingInsertions, correction?.isTrailingInsertionOnly == true {
                         correction = nil
@@ -1409,13 +1416,32 @@ case "typo":
                 }
                 // 本体と同じ経路（数字を「なん」に置き換える・出力できない記号で区切る）で、しきい値なしの訂正を出す。
                 // 数字などを含まない読みでは「生成 1 回 + margin」と同じ
-                let correction = try await normalizer.correction(for: record.noisy, threshold: -.infinity)
+                let correction = try await normalizer.correction(
+                    for: record.noisy, threshold: -.infinity,
+                    minimumSegmentLength: typoMinimumSegmentLength)
                 predictions.append(correction?.corrected ?? record.noisy)
                 margins.append(correction?.margin ?? 0)
             }
         } catch {
             FileHandle.standardError.write("エラー: \(error)\n".data(using: .utf8)!)
             exit(1)
+        }
+        if let typoDumpPath {
+            // 1 件 1 行: 入力・正解・型・しきい値なしの訂正・margin（+∞ は JSON にできないので 1e9）
+            var lines: [String] = []
+            for (index, record) in records.enumerated() {
+                let margin = margins[index].isFinite ? margins[index] : 1e9
+                let object: [String: Any] = [
+                    "noisy": record.noisy, "clean": record.clean, "error_type": record.errorType,
+                    "prediction": predictions[index], "margin": margin,
+                ]
+                if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+                   let line = String(data: data, encoding: .utf8) {
+                    lines.append(line)
+                }
+            }
+            try? (lines.joined(separator: "\n") + "\n")
+                .write(toFile: typoDumpPath, atomically: true, encoding: .utf8)
         }
         let cleanCount = records.filter { $0.errorType == "none" }.count
         let typoCountTotal = records.count - cleanCount
