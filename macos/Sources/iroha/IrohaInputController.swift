@@ -387,6 +387,9 @@ final class IrohaInputController: IMKInputController {
     /// 今の文節列に、打ち直した文節があるか。読み全体が入力したときと変わっているので、
     /// 真なら確定しても学習・変換記録に残さない（学習は「読み全体 → 確定」と「直す前の結果」で覚える）
     private var segmentsRetyped = false
+    /// この文節変換で ←→ で文節を移したか。真のときだけ、文字を打つと選んでいる文節を打ち直す（2026-11-17）。
+    /// 偽なら、文字を打つと全文節を確定して次の入力を始める（Space で候補を選んで続きを打つ流れ）
+    private var segmentMovedByArrow = false
     /// 文節列の先頭のうち、固定部分（`fixedChunks` と英字入力）から作った文節の数。
     /// 打ち直しを終えたとき、固定部分と `composer` のどちらを合わせるかを決める
     private var segmentFixedCount = 0
@@ -1471,6 +1474,7 @@ final class IrohaInputController: IMKInputController {
         let generation = segmentGeneration
         segmentEdit = nil
         segmentsRetyped = false
+        segmentMovedByArrow = false
         segmentFixedCount = fixedSegments.count
 
         // 暫定表示: 残りの読み全体を1文節として今の表示内容をそのまま使う
@@ -1630,16 +1634,20 @@ final class IrohaInputController: IMKInputController {
                 }
                 return true
             }
-            // 文字入力なら、選んでいる文節をその文字から打ち直す（2026-11-10。それまでは全文節を確定して
-            // 新しい入力を始めていた）。長い文の一部だけを直すのに、確定してから消して打ち直さなくて済む。
+            // ←→ で文節を移したあとの文字入力なら、選んでいる文節をその文字から打ち直す（2026-11-10）。
+            // 長い文の一部だけを直すのに、確定してから消して打ち直さなくて済む。
+            // 文節を移していなければ、全文節を確定して新しい入力を始める（2026-11-17。Space で候補を選んで
+            // そのまま続きを打つと、選んだ文節が打ち直しで置き換わって消えた。ほかの IME と同じ動きに戻す）。
+            // 最初の文節を打ち直すときは Backspace から始める。
             // 文節の区切りがまだ届いていないとき（Space の直後。文節が読み全体の 1 つしかない）と、
-            // 英字入力を始める文字（Shift+英字・区切り記号）は、今までどおり確定して新しい入力を始める
+            // 英字入力を始める文字（Shift+英字・区切り記号）も、確定して新しい入力を始める
             if let characters = event.characters, let first = characters.first,
                let scalar = first.unicodeScalars.first, scalar.isASCII,
                (0x21...0x7E).contains(scalar.value) {
                 let startsAlphabet = Self.startsAlphabetRun(first)
                     || (DelimitedAlphabetSettings.isEnabled && first == DelimitedAlphabetSettings.start)
-                if !segmentationPending, !startsAlphabet, segments.indices.contains(currentSegmentIndex) {
+                if segmentMovedByArrow, !segmentationPending, !startsAlphabet,
+                   segments.indices.contains(currentSegmentIndex) {
                     startSegmentEdit(first, client: client)
                     return true
                 }
@@ -2329,6 +2337,8 @@ final class IrohaInputController: IMKInputController {
         let newIndex = currentSegmentIndex + delta
         guard segments.indices.contains(newIndex) else { return }
         currentSegmentIndex = newIndex
+        // 直したい文節へ移ったので、このあと文字を打てばその文節を打ち直す
+        segmentMovedByArrow = true
         refreshSegmentDisplay(client: client)
     }
 
@@ -2415,6 +2425,7 @@ final class IrohaInputController: IMKInputController {
         segmentsFromAI = false
         segmentEdit = nil
         segmentsRetyped = false
+        segmentMovedByArrow = false
         hidePanel()
         cancelConversion()
         updateMarkedText(client: client, display: kanaDisplay)
@@ -3075,6 +3086,7 @@ final class IrohaInputController: IMKInputController {
         segmentsFromAI = true
         segmentEdit = nil
         segmentsRetyped = false
+        segmentMovedByArrow = false
         segmentFixedCount = 0
         currentSegmentIndex = 0
         refreshSegmentDisplay(client: client)
@@ -3433,6 +3445,7 @@ final class IrohaInputController: IMKInputController {
         segmentsFromAI = false
         segmentEdit = nil
         segmentsRetyped = false
+        segmentMovedByArrow = false
         compositionHasVoice = false
         voicePartial = nil
         // 変換を待っている声の認識結果があっても、確定のあとには入れない
