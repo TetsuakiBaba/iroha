@@ -956,6 +956,7 @@ void InputSession::EnterSegmentMode() {
     s.mode = Mode::Segmenting;
     s.segmentEdit.reset();
     s.segmentsRetyped = false;
+    s.segmentMovedByArrow = false;
     s.segmentsFromAI = false;
     s.segmentFixedCount = fixedSegments.size();
     s.showsKanaOnly = false;
@@ -1051,11 +1052,13 @@ void InputSession::HandleSegmenting(SessionKey key, char32_t character, bool shi
             ChooseCandidateOnPage(static_cast<size_t>(character - U'1'));
             break;
         }
-        // 文字入力なら、選んでいる文節をその文字から打ち直す。
-        // 英字入力を始める文字（Shift+英字・区切り記号）は、確定して新しい入力を始める
+        // ←→ で文節を移したあとの文字入力なら、選んでいる文節をその文字から打ち直す。
+        // 文節を移していなければ、全文節を確定して新しい入力を始める（2026-11-17、macOS版と同じ。Space で候補を
+        // 選んでそのまま続きを打つと、選んだ文節が打ち直しで置き換わって消えた）。最初の文節を打ち直すときは
+        // Backspace から始める。英字入力を始める文字（Shift+英字・区切り記号）も、確定して新しい入力を始める
         const bool startsDelimited = settings_.delimitedAlphabet && character == settings_.delimitedStart;
         const bool startsAlphabet = StartsAlphabetRun(character);
-        if (!startsAlphabet && !startsDelimited && s.currentSegment < s.segments.size()) {
+        if (s.segmentMovedByArrow && !startsAlphabet && !startsDelimited && s.currentSegment < s.segments.size()) {
             StartSegmentEdit(character);
             break;
         }
@@ -1088,6 +1091,7 @@ void InputSession::ExitSegmentModeToKana() {
     s.segmentEngineBaseline.reset();
     s.segmentEdit.reset();
     s.segmentsRetyped = false;
+    s.segmentMovedByArrow = false;
     s.segmentsFromAI = false;
     s.showsKanaOnly = true;
     s.typoReading.reset();
@@ -1290,6 +1294,8 @@ void InputSession::MoveSegment(int delta) {
     size_t next = s.currentSegment;
     if (delta < 0 && next > 0) --next;
     if (delta > 0 && next + 1 < s.segments.size()) ++next;
+    // 直したい文節へ移ったので、このあと文字を打てばその文節を打ち直す
+    if (next != s.currentSegment) s.segmentMovedByArrow = true;
     s.currentSegment = next;
 }
 
@@ -1769,6 +1775,7 @@ void InputSession::PresentAIResultAsSegments(const std::u32string& output, const
     s.segmentsFromAI = true;
     s.segmentEdit.reset();
     s.segmentsRetyped = false;
+    s.segmentMovedByArrow = false;
     s.segmentFixedCount = 0;
     s.currentSegment = 0;
     s.candidateListOpen = false;

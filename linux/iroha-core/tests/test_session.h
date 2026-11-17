@@ -680,14 +680,16 @@ void TestSessionEscapeFromSegmentMode() {
     EXPECT_EQ(output.PreeditText(), U"記者");
 }
 
-// 文節変換中に文字を打つと、選んでいる文節をその文字から打ち直す（範囲の読み全体を裏で変換し直す）。
-// 打ち直した確定は学習しない。大文字（英字入力）は確定して新しい入力を始める
+// 文節変換中に ←→ で文節を移してから文字を打つと、選んでいる文節をその文字から打ち直す（範囲の読み全体を裏で
+// 変換し直す）。打ち直した確定は学習しない。大文字（英字入力）は確定して新しい入力を始める
 void TestSessionRetypeSegment() {
     FakeSessionHost host;
     host.table[U"こどものこうえん"] = U"子供の公演";
     iroha::InputSession session(&host);
     Type(session, U"kodomonokouenn");
     Press(session, Key::Space);
+    Press(session, Key::Right);
+    Press(session, Key::Left); // 最初の文節に戻る（←→ で文節を移したので、文字を打つと打ち直しになる）
     auto output = Type(session, U"d");
     EXPECT_EQ(output.PreeditText(), U"d公演"); // 打ち直しの読み（未解決のローマ字）を前の文節の位置に
     EXPECT_TRUE(output.segmenting && !output.candidatesVisible);
@@ -708,6 +710,51 @@ void TestSessionRetypeSegment() {
     output = Type(session, U"A");
     EXPECT_EQ(output.commit, U"記者");
     EXPECT_EQ(output.PreeditText(), U"A");
+}
+
+// 文節変換中に ←→ で文節を移していなければ、文字を打つと全文節を確定して次の入力を始める（2026-11-17、macOS版と同じ。
+// Space で候補を選んでそのまま続きを打つと、選んだ文節が打ち直しで置き換わって消えていた）
+void TestSessionCharacterAfterCandidateCommits() {
+    FakeSessionHost host;
+    host.candidateTable[U"きょうはいい"] = {U"今日はいい", U"京はいい"};
+    iroha::InputSession session(&host);
+    Type(session, U"kyouhaiitenki");
+    CompleteLatest(session, host, U"今日はいい天気");
+    Press(session, Key::Space);                        // 文節変換に入り、最初の文節の候補を開く
+    auto output = Press(session, Key::Space);          // 次の候補を選ぶ
+    EXPECT_EQ(output.PreeditText(), U"京はいい天気");
+    output = Type(session, U"a");
+    EXPECT_EQ(output.commit, U"京はいい天気");         // 選んだ候補のまま全文節を確定する
+    EXPECT_TRUE(!output.segmenting);
+    EXPECT_EQ(output.PreeditText(), U"あ");            // 打った文字は次の入力の頭になる
+    Press(session, Key::Reset);
+    // 選んだ候補で確定したので学習に残り、打ち直しの扱い（学習しない）にはならない
+    EXPECT_TRUE(host.commits.size() == 1 && host.commits[0].committed == U"京はいい天気");
+}
+
+// → で文節を移してから文字を打つと、その文節を打ち直す
+void TestSessionCharacterAfterArrowRetypes() {
+    FakeSessionHost host;
+    host.table[U"きょうはいいてんき"] = U"今日はいい天気";
+    iroha::InputSession session(&host);
+    Type(session, U"kyouhaiitenki");
+    Press(session, Key::Space);
+    Press(session, Key::Right);
+    auto output = Type(session, U"denki");
+    EXPECT_TRUE(output.segmenting && output.commit.empty());
+    EXPECT_EQ(output.PreeditText(), U"今日はいいでんき");
+    EXPECT_TRUE(output.livePending);
+    EXPECT_EQ(host.liveRequests.back().reading, U"きょうはいいでんき");
+    CompleteLatest(session, host, U"今日はいい電気");
+    EXPECT_EQ(session.Current().PreeditText(), U"今日はいい電気");
+    EXPECT_EQ(Press(session, Key::Enter).commit, U"今日はいい電気");
+
+    // 確定したら、次の文節変換は ←→ で移すまで打ち直しにならない
+    Type(session, U"kyouhaiitenki");
+    Press(session, Key::Space);
+    output = Type(session, U"a");
+    EXPECT_EQ(output.commit, U"今日はいい天気");
+    EXPECT_EQ(output.PreeditText(), U"あ");
 }
 
 // 文節変換中の Backspace は、選んでいる文節の読みを後ろから消す（Esc で打ち直す前に戻す）
@@ -1618,6 +1665,8 @@ void RunSessionTests() {
     TestSessionResizeSegment();
     TestSessionEscapeFromSegmentMode();
     TestSessionRetypeSegment();
+    TestSessionCharacterAfterCandidateCommits();
+    TestSessionCharacterAfterArrowRetypes();
     TestSessionSegmentBackspace();
     TestSessionLeftContext();
     TestSessionCommitNowAndReset();

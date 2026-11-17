@@ -477,6 +477,10 @@ private:
         size_t segmentFixedCount = 0;
         // 打ち直した文節があるか（学習しない）
         bool segmentsRetyped = false;
+        // この文節変換で ←→ で文節を移したか。真のときだけ、文字を打つと選んでいる文節を打ち直す（2026-11-17、
+        // macOS版 segmentMovedByArrow）。偽なら、文字を打つと全文節を確定して次の入力を始める
+        // （Space で候補を選んで続きを打つ流れ）。確定したときは ResetState で偽に戻る
+        bool segmentMovedByArrow = false;
         // 文節列が AI変換の結果から作ったものか（学習にも変換記録にも入力履歴にも残さない。読みと対応しないため）
         bool segmentsFromAI = false;
         std::optional<SegmentEdit> segmentEdit;
