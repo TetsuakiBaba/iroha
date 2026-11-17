@@ -107,6 +107,9 @@ windows\build\iroha-cli\iroha-cli.exe lattice-parity <macOS版の出力.jsonl> -
 ```powershell
 # モデルの生成と採点を macOS版の出力（iroha-cli ajimee-dump）と突き合わせる。同じモデルを IROHA_MODEL で指定する
 windows\build\iroha-cli\iroha-cli.exe model-parity <macOS版の出力.jsonl>
+# 同じ形式を Windows版でも書き出せる（llama.cpp の版や設定を変える前に書き出し、変えたあとの model-parity の基準にする。
+# 採点は有効数字 9 桁で書くので、2 つの書き出しの値をそのまま比べてもよい）
+windows\build\iroha-cli\iroha-cli.exe ajimee-dump testdata\iroha-bench-v1\evaluation_items.json <出力.jsonl>
 # 採点が生成と辻褄が合うかを確かめる（macOS版の出力は使わない。入力は同じ形式の JSONL）
 windows\build\iroha-cli\iroha-cli.exe model-selfcheck <同じ形式.jsonl> --limit 40
 # 2条件での評価（モデルのみ / 辞書ラティス + モデルの再採点）
