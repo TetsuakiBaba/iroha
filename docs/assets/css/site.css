@@ -78,15 +78,14 @@
 
 /* ページの中の移動は動きをつける:
    ・リンクでの移動はなめらかにスクロールする
-   ・いちばん上の節と「機能をつなげる」の頭は、近くでスクロールを止めるとそこへ寄る（scroll-snap の proximity。長い節の途中では寄らない）
+   ・スクロールを止めた位置で節の頭へ寄せること（scroll-snap）はしない（2026-11-17 に外した。「機能」の頭へ寄るのが煩わしいため）
    ・各節の中身は、画面に入ったときに下から浮かび上がる（site.js の setupReveal が html に reveal-on を付けたときだけ） */
-html { scroll-behavior: smooth; scroll-snap-type: y proximity; scroll-padding-top: 65px; -webkit-text-size-adjust: 100%; }
-.hero, #functions { scroll-snap-align: start; }
+html { scroll-behavior: smooth; scroll-padding-top: 65px; -webkit-text-size-adjust: 100%; }
 .reveal-on main .section > .wrap, .reveal-on main .section > .narrow {
   opacity: 0; transform: translateY(28px); transition: opacity 1s var(--ease), transform 1s var(--ease);
 }
 .reveal-on main .section > .is-in { opacity: 1; transform: none; }
-@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; scroll-snap-type: none; } }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 
 body {
   margin: 0;
