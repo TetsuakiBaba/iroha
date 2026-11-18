@@ -28,6 +28,7 @@ namespace iroha {
 // （読み, 文脈）をキーにキャッシュするので、ライブ変換で末尾に1文字ずつ足していく間、
 // 打鍵ごとに実際に再変換されるのは末尾の区切りだけになる。
 //
+// 全角スペースを含む読みは全角スペースで分けて変換し、全角スペースはそのまま戻す（ConvertSplittingAtSpaces）。
 // maxChunkLength 以下の読みはそのまま素通しする。
 // 文字数はコードポイントで数える（読みはNFCのかなである前提。ReadingAligner と同じ）
 class ChunkedConversionEngine : public ConversionEngine {
@@ -47,6 +48,13 @@ public:
     static std::optional<size_t> PunctuationCut(const std::u32string& window, size_t minimum);
 
 private:
+    // 全角スペース（「z」+ スペースで入る。RomajiComposer）
+    static constexpr char32_t kIdeographicSpace = U'\u3000';
+
+    // 全角スペースで分けて前から順に変換し、全角スペースはそのまま戻す
+    bool ConvertSplittingAtSpaces(const std::u32string& reading, const std::u32string& context,
+                                  int candidateCount, std::vector<std::u32string>* results,
+                                  std::string* error);
     // 窓（maxChunkLength文字）をどこで切るかと、その区切りの変換結果を返す
     bool CutWindow(const std::u32string& window, const std::u32string& context, size_t* cut,
                    std::u32string* converted, std::string* error);

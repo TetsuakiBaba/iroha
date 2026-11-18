@@ -86,6 +86,32 @@ void TestChunkedShortReadingPassesThrough() {
     EXPECT_TRUE(stub.contexts == (Strings{U"文脈"}));
 }
 
+// 全角スペースはモデルに渡さず、前後を分けて変換して全角スペースをそのまま戻す
+void TestChunkedSplitsAtIdeographicSpace() {
+    TableEngine stub;
+    stub.table = {{U"かいし", U"開始"}, {U"しゅうりょう", U"終了"}};
+    iroha::ChunkedConversionEngine engine(&stub, 80);
+    EXPECT_TRUE(ConvertWith(engine, U"かいし\u3000しゅうりょう", U"前", 1) == (Strings{U"開始\u3000終了"}));
+    EXPECT_TRUE(stub.readings == (Strings{U"かいし", U"しゅうりょう"}));
+    EXPECT_TRUE(stub.contexts == (Strings{U"前", U"前開始\u3000"}));
+    // 先頭・末尾・連続した全角スペースもそのまま残る（入力中は末尾に全角スペースがある）
+    EXPECT_TRUE(ConvertWith(engine, U"\u3000かいし\u3000\u3000", U"", 1) ==
+                (Strings{U"\u3000開始\u3000\u3000"}));
+}
+
+// 候補を複数求められたら、分けて変換した結果の後ろに、全角スペースの数が合う下のエンジンの候補を続ける
+void TestChunkedIdeographicSpaceCandidates() {
+    TableEngine stub;
+    stub.table = {{U"かいし", U"開始"},
+                  {U"しゅうりょう", U"終了"},
+                  {U"かいし\u3000しゅうりょう", U"開始🍀終了"}};
+    iroha::ChunkedConversionEngine engine(&stub, 80);
+    EXPECT_TRUE(ConvertWith(engine, U"かいし\u3000しゅうりょう", U"", 3) == (Strings{U"開始\u3000終了"}));
+    stub.table[U"かいし\u3000しゅうりょう"] = U"カイシ\u3000終了";
+    EXPECT_TRUE(ConvertWith(engine, U"かいし\u3000しゅうりょう", U"", 3) ==
+                (Strings{U"開始\u3000終了", U"カイシ\u3000終了"}));
+}
+
 // 句読点があればその直後で切り、前の区切りの変換結果を次の文脈にする
 void TestChunkedSplitsAfterPunctuation() {
     TableEngine stub;
@@ -154,6 +180,8 @@ void RunEngineTests() {
     TestVariantReadingNormalization();
 
     TestChunkedShortReadingPassesThrough();
+    TestChunkedSplitsAtIdeographicSpace();
+    TestChunkedIdeographicSpaceCandidates();
     TestChunkedSplitsAfterPunctuation();
     TestChunkedSplitsAtAlignedSegmentBoundary();
     TestChunkedFallsBackToWindowLength();

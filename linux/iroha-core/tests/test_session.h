@@ -890,6 +890,41 @@ void TestSessionDisplayConversionForgetsLearning() {
 }
 
 // Shift+英字で英字入力を始め、Shift を離して打つとかな入力に戻る（それまでの英字は固定部分）
+// 「z」+ スペースは全角スペース、「z」+ Shift+L は ⇒（macOS版 52bda25）。それ以外のスペース・Shift+英字はこれまでどおり
+void TestSessionZSymbols() {
+    FakeSessionHost host;
+    host.table[U"あ\u3000⇒"] = U"亜\u3000⇒";
+    iroha::InputSession session(&host);
+    Type(session, U"az");
+    auto output = Press(session, Key::Space);            // 未解決のローマ字が「z」なら変換を始めない
+    EXPECT_TRUE(!output.segmenting);
+    EXPECT_EQ(host.liveRequests.back().reading, U"あ\u3000");
+    output = Type(session, U"zL");                         // 「z」のあとの Shift+L は英字入力を始めない
+    EXPECT_EQ(host.liveRequests.back().reading, U"あ\u3000⇒");
+    CompleteLatest(session, host, U"亜\u3000⇒");
+    output = Press(session, Key::Space);                   // 「z」のあとでなければ文節変換を始める
+    EXPECT_TRUE(output.segmenting);
+    EXPECT_EQ(Press(session, Key::Enter).commit, U"亜\u3000⇒");
+
+    // 「z」のあとの Shift+H は ← にせず、英字入力を始める
+    Type(session, U"az");
+    output = Type(session, U"H");
+    EXPECT_EQ(output.PreeditText(), U"あzH");
+    Press(session, Key::Escape);
+    Press(session, Key::Escape);
+    Press(session, Key::Escape);
+
+    // 文節の打ち直しの中でも「z」+ スペースは全角スペース
+    host.table[U"きょうはいいてんき"] = U"今日はいい天気";
+    Type(session, U"kyouhaiitenki");
+    Press(session, Key::Space);
+    Press(session, Key::Right);
+    Type(session, U"z");
+    output = Press(session, Key::Space);
+    EXPECT_TRUE(output.segmenting && output.commit.empty());
+    EXPECT_EQ(host.liveRequests.back().reading, U"きょうはいい\u3000");
+}
+
 void TestSessionAlphabetRun() {
     FakeSessionHost host;
     iroha::InputSession session(&host);
@@ -1673,6 +1708,7 @@ void RunSessionTests() {
     TestSessionLiveConversionDisabled();
     TestSessionDisplayConversion();
     TestSessionDisplayConversionForgetsLearning();
+    TestSessionZSymbols();
     TestSessionAlphabetRun();
     TestSessionTogglePunctuation();
     TestSessionIdleSpace();

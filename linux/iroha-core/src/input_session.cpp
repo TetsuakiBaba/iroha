@@ -340,7 +340,7 @@ void InputSession::HandleComposing(SessionKey key, char32_t character, bool shif
                                    std::u32string* commit) {
     State& s = state_;
     switch (key) {
-    case SessionKey::Character:
+    case SessionKey::Character: {
         // 区切り記号で囲んだ英字入力。Shift+英字より先に見る
         if (s.alphabetRunDelimited && s.alphabetRun) {
             if (character == settings_.delimitedEnd) {
@@ -355,8 +355,10 @@ void InputSession::HandleComposing(SessionKey key, char32_t character, bool shif
             break;
         }
         // Shift+英字（大文字）で英字入力を始める。Shift を押している間は記号・数字もそのまま英字に足し、
-        // Shift を離して打った文字からはかな入力に戻る（それまでの英字は固定部分になる）
-        if (StartsAlphabetRun(character) || (s.alphabetRun && shift)) {
+        // Shift を離して打った文字からはかな入力に戻る（それまでの英字は固定部分になる）。
+        // ただし「z」のあとの Shift+L は SKK の「zL」→「⇒」にする（RomajiComposer の大文字を区別する表）
+        const bool completesRomaji = !s.alphabetRun && s.composer.CompletesKey(character);
+        if ((StartsAlphabetRun(character) && !completesRomaji) || (s.alphabetRun && shift)) {
             InputAlphabet(character);
             break;
         }
@@ -364,6 +366,7 @@ void InputSession::HandleComposing(SessionKey key, char32_t character, bool shif
         LockDisplayOverride();
         InputCharacter(character);
         break;
+    }
     case SessionKey::Enter:
         if (!StateComposing()) break;
         ForgetRejectedLearnings();
@@ -449,6 +452,12 @@ void InputSession::HandleComposing(SessionKey key, char32_t character, bool shif
         // 区切り記号の英字入力中の Shift+Space は、英字の中にスペースを入れる
         if (s.alphabetRunDelimited && s.alphabetRun && shift) {
             s.alphabetRun->push_back(U' ');
+            break;
+        }
+        // 「z」+ スペースで全角スペース（SKK と同じ。RomajiComposer の「z 」）。
+        // 未解決のローマ字が「z」のときだけで、それ以外のスペースはこれまでどおり変換を始める
+        if (!s.alphabetRun && !shift && s.composer.CompletesKey(U' ')) {
+            InputCharacter(U' ');
             break;
         }
         if (!StateComposing()) {
@@ -1446,6 +1455,14 @@ bool InputSession::HandleSegmentEditKey(SessionKey key, char32_t character, bool
         edit.composer.Input(character);
         SegmentEditDidChange();
         return true;
+    case SessionKey::Space:
+        // 「z」+ スペースで全角スペース（入力中のスペースと同じ）
+        if (!shift && edit.composer.CompletesKey(U' ')) {
+            edit.composer.Input(U' ');
+            SegmentEditDidChange();
+            return true;
+        }
+        [[fallthrough]];
     default: {
         // 空にした文節はここで消え、選択はその場所に来た文節に移る。
         // 消した文節から見て隣へ行く ← → は、それで済んでいるので、もう 1 つ動かさない

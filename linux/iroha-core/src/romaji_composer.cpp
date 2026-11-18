@@ -72,6 +72,23 @@ const std::unordered_map<std::u32string, std::u32string>& DefaultTable() {
         // 記号
         {U"-", U"ー"}, {U",", U"、"}, {U".", U"。"}, {U"/", U"・"},
         {U"[", U"「"}, {U"]", U"」"}, {U"!", U"！"}, {U"?", U"？"}, {U"~", U"〜"},
+        // z で始まる記号（2026-11-18、macOS版 52bda25）。上の 10 個は Google日本語入力（Mozc の romanji-hiragana.tsv）と同じ、
+        // 下は SKK（ddskk の skk-rom-kana-base-rule-list）にだけあるもの。
+        // 「z 」（z + スペース）はスペースが変換キーなので、InputSession が CompletesKey を見て渡す
+        {U"zh", U"←"}, {U"zj", U"↓"}, {U"zk", U"↑"}, {U"zl", U"→"},
+        {U"z.", U"…"}, {U"z,", U"‥"}, {U"z/", U"・"}, {U"z-", U"〜"}, {U"z[", U"『"}, {U"z]", U"』"},
+        {U"z ", U"\u3000"}, {U"z*", U"※"}, {U"z0", U"○"}, {U"z@", U"◎"}, {U"z:", U"゜"}, {U"z;", U"゛"},
+        {U"z{", U"【"}, {U"z}", U"】"}, {U"z(", U"（"}, {U"z)", U"）"}, {U"zn", U"ー"},
+    };
+    return table;
+}
+
+// 大文字を区別するキー（SKK の「zL」→「⇒」）。Input は英字を小文字にそろえて DefaultTable を引くので、
+// 小文字にする前にこちらを引く。Shift+英字は英字入力を始めるので、InputSession は CompletesKey が
+// 真のときだけ合成器へ渡す
+const std::unordered_map<std::u32string, std::u32string>& CaseSensitiveTable() {
+    static const std::unordered_map<std::u32string, std::u32string> table = {
+        {U"zL", U"⇒"},
     };
     return table;
 }
@@ -112,6 +129,12 @@ RomajiComposer::RomajiComposer(std::u32string comma, std::u32string period)
 
 void RomajiComposer::Input(char32_t character) {
     raw_.push_back(character);
+    // 大文字を区別するキー（「zL」→「⇒」）は小文字にする前に引く
+    if (auto it = CaseSensitiveTable().find(pending_ + character); it != CaseSensitiveTable().end()) {
+        text_ += it->second;
+        pending_.clear();
+        return;
+    }
     // 英字は小文字に正規化して扱う
     pending_.push_back(ToLowerAscii(character));
     Resolve();
@@ -119,6 +142,13 @@ void RomajiComposer::Input(char32_t character) {
 
 void RomajiComposer::Input(const std::u32string& text) {
     for (char32_t c : text) Input(c);
+}
+
+bool RomajiComposer::CompletesKey(char32_t character) const {
+    const std::u32string key = pending_ + character;
+    if (CaseSensitiveTable().count(key) > 0) return true;
+    const bool uppercase = character >= U'A' && character <= U'Z';
+    return !uppercase && table_.count(key) > 0;
 }
 
 void RomajiComposer::DeleteBackward() {

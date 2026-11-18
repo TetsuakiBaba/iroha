@@ -19,6 +19,11 @@ public:
     void Input(char32_t character);
     void Input(const std::u32string& text);
 
+    // 未解決のローマ字にこの文字を足すと、通常の入力では合成器に渡らない文字で終わるキー
+    // （「z」+ スペース、「z」+ Shift+L）がちょうど完成するか。
+    // 大文字は大文字を区別する表だけを見る（「z」+ Shift+H を「zh」とみなして ← にしない）
+    bool CompletesKey(char32_t character) const;
+
     // 表示上の末尾1文字を削除する
     void DeleteBackward();
 

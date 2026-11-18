@@ -16,6 +16,9 @@ bool ChunkedConversionEngine::Convert(const std::u32string& reading,
                                       const std::u32string& context, int candidateCount,
                                       std::vector<std::u32string>* results, std::string* error) {
     if (!results) return false;
+    if (reading.find(kIdeographicSpace) != std::u32string::npos) {
+        return ConvertSplittingAtSpaces(reading, context, candidateCount, results, error);
+    }
     if (reading.size() <= maxChunkLength_) {
         return base_->Convert(reading, context, candidateCount, results, error);
     }
@@ -45,6 +48,51 @@ bool ChunkedConversionEngine::Convert(const std::u32string& reading,
         index += cut;
     }
     results->push_back(std::move(result));
+    return true;
+}
+
+// 全角スペースを含む読みは、全角スペースで分けて前から順に変換し、全角スペースはそのまま戻す（macOS版 52bda25）。
+//
+// モデルは読みの全角スペースを写さず別の文字を出す（2026-11-18、iroha-kkc-v1 で「かいし　しゅうりょう」→
+// 「開始🍀終了」、「あ　い」→「アfイ」）。ライブ変換の第一候補はモデルの生成なので、モデルに全角スペースを渡さない。
+// 各部分は直前までの変換結果（全角スペースを含む）を左文脈にする。
+// 候補を複数求められたとき（全角スペースを含む文節の候補ウィンドウ）は、この結果の後ろに、下のエンジンの候補の
+// うち全角スペースの数が読みと同じものを続ける
+bool ChunkedConversionEngine::ConvertSplittingAtSpaces(const std::u32string& reading,
+                                                       const std::u32string& context, int candidateCount,
+                                                       std::vector<std::u32string>* results,
+                                                       std::string* error) {
+    std::u32string result;
+    std::u32string partContext = context;
+    size_t start = 0;
+    while (true) {
+        const size_t end = reading.find(kIdeographicSpace, start);
+        const std::u32string part =
+            reading.substr(start, end == std::u32string::npos ? std::u32string::npos : end - start);
+        if (!part.empty()) {
+            std::vector<std::u32string> converted;
+            if (!Convert(part, partContext, 1, &converted, error)) return false;
+            const std::u32string& text = converted.empty() ? part : converted.front();
+            result += text;
+            partContext += text;
+        }
+        if (end == std::u32string::npos) break;
+        result.push_back(kIdeographicSpace);
+        partContext.push_back(kIdeographicSpace);
+        start = end + 1;
+    }
+    results->clear();
+    results->push_back(result);
+    if (candidateCount <= 1) return true;
+    const auto spaces = std::count(reading.begin(), reading.end(), kIdeographicSpace);
+    std::vector<std::u32string> candidates;
+    if (!base_->Convert(reading, context, candidateCount, &candidates, error)) return false;
+    for (const std::u32string& candidate : candidates) {
+        if (results->size() >= static_cast<size_t>(candidateCount)) break;
+        if (std::find(results->begin(), results->end(), candidate) != results->end()) continue;
+        if (std::count(candidate.begin(), candidate.end(), kIdeographicSpace) != spaces) continue;
+        results->push_back(candidate);
+    }
     return true;
 }
 
