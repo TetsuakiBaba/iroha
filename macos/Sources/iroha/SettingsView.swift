@@ -412,6 +412,10 @@ private struct VoiceInputSection: View {
     @AppStorage(VoiceInputSettings.enabledKey) private var enabled = false
     @AppStorage(VoiceInputSettings.holdKeyKey) private var holdKey = VoiceInputSettings.HoldKey.rightCommand.rawValue
     @AppStorage(VoiceInputSettings.recognizerKey) private var recognizer = VoiceRecognizerKind.speech.rawValue
+    @AppStorage(VoiceLogSettings.enabledKey) private var logEnabled = false
+    @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
+    @AppStorage(PrivateModeSettings.enabledKey) private var privateMode = false
+    @State private var loggedCount: Int?
     @State private var microphone = VoiceMicrophone.status
     @State private var assets: VoiceAssetStatus?
     @State private var downloadProgress: Double?
@@ -465,6 +469,9 @@ private struct VoiceInputSection: View {
                 microphoneRow
                 assetsRow
             }
+            if developerMode {
+                logRows
+            }
         } header: {
             HelpSectionHeader(
                 title: "「こえ」モード",
@@ -474,6 +481,43 @@ private struct VoiceInputSection: View {
         }
         .task(id: recognizer) { await refresh() }
         .onChange(of: enabled) { _, _ in Task { await refresh() } }
+        .task(id: logEnabled) { await refreshLoggedCount() }
+    }
+
+    /// 認識結果の記録（`VoiceLogSettings`。開発者モードの項目）
+    @ViewBuilder
+    private var logRows: some View {
+        HelpToggle(
+            title: "認識結果を記録する", isOn: $logEnabled,
+            help: "ONの間、キーを離して認識が終わるたびに、音声認識が返した文字列と、それを読みに戻したものを記録します。"
+                + "声で入れた文を確定したときは、確定した文字列も記録します（候補やキーボードで直したあとの文）。"
+                + "話した内容と直して確定した文を並べて、フィラー（「えー」「あの」など）の除き方を調べるための記録です。"
+                + "記録はデータフォルダの logs/voice/ に、Macごと・月ごとのファイル（1行1件のJSON）で残ります。"
+                + "音声そのものは残しません。プライベートモードの間は記録しません。この設定は他のMacと同期しません。",
+            isDisabled: !enabled, developer: true)
+            .disabled(!enabled)
+        if logEnabled {
+            if privateMode {
+                PrivateModePausedNote(text: "プライベートモードの間は、認識結果を記録していません")
+            }
+            LabeledContent("記録した発話") {
+                HStack {
+                    Text(loggedCount.map { "\($0) 件" } ?? "…").foregroundStyle(.secondary)
+                    Button("Finderで表示") {
+                        let dir = VoiceLog.defaultDirectory
+                        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                        NSWorkspace.shared.open(dir)
+                    }
+                    Button("再読み込み") { Task { await refreshLoggedCount() } }
+                }
+            }
+        }
+    }
+
+    private func refreshLoggedCount() async {
+        guard logEnabled else { return }
+        let count = await Task.detached(priority: .utility) { VoiceLog.shared.utteranceCount() }.value
+        loggedCount = count
     }
 
     @ViewBuilder
@@ -2732,7 +2776,7 @@ private struct AboutSettingsTab: View {
                     title: "開発者モード", isOn: $developerMode,
                     help: "ONにすると、細かな調整や開発者向けの項目を設定画面に表示します"
                         + "（入力: アプリの文章を文脈に使う・打ち間違いの訂正の訂正モデル／休止時間／最低文字数／確信の強さ・"
-                        + "区切り記号で英字を入力・タップ入力（加速度センサを利用するとき）・AIで直す、"
+                        + "区切り記号で英字を入力・タップ入力（加速度センサを利用するとき）・AIで直す・「こえ」モードの認識結果を記録する、"
                         + "辞書・学習: 自分の原稿に合わせる・記号・顔文字・絵文字を候補に出す、"
                         + "選択テキスト: 除外するアプリ、モデル: 推論エンジン・モデルファイルの指定・irohaを再起動・"
                         + "自分の入力で追加学習・変換のベンチマーク、情報: 推論の時間の表示・加速度センサを利用する）。"

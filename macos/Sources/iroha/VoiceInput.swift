@@ -81,6 +81,22 @@ enum VoiceInputSettings {
     }
 }
 
+/// 「こえ」モードの認識結果を記録するか（`VoiceLog`。設定 > 入力 > 「こえ」モード、開発者モードの項目・既定OFF・
+/// 他のMacと同期しない（`ConversionLogSettings` と同じく、データフォルダを共有する別のMacで記録が始まらないように）。
+/// フィラーの除去を評価する材料を集めるため。2026-11-19）
+enum VoiceLogSettings {
+    static let enabledKey = "voiceLogEnabled"
+
+    static var isEnabled: Bool {
+        UserDefaults.standard.bool(forKey: enabledKey)
+    }
+
+    /// いま記録するか。設定がONでも、プライベートモードの間は記録しない
+    static var isActive: Bool {
+        isEnabled && !PrivateModeSettings.isEnabled
+    }
+}
+
 /// 「こえ」モード: 決めた修飾キーを押している間だけ録音し、離したら認識結果を入力中のコントローラに渡す（試作。2026-11-10）。
 ///
 /// 認識結果は確定せず、読みに戻して未確定文字列に入れる（`IrohaInputController.insertVoiceTranscript`）。

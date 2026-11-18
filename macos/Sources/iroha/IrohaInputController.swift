@@ -309,6 +309,7 @@ final class IrohaInputController: IMKInputController {
         var segmentsRetyped: Bool
         var segmentFixedCount: Int
         var compositionHasVoice: Bool
+        var voiceUtteranceIDs: [String]
         var recentCommitted: String
         var recentCommittedHasPrivateText: Bool
         var documentContext: String?
@@ -397,6 +398,8 @@ final class IrohaInputController: IMKInputController {
     /// 声で入れた読みは音声認識の表記から求め直したもので、打った読みではないので、
     /// 真なら確定しても学習・変換記録・入力履歴に残さない。合成の始まりで偽に戻す
     private var compositionHasVoice = false
+    /// 今の合成に入れた発話の記録の識別子（`VoiceLog`。記録が ON のときだけ足す）。確定したら確定の記録に入れる
+    private var voiceUtteranceIDs: [String] = []
     /// 「こえ」モードで話している間の、音声認識の途中結果（表記）。未確定文字列の末尾に足して見せる（`showVoicePartial`）。
     /// キーを離して認識が終わると、読みに戻した合成に置き換わる。合成の状態（読み・固定部分）には入れない
     private var voicePartial: String?
@@ -3202,9 +3205,16 @@ final class IrohaInputController: IMKInputController {
             clearVoicePartial()
             return
         }
+        let utteranceID = VoiceLogSettings.isActive ? UUID().uuidString : nil
+        if let utteranceID {
+            VoiceLog.shared.record(.utterance(
+                id: utteranceID, recognizer: VoiceInputSettings.recognizer.rawValue, recognized: recognized,
+                transcript: transcript))
+        }
         guard japaneseMode else {
             closeCommitUndo()
             voicePartial = nil
+            voiceUtteranceIDs = utteranceID.map { [$0] } ?? []
             commitText(transcript.surface, client: client)
             return
         }
@@ -3230,7 +3240,7 @@ final class IrohaInputController: IMKInputController {
             return index > 0 || !composer.text.isEmpty
         }
         guard needsConversion else {
-            applyVoiceTranscript(transcript, locked: [:], client: client)
+            applyVoiceTranscript(transcript, utteranceID: utteranceID, locked: [:], client: client)
             return
         }
         let baseContext = conversionContext + fixedText
@@ -3258,15 +3268,17 @@ final class IrohaInputController: IMKInputController {
             let result = locked
             await MainActor.run {
                 guard generation == self.voiceInsertGeneration, let client = self.client() else { return }
-                self.applyVoiceTranscript(transcript, locked: result, client: client)
+                self.applyVoiceTranscript(transcript, utteranceID: utteranceID, locked: result, client: client)
             }
         }
     }
 
     /// 読みと固定部分を合成に入れる。`locked` は固定部分（`parts` の位置）ごとの「その前の読み → 変換結果」。
-    /// 変換を待つ間に合成が変わって読みが合わなくなっていたら、今のライブ変換の結果かかなで固定する
+    /// 変換を待つ間に合成が変わって読みが合わなくなっていたら、今のライブ変換の結果かかなで固定する。
+    /// `utteranceID` は発話の記録の識別子（記録が OFF なら nil）
     private func applyVoiceTranscript(
-        _ transcript: VoiceTranscript, locked: [Int: (reading: String, text: String)], client: IMKTextInput
+        _ transcript: VoiceTranscript, utteranceID: String?, locked: [Int: (reading: String, text: String)],
+        client: IMKTextInput
     ) {
         guard !isTranslating else { return }
         if mode == .segmenting { commitCurrent(client: client) }
@@ -3301,6 +3313,7 @@ final class IrohaInputController: IMKInputController {
             }
         }
         compositionHasVoice = true
+        if let utteranceID { voiceUtteranceIDs.append(utteranceID) }
         // 声で入れた読みは打ち間違いの訂正に通さない（打鍵の誤りを直すモデルで、認識の誤りは対象外）
         cancelTypoCorrection()
         typoRejectedReading = composer.text
@@ -3416,6 +3429,7 @@ final class IrohaInputController: IMKInputController {
         segmentsRetyped = undo.segmentsRetyped
         segmentFixedCount = undo.segmentFixedCount
         compositionHasVoice = undo.compositionHasVoice
+        voiceUtteranceIDs = undo.voiceUtteranceIDs
         recentCommitted = undo.recentCommitted
         recentCommittedHasPrivateText = undo.recentCommittedHasPrivateText
         documentContext = undo.documentContext
@@ -3429,6 +3443,11 @@ final class IrohaInputController: IMKInputController {
     }
 
     private func commitText(_ text: String, client: IMKTextInput?) {
+        // 声で入れた入力の確定を記録する（ほかの記録と同じく、取り消せなくなったときに書く）
+        if !voiceUtteranceIDs.isEmpty, !text.isEmpty, VoiceLogSettings.isActive {
+            let entry = VoiceLogEntry.commit(utterances: voiceUtteranceIDs, committed: text)
+            deferCommitEffect { VoiceLog.shared.record(entry) }
+        }
         // 前の確定はもう取り消せない（間に別の確定が入った）
         let effects = pendingCommitEffects
         pendingCommitEffects = []
@@ -3443,6 +3462,7 @@ final class IrohaInputController: IMKInputController {
                 segmentBaseline: segmentBaseline, segmentEngineBaseline: segmentEngineBaseline,
                 segmentsFromAI: segmentsFromAI, segmentsRetyped: segmentsRetyped,
                 segmentFixedCount: segmentFixedCount, compositionHasVoice: compositionHasVoice,
+                voiceUtteranceIDs: voiceUtteranceIDs,
                 recentCommitted: recentCommitted,
                 recentCommittedHasPrivateText: recentCommittedHasPrivateText, documentContext: documentContext,
                 effects: effects)
@@ -3467,6 +3487,7 @@ final class IrohaInputController: IMKInputController {
         segmentsRetyped = false
         segmentMovedByArrow = false
         compositionHasVoice = false
+        voiceUtteranceIDs = []
         voicePartial = nil
         // 変換を待っている声の認識結果があっても、確定のあとには入れない
         voiceInsertGeneration += 1
@@ -3506,6 +3527,7 @@ final class IrohaInputController: IMKInputController {
         // いま読むと、未確定文字列として見せている途中結果が文脈に混ざる）
         guard !isComposing, voicePartial == nil else { return }
         compositionHasVoice = false
+        voiceUtteranceIDs = []
         // デバッグ表示が ON のときは、1 文字目の表示を待たせている処理を工程ごとに測って出す
         let clock = ContinuousClock()
         var lapStart = clock.now
