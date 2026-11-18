@@ -745,6 +745,45 @@ void TestSessionRetypeSegmentAfterMove() {
     EXPECT_TRUE(host.commits.empty()); // 打ち直した確定は学習しない
 }
 
+// z で始まる記号（2026-11-18、macOS版と同じ）。「z」+ スペースは変換を始めずに全角スペースにし、
+// 「z」のあとの Shift+L は英字入力を始めずに「⇒」にする。文節の打ち直しの中の「z」+ スペースも同じ
+void TestSessionZSymbols() {
+    FakeSessionHost host;
+    iroha::InputSession session(&host);
+    Type(session, U"kaisiz");
+    auto output = Press(session, Key::Space);
+    EXPECT_TRUE(!output.segmenting);
+    EXPECT_EQ(output.PreeditText(), U"かいし　");
+    EXPECT_EQ(host.liveRequests.back().reading, U"かいし　");
+    Type(session, U"shuuryou");
+    EXPECT_EQ(host.liveRequests.back().reading, U"かいし　しゅうりょう");
+    // 「z」でなければスペースはこれまでどおり変換を始める
+    output = Press(session, Key::Space);
+    EXPECT_TRUE(output.segmenting);
+    Press(session, Key::Reset);
+
+    // 「z」のあとの Shift+L は「⇒」（英字入力にならない）
+    output = Type(session, U"yazL");
+    EXPECT_EQ(output.PreeditText(), U"や⇒");
+    EXPECT_EQ(host.liveRequests.back().reading, U"や⇒");
+    // 「z」がなければ Shift+L は英字入力を始める
+    output = Type(session, U"L");
+    EXPECT_EQ(output.PreeditText(), U"や⇒L");
+    Press(session, Key::Reset);
+
+    // 文節の打ち直しの中でも「z」+ スペースは全角スペース
+    host.table[U"きょうはいいてんき"] = U"今日はいい天気";
+    Type(session, U"kyouhaiitenki");
+    Press(session, Key::Space);
+    Press(session, Key::Right);
+    Type(session, U"z");
+    output = Press(session, Key::Space);
+    EXPECT_TRUE(output.segmenting && !output.candidatesVisible);
+    EXPECT_EQ(output.PreeditText(), U"今日はいい　");
+    Type(session, U"sora");
+    EXPECT_EQ(host.liveRequests.back().reading, U"きょうはいい　そら");
+}
+
 // ←→ で文節を移していなければ、文字を打つと全文節を確定して次の入力を始める（2026-11-17、macOS版と同じ。
 // Space で候補を選んでそのまま続きを打つと、選んだ文節が打ち直しで消えていた）
 void TestSessionTypeAfterCandidateCommits() {
@@ -1881,6 +1920,7 @@ void RunSessionTests() {
     TestSessionRetypeSegment();
     TestSessionRetypeSegmentAfterMove();
     TestSessionTypeAfterCandidateCommits();
+    TestSessionZSymbols();
     TestSessionSegmentBackspace();
     TestSessionLeftContext();
     TestSessionCommitNowAndReset();

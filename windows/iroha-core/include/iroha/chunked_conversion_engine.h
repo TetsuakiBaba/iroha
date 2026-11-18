@@ -46,7 +46,13 @@ public:
     // 窓の中で最後に現れる句読点の直後の位置（minimum以上のもの）。なければnullopt
     static std::optional<size_t> PunctuationCut(const std::u32string& window, size_t minimum);
 
+    // 全角スペース（「z」+ スペースで入る。RomajiComposer）
+    static constexpr char32_t kIdeographicSpace = U'　';
+
 private:
+    // 全角スペースを含む読みを全角スペースごとに分けて変換する（全角スペースはモデルに渡さない）
+    bool ConvertSplittingAtSpaces(const std::u32string& reading, const std::u32string& context,
+                                  int candidateCount, std::vector<std::u32string>* results, std::string* error);
     // 窓（maxChunkLength文字）をどこで切るかと、その区切りの変換結果を返す
     bool CutWindow(const std::u32string& window, const std::u32string& context, size_t* cut,
                    std::u32string* converted, std::string* error);

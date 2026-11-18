@@ -157,6 +157,52 @@ void TestPunctuationStyle() {
     EXPECT_EQ(Compose(U"a,b.", true), U"あ、b。");
 }
 
+// macOS版 testZSymbols
+void TestZSymbols() {
+    // Google日本語入力（Mozc）と同じもの
+    EXPECT_EQ(Compose(U"zhzjzkzl"), U"←↓↑→");
+    EXPECT_EQ(Compose(U"z.z,z/z-z[z]"), U"…‥・〜『』");
+    // SKK にだけあるもの
+    EXPECT_EQ(Compose(U"z*z0z@z:z;"), U"※○◎゜゛");
+    EXPECT_EQ(Compose(U"z{z}z(z)zn"), U"【】（）ー");
+    EXPECT_EQ(Compose(U"az b"), U"あ　b");
+    // 句読点の設定は「z,」「z.」に効かない
+    iroha::RomajiComposer composer(U"，", U"．");
+    composer.Input(std::u32string(U"z,z."));
+    EXPECT_EQ(composer.Display(), U"‥…");
+    // 前後のかな・「ん」・促音とつながる
+    EXPECT_EQ(Compose(U"yajirushiz.zl"), U"やじるし…→");
+    EXPECT_EQ(Compose(U"nzh"), U"ん←");
+    EXPECT_EQ(Compose(U"zza"), U"っざ");
+    EXPECT_EQ(Compose(U"zaza"), U"ざざ");
+    // 「z」だけで確定すれば z のまま
+    EXPECT_EQ(Compose(U"az", true), U"あz");
+    // F9/F10 の英数変換用の打鍵列は残る
+    iroha::RomajiComposer raw;
+    raw.Input(std::u32string(U"zh"));
+    EXPECT_EQ(raw.Raw(), U"zh");
+    EXPECT_TRUE(raw.RawIsReliable());
+}
+
+// macOS版 testZCaseSensitiveKey
+void TestZCaseSensitiveKey() {
+    iroha::RomajiComposer composer;
+    composer.Input(U'a');
+    // 「z」がなければ Shift+L はどのキーも完成させない（InputSession は英字入力を始める）
+    EXPECT_TRUE(!composer.CompletesKey(U'L'));
+    composer.Input(U'z');
+    EXPECT_TRUE(composer.CompletesKey(U'L'));
+    EXPECT_TRUE(composer.CompletesKey(U' '));
+    EXPECT_TRUE(composer.CompletesKey(U'h'));
+    // 大文字は大文字を区別するキーだけ（「z」+ Shift+H は ← にしない）
+    EXPECT_TRUE(!composer.CompletesKey(U'H'));
+    composer.Input(U'L');
+    EXPECT_EQ(composer.Display(), U"あ⇒");
+    EXPECT_EQ(composer.Raw(), U"azL");
+    // スペースは「z」のあとだけ
+    EXPECT_TRUE(!composer.CompletesKey(U' '));
+}
+
 void TestHiraganaToKatakana() {
     EXPECT_EQ(iroha::HiraganaToKatakana(U"にゅうりょく"), U"ニュウリョク");
     EXPECT_EQ(iroha::HiraganaToKatakana(U"こーひー"), U"コーヒー");
@@ -370,6 +416,8 @@ int main() {
     TestPassthroughUnknown();
     TestRealWords();
     TestPunctuationStyle();
+    TestZSymbols();
+    TestZCaseSensitiveKey();
     TestHiraganaToKatakana();
     TestUnicodeRoundTrip();
 

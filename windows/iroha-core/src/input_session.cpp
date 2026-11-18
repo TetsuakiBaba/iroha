@@ -392,8 +392,10 @@ void InputSession::HandleComposing(SessionKey key, char32_t character, bool shif
             break;
         }
         // Shift+英字（大文字）で英字入力を始める。Shift を押している間は記号・数字もそのまま英字に足し、
-        // Shift を離して打った文字からはかな入力に戻る（それまでの英字は固定部分になる）
-        if (StartsAlphabetRun(character) || (s.alphabetRun && shift)) {
+        // Shift を離して打った文字からはかな入力に戻る（それまでの英字は固定部分になる）。
+        // ただし「z」のあとの Shift+L は SKK の「zL」→「⇒」にする（RomajiComposer の大文字を区別する表。macOS版と同じ）
+        if ((StartsAlphabetRun(character) && !(!s.alphabetRun && s.composer.CompletesKey(character))) ||
+            (s.alphabetRun && shift)) {
             InputAlphabet(character);
             break;
         }
@@ -486,6 +488,12 @@ void InputSession::HandleComposing(SessionKey key, char32_t character, bool shif
         // 区切り記号の英字入力中の Shift+Space は、英字の中にスペースを入れる
         if (s.alphabetRunDelimited && s.alphabetRun && shift) {
             s.alphabetRun->push_back(U' ');
+            break;
+        }
+        // 「z」+ スペースで全角スペース（SKK と同じ。RomajiComposer の「z 」）。未解決のローマ字が「z」のときだけで、
+        // それ以外のスペースはこれまでどおり変換を始める（macOS版と同じ）
+        if (!s.alphabetRun && !shift && s.composer.CompletesKey(U' ')) {
+            InputCharacter(U' ');
             break;
         }
         if (!StateComposing()) {
@@ -1490,6 +1498,14 @@ bool InputSession::HandleSegmentEditKey(SessionKey key, char32_t character, bool
         edit.composer.Input(character);
         SegmentEditDidChange();
         return true;
+    case SessionKey::Space:
+        // 「z」+ スペースで全角スペース（入力中のスペースと同じ）。それ以外は打ち直しを終えて今の文節の候補を開く
+        if (!shift && edit.composer.CompletesKey(U' ')) {
+            edit.composer.Input(U' ');
+            SegmentEditDidChange();
+            return true;
+        }
+        [[fallthrough]];
     default: {
         // 空にした文節はここで消え、選択はその場所に来た文節に移る。
         // 消した文節から見て隣へ行く ← → は、それで済んでいるので、もう 1 つ動かさない
