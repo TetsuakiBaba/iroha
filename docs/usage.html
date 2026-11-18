@@ -55,6 +55,7 @@
       <li><a href="#basic">基本の操作</a></li>
       <li><a href="#bunsetsu">区切りと候補を直す</a></li>
       <li><a href="#kana">ひらがな・カタカナ・英数</a></li>
+      <li><a href="#symbols">記号を入れる</a></li>
       <li><a href="#alphabet">文の途中で英字</a></li>
       <li><a href="#undo">確定を取り消す</a></li>
       <li><a href="#typo">打ち間違いの訂正</a></li>
@@ -128,6 +129,54 @@
       </table>
     </div>
     <p>こうして決めた部分は、続けて打ってもそのままの形で残ります。</p>
+  </section>
+
+  <section id="symbols" class="doc-section">
+    <h2>記号を入れる</h2>
+    <p><code>z</code> に続けてキーを 1 つ打つと、矢印やかぎかっこなどの記号が入ります。変換の候補から探さなくても、打つだけで入ります（v0.19.0 から）。</p>
+    <p>下の表の「z h」は、<code>z</code> を打ってから <code>h</code> を打つことです。</p>
+    <p class="example"><code>migizlhidari</code>　→　「右→左」</p>
+    <h3>Google 日本語入力と同じ打ち方</h3>
+    <div class="table-wrap">
+      <table class="keys">
+        <thead><tr><th>キー</th><th>入る記号</th></tr></thead>
+        <tbody>
+          <tr><td>z h</td><td>←</td></tr>
+          <tr><td>z j</td><td>↓</td></tr>
+          <tr><td>z k</td><td>↑</td></tr>
+          <tr><td>z l</td><td>→</td></tr>
+          <tr><td>z .</td><td>…（三点リーダー）</td></tr>
+          <tr><td>z ,</td><td>‥（二点リーダー）</td></tr>
+          <tr><td>z /</td><td>・（中黒）</td></tr>
+          <tr><td>z -</td><td>〜（波ダッシュ）</td></tr>
+          <tr><td>z [ / z ]</td><td>『 / 』（二重かぎかっこ）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>h・j・k・l は、キーボードの並びの左・下・上・右に当たります。</p>
+    <h3>SKK と同じ打ち方</h3>
+    <div class="table-wrap">
+      <table class="keys">
+        <thead><tr><th>キー</th><th>入る記号</th></tr></thead>
+        <tbody>
+          <tr><td>z の次に Space</td><td>全角スペース</td></tr>
+          <tr><td>z の次に Shift + L</td><td>⇒</td></tr>
+          <tr><td>z *</td><td>※（米印）</td></tr>
+          <tr><td>z 0</td><td>○</td></tr>
+          <tr><td>z @</td><td>◎</td></tr>
+          <tr><td>z ( / z )</td><td>（ / ）（全角のかっこ）</td></tr>
+          <tr><td>z { / z }</td><td>【 / 】（隅付きかっこ）</td></tr>
+          <tr><td>z :</td><td>゜（半濁点）</td></tr>
+          <tr><td>z ;</td><td>゛（濁点）</td></tr>
+          <tr><td>z n</td><td>ー（長音）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li><code>z</code> のあとに母音（a・i・u・e・o）や <code>y</code>・<code>w</code> を打ったときは、これまでどおり「ざ」「じゃ」などのかなになります。<code>zz</code> は「っ」です。</li>
+      <li><code>z</code> だけを打って Return で確定すると、<code>z</code> のまま入ります。</li>
+      <li>このほか、<code>-</code> で ー、<code>[</code> <code>]</code> で 「 」、<code>/</code> で ・、<code>~</code> で 〜 が入ります。</li>
+    </ul>
   </section>
 
   <section id="alphabet" class="doc-section">
