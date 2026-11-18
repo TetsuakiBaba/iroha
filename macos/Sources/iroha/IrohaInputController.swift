@@ -1168,6 +1168,15 @@ final class IrohaInputController: IMKInputController {
                 updateMarkedText(client: client, display: currentDisplay)
                 return true
             }
+            // 「z」+ スペースで全角スペース（SKK と同じ。`RomajiComposer.defaultTable` の「z 」）。
+            // 未解決のローマ字が「z」のときだけで、それ以外のスペースはこれまでどおり変換を始める
+            if alphabetRun == nil,
+               event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+               composer.completesKey(with: " ") {
+                composer.input(" ")
+                composerDidChange(client: client)
+                return true
+            }
             guard isComposing else {
                 // 入力していないときのスペース。設定で常に半角にしていなければ全角を入れる
                 // （Shift+スペースは半角のままアプリに任せる）
@@ -1213,7 +1222,9 @@ final class IrohaInputController: IMKInputController {
         // Shift+英字（大文字）で英字入力を始める。Shiftを押している間は記号・数字もそのまま英字に足し、
         // Shiftを離して打った文字からはかな入力に戻る（それまでの英字は固定部分になる）
         let shift = event.modifierFlags.contains(.shift)
-        if Self.startsAlphabetRun(first) || (alphabetRun != nil && shift) {
+        // ただし「z」のあとの Shift+L は SKK の「zL」→「⇒」にする（`RomajiComposer.caseSensitiveTable`）
+        let completesRomaji = alphabetRun == nil && composer.completesKey(with: first)
+        if (Self.startsAlphabetRun(first) && !completesRomaji) || (alphabetRun != nil && shift) {
             inputAlphabet(first, client: client)
             return true
         }
@@ -1752,6 +1763,15 @@ final class IrohaInputController: IMKInputController {
             if let first = event.characters?.first, let scalar = first.unicodeScalars.first, scalar.isASCII,
                (0x21...0x7E).contains(scalar.value) {
                 edit.composer.input(first)
+                segmentEdit = edit
+                segmentEditDidChange(client: client)
+                return true
+            }
+            // 「z」+ スペースで全角スペース（入力中のスペースと同じ）
+            if Int(event.keyCode) == kVK_Space,
+               event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+               edit.composer.completesKey(with: " ") {
+                edit.composer.input(" ")
                 segmentEdit = edit
                 segmentEditDidChange(client: client)
                 return true

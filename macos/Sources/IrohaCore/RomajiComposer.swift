@@ -35,6 +35,12 @@ public struct RomajiComposer: Sendable, Equatable {
 
     public mutating func input(_ character: Character) {
         raw.append(character)
+        // 大文字を区別するキー（「zL」→「⇒」）は小文字にする前に引く
+        if let exact = Self.caseSensitiveTable[pending + String(character)] {
+            text += exact
+            pending = ""
+            return
+        }
         // 英字は小文字に正規化して扱う
         let c = Character(character.lowercased())
         pending.append(c)
@@ -216,7 +222,30 @@ public struct RomajiComposer: Sendable, Equatable {
         // 記号
         "-": "ー", ",": "、", ".": "。", "/": "・",
         "[": "「", "]": "」", "!": "！", "?": "？", "~": "〜",
+        // z で始まる記号（2026-11-18）。上の 10 個は Google日本語入力（Mozc の romanji-hiragana.tsv）と同じ、
+        // 下は SKK（ddskk の skk-rom-kana-base-rule-list）にだけあるもの。
+        // 「z 」（z + スペース）はスペースが変換キーなので、コントローラが `completesKey(with:)` を見て渡す
+        "zh": "←", "zj": "↓", "zk": "↑", "zl": "→",
+        "z.": "…", "z,": "‥", "z/": "・", "z-": "〜", "z[": "『", "z]": "』",
+        "z ": "\u{3000}", "z*": "※", "z0": "○", "z@": "◎", "z:": "゜", "z;": "゛",
+        "z{": "【", "z}": "】", "z(": "（", "z)": "）", "zn": "ー",
     ]
+
+    /// 大文字を区別するキー（SKK の「zL」→「⇒」）。`input` は英字を小文字にそろえて `defaultTable` を引くので、
+    /// 小文字にする前にこちらを引く。Shift+英字は英字入力を始めるので、コントローラは `completesKey(with:)` が
+    /// 真のときだけ合成器へ渡す
+    static let caseSensitiveTable: [String: String] = [
+        "zL": "⇒",
+    ]
+
+    /// 未解決のローマ字にこの文字を足すと、通常の入力では合成器に渡らない文字で終わるキー
+    /// （「z」+ スペース、「z」+ Shift+L）がちょうど完成するか。
+    /// 大文字は `caseSensitiveTable` だけを見る（「z」+ Shift+H を「zh」とみなして ← にしない）
+    public func completesKey(with character: Character) -> Bool {
+        let key = pending + String(character)
+        if Self.caseSensitiveTable[key] != nil { return true }
+        return !character.isUppercase && table[key] != nil
+    }
 
     /// 全キーの真の接頭辞集合（次の入力を待つべきか判定に使う）
     static let prefixes: Set<String> = {

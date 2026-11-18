@@ -142,6 +142,50 @@ final class RomajiComposerTests: XCTestCase {
         XCTAssertEqual(compose("a,b.", flush: true), "あ、b。")
     }
 
+    func testZSymbols() {
+        // Google日本語入力（Mozc）と同じもの
+        XCTAssertEqual(compose("zhzjzkzl"), "←↓↑→")
+        XCTAssertEqual(compose("z.z,z/z-z[z]"), "…‥・〜『』")
+        // SKK にだけあるもの
+        XCTAssertEqual(compose("z*z0z@z:z;"), "※○◎゜゛")
+        XCTAssertEqual(compose("z{z}z(z)zn"), "【】（）ー")
+        XCTAssertEqual(compose("az b"), "あ\u{3000}b")
+        // 句読点の設定は「z,」「z.」に効かない
+        var composer = RomajiComposer(commaText: "，", periodText: "．")
+        composer.input("z,z.")
+        XCTAssertEqual(composer.display, "‥…")
+        // 前後のかな・「ん」・促音とつながる
+        XCTAssertEqual(compose("yajirushiz.zl"), "やじるし…→")
+        XCTAssertEqual(compose("nzh"), "ん←")
+        XCTAssertEqual(compose("zza"), "っざ")
+        XCTAssertEqual(compose("zaza"), "ざざ")
+        // 「z」だけで確定すれば z のまま
+        XCTAssertEqual(compose("az", flush: true), "あz")
+        // F9/F10 の英数変換用の打鍵列は残る
+        var raw = RomajiComposer()
+        raw.input("zh")
+        XCTAssertEqual(raw.raw, "zh")
+        XCTAssertTrue(raw.rawIsReliable)
+    }
+
+    func testZCaseSensitiveKey() {
+        var composer = RomajiComposer()
+        composer.input("a")
+        // 「z」がなければ Shift+L はどのキーも完成させない（コントローラは英字入力を始める）
+        XCTAssertFalse(composer.completesKey(with: "L"))
+        composer.input("z")
+        XCTAssertTrue(composer.completesKey(with: "L"))
+        XCTAssertTrue(composer.completesKey(with: " "))
+        XCTAssertTrue(composer.completesKey(with: "h"))
+        // 大文字は大文字を区別するキーだけ（「z」+ Shift+H は ← にしない）
+        XCTAssertFalse(composer.completesKey(with: "H"))
+        composer.input("L")
+        XCTAssertEqual(composer.display, "あ⇒")
+        XCTAssertEqual(composer.raw, "azL")
+        // スペースは「z」のあとだけ
+        XCTAssertFalse(composer.completesKey(with: " "))
+    }
+
     func testHiraganaToKatakana() {
         XCTAssertEqual(hiraganaToKatakana("にゅうりょく"), "ニュウリョク")
         XCTAssertEqual(hiraganaToKatakana("こーひー"), "コーヒー")

@@ -58,11 +58,54 @@ public actor ChunkedConversionEngine: ConversionEngine {
     }
 
     public func convert(reading: String, context: String, candidateCount: Int) async throws -> [String] {
+        if reading.contains(Self.ideographicSpace) {
+            return try await convertSplittingAtSpaces(reading, context: context, candidateCount: candidateCount)
+        }
         let characters = Array(reading)
         guard characters.count > maxChunkLength else {
             return try await base.convert(reading: reading, context: context, candidateCount: candidateCount)
         }
+        return [try await convertLong(characters, context: context)]
+    }
 
+    /// 全角スペース（「z」+ スペースで入る。`RomajiComposer`）
+    static let ideographicSpace: Character = "\u{3000}"
+
+    /// 全角スペースを含む読みは、全角スペースで分けて前から順に変換し、全角スペースはそのまま戻す。
+    ///
+    /// モデルは読みの全角スペースを写さず別の文字を出す（2026-11-18、iroha-kkc-v1 で「かいし　しゅうりょう」→
+    /// 「開始🍀終了」、「あ　い」→「あ・い」）。ライブ変換の第一候補はモデルの生成なので、モデルに全角スペースを渡さない。
+    /// 各部分は直前までの変換結果（全角スペースを含む）を左文脈にする。
+    /// 候補を複数求められたとき（全角スペースを含む文節の候補ウィンドウ）は、この結果の後ろに、下のエンジンの候補の
+    /// うち全角スペースの数が読みと同じものを続ける
+    private func convertSplittingAtSpaces(_ reading: String, context: String, candidateCount: Int) async throws -> [String] {
+        var result = ""
+        var partContext = context
+        for (index, part) in reading.split(separator: Self.ideographicSpace, omittingEmptySubsequences: false)
+            .enumerated() {
+            if index > 0 {
+                result.append(Self.ideographicSpace)
+                partContext.append(Self.ideographicSpace)
+            }
+            guard !part.isEmpty else { continue }
+            let converted = try await convert(reading: String(part), context: partContext, candidateCount: 1).first
+                ?? String(part)
+            result += converted
+            partContext += converted
+        }
+        guard candidateCount > 1 else { return [result] }
+        let spaces = reading.filter { $0 == Self.ideographicSpace }.count
+        var candidates = [result]
+        for candidate in try await base.convert(reading: reading, context: context, candidateCount: candidateCount)
+        where candidates.count < candidateCount && !candidates.contains(candidate)
+            && candidate.filter({ $0 == Self.ideographicSpace }).count == spaces {
+            candidates.append(candidate)
+        }
+        return candidates
+    }
+
+    /// `maxChunkLength` を超える読みを区切って順に変換する
+    private func convertLong(_ characters: [Character], context: String) async throws -> String {
         // 長い読みは候補を並べる場面（文節の候補ウィンドウ）には来ないので、1候補だけ返す
         var result = ""
         var context = context
@@ -80,7 +123,7 @@ public actor ChunkedConversionEngine: ConversionEngine {
             context += converted
             index += cut
         }
-        return [result]
+        return result
     }
 
     /// 窓（maxChunkLength文字）をどこで切るかと、その区切りの変換結果を返す

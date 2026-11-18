@@ -26,6 +26,32 @@ final class ChunkedConversionEngineTests: XCTestCase {
         XCTAssertEqual(stub.calls[0].context, "文脈")
     }
 
+    /// 全角スペースはモデルに渡さず、前後を分けて変換して全角スペースをそのまま戻す
+    func testSplitsAtIdeographicSpace() async throws {
+        let stub = RecordingEngine()
+        stub.table = ["かいし": "開始", "しゅうりょう": "終了"]
+        let engine = ChunkedConversionEngine(base: stub, maxChunkLength: 80)
+        let result = try await engine.convert(reading: "かいし\u{3000}しゅうりょう", context: "前", candidateCount: 1)
+        XCTAssertEqual(result, ["開始\u{3000}終了"])
+        XCTAssertEqual(stub.calls.map(\.reading), ["かいし", "しゅうりょう"])
+        XCTAssertEqual(stub.calls.map(\.context), ["前", "前開始\u{3000}"])
+        // 先頭・末尾・連続した全角スペースもそのまま残る（入力中は末尾に全角スペースがある）
+        let edges = try await engine.convert(reading: "\u{3000}かいし\u{3000}\u{3000}", context: "", candidateCount: 1)
+        XCTAssertEqual(edges, ["\u{3000}開始\u{3000}\u{3000}"])
+    }
+
+    /// 候補を複数求められたら、分けて変換した結果の後ろに、全角スペースの数が合う下のエンジンの候補を続ける
+    func testIdeographicSpaceCandidates() async throws {
+        let stub = RecordingEngine()
+        stub.table = ["かいし": "開始", "しゅうりょう": "終了", "かいし\u{3000}しゅうりょう": "開始🍀終了"]
+        let engine = ChunkedConversionEngine(base: stub, maxChunkLength: 80)
+        let result = try await engine.convert(reading: "かいし\u{3000}しゅうりょう", context: "", candidateCount: 3)
+        XCTAssertEqual(result, ["開始\u{3000}終了"])
+        stub.table["かいし\u{3000}しゅうりょう"] = "カイシ\u{3000}終了"
+        let more = try await engine.convert(reading: "かいし\u{3000}しゅうりょう", context: "", candidateCount: 3)
+        XCTAssertEqual(more, ["開始\u{3000}終了", "カイシ\u{3000}終了"])
+    }
+
     /// 句読点があればその直後で切り、前の区切りの変換結果を次の文脈にする
     func testSplitsAfterPunctuation() async throws {
         let stub = RecordingEngine()
