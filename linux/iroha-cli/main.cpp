@@ -15,6 +15,9 @@
 //                                                 : 読みの一覧にラティスの読み一致候補を付けて書き出す
 //   iroha-cli lattice-parity <macOS版の出力.jsonl> [--n 10] [--examples 10]
 //                                                 : macOS 版の lattice-dump / ajimee-dump の候補と突き合わせる
+//   iroha-cli ajimee-dump <evaluation_items.json> <出力.jsonl> [--lattice 件数]
+//                                                 : 各項目の辞書ラティス候補・モデルの生成・モデルの採点を JSONL に書く
+//                                                   （macOS版の ajimee-dump と同じ形。model-parity の基準にも使える）
 //   iroha-cli model-parity <macOS版のajimee-dumpの出力.jsonl> [--examples 10]
 //                                                 : モデルの生成と採点を macOS 版の出力と突き合わせる
 //   iroha-cli model-selfcheck <同じ形式.jsonl> [--limit N]
@@ -540,6 +543,91 @@ int RunLatticeDump(const std::filesystem::path& inputPath, const std::filesystem
                  "正解がラティス内 %d (%.1f%%)、ラティス1位が正解 %d (%.1f%%)\n",
                  written, skippedMalformed, totalMilliseconds / denominator, goldInLattice,
                  100.0 * goldInLattice / denominator, goldFirst, 100.0 * goldFirst / denominator);
+    return 0;
+}
+
+// 評価セットの各項目について、辞書ラティスの読み一致候補（評価順）・モデルの生成・モデルの対数確率を JSONL に書く。
+// 移植元: macos/Sources/iroha-cli/main.swift の ajimee-dump コマンド（同じキー・同じ並び。Windows版 d47e380 と同じ）。
+// 書き出したものは model-parity の基準になるので、同じ Linux版どうし（llama.cpp の版や設定を変える前と後）の
+// 生成と採点の突き合わせにも使える。採点は値を比べられるように有効数字 9 桁で書く
+int RunAjimeeDump(const std::filesystem::path& itemsPath, const std::filesystem::path& outputPath, int latticeCount) {
+    std::vector<iroha::benchmark::Item> items;
+    std::string error;
+    if (!iroha::benchmark::LoadItems(itemsPath, &items, &error)) {
+        std::fprintf(stderr, "エラー: %s\n", error.c_str());
+        return 1;
+    }
+    const auto lattice = MakeLattice();
+    if (!lattice) return 1;
+    iroha::ZenzEngine zenz(DefaultModelPath(), ZenzOptions());
+    if (!zenz.Prewarm(&error)) {
+        std::fprintf(stderr, "エラー: %s\n", error.c_str());
+        return 1;
+    }
+    lattice->Candidates(U"うぉーむあっぷ", 1);
+    std::ofstream output(outputPath, std::ios::binary);
+    if (!output) {
+        std::fprintf(stderr, "出力が開けません\n");
+        return 1;
+    }
+    const auto quoteArray = [](const std::vector<std::u32string>& values) {
+        std::string json = "[";
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i > 0) json += ",";
+            json += iroha::json::QuoteString(Utf32ToUtf8(values[i]));
+        }
+        return json + "]";
+    };
+    int written = 0;
+    for (const iroha::benchmark::Item& item : items) {
+        auto start = std::chrono::steady_clock::now();
+        const std::vector<std::u32string> latticeCandidates = lattice->FullMatchCandidates(item.input, latticeCount);
+        const double latticeMs = MillisecondsSince(start);
+
+        start = std::chrono::steady_clock::now();
+        std::vector<std::u32string> converted;
+        if (!zenz.Convert(item.input, item.contextText, 1, &converted, &error)) {
+            std::fprintf(stderr, "エラー: %s\n", error.c_str());
+            return 1;
+        }
+        const double generateMs = MillisecondsSince(start);
+        const std::u32string generated = converted.empty() ? U"" : converted.front();
+
+        std::vector<std::u32string> toScore(
+            latticeCandidates.begin(),
+            latticeCandidates.begin() + std::min(latticeCandidates.size(), static_cast<size_t>(latticeCount)));
+        if (!generated.empty() && std::find(toScore.begin(), toScore.end(), generated) == toScore.end()) {
+            toScore.push_back(generated);
+        }
+        start = std::chrono::steady_clock::now();
+        std::vector<float> scores;
+        if (!toScore.empty() && !zenz.Score(toScore, item.input, item.contextText, &scores, &error)) {
+            std::fprintf(stderr, "エラー: %s\n", error.c_str());
+            return 1;
+        }
+        const double scoreMs = MillisecondsSince(start);
+
+        std::string json = "{\"index\":" + iroha::json::QuoteString(item.index) +
+                           ",\"context\":" + iroha::json::QuoteString(Utf32ToUtf8(item.contextText)) +
+                           ",\"reading\":" + iroha::json::QuoteString(Utf32ToUtf8(item.input)) +
+                           ",\"expected\":" + quoteArray(item.expectedOutput) +
+                           ",\"lattice\":" + quoteArray(latticeCandidates) +
+                           ",\"generated\":" + iroha::json::QuoteString(Utf32ToUtf8(generated)) +
+                           ",\"scoredCandidates\":" + quoteArray(toScore) + ",\"zenzScores\":[";
+        for (size_t i = 0; i < scores.size(); ++i) {
+            char number[32];
+            std::snprintf(number, sizeof(number), "%s%.9g", i > 0 ? "," : "", scores[i]);
+            json += number;
+        }
+        char tail[128];
+        std::snprintf(tail, sizeof(tail), "],\"latticeMs\":%.3f,\"generateMs\":%.3f,\"scoreMs\":%.3f}\n", latticeMs,
+                      generateMs, scoreMs);
+        json += tail;
+        output.write(json.data(), static_cast<std::streamsize>(json.size()));
+        ++written;
+        if (written % 100 == 0) std::fprintf(stderr, "%d 件\n", written);
+    }
+    std::fprintf(stderr, "%d 件を書き出しました\n", written);
     return 0;
 }
 
@@ -1349,6 +1437,17 @@ int main(int argc, char** argv) {
             }
         }
         return RunLatticeDump(ArgumentPath(args[2]), ArgumentPath(args[3]), nBest, limit, skip);
+    }
+
+    if (command == U"ajimee-dump" && args.size() >= 4) {
+        int latticeCount = 10;
+        for (size_t index = 4; index + 1 < args.size(); index += 2) {
+            if (args[index] == U"--lattice") {
+                const int value = std::atoi(Utf32ToUtf8(args[index + 1]).c_str());
+                latticeCount = value > 0 ? value : 10;
+            }
+        }
+        return RunAjimeeDump(ArgumentPath(args[2]), ArgumentPath(args[3]), latticeCount);
     }
 
     if (command == U"model-parity" && args.size() >= 3) {

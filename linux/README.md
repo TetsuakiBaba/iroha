@@ -78,6 +78,11 @@ IROHA_LATTICE=off    $C ajimee testdata/ajimee/evaluation_items.json
 IROHA_LATTICE=always $C ajimee testdata/ajimee/evaluation_items.json
 # 項目ごとの変換時間を TSV に書く（先頭 4 列は macOS版と同じ。集計は experiments/iroha-bench/latency_stats.py）
 IROHA_TIMINGS=out.tsv IROHA_LATTICE=off $C ajimee testdata/iroha-bench-v1/evaluation_items.json
+# モデルの生成と採点を macOS版の出力（iroha-cli ajimee-dump）と突き合わせる。同じモデルを IROHA_MODEL で指定する
+$C model-parity <macOS版の出力.jsonl>
+# 同じ形式を Linux版でも書き出せる（llama.cpp の版や設定を変える前に書き出し、変えたあとの model-parity の基準にする。
+# 採点は有効数字 9 桁で書くので、2 つの書き出しの値をそのまま比べてもよい。Windows版と同じ）
+$C ajimee-dump testdata/iroha-bench-v1/evaluation_items.json <出力.jsonl>
 ```
 
 #### 変換の速さ（2026-11-14、iroha-bench-v1 の 3,253 項目）
