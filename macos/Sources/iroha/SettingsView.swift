@@ -1014,6 +1014,21 @@ private struct TermDictionarySection: View {
                             help: Self.help(for: dictionary), dictionary: dictionary)
                     }
                 }
+                // データフォルダに置いたが一覧に無い辞書（公開前の辞書を手で置いたときなど）も、
+                // ライブ変換の切り替えと削除ができるように出す
+                let unlisted = downloader.installed.values
+                    .filter { catalog.dictionary(id: $0.id) == nil }
+                    .sorted { $0.id < $1.id }
+                if !unlisted.isEmpty {
+                    FormSubheader("一覧にない辞書")
+                    ForEach(unlisted) { record in
+                        TermDictionaryRow(
+                            id: record.id, name: record.name, entries: record.entries,
+                            help: "配布している辞書の一覧に無い辞書です（データの保存場所に置かれたもの）。"
+                                + "\(record.group)。ライセンス: \(record.license)",
+                            dictionary: nil)
+                    }
+                }
             } else {
                 catalogStatus
                 // 一覧が取れなくても、入れている辞書は外せるようにする
