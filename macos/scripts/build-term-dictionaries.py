@@ -17,6 +17,8 @@
   - 郵便番号データ（日本郵便。郵便番号データについては著作権を主張せず、配布は自由と明記）
   - Wikidata（CC0）: かなの読み（P1814）を持つ項目。読みが付いているのは人名・駅・神社と寺院・地名などの
     固有名詞にほぼ限られる（病名・化合物にはほとんど付いていない）ので、固有名詞の辞書として作る
+  - お守り辞書（iroha、CC0 1.0）: 縁起のよい当て字・言い換え（元氣・顔晴る・志事など）。元の一覧は
+    macos/scripts/term-dictionaries/omamori.tsv（用例の出典つき）で、取得は要らない
 使わないもの: 万病辞書・JMED-DICT mini・ComeJisyo（再配布の条件を確認できない）、SKK の専門辞書（GPL v2）、
 Mozc の dictionary_oss（第三者のデータ）。
 
@@ -113,6 +115,19 @@ SOURCE_WIKIDATA = {
         "（https://creativecommons.org/publicdomain/zero/1.0/deed.ja）。この辞書も CC0 1.0 で配布する",
     ],
 }
+
+SOURCE_OMAMORI = {
+    "name": "お守り辞書",
+    "holder": "iroha",
+    "license": "CC0 1.0",
+    "url": "https://github.com/TetsuakiBaba/iroha/blob/main/macos/scripts/term-dictionaries/omamori.tsv",
+    "licenseURL": "https://creativecommons.org/publicdomain/zero/1.0/deed.ja",
+    "notices": [
+        "iroha が用例を確かめて集めた、縁起のよい当て字・言い換えの一覧（元の表記と用例の出典は上の URL の一覧にある）",
+        "ライセンス: CC0 1.0（https://creativecommons.org/publicdomain/zero/1.0/deed.ja）",
+    ],
+}
+OMAMORI_LIST = Path(__file__).resolve().parent / "term-dictionaries" / "omamori.tsv"
 
 # 全部の辞書ファイルに書く注記
 COMMON_NOTICES = [
@@ -416,6 +431,20 @@ def build_hyakuyaku() -> Pack:
     return pack
 
 
+def build_omamori() -> Pack:
+    pack = Pack("omamori", "お守り辞書", "表記の言い換え",
+                "縁起のよい当て字・言い換え（元氣・顔晴る・志事・最幸など）を、元の表記の別の候補として加える",
+                [SOURCE_OMAMORI])
+    for line in OMAMORI_LIST.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        group, reading, _original, word, _word_reading, evidence = line.split("\t")
+        # 例には用例のある見出しを先に選び（活用形を補った語は後ろ）、その中では「基本」の語を先にする
+        has_example = evidence.startswith("http")
+        pack.add(reading, word, (2 if group == "基本" else 1) if has_example else 0)
+    return pack
+
+
 def clean_town(kanji: str, kana: str) -> tuple[str, str] | None:
     """町域名から括弧書き（丁目・番地の範囲など）を除く。地名として使えなければ None"""
     kanji = re.sub(r"（.*", "", kanji)
@@ -462,7 +491,7 @@ def build_wikidata() -> list[Pack]:
 
 PREVIOUS_CATALOG = ROOT / "models" / "term-dictionaries.json"
 RELEASE_URL = "https://github.com/TetsuakiBaba/iroha/releases/download/term-dictionaries-v1"
-ALL_SOURCES = [SOURCE_JMDICT, SOURCE_HYAKUYAKU, SOURCE_KEN_ALL, SOURCE_WIKIDATA]
+ALL_SOURCES = [SOURCE_JMDICT, SOURCE_HYAKUYAKU, SOURCE_KEN_ALL, SOURCE_WIKIDATA, SOURCE_OMAMORI]
 
 
 def content_sha256(pack: Pack) -> str:
@@ -533,6 +562,8 @@ def build() -> None:
     fetched = json.loads((SOURCES / "fetched.json").read_text())
     version = fetched["date"].replace("-", "")
     available = set(fetched.get("sources", [name for name, _, _ in FETCHERS]))
+    # リポジトリにある一覧から作る辞書（取得が要らない）
+    available.add("omamori")
     previous = {}
     if PREVIOUS_CATALOG.exists():
         previous = {e["id"]: e for e in json.loads(PREVIOUS_CATALOG.read_text())["dictionaries"]}
@@ -543,6 +574,7 @@ def build() -> None:
         ("hyakuyaku", ["hyakuyaku"], lambda: [build_hyakuyaku()]),
         ("japanpost", ["japanpost-places"], lambda: [build_ken_all()]),
         ("wikidata", [g[0] for g in WIKIDATA_GROUPS], build_wikidata),
+        ("omamori", ["omamori"], lambda: [build_omamori()]),
     ]
     DIST.mkdir(parents=True, exist_ok=True)
     for old in DIST.glob("*.tsv"):

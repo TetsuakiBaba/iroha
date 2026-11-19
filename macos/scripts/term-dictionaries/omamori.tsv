@@ -1,0 +1,57 @@
+# お守り辞書の元の一覧（build-term-dictionaries.py が読む）。
+# 読みと通常の変換の表記（元の表記）が合う語句に、縁起のよい当て字・言い換えを別の候補として加える。
+# 「用例」は出典の中で追加候補の表記が使われている・紹介されていることを確かめた項目で、媒体での頻度を示すものではない。
+# 「展開」は用例のある見出しをもとに、辞書用に活用形を補ったもの。
+# 辞書に入るのは「読み → 追加候補」だけ（元の表記は記録のため。元の表記を条件にした候補の追加は辞書ではできない）。
+# 候補の読みが元の読みと違う項目（お福分け など）も、元の読みで引けるようにする。
+# 金額の追加ルール（参加費3,000円 → 参加費3,000縁）は辞書では表せないので入れていない。
+# 列: グループ<TAB>読み<TAB>元の表記<TAB>追加候補<TAB>候補の読み（読みと違うときだけ）<TAB>根拠
+基本	きづく	気づく	氣づく		https://micane.jp/ki-spiritual
+基本	きづき	気づき	氣づき		https://micane.jp/ki-spiritual
+基本	げんき	元気	元氣		https://ameblo.jp/gravity-writer/entry-12275467718.html
+基本	ほんき	本気	本氣		https://note.com/baseexchange841/n/n56db7571e778
+基本	れいき	霊気	靈氣		https://www.gendaireiki.or.jp/gendaireiki
+基本	がんばる	頑張る	顔晴る		https://www.kindly-asagiri.jp/asagiri2022-08.pdf
+基本	しごと	仕事	志事		https://www.kindly-asagiri.jp/asagiri2022-08.pdf
+基本	おしごと	お仕事	お志事		https://ameblo.jp/gravity-writer/entry-12275467718.html
+基本	さいこう	最高	最幸		https://spiluca.com/column/spiritual-ateji/
+基本	せいこう	成功	成幸		https://spiluca.com/column/spiritual-ateji/
+基本	であい	出会い	出愛		https://archive.jefunited.co.jp/news/2010/06/report/12762576005281.html
+基本	きあい	気合	氣愛		https://northvillage.asia/gackt-art-2025/
+基本	きづかない	気づかない	氣づかない		「気づく」から展開
+基本	きづいた	気づいた	氣づいた		「気づく」から展開
+基本	きづいて	気づいて	氣づいて		「気づく」から展開
+基本	きづきます	気づきます	氣づきます		「気づく」から展開
+基本	きづきました	気づきました	氣づきました		「気づく」から展開
+基本	きづけば	気づけば	氣づけば		「気づく」から展開
+基本	きづこう	気づこう	氣づこう		「気づく」から展開
+基本	きづかず	気づかず	氣づかず		「気づく」から展開
+基本	きづける	気づける	氣づける		「気づく」から展開
+基本	がんばらない	頑張らない	顔晴らない		「頑張る」から展開
+基本	がんばった	頑張った	顔晴った		「頑張る」から展開
+基本	がんばって	頑張って	顔晴って		「頑張る」から展開
+基本	がんばります	頑張ります	顔晴ります		「頑張る」から展開
+基本	がんばりました	頑張りました	顔晴りました		「頑張る」から展開
+基本	がんばれば	頑張れば	顔晴れば		「頑張る」から展開
+基本	がんばろう	頑張ろう	顔晴ろう		「頑張る」から展開
+基本	がんばらず	頑張らず	顔晴らず		「頑張る」から展開
+基本	がんばれる	頑張れる	顔晴れる		「頑張る」から展開
+氣の表記を広げる	ゆうき	勇気	勇氣		https://note.com/baseexchange841/n/n56db7571e778
+氣の表記を広げる	かっき	活気	活氣		https://note.com/baseexchange841/n/n56db7571e778
+氣の表記を広げる	こんき	根気	根氣		https://note.com/baseexchange841/n/n56db7571e778
+氣の表記を広げる	しょうき	正気	正氣		https://note.com/baseexchange841/n/n56db7571e778
+氣の表記を広げる	わき	和気	和氣		https://note.com/baseexchange841/n/n56db7571e778
+氣の表記を広げる	せいき	精気	精氣		https://note.com/baseexchange841/n/n56db7571e778
+氣の表記を広げる	きをくばる	気を配る	氣を配る		https://note.com/baseexchange841/n/n56db7571e778
+氣の表記を広げる	きをすます	気を澄ます	氣を澄ます		https://note.com/baseexchange841/n/n56db7571e778
+前向きな当て字・理念	ぼうねんかい	忘年会	望年会		https://tsuyamajc.or.jp/2020/report.html
+前向きな当て字・理念	じんざい	人材	人財		https://publications.asahi.com/product/24772.html
+前向きな当て字・理念	きぎょう	企業	輝業		https://www.kinokuniya.co.jp/f/dsg-01-9784022952639
+前向きな当て字・理念	きょういく	教育	共育		https://miyagi.doyu.jp/technical/employee_education
+前向きな当て字・理念	しょうばい	商売	笑売		https://ebilab.jp/company/
+挨拶の言葉遊び	ありがとうございます	ありがとうございます	ありがとうご財増す		https://ameblo.jp/sumie210/entry-12812558800.html
+文芸・慣用表現	しんゆう	親友	心友		https://kotobank.jp/word/%E5%BF%83%E5%8F%8B-539168
+文芸・慣用表現	おもい	思い	想い		https://marugame-kasugajinja.com/category-44/norito-fumiduki/
+読みが変わる言い換え	おすそわけ	おすそ分け	お福分け	おふくわけ	https://nishinomiya-ebisu.com/backnumber/049.pdf
+読みが変わる言い換え	ろうどう	労働	喜働	きどう	https://www.nm-rinri.net/?p=3283
+読みが変わる言い換え	ことば	言葉	言の葉	ことのは	https://marugame-kasugajinja.com/category-44/norito-fumiduki/

@@ -73,6 +73,7 @@ final class IrohaInputController: IMKInputController {
         latticeUse: .candidates,
         notation: { DocumentNotationSettings.configuration },
         userDictionary: { PrivateModeSettings.userDictionary },
+        liveTermDictionary: { TermDictionarySettings.liveLookup },
         learning: { LearningSettings.dictionary })
 
     /// 辞書ラティス。辞書がバンドルに無ければ nil

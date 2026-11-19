@@ -132,7 +132,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PreferencesSync.shared.start()
         // 他のMacからの同期でデータフォルダが変わったら辞書・学習・ルール・設定を読み直す
         DataDirectoryWatcher.shared.start()
-        // 入れている専門辞書を裏で読んでおく（読み終わるまでは専門辞書なしで変換する）
+        // 入れている専門辞書を裏で読んでおく（読み終わるまでは専門辞書なしで変換する）。
+        // その前に、ライブ変換にも使う辞書の設定の読み方を渡す
+        TermDictionarySettings.start()
         TermDictionaryStore.shared.reloadInBackground()
         // 自分の原稿に合わせる設定が ON なら、文書を裏で読んでおく
         DocumentNotationStore.shared.reloadIfNeeded()

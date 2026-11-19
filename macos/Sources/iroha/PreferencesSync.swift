@@ -28,6 +28,7 @@ final class PreferencesSync {
             LearningSettings.enabledKey, UserDictionarySync.autoSyncKey,
             PrivateModeSettings.shortcutKey, PrivateModeSettings.caretIndicatorKey,
             SymbolCandidateSettings.enabledKey, SecureInputNoticeSettings.enabledKey,
+            TermDictionarySettings.liveConversionKey,
             DocumentNotationSettings.enabledKey, DocumentNotationSettings.weightKey,
             DocumentNotationSettings.topicWeightKey, DocumentNotationSettings.profileShortcutKey,
             TypoNormalizerSettings.enabledKey, TypoNormalizerSettings.thresholdKey,

@@ -1028,7 +1028,8 @@ private struct TermDictionarySection: View {
                 title: "専門辞書",
                 help: "分野の用語や地名・人名の辞書を追加すると、その語を文節の候補ウィンドウに出します"
                     + "（スペースキーで変換したときの候補）。並び順は変換モデルが前後の文から決めます。"
-                    + "ライブ変換で最初に出る変換は変えません。候補から選んで確定すると、"
+                    + "ライブ変換で最初に出る変換は変えません（辞書ごとの「ライブ変換にも使う」をONにした辞書だけは、"
+                    + "ユーザ辞書と同じくライブ変換でもその語に置き換えます）。候補から選んで確定すると、"
                     + "変換の学習で次からその語に変換します。"
                     + "辞書はアプリに含まれていません。追加を押したときにダウンロードし、"
                     + "データの保存場所の中に置きます（共有フォルダにしていれば他のMacでも使えます）。"
@@ -1087,6 +1088,7 @@ private struct TermDictionaryRow: View {
     /// カタログの項目（一覧が取れていないときは nil。そのときは追加できない）
     let dictionary: TermDictionaryCatalog.Dictionary?
     @ObservedObject private var downloader = TermDictionaryDownloader.shared
+    @AppStorage(TermDictionarySettings.liveConversionKey) private var liveConversion = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -1096,6 +1098,21 @@ private struct TermDictionaryRow: View {
                 Spacer()
                 control
             }
+            if downloader.installed[id] != nil {
+                HelpToggle(
+                    title: "ライブ変換にも使う", isOn: usesInLiveConversion,
+                    help: "入力中の変換（ライブ変換）でも、この辞書の語に置き換えます。"
+                        + "ユーザ辞書と同じく、読みが辞書の語と一致すれば、スペースキーを押さなくてもその語になり、"
+                        + "候補ウィンドウでも先頭に出します。読みの一部が一致したときは、"
+                        + "そこが語の区切りになる場合だけ置き換えます。"
+                        + "同じ読みに辞書の語が2つ以上ある読み（胃がん・胃癌など）は、どれにするかを決められないので"
+                        + "置き換えず、これまでどおり候補ウィンドウにだけ出します。"
+                        + "ユーザ辞書に同じ読みがあればユーザ辞書の語を使います。"
+                        + "同じ読みの一般の語（例えば人名の辞書なら、人名と同じ読みの言葉）が出なくなることがあります。"
+                        + "その語を候補から選んで確定すると、変換の学習で次からその語に戻ります。"
+                        + "プライベートモードの間は使いません。")
+                    .padding(.leading, 12)
+            }
             if case .downloading(let value) = downloader.progress[id] {
                 ProgressView(value: value)
             }
@@ -1103,6 +1120,16 @@ private struct TermDictionaryRow: View {
                 Text(message).font(.caption).foregroundStyle(.red)
             }
         }
+    }
+
+    private var usesInLiveConversion: Binding<Bool> {
+        Binding(
+            get: { TermDictionarySettings.ids(from: liveConversion).contains(id) },
+            set: { isOn in
+                var ids = TermDictionarySettings.ids(from: liveConversion)
+                if isOn { ids.insert(id) } else { ids.remove(id) }
+                liveConversion = TermDictionarySettings.text(from: ids)
+            })
     }
 
     @ViewBuilder

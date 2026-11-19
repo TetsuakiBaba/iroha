@@ -32,7 +32,18 @@ public struct TermDictionaryLookup: Sendable {
         }
     }
 
+    /// 辞書ファイルを直接マップする（iroha-cli の `IROHA_TERM_LIVE` 用。印の名前はファイル名）
+    public init(files: [URL]) {
+        tables = files.compactMap { url in
+            guard let data = try? Data(contentsOf: url, options: .alwaysMapped) else { return nil }
+            return Table(label: url.deletingPathExtension().lastPathComponent, data: data, start: Self.bodyStart(data))
+        }
+    }
+
     public var isEmpty: Bool { tables.isEmpty }
+
+    /// マップした辞書の数
+    public var dictionaryCount: Int { tables.count }
 
     /// 印に出す名前。カタログの名前の括弧書きは除く（「地名（市区町村・町域）」→「地名」）
     static func label(for name: String) -> String {
@@ -65,7 +76,52 @@ public struct TermDictionaryLookup: Sendable {
         return []
     }
 
+    // MARK: - ライブ変換に使う語
+
+    /// 読み `reading` の中に読みが現れる語のうち、ライブ変換に使えるものを、ユーザ辞書の形にして返す
+    /// （`TermDictionaryLiveEngine` がユーザ辞書と同じ規則で読みに当てる）。
+    ///
+    /// 使うのは次の語だけ:
+    /// - 読みが `TermDictionary.minimumReadingLength` 文字以上
+    /// - その読みの語が、ライブ変換に使う辞書全体で 1 つだけ（「いがん」→ 胃がん・胃ガン・胃癌 のように
+    ///   表記が分かれる読みは、どれに置き換えるかを決められないので候補ウィンドウにだけ出す）
+    /// - 語が読みより大幅に長くない（`UserDictionary.isSuitableForLiveConversion`）
+    ///
+    /// 読みの位置ごとに、その位置から始まる読みを持つ語が辞書にある間だけ 1 文字ずつ延ばして引く
+    /// （語の一覧をメモリに展開しない）
+    public func liveDictionary(occurringIn reading: String) -> UserDictionary {
+        guard !tables.isEmpty else { return .empty }
+        let characters = Array(reading)
+        var entries: [UserDictionaryEntry] = []
+        var seen: Set<String> = []
+        for start in characters.indices {
+            var length = 1
+            while start + length <= characters.count {
+                let part = String(characters[start..<(start + length)])
+                let prefix = Array(part.utf8)
+                guard tables.contains(where: { Self.hasLine(withPrefix: prefix, in: $0) }) else { break }
+                if length >= TermDictionary.minimumReadingLength, seen.insert(part).inserted {
+                    let key = prefix + [Self.tab]
+                    var words: [String] = []
+                    for table in tables {
+                        for word in Self.words(withKey: key, in: table) where !words.contains(word) {
+                            words.append(word)
+                        }
+                    }
+                    if words.count == 1, words[0] != part,
+                       UserDictionary.isSuitableForLiveConversion(reading: part, word: words[0]) {
+                        entries.append(UserDictionaryEntry(reading: part, word: words[0]))
+                    }
+                }
+                length += 1
+            }
+        }
+        return entries.isEmpty ? .empty : UserDictionary(entries: entries)
+    }
+
     // MARK: - 二分探索
+
+    private static let tab = UInt8(ascii: "\t")
 
     private static let newline = UInt8(ascii: "\n")
 
@@ -79,6 +135,58 @@ public struct TermDictionaryLookup: Sendable {
             }
             return min(position, bytes.count)
         }
+    }
+
+    /// 鍵より前に並ぶ行を除いた、最初の行の頭の位置（無ければファイルの終わり）
+    static func lowerBound(_ key: [UInt8], in table: Table) -> Int {
+        table.data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Int in
+            var low = table.start
+            var high = bytes.count
+            while low < high {
+                var lineStart = (low + high) / 2
+                while lineStart > low, bytes[lineStart - 1] != newline { lineStart -= 1 }
+                var lineEnd = lineStart
+                while lineEnd < high, bytes[lineEnd] != newline { lineEnd += 1 }
+                if compare(bytes, lineStart..<lineEnd, key) < 0 {
+                    low = lineEnd + 1
+                } else {
+                    high = lineStart
+                }
+            }
+            return low
+        }
+    }
+
+    /// `prefix` で始まる行があるか
+    static func hasLine(withPrefix prefix: [UInt8], in table: Table) -> Bool {
+        let position = lowerBound(prefix, in: table)
+        return table.data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Bool in
+            starts(bytes, at: position, with: prefix)
+        }
+    }
+
+    /// 「読み<TAB>」（`key`）で始まる行の語
+    static func words(withKey key: [UInt8], in table: Table) -> [String] {
+        var position = lowerBound(key, in: table)
+        return table.data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> [String] in
+            var words: [String] = []
+            while starts(bytes, at: position, with: key) {
+                var lineEnd = position + key.count
+                while lineEnd < bytes.count, bytes[lineEnd] != newline { lineEnd += 1 }
+                let word = String(decoding: bytes[(position + key.count)..<lineEnd], as: UTF8.self)
+                if !word.isEmpty { words.append(word) }
+                position = lineEnd + 1
+            }
+            return words
+        }
+    }
+
+    private static func starts(_ bytes: UnsafeRawBufferPointer, at position: Int, with prefix: [UInt8]) -> Bool {
+        guard position + prefix.count <= bytes.count else { return false }
+        for offset in 0..<prefix.count where bytes[position + offset] != prefix[offset] {
+            return false
+        }
+        return true
     }
 
     static func contains(_ key: [UInt8], in table: Table) -> Bool {

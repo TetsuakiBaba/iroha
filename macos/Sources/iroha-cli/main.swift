@@ -52,6 +52,8 @@ import IrohaMLX
 //   ラティス候補の再採点で決める（既定は候補ウィンドウのみラティス。IME本体と同じ）
 //   IROHA_TERM_DICTIONARIES=installed で IME 本体に入れた専門辞書を、=a.tsv,b.tsv でその辞書ファイルを
 //   候補ウィンドウの辞書ラティスに加える（既定は使わない）
+//   IROHA_TERM_LIVE=installed で IME 本体に入れた専門辞書のすべてを、=a.tsv,b.tsv でその辞書ファイルを
+//   ユーザ辞書と同じ規則でライブ変換にも使う（設定 > 専門辞書 の「ライブ変換にも使う」。既定は使わない）
 //   IROHA_NO_LATIN=1 で読みにラテン文字がないときの英字出力を禁じる（実験用。USB等も出なくなる）
 //   IROHA_NO_CONSTRAINT=1 で読み制約（constrained decoding）を丸ごと切り素の貪欲生成にする
 //   （実験用。Python側の制約なし計測と突き合わせるとき）
@@ -85,6 +87,18 @@ func cliTermDictionary() -> TermDictionary {
     }
     FileHandle.standardError.write("専門辞書: \(dictionary.entryCount) 語（IROHA_TERM_DICTIONARIES）\n".data(using: .utf8)!)
     return dictionary
+}
+
+/// ライブ変換にも使う専門辞書（IROHA_TERM_LIVE）。`installed` なら IME 本体で入れた辞書のすべて、それ以外は
+/// カンマ区切りの辞書ファイル（読み<TAB>語、読み・語の順に並べたもの）。指定が無ければ使わない（設定 > 専門辞書 の
+/// 「ライブ変換にも使う」と同じ。IME 本体と違い、既定は無し）
+func cliLiveTermDictionary() -> TermDictionaryLookup {
+    guard let value = ProcessInfo.processInfo.environment["IROHA_TERM_LIVE"], !value.isEmpty else { return .empty }
+    let lookup = value == "installed"
+        ? TermDictionaryLookup(records: TermDictionaryInstall.installedRecords())
+        : TermDictionaryLookup(files: value.split(separator: ",").map { URL(fileURLWithPath: String($0)) })
+    FileHandle.standardError.write("ライブ変換にも使う専門辞書: \(lookup.dictionaryCount) 個（IROHA_TERM_LIVE）\n".data(using: .utf8)!)
+    return lookup
 }
 
 /// IME本体と同じデータフォルダを使う（設定 > 情報 > データの保存場所 で変えた場所を追う）
@@ -176,6 +190,7 @@ func makeEngine(userData: UserDataMode = .ime) -> any ConversionEngine {
     // 辞書ラティス + zenz採点（IME本体と同じ構成）。辞書が無い・OFF指定ならzenz単体
     let latticeMode = ProcessInfo.processInfo.environment["IROHA_LATTICE"] ?? ""
     let termDictionary = cliTermDictionary()
+    let liveTerms = cliLiveTermDictionary()
     let lattice = LatticeConverter.defaultDictionaryURL().map {
         LatticeConverter(dictionaryURL: $0) { termDictionary }
     }
@@ -196,6 +211,7 @@ func makeEngine(userData: UserDataMode = .ime) -> any ConversionEngine {
         model: model, lattice: lattice, latticeUse: latticeUse,
         notation: { DocumentNotationContext.shared.configuration },
         userDictionary: { store.current },
+        liveTermDictionary: { liveTerms },
         learning: { learning.current })
 }
 

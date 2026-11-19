@@ -281,6 +281,11 @@ ASCIIショートカット）は取り込みの対象外。取り込んだ単語
   ユーザ辞書のように読みが一致したら置き換える形にしないのは、語数の多い辞書では「かんせん → 感染」が
   文脈と関係なく「観戦」を上書きするなど、ほかの文の変換を壊すため。候補から選んで確定すると、
   変換の学習で次からその語に変換する
+- 辞書ごとの「**ライブ変換にも使う**」をONにした辞書だけは、ユーザ辞書と同じく読みが一致したら置き換える
+  （既定はOFF）。読み全体が辞書の語の読みと一致すればスペースキーを押さなくてもその語になり、候補ウィンドウでも先頭に出る。
+  読みの途中の一致は、ユーザ辞書と同じく辞書ラティスで語の区切りになる所だけ使う。
+  同じ読みに辞書の語が2つ以上ある読み（胃がん・胃癌など）は置き換えない。同じ読みならユーザ辞書の語が勝つ。
+  プライベートモードの間は使わない。iroha-cli では `IROHA_TERM_LIVE=installed`（入れた辞書すべて）か `=a.tsv,b.tsv`
 - 配布している辞書（再配布の条件を確かめたものだけ。2026-11-08 時点）:
 
 | 辞書 | 元データ | ライセンス |
@@ -289,6 +294,7 @@ ASCIIショートカット）は取り込みの対象外。取り込んだ単語
 | 薬の名前 | [百薬辞書](https://sociocom.naist.jp/hyakuyaku-dic/)（奈良先端科学技術大学院大学 ソーシャル・コンピューティング研究室） | CC BY 4.0 |
 | 地名（市区町村・町域） | 日本郵便の[郵便番号データ](https://www.post.japanpost.jp/service/search/zipcode/download/readme.html) | 著作権を主張しない（配布自由） |
 | 人名・駅・神社と寺院・旧市区町村 | [Wikidata](https://www.wikidata.org/) のかなの読み（P1814） | CC0 |
+| お守り辞書（縁起のよい当て字・言い換え。元氣・顔晴る・志事・最幸など） | iroha が用例を確かめて集めた一覧（[macos/scripts/term-dictionaries/omamori.tsv](macos/scripts/term-dictionaries/omamori.tsv)、用例の出典つき） | CC0 |
 
 万病辞書・JMED-DICT mini・ComeJisyo は再配布の条件を確認できず、SKK の専門辞書は GPL v2 のため使っていない。
 Wikidata のかなの読みは固有名詞（人名・駅・神社と寺院・地名）にほぼ限られ、病名や化合物にはほとんど付いていない。
@@ -676,6 +682,6 @@ git tag v0.4.0 && git push origin v0.4.0
   [swift-tokenizers](https://github.com/ensan-hcl/swift-tokenizers): Apache-2.0）
 - 辞書データ [azooKey_dictionary_storage](https://github.com/azooKey/azooKey_dictionary_storage): Apache-2.0
 - 記号・顔文字・絵文字のデータ [Mozc](https://github.com/google/mozc)（Google Inc.）: BSD 3-Clause
-- 専門辞書（設定で追加したときだけダウンロード）: [JMdict](https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html)（EDRDG）CC BY-SA 4.0・[百薬辞書](https://sociocom.naist.jp/hyakuyaku-dic/)（NAIST ソーシャル・コンピューティング研究室）CC BY 4.0・日本郵便の郵便番号データ・[Wikidata](https://www.wikidata.org/) CC0
+- 専門辞書（設定で追加したときだけダウンロード）: [JMdict](https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html)（EDRDG）CC BY-SA 4.0・[百薬辞書](https://sociocom.naist.jp/hyakuyaku-dic/)（NAIST ソーシャル・コンピューティング研究室）CC BY 4.0・日本郵便の郵便番号データ・[Wikidata](https://www.wikidata.org/) CC0・お守り辞書（iroha）CC0
 - アプリアイコン・メニューバーアイコンの書体 [Tsukimi Rounded](https://fonts.google.com/specimen/Tsukimi+Rounded)（Takashi Funayama氏）: SIL Open Font License 1.1
 - 設計にあたり [azooKey-Desktop](https://github.com/azooKey/azooKey-Desktop) / Zenzai の公開知見を参考にした

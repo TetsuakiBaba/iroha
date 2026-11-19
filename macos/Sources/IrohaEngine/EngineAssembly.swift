@@ -5,7 +5,7 @@ import IrohaMLX
 
 /// かな漢字変換エンジンの組み立て（デコレータの重ね方）。IME 本体・`iroha-cli`・`iroha-bench` が同じものを使う。
 ///
-/// 外側から 学習 → ユーザ辞書 → 長い読みの区切り → 異体字の補完 → 辞書ラティス + モデルの採点 → 自分の原稿の表記 → モデル
+/// 外側から 学習 → ユーザ辞書 → 専門辞書のうちライブ変換にも使うもの → 長い読みの区切り → 異体字の補完 → 辞書ラティス + モデルの採点 → 自分の原稿の表記 → モデル
 /// の順に重ねる。学習・ユーザ辞書・原稿の表記は変換のたびに閉包から読むので、空を渡せば素通しになる
 /// （評価ではモデル単体の力を測るため空にする）。
 /// IrohaCore は MLX と macOS 専用の部分（`SystemReadingTokenizer`）に依存させないので、別のモジュールに置く
@@ -34,6 +34,7 @@ public enum EngineAssembly {
         latticeUse: LatticeUse = .candidates,
         notation: @escaping @Sendable () -> NotationPreferenceConfiguration = { .disabled },
         userDictionary: @escaping @Sendable () -> UserDictionary = { .empty },
+        liveTermDictionary: @escaping @Sendable () -> TermDictionaryLookup = { .empty },
         learning: @escaping @Sendable () -> LearningDictionary = { .empty }
     ) -> LearningEngine {
         let core: any ConversionEngine
@@ -45,7 +46,10 @@ public enum EngineAssembly {
         }
         return LearningEngine(
             base: UserDictionaryEngine(
-                base: ChunkedConversionEngine(base: VariantKanjiEngine(base: core)),
+                base: TermDictionaryLiveEngine(
+                    base: ChunkedConversionEngine(base: VariantKanjiEngine(base: core)),
+                    lookup: liveTermDictionary,
+                    lattice: lattice),
                 dictionary: userDictionary,
                 lattice: lattice),
             dictionary: learning)

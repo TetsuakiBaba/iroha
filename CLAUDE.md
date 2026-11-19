@@ -274,8 +274,15 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   一覧は `models/term-dictionaries.json`、本体は Release `term-dictionaries-v1`（**必ず `--prerelease`**）、
   作り方は `macos/scripts/build-term-dictionaries.py`（fetch / build）と `publish-term-dictionaries.sh`。
   入れた辞書は `<データフォルダ>/dictionaries/<ID>.tsv` と `<ID>.json`（出典・ライセンスの記録）。守ること:
-  ・**候補ウィンドウにだけ効かせる**（ユーザの判断）。辞書ラティスの候補に語として加わり、モデルの採点で並ぶ。
+  ・**既定では候補ウィンドウにだけ効かせる**（ユーザの判断）。辞書ラティスの候補に語として加わり、モデルの採点で並ぶ。
     ライブ変換の第一候補・ユーザ辞書の語の境目の判定（`wordBoundaries`）には入れない
+  ・**辞書ごとの「ライブ変換にも使う」**（`TermDictionarySettings`、キー `termDictionaryLiveConversion`・ID のカンマ区切り・
+    既定は空・同期する。2026-11-19、ユーザの判断で置き換え方式）を ON にした辞書は、ユーザ辞書と同じ規則で読みに当てる
+    （`TermDictionaryLiveEngine`。ユーザ辞書のデコレータのすぐ内側で、中身は `UserDictionaryEngine` そのもの。
+    同じ読みならユーザ辞書が勝つ）。使う語は読みごとに辞書ファイルを二分探索で引き（`TermDictionaryLookup.liveDictionary`。
+    メモリに展開しない）、**同じ読みに語が 2 つ以上ある読みは使わない**（胃がん・胃癌のどれにするかを決められない）。
+    読み 1 文字・読みより大幅に長い語も使わない。プライベートモードの間はユーザ辞書と同じく止める。
+    iroha-cli は `IROHA_TERM_LIVE=installed` か `=a.tsv,b.tsv`
   ・候補ウィンドウでは、専門辞書の語（か、その語＋読みの残りのかな）になっている候補の右に辞書の名前を小さな印で出す
     （`TermDictionaryLookup`。入れた辞書ファイルをマップして二分探索で引くので、辞書ファイルは読み・語の UTF-8 のバイト順に
     並べたままにする。`iroha-cli terms lookup <読み> <候補>…` で確かめられる）。基本の辞書にもある語（地名の「中央」など）にも付く
@@ -285,7 +292,8 @@ cd macos && swift build --build-system native && swift test --build-system nativ
     一致しなくなった所で先を探すのをやめ、動的ユーザ辞書の語はその判定に加わらないので、多くの人名・地名に届かない
     （引くたびに全件をなめるので遅くもある）。LatticeConverter は本体の辞書を共有する変換器を 2 つ持つ
     （候補用は専門辞書を読む、境目の判定用は読まない）
-  ・使う元データは再配布の条件を確かめたものだけ（JMdict CC BY-SA 4.0・百薬辞書 CC BY 4.0・郵便番号データ・Wikidata CC0）。
+  ・使う元データは再配布の条件を確かめたものだけ（JMdict CC BY-SA 4.0・百薬辞書 CC BY 4.0・郵便番号データ・Wikidata CC0、
+    お守り辞書はリポジトリの `macos/scripts/term-dictionaries/omamori.tsv` から作る。縁起のよい当て字・言い換え。2026-11-19）。
     万病辞書・JMED-DICT mini・ComeJisyo（条件を確認できない）、SKK の専門辞書（GPL v2）、Mozc の dictionary_oss は使わない。
     **JMdict のライセンスは配る版を新しく保つことを求める**ので、`.github/workflows/term-dictionaries.yml` が毎月作り直して
     公開しカタログをコミットする（アプリは設定画面を開いたときに入れ直す）。語の一覧（`contentSha256`）が前の版と同じ辞書は

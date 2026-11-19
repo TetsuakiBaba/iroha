@@ -27,8 +27,13 @@ public final class TermDictionaryStore: @unchecked Sendable {
     private var cached: TermDictionary = .empty
     private var records: [TermDictionaryInstall.Record] = []
     private var cachedLookup: TermDictionaryLookup = .empty
+    private var cachedLiveLookup: TermDictionaryLookup = .empty
     /// 最後に読み込んだときの辞書の組。変わっていなければ読み直さない
     private var loadedSignature: String?
+    /// 最後に読み込んだときの、ライブ変換にも使う辞書の組
+    private var loadedLiveSignature: String?
+    /// ライブ変換にも使う辞書の ID（設定 > 辞書・学習 > 専門辞書。IME 本体が `setLiveConversionIDs` で渡す）
+    private var liveConversionIDs: @Sendable () -> Set<String> = { [] }
 
     public init(
         cacheURL: URL = TermDictionaryStore.defaultCacheURL,
@@ -52,6 +57,20 @@ public final class TermDictionaryStore: @unchecked Sendable {
         return cachedLookup
     }
 
+    /// ライブ変換にも使う辞書（`TermDictionaryLiveEngine` が引く）
+    public var liveLookup: TermDictionaryLookup {
+        lock.lock()
+        defer { lock.unlock() }
+        return cachedLiveLookup
+    }
+
+    /// ライブ変換にも使う辞書の ID を返すものを渡す。変わったら `reload()` を呼ぶ
+    public func setLiveConversionIDs(_ provider: @escaping @Sendable () -> Set<String>) {
+        lock.lock()
+        liveConversionIDs = provider
+        lock.unlock()
+    }
+
     /// 読み込んだ辞書の素性
     public var installedRecords: [TermDictionaryInstall.Record] {
         lock.lock()
@@ -68,9 +87,25 @@ public final class TermDictionaryStore: @unchecked Sendable {
         let found = TermDictionaryInstall.installedRecords()
         let signature = found.map { "\($0.id):\($0.sha256)" }.joined(separator: ",")
         lock.lock()
+        let liveIDs = liveConversionIDs()
         let unchanged = signature == loadedSignature
         lock.unlock()
-        guard !unchanged else { return false }
+        let live = found.filter { liveIDs.contains($0.id) }
+        let liveSignature = live.map { "\($0.id):\($0.sha256)" }.joined(separator: ",")
+        lock.lock()
+        let liveUnchanged = liveSignature == loadedLiveSignature
+        lock.unlock()
+        guard !unchanged || !liveUnchanged else { return false }
+        if unchanged {
+            // ライブ変換に使う辞書の選び方だけが変わった（ファイルをマップし直すだけ）
+            let liveLookup = TermDictionaryLookup(records: live)
+            lock.lock()
+            cachedLiveLookup = liveLookup
+            loadedLiveSignature = liveSignature
+            lock.unlock()
+            postDidChange()
+            return true
+        }
 
         let dictionary: TermDictionary
         if found.isEmpty {
@@ -82,16 +117,23 @@ public final class TermDictionaryStore: @unchecked Sendable {
             dictionary = .empty
         }
         let lookup = TermDictionaryLookup(records: found)
+        let liveLookup = TermDictionaryLookup(records: live)
         lock.lock()
         cached = dictionary
         cachedLookup = lookup
+        cachedLiveLookup = liveLookup
         records = found
         loadedSignature = signature
+        loadedLiveSignature = liveSignature
         lock.unlock()
+        postDidChange()
+        return true
+    }
+
+    private func postDidChange() {
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
         }
-        return true
     }
 
     public func reloadInBackground() {

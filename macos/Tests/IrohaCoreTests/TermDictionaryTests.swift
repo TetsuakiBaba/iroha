@@ -193,3 +193,87 @@ final class TermDictionaryTests: XCTestCase {
         XCTAssertEqual(boundaries, plainBoundaries)
     }
 }
+
+// MARK: - ライブ変換にも使う
+
+/// 読みをカタカナにして返すだけのエンジン
+private struct KatakanaEngine: ConversionEngine {
+    func convert(reading: String, context: String, candidateCount: Int) async throws -> [String] {
+        (0..<max(1, candidateCount)).map { $0 == 0 ? hiraganaToKatakana(reading) : "\(hiraganaToKatakana(reading))\($0)" }
+    }
+}
+
+final class TermDictionaryLiveTests: XCTestCase {
+
+    /// build-term-dictionaries.py と同じく、読み・語の順（UTF-8 のバイト順）に並べる
+    private func table(_ label: String, _ pairs: [(String, String)]) -> TermDictionaryLookup.Table {
+        let lines = pairs.map { "\($0.0)\t\($0.1)" }.sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }
+        let data = Data(("# 注記\n# 形式: 読み<TAB>語\n" + lines.joined(separator: "\n") + "\n").utf8)
+        return .init(label: label, data: data, start: TermDictionaryLookup.bodyStart(data))
+    }
+
+    private var lookup: TermDictionaryLookup {
+        let medicine = table("医学", [
+            ("いがん", "胃がん"), ("いがん", "胃癌"), ("けっしゅ", "血腫"), ("ぞんで", "ゾンデ"),
+            ("けっしゅう", "結集"), ("あ", "亜"),
+        ] + (0..<300).map { ("か\($0)", "火\($0)") })
+        let omamori = table("お守り辞書", [
+            ("げんき", "元氣"), ("がんばる", "顔晴る"), ("ぞんで", "ゾンデ"), ("めーるあどれす", "abc@example.com"),
+        ])
+        return TermDictionaryLookup(tables: [medicine, omamori])
+    }
+
+    func testLiveDictionaryUsesOnlyUnambiguousReadings() {
+        let dictionary = lookup.liveDictionary(occurringIn: "いがんとけっしゅうとげんき")
+        // 表記が分かれる読み（いがん）は使わない
+        XCTAssertEqual(dictionary.liveWords(forReading: "いがん"), [])
+        XCTAssertEqual(dictionary.liveWords(forReading: "けっしゅ"), ["血腫"])
+        XCTAssertEqual(dictionary.liveWords(forReading: "けっしゅう"), ["結集"])
+        XCTAssertEqual(dictionary.liveWords(forReading: "げんき"), ["元氣"])
+        // 1 文字の読みは使わない
+        XCTAssertEqual(dictionary.liveWords(forReading: "あ"), [])
+        // 2 つの辞書に同じ語があっても 1 語として数える
+        XCTAssertEqual(lookup.liveDictionary(occurringIn: "ぞんで").liveWords(forReading: "ぞんで"), ["ゾンデ"])
+        // 読みより大幅に長い語は使わない（ユーザ辞書と同じ）
+        XCTAssertTrue(lookup.liveDictionary(occurringIn: "めーるあどれす").isEmpty)
+        // 読みに語が現れなければ空
+        XCTAssertTrue(lookup.liveDictionary(occurringIn: "きょうはいいてんき").isEmpty)
+        XCTAssertTrue(TermDictionaryLookup.empty.liveDictionary(occurringIn: "げんき").isEmpty)
+        // 読みの途中に並ぶ数字の語（二分探索の範囲の確認）
+        XCTAssertEqual(lookup.liveDictionary(occurringIn: "か123の").liveWords(forReading: "か123"), ["火123"])
+    }
+
+    func testEngineReplacesLikeUserDictionary() async throws {
+        let lookup = self.lookup
+        let engine = TermDictionaryLiveEngine(base: KatakanaEngine(), lookup: { lookup })
+        // 読み全体の一致は置き換える
+        let exact = try await engine.convert(reading: "げんき", context: "", candidateCount: 1)
+        XCTAssertEqual(exact, ["元氣"])
+        // 途中の一致は語で埋め、残りをエンジンに渡す
+        let partial = try await engine.convert(reading: "げんきです", context: "", candidateCount: 1)
+        XCTAssertEqual(partial, ["元氣デス"])
+        // 表記が分かれる読みは置き換えない
+        let ambiguous = try await engine.convert(reading: "いがん", context: "", candidateCount: 1)
+        XCTAssertEqual(ambiguous, ["イガン"])
+        // 候補ウィンドウでは辞書の語を先頭に出す
+        let candidates = try await engine.convert(reading: "がんばる", context: "", candidateCount: 3)
+        XCTAssertEqual(candidates.first, "顔晴る")
+        XCTAssertTrue(candidates.contains("ガンバル"))
+        // 辞書が無ければ素通し
+        let none = TermDictionaryLiveEngine(base: KatakanaEngine(), lookup: { .empty })
+        let passed = try await none.convert(reading: "げんき", context: "", candidateCount: 1)
+        XCTAssertEqual(passed, ["ゲンキ"])
+    }
+
+    func testUserDictionaryWinsOverTermDictionary() async throws {
+        let user = UserDictionary(entries: [UserDictionaryEntry(reading: "げんき", word: "ゲンキ堂")])
+        let lookup = self.lookup
+        let engine = UserDictionaryEngine(
+            base: TermDictionaryLiveEngine(base: KatakanaEngine(), lookup: { lookup }),
+            dictionary: { user })
+        let result = try await engine.convert(reading: "げんき", context: "", candidateCount: 1)
+        XCTAssertEqual(result, ["ゲンキ堂"])
+        let candidates = try await engine.convert(reading: "げんき", context: "", candidateCount: 3)
+        XCTAssertEqual(Array(candidates.prefix(2)), ["ゲンキ堂", "元氣"])
+    }
+}
