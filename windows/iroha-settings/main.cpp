@@ -158,6 +158,7 @@ enum ControlId {
     kIdTermAdd,
     kIdTermRemove,
     kIdTermDetail,
+    kIdTermLive,
     // 変換ルール
     kIdRuleList,
     kIdRuleTrigger,
@@ -381,7 +382,7 @@ struct App {
     // ユーザ辞書
     HWND dictList = nullptr, dictReading = nullptr, dictWord = nullptr, dictAdd = nullptr, dictRemove = nullptr;
     // 専門辞書
-    HWND termList = nullptr, termAdd = nullptr, termRemove = nullptr, termDetail = nullptr;
+    HWND termList = nullptr, termAdd = nullptr, termRemove = nullptr, termDetail = nullptr, termLive = nullptr;
     Row* termRowStatus = nullptr;
     std::unique_ptr<iroha::TermDictionaryCatalog> termCatalog;
     std::vector<TermRow> termRows;
@@ -857,14 +858,36 @@ void App::BuildDictionaryPage() {
 
 void App::BuildTermPage() {
     ui::Page* page = PageFor(L"terms");
-    page->AddNote(L"分野の用語や地名・人名の辞書を追加すると、その語を文節の候補ウィンドウに出します（ライブ変換は変えません）。"
+    page->AddNote(L"分野の用語や地名・人名の辞書を追加すると、その語を文節の候補ウィンドウに出します。"
+                  L"ライブ変換で最初に出る変換は変えません（辞書ごとの「ライブ変換にも使う」をONにした辞書だけは、"
+                  L"ユーザ辞書と同じくライブ変換でもその語に置き換えます）。"
                   L"辞書はダウンロードしてデータフォルダの dictionaries\\ に置きます。出典とライセンスは一覧で選ぶと出ます。");
-    termList = MakeList(page, kIdTermList, {{L"辞書", 180}, {L"まとまり", 170}, {L"語数", 80}, {L"状態", 150}});
+    termList = MakeList(page, kIdTermList,
+                        {{L"辞書", 165}, {L"まとまり", 170}, {L"語数", 70}, {L"状態", 150}, {L"ライブ変換", 75}});
     page->AddFill(termList, 180);
     termAdd = MakeButton(page, kIdTermAdd, L"追加");
     termRemove = MakeButton(page, kIdTermRemove, L"削除");
     termRowStatus = page->AddItem(L"選んだ辞書", L"");
     termRowStatus->right = {{termAdd, 90}, {termRemove, 90}};
+    // 入れている辞書を選んだときだけ操作できる（macOS版の TermDictionaryRow の「ライブ変換にも使う」）
+    termLive = MakeToggle(page, kIdTermLive);
+    Row* live = page->AddItem(
+        L"ライブ変換にも使う", L"選んだ辞書の語を、入力中の変換でも使います",
+        L"入力中の変換（ライブ変換）でも、この辞書の語に置き換えます。"
+        L"ユーザ辞書と同じく、読みが辞書の語と一致すれば、スペースキーを押さなくてもその語になり、"
+        L"候補ウィンドウでも先頭に出します。読みの一部が一致したときは、"
+        L"そこが語の区切りになる場合だけ置き換えます。"
+        L"同じ読みに辞書の語が2つ以上ある読み（胃がん・胃癌など）は、どれにするかを決められないので"
+        L"置き換えず、これまでどおり候補ウィンドウにだけ出します。"
+        L"ユーザ辞書に同じ読みがあればユーザ辞書の語を使います。"
+        L"同じ読みの一般の語（例えば人名の辞書なら、人名と同じ読みの言葉）が出なくなることがあります。"
+        L"その語を候補から選んで確定すると、変換の学習で次からその語に戻ります。"
+        L"プライベートモードの間は使いません。");
+    live->right = {{termLive, 110}};
+    live->enabled = [this] {
+        const int selected = ListView_GetNextItem(termList, -1, LVNI_SELECTED);
+        return selected >= 0 && selected < static_cast<int>(termRows.size()) && termRows[selected].installed;
+    };
     // 出典・ライセンスの URL を写せるよう、読み取り専用の入力欄に出す
     termDetail = ui::CreateControl(page->hwnd(), WC_EDITW, L"", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL,
                                    kIdTermDetail);
@@ -1620,6 +1643,7 @@ void App::RefreshTermList() {
         row.installed = true;
         termRows.push_back(std::move(row));
     }
+    const std::set<std::string> liveIds = iroha::TermDictionarySettings::Ids(config.termDictionaryLiveConversion);
     const int selected = ListView_GetNextItem(termList, -1, LVNI_SELECTED);
     ListView_DeleteAllItems(termList);
     for (int i = 0; i < static_cast<int>(termRows.size()); ++i) {
@@ -1629,13 +1653,16 @@ void App::RefreshTermList() {
         item.iItem = i;
         item.pszText = const_cast<wchar_t*>(row.name.c_str());
         ListView_InsertItem(termList, &item);
-        ListView_SetItemText(termList, i, 1, const_cast<wchar_t*>(row.group.c_str()));
+        // 配布の一覧に無い入れた辞書（データフォルダに手で置いたものなど）は、まとまりの欄を「一覧にない辞書」にする
+        // （macOS版の見出しと同じ。本来のまとまりは下の説明に出す）。一覧が取れていないときは、どれもそう言わない
+        std::wstring group = !row.catalogEntry && termCatalog ? L"一覧にない辞書" : row.group;
+        ListView_SetItemText(termList, i, 1, group.data());
         std::wstring entries = std::to_wstring(row.entries);
         ListView_SetItemText(termList, i, 2, entries.data());
-        std::wstring state = !row.installed ? L"" : row.needsUpdate ? L"入れてある（更新あり）"
-                                             : row.catalogEntry   ? L"入れてある"
-                                                                  : L"入れてある（一覧に無い）";
+        std::wstring state = !row.installed ? L"" : row.needsUpdate ? L"入れてある（更新あり）" : L"入れてある";
         ListView_SetItemText(termList, i, 3, state.data());
+        std::wstring live = row.installed && liveIds.count(row.id) > 0 ? L"使う" : L"";
+        ListView_SetItemText(termList, i, 4, live.data());
     }
     if (selected >= 0 && selected < static_cast<int>(termRows.size())) {
         ListView_SetItemState(termList, selected, LVIS_SELECTED, LVIS_SELECTED);
@@ -1649,12 +1676,20 @@ void App::ShowTermDetail() {
     EnableWindow(termAdd, valid && !termBusy && termRows[selected].catalogEntry &&
                               (!termRows[selected].installed || termRows[selected].needsUpdate));
     EnableWindow(termRemove, valid && !termBusy && termRows[selected].installed);
+    EnableWindow(termLive, valid && termRows[selected].installed);
+    SetCheck(termLive, valid && termRows[selected].installed &&
+                           iroha::TermDictionarySettings::Ids(config.termDictionaryLiveConversion)
+                                   .count(termRows[selected].id) > 0);
     if (!valid) {
         SetWindowTextW(termDetail, L"一覧から辞書を選ぶと、説明と出典・ライセンスが出ます。");
         return;
     }
     const TermRow& row = termRows[selected];
     std::wstring text = row.name + L"（" + row.group + L"）  " + std::to_wstring(row.entries) + L" 語\r\n";
+    // データフォルダに置いたが配布の一覧に無い辞書（公開前の辞書を手で置いたときなど）。macOS版の「一覧にない辞書」
+    if (!row.catalogEntry && termCatalog) {
+        text += L"配布している辞書の一覧に無い辞書です（データフォルダに置かれたもの）。\r\n";
+    }
     if (!row.summary.empty()) text += row.summary + L"\r\n";
     if (!row.samples.empty()) {
         text += L"例: ";
@@ -2317,6 +2352,24 @@ void App::OnCommand(int id, int code, HWND control) {
     case kIdDictRemove:
         if (clicked) OnDictRemove();
         return;
+    case kIdTermLive: {
+        if (!clicked) return;
+        const int row = ListView_GetNextItem(termList, -1, LVNI_SELECTED);
+        if (row < 0 || row >= static_cast<int>(termRows.size()) || !termRows[row].installed) return;
+        const std::string dictionaryId = termRows[row].id;
+        const bool on = Checked(control);
+        Update([&](iroha::Config& c) {
+            std::set<std::string> ids = iroha::TermDictionarySettings::Ids(c.termDictionaryLiveConversion);
+            if (on) {
+                ids.insert(dictionaryId);
+            } else {
+                ids.erase(dictionaryId);
+            }
+            c.termDictionaryLiveConversion = iroha::TermDictionarySettings::Text(ids);
+        });
+        RefreshTermList();
+        return;
+    }
     case kIdTermAdd:
     case kIdTermRemove: {
         if (!clicked) return;

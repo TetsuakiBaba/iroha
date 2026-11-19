@@ -62,6 +62,8 @@
 //   ラティス候補の再採点で決める（既定は候補数 2 以上のときだけラティス。IME本体と同じ）
 //   IROHA_TERM_DICTIONARIES=installed で IME 本体に入れた専門辞書を、=a.tsv,b.tsv でその辞書ファイルを
 //   候補ウィンドウの辞書ラティスに加える（既定は使わない。macOS版と同じ）
+//   IROHA_TERM_LIVE=installed で IME 本体に入れた専門辞書のすべてを、=a.tsv,b.tsv でその辞書ファイルを
+//   ユーザ辞書と同じ規則でライブ変換にも使う（設定 > 専門辞書 の「ライブ変換にも使う」。既定は使わない）
 //   IROHA_NO_LATIN=1 で読みにラテン文字がないときの英字出力を禁じる（実験用）
 //   IROHA_NO_CONSTRAINT=1 で読み制約（constrained decoding）を丸ごと切り素の貪欲生成にする（実験用）
 //   IROHA_KV_REUSE=0 で前回の計算の再利用（KVキャッシュ・エンコーダ出力）を切る（切り分け用）
@@ -208,6 +210,33 @@ std::shared_ptr<const iroha::TermLatticeIndex> CliTermIndex(const std::filesyste
     return index;
 }
 
+// ライブ変換にも使う専門辞書（IROHA_TERM_LIVE）。`installed` なら IME 本体で入れた辞書のすべて、それ以外は
+// カンマ区切りの辞書ファイル（読み<TAB>語、読み・語の順に並べたもの）。指定が無ければ使わない（設定 > 専門辞書 の
+// 「ライブ変換にも使う」と同じ。IME 本体と違い、既定は無し）
+std::shared_ptr<const iroha::TermDictionaryLookup> CliLiveTermLookup() {
+    const wchar_t* env = _wgetenv(L"IROHA_TERM_LIVE");
+    if (!env || env[0] == L'\0') return nullptr;
+    const std::wstring value = env;
+    std::shared_ptr<const iroha::TermDictionaryLookup> lookup;
+    if (value == L"installed") {
+        const std::filesystem::path data = DataDir();
+        lookup = std::make_shared<iroha::TermDictionaryLookup>(
+            iroha::TermDictionaryLookup::Load(data, iroha::TermDictionaryInstall::InstalledRecords(data)));
+    } else {
+        std::vector<std::filesystem::path> files;
+        size_t start = 0;
+        while (start <= value.size()) {
+            size_t end = value.find(L',', start);
+            if (end == std::wstring::npos) end = value.size();
+            if (end > start) files.emplace_back(value.substr(start, end - start));
+            start = end + 1;
+        }
+        lookup = std::make_shared<iroha::TermDictionaryLookup>(iroha::TermDictionaryLookup::LoadFiles(files));
+    }
+    std::fprintf(stderr, "ライブ変換にも使う専門辞書: %zu 個（IROHA_TERM_LIVE）\n", lookup->DictionaryCount());
+    return lookup;
+}
+
 // ユーザ辞書・学習の扱い。評価（bench / ajimee）はモデル単体の力を測るので既定で空にする。
 // 実データを混ぜると学習ファイルの成長で同じモデルでも数値が変わり、再現性がなくなる
 enum class UserDataMode {
@@ -238,8 +267,10 @@ struct EngineStack {
           lattice(MakeLatticeForStack()),
           userDictionary(UserDataPath(mode, L"IROHA_USER_DICT", L"user-dictionary.json")),
           learning(UserDataPath(mode, L"IROHA_LEARNING", L"learning.json")),
+          liveTerms(CliLiveTermLookup()),
           assembly(&zenz, &zenz, lattice.get(), LatticeUseFromEnvironment(),
-                   [this] { return userDictionary.Current(); }, [this] { return learning.Current(); }),
+                   [this] { return userDictionary.Current(); }, [this] { return learning.Current(); },
+                   [this] { return liveTerms; }),
           engine(assembly.Engine()) {
         if (mode == UserDataMode::Evaluation) {
             std::fprintf(stderr, "%s\n",
@@ -253,6 +284,7 @@ struct EngineStack {
     std::unique_ptr<iroha::LatticeConverter> lattice;
     iroha::UserDictionaryStore userDictionary;
     iroha::LearningStore learning;
+    std::shared_ptr<const iroha::TermDictionaryLookup> liveTerms;
     iroha::EngineAssembly assembly;
     iroha::LearningEngine& engine;
 

@@ -360,6 +360,10 @@ std::string TermDictionaryInstall::Signature(const std::vector<Record>& records)
 
 // ---- 辞書名の印 ----
 
+TermDictionaryLookup::TermDictionaryLookup(std::vector<Table> tables) {
+    for (Table& table : tables) tables_.push_back(std::make_shared<const Table>(std::move(table)));
+}
+
 TermDictionaryLookup TermDictionaryLookup::Load(
     const std::filesystem::path& dataDirectory,
     const std::vector<TermDictionaryInstall::Record>& records) {
@@ -369,9 +373,54 @@ TermDictionaryLookup TermDictionaryLookup::Load(
         if (!ReadFile(TermDictionaryInstall::FilePath(dataDirectory, record.id), &table.data)) continue;
         table.label = Label(record.name);
         table.start = BodyStart(table.data);
+        table.id = record.id;
         tables.push_back(std::move(table));
     }
     return TermDictionaryLookup(std::move(tables));
+}
+
+TermDictionaryLookup TermDictionaryLookup::LoadFiles(const std::vector<std::filesystem::path>& files) {
+    std::vector<Table> tables;
+    for (const auto& path : files) {
+        Table table;
+        if (!ReadFile(path, &table.data)) continue;
+        table.label = Utf16ToUtf32(path.stem().wstring());
+        table.start = BodyStart(table.data);
+        tables.push_back(std::move(table));
+    }
+    return TermDictionaryLookup(std::move(tables));
+}
+
+TermDictionaryLookup TermDictionaryLookup::Select(const std::set<std::string>& ids) const {
+    TermDictionaryLookup selected;
+    for (const auto& table : tables_) {
+        if (!table->id.empty() && ids.count(table->id) > 0) selected.tables_.push_back(table);
+    }
+    return selected;
+}
+
+// ---- 専門辞書の設定 ----
+
+std::set<std::string> TermDictionarySettings::Ids(const std::string& text) {
+    std::set<std::string> ids;
+    size_t start = 0;
+    while (start <= text.size()) {
+        size_t end = text.find(',', start);
+        if (end == std::string::npos) end = text.size();
+        if (end > start) ids.insert(text.substr(start, end - start));
+        start = end + 1;
+    }
+    return ids;
+}
+
+std::string TermDictionarySettings::Text(const std::set<std::string>& ids) {
+    std::string text;
+    for (const std::string& id : ids) {
+        if (id.empty()) continue;
+        if (!text.empty()) text += ",";
+        text += id;
+    }
+    return text;
 }
 
 std::u32string TermDictionaryLookup::Label(const std::u32string& name) {
@@ -412,6 +461,83 @@ bool TermDictionaryLookup::Contains(const std::string& key, const Table& table) 
     return false;
 }
 
+size_t TermDictionaryLookup::LowerBound(const std::string& key, const Table& table) {
+    const std::string& bytes = table.data;
+    size_t low = table.start;
+    size_t high = bytes.size();
+    while (low < high) {
+        size_t lineStart = (low + high) / 2;
+        while (lineStart > low && bytes[lineStart - 1] != '\n') --lineStart;
+        size_t lineEnd = lineStart;
+        while (lineEnd < high && bytes[lineEnd] != '\n') ++lineEnd;
+        if (std::string_view(bytes.data() + lineStart, lineEnd - lineStart).compare(std::string_view(key)) < 0) {
+            low = lineEnd + 1;
+        } else {
+            high = lineStart;
+        }
+    }
+    return low;
+}
+
+namespace {
+
+bool StartsWith(const std::string& bytes, size_t position, const std::string& prefix) {
+    return position <= bytes.size() && bytes.size() - position >= prefix.size() &&
+           bytes.compare(position, prefix.size(), prefix) == 0;
+}
+
+} // namespace
+
+bool TermDictionaryLookup::HasLine(const std::string& prefix, const Table& table) {
+    return StartsWith(table.data, LowerBound(prefix, table), prefix);
+}
+
+std::vector<std::u32string> TermDictionaryLookup::Words(const std::string& key, const Table& table) {
+    const std::string& bytes = table.data;
+    std::vector<std::u32string> words;
+    size_t position = LowerBound(key, table);
+    while (StartsWith(bytes, position, key)) {
+        size_t lineEnd = position + key.size();
+        while (lineEnd < bytes.size() && bytes[lineEnd] != '\n') ++lineEnd;
+        std::string_view word(bytes.data() + position + key.size(), lineEnd - position - key.size());
+        if (!word.empty() && word.back() == '\r') word.remove_suffix(1);
+        if (!word.empty()) words.push_back(Utf8ToUtf32(word));
+        position = lineEnd + 1;
+    }
+    return words;
+}
+
+UserDictionary TermDictionaryLookup::LiveDictionary(const std::u32string& reading) const {
+    if (tables_.empty()) return UserDictionary();
+    const std::vector<std::u32string> characters = SplitGraphemes(reading);
+    std::vector<UserDictionaryEntry> entries;
+    std::set<std::u32string> seen;
+    for (size_t start = 0; start < characters.size(); ++start) {
+        std::u32string part;
+        for (size_t end = start; end < characters.size(); ++end) {
+            part += characters[end];
+            const std::string prefix = Utf32ToUtf8(part);
+            if (std::none_of(tables_.begin(), tables_.end(),
+                             [&](const auto& table) { return HasLine(prefix, *table); })) {
+                break;
+            }
+            if (end - start + 1 < TermDictionary::kMinimumReadingLength || !seen.insert(part).second) continue;
+            const std::string key = prefix + "\t";
+            std::vector<std::u32string> words;
+            for (const auto& table : tables_) {
+                for (std::u32string& word : Words(key, *table)) {
+                    if (std::find(words.begin(), words.end(), word) == words.end()) words.push_back(std::move(word));
+                }
+            }
+            if (words.size() == 1 && words[0] != part &&
+                UserDictionary::IsSuitableForLiveConversion(part, words[0])) {
+                entries.push_back(MakeUserDictionaryEntry(part, words[0]));
+            }
+        }
+    }
+    return entries.empty() ? UserDictionary() : UserDictionary(std::move(entries));
+}
+
 std::vector<std::u32string> TermDictionaryLookup::Labels(const std::u32string& reading,
                                                          const std::u32string& candidate) const {
     if (tables_.empty()) return {};
@@ -435,8 +561,8 @@ std::vector<std::u32string> TermDictionaryLookup::Labels(const std::u32string& r
         if (word == termReading) continue;
         const std::string key = Utf32ToUtf8(termReading) + "\t" + Utf32ToUtf8(word);
         std::vector<std::u32string> found;
-        for (const Table& table : tables_) {
-            if (Contains(key, table)) found.push_back(table.label);
+        for (const auto& table : tables_) {
+            if (Contains(key, *table)) found.push_back(table->label);
         }
         if (!found.empty()) return found;
     }

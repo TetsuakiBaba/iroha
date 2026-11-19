@@ -181,6 +181,7 @@ Config LoadConfig(const std::filesystem::path& path) {
     text("voiceInputHoldKey", &config.voiceInputHoldKey);
     text("voiceInputToggleHotkey", &config.voiceInputToggleHotkey);
     text("updateCheckURL", &config.updateCheckURL);
+    text("termDictionaryLiveConversion", &config.termDictionaryLiveConversion);
     for (size_t i = 0; i < config.selectionPresets.size(); ++i) {
         const std::string prefix = "selPreset" + std::to_string(i);
         auto& preset = config.selectionPresets[i];
@@ -209,6 +210,7 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
     std::string out = "{\"model\":" + json::QuoteString(Utf32ToUtf8(config.model)) +
                       ",\"liveConversion\":" + (config.liveConversion ? "true" : "false") +
                       ",\"symbolCandidates\":" + (config.symbolCandidates ? "true" : "false") +
+                      ",\"termDictionaryLiveConversion\":" + json::QuoteString(config.termDictionaryLiveConversion) +
                       ",\"punctuation\":" + json::QuoteString(Utf32ToUtf8(config.punctuation)) +
                       ",\"fullWidthSpace\":" + (config.fullWidthSpace ? "true" : "false") +
                       ",\"candidateCount\":" + std::to_string(config.candidateCount) +

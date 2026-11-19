@@ -17,6 +17,7 @@
 #include <atomic>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -141,7 +142,7 @@ PSECURITY_DESCRIPTOR CreatePipeSecurityDescriptor() {
 }
 
 // IME本体と同じ構成のエンジン一式:
-// 学習 → ユーザ辞書 → 長い読みの区切り → 異体字 → 辞書ラティスの候補をモデルで再採点 → モデル。
+// 学習 → ユーザ辞書 → ライブ変換にも使う専門辞書 → 長い読みの区切り → 異体字 → 辞書ラティスの候補をモデルで再採点 → モデル。
 // 候補を複数求められたとき（候補ウィンドウ）は辞書ラティスで候補を作ってモデルで並べ、
 // 1つだけのとき（全体の変換）はモデルの生成に任せる。辞書が無ければモデル単体で動く。
 // 設定GUIからのReload要求で設定・辞書を読み直す（モデルは変わったときだけロード）
@@ -315,13 +316,39 @@ struct ServerState {
     bool termsLoaded = false;
     std::shared_ptr<const iroha::TermLatticeIndex> termIndex;
     std::shared_ptr<const iroha::TermDictionaryLookup> termLookup;
+    // ライブ変換にも使う専門辞書（設定の termDictionaryLiveConversion。中身は termLookup と共有する。無ければ nullptr）
+    std::shared_ptr<const iroha::TermDictionaryLookup> liveTermLookup;
+    std::string liveTermSignature;
 
-    // 入れている専門辞書が変わっていれば読み直す（数十万語で 1 秒前後）
-    void LoadTermDictionaries() {
+    // 入れている専門辞書が変わっていれば読み直す（数十万語で 1 秒前後）。
+    // ライブ変換に使う辞書の選び方だけが変わったときは、読み込んだ辞書から選び直すだけにする（macOS版の liveSignature）
+    void LoadTermDictionaries(const std::string& liveConversionIds) {
         const std::filesystem::path data(DataDir());
         const auto records = iroha::TermDictionaryInstall::InstalledRecords(data);
         const std::string signature = iroha::TermDictionaryInstall::Signature(records);
-        if (termsLoaded && signature == termSignature) return;
+        const std::set<std::string> liveIds = iroha::TermDictionarySettings::Ids(liveConversionIds);
+        std::vector<iroha::TermDictionaryInstall::Record> liveRecords;
+        for (const auto& record : records) {
+            if (liveIds.count(record.id) > 0) liveRecords.push_back(record);
+        }
+        const std::string liveSignature = iroha::TermDictionaryInstall::Signature(liveRecords);
+        const bool unchanged = termsLoaded && signature == termSignature;
+        if (!unchanged) ReadTermDictionaries(data, records, signature);
+        if (unchanged && liveSignature == liveTermSignature) return;
+        liveTermSignature = liveSignature;
+        liveTermLookup = nullptr;
+        if (termLookup && !liveRecords.empty()) {
+            liveTermLookup = std::make_shared<iroha::TermDictionaryLookup>(termLookup->Select(liveIds));
+        }
+        if (!liveRecords.empty() || unchanged) {
+            Log(("term dictionaries for live conversion: " +
+                 (liveSignature.empty() ? std::string("none") : liveSignature)).c_str());
+        }
+    }
+
+    void ReadTermDictionaries(const std::filesystem::path& data,
+                              const std::vector<iroha::TermDictionaryInstall::Record>& records,
+                              const std::string& signature) {
         termsLoaded = true;
         termSignature = signature;
         termIndex = nullptr;
@@ -458,7 +485,7 @@ struct ServerState {
                 Log("dictionary not found (candidates come from the model only)");
             }
         }
-        LoadTermDictionaries();
+        LoadTermDictionaries(config.termDictionaryLiveConversion);
         if (lattice) lattice->SetTermDictionary(termIndex);
         userDictionary = std::make_unique<iroha::UserDictionaryStore>(
             StorePath(L"IROHA_USER_DICT", L"user-dictionary.json"));
@@ -477,7 +504,9 @@ struct ServerState {
         assembly = std::make_unique<iroha::EngineAssembly>(
             zenz.get(), zenz.get(), lattice.get(), iroha::LatticeUse::Candidates,
             [this] { return privateMode ? iroha::UserDictionary() : userDictionary->Current(); },
-            [this] { return privateMode || !learningEnabled ? iroha::LearningDictionary() : learning->Current(); });
+            [this] { return privateMode || !learningEnabled ? iroha::LearningDictionary() : learning->Current(); },
+            // ライブ変換にも使う専門辞書も、プライベートモードの間はユーザ辞書と同じく使わない
+            [this] { return privateMode ? nullptr : liveTermLookup; });
         engine = &assembly->Engine();
     }
 };

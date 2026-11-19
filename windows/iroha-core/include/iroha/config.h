@@ -27,6 +27,9 @@ struct Config {
     bool liveConversion = true;
     // 文節の候補ウィンドウに記号・顔文字・絵文字（Mozc のデータ）を足すか
     bool symbolCandidates = true;
+    // 専門辞書のうち「ライブ変換にも使う」にした辞書の ID（カンマ区切り。既定は空。macOS版と同じキー
+    // termDictionaryLiveConversion。読み書きは TermDictionarySettings）
+    std::string termDictionaryLiveConversion;
     // 句読点（「,」「.」キーで入れる文字の組。"、。" か "，．"。Ctrl+. で切り替えると保存する）
     std::u32string punctuation = U"、。";
     // 入力していないときの Space を全角スペースにするか（偽なら半角。Shift+Space は常に半角）

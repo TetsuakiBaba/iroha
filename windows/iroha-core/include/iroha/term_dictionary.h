@@ -3,8 +3,11 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
+
+#include "iroha/user_dictionary.h"
 
 namespace iroha {
 
@@ -12,8 +15,10 @@ namespace iroha {
 // 移植元: macos/Sources/IrohaCore/TermDictionary/（TermDictionary.swift・TermDictionaryCatalog.swift・
 // TermDictionaryLookup.swift。挙動互換を維持すること）
 //
-// 使い道は候補ウィンドウだけ: 辞書ラティス（LatticeConverter）が候補を作るときに語として加わり、
+// 既定の使い道は候補ウィンドウだけ: 辞書ラティス（LatticeConverter）が候補を作るときに語として加わり、
 // できた候補をモデルの対数確率で並べる。ライブ変換の第一候補（モデルの生成）は変えない。
+// 辞書ごとの「ライブ変換にも使う」（TermDictionarySettings）を ON にした辞書だけは、ユーザ辞書と同じ規則で
+// ライブ変換でも読みに当てる（TermDictionaryLiveEngine・TermDictionaryLookup::LiveDictionary）。
 // 辞書ラティスへの加え方は LatticeConverter::BuildTermIndex（macOS版は azooKey のユーザ辞書の形式に
 // 書き出して読ませるが、Windows版は同じ探索ができる木をメモリに作る）。
 //
@@ -153,24 +158,52 @@ public:
     static std::optional<Record> DecodeRecord(const std::string& json);
 };
 
+// 専門辞書の設定（設定 > 専門辞書）。移植元: macos/Sources/iroha/TermDictionarySettings.swift
+//
+// 「ライブ変換にも使う」にした辞書の ID を、カンマ区切りの文字列で config.json の
+// termDictionaryLiveConversion に持つ（キーの名前は macOS版と同じ。既定は空）
+struct TermDictionarySettings {
+    static std::set<std::string> Ids(const std::string& text);
+    static std::string Text(const std::set<std::string>& ids); // ID の順に並べる
+};
+
 // 候補が、入れている専門辞書のどれに載っている語かを引く（候補ウィンドウで辞書名の印を出すため）。
+// 「ライブ変換にも使う」辞書の語を集めるのにも使う（LiveDictionary）。
 // 辞書ファイルは「読み<TAB>語」の行が読み・語の順（UTF-8 のバイト順）に並んでいるので、二分探索で引く
+// （語の一覧に展開しない。人名だけで 21 万語ある）
 class TermDictionaryLookup {
 public:
     struct Table {
         std::u32string label; // 印に出す名前（「工学」「地名」）
         std::string data;     // 辞書ファイルの中身
         size_t start = 0;     // 先頭の「#」行を除いた、最初の語の行の位置
+        std::string id;       // 辞書の ID（Select で選ぶのに使う。ファイルを直接読んだときは空）
     };
 
     TermDictionaryLookup() = default;
-    explicit TermDictionaryLookup(std::vector<Table> tables) : tables_(std::move(tables)) {}
+    explicit TermDictionaryLookup(std::vector<Table> tables);
 
     // 入れている辞書のファイルを読む（読めないファイルは除く）
     static TermDictionaryLookup Load(const std::filesystem::path& dataDirectory,
                                      const std::vector<TermDictionaryInstall::Record>& records);
+    // 辞書ファイルを直接読む（iroha-cli の IROHA_TERM_LIVE 用。印の名前はファイル名。読めないファイルは除く）
+    static TermDictionaryLookup LoadFiles(const std::vector<std::filesystem::path>& files);
+
+    // ID が ids にある辞書だけのもの（辞書の中身は読み直さず、この引き当てと共有する）
+    TermDictionaryLookup Select(const std::set<std::string>& ids) const;
 
     bool Empty() const { return tables_.empty(); }
+    // 持っている辞書の数
+    size_t DictionaryCount() const { return tables_.size(); }
+
+    // 読み reading の中に読みが現れる語のうち、ライブ変換に使えるものを、ユーザ辞書の形にして返す
+    // （TermDictionaryLiveEngine がユーザ辞書と同じ規則で読みに当てる）。使うのは次の語だけ:
+    // - 読みが TermDictionary::kMinimumReadingLength 文字以上
+    // - その読みの語が、持っている辞書全体で 1 つだけ（「いがん」→ 胃がん・胃ガン・胃癌 のように
+    //   表記が分かれる読みは、どれに置き換えるかを決められないので候補ウィンドウにだけ出す）
+    // - 語が読みと同じでなく、読みより大幅に長くない（UserDictionary::IsSuitableForLiveConversion）
+    // 読みの位置ごとに、その位置から始まる読みを持つ語が辞書にある間だけ 1 文字ずつ延ばして引く
+    UserDictionary LiveDictionary(const std::u32string& reading) const;
 
     // 文節の候補 candidate（読み reading）に含まれる専門辞書の語が載っている辞書の名前。
     // 候補が「辞書の語」か「辞書の語＋読みの残り（助詞などのかな）」のときに当てる。
@@ -183,9 +216,16 @@ public:
     // 「#」で始まる行（出典・ライセンスの注記）の後ろの位置
     static size_t BodyStart(const std::string& data);
     static bool Contains(const std::string& key, const Table& table);
+    // 鍵より前に並ぶ行を除いた、最初の行の頭の位置（無ければファイルの終わり以降）
+    static size_t LowerBound(const std::string& key, const Table& table);
+    // prefix で始まる行があるか
+    static bool HasLine(const std::string& prefix, const Table& table);
+    // 「読み<TAB>」（key）で始まる行の語
+    static std::vector<std::u32string> Words(const std::string& key, const Table& table);
 
 private:
-    std::vector<Table> tables_;
+    // 辞書の中身は Select で作ったものと共有する
+    std::vector<std::shared_ptr<const Table>> tables_;
 };
 
 } // namespace iroha

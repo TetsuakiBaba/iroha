@@ -153,7 +153,8 @@ $env:IROHA_LATTICE = "always"; windows\build\iroha-cli\iroha-cli.exe ajimee test
 - 既定のモデルは `iroha-core` の `config.h`（`kDefaultModelFileName`）。未取得で以前の既定（zenz-v3.1-small）が
   あればそれを使う。差し替えるときは `fetch-model.ps1`・`iroha-settings` のモデル一覧と、macOS版の
   `ModelDownloader.swift`・`fetch-model.sh` を合わせる
-- 変換サーバは「学習 → ユーザ辞書 → 長い読みの区切り（`ChunkedConversionEngine`、80文字超）→ 異体字（`VariantKanjiEngine`）→
+- 変換サーバは「学習 → ユーザ辞書 → ライブ変換にも使う専門辞書（`TermDictionaryLiveEngine`）→
+  長い読みの区切り（`ChunkedConversionEngine`、80文字超）→ 異体字（`VariantKanjiEngine`）→
   辞書ラティスの候補をモデルで再採点（`LatticeRescoringEngine`）→ モデル」の順に重ねる（macOS版の `EngineAssembly` と同じ順）。
   **重ね方は `iroha-core` の `EngineAssembly`（`iroha/engine_assembly.h`）の 1 か所にあり、変換サーバ・iroha-cli・iroha-bench が
   使う**（2026-11-14。それまでは変換サーバの ServerState と iroha-cli の EngineStack に分かれていた）。デコレータを足す・
@@ -507,10 +508,25 @@ windows\build\iroha-cli\iroha-cli.exe symbols neko warai kaomoji
 配布している辞書（JMdict の分野別の用語・百薬辞書・郵便番号データの地名・Wikidata の人名や駅など）を、
 設定画面の「専門辞書」タブから 1 つずつ入れ外しする（2026-11-13）。カタログ（`models/term-dictionaries.json`）・
 辞書ファイル・置き場所の形式（`%LOCALAPPDATA%\iroha\dictionaries\<ID>.tsv` と `<ID>.json`）は macOS版と同じ。
-使い道は候補ウィンドウだけで、ライブ変換の第一候補は変えない（macOS版と同じ）
+既定では候補ウィンドウにだけ効かせ、ライブ変換の第一候補は変えない（macOS版と同じ）
 
 - `iroha-core` の `term_dictionary`: カタログ・設置の記録・辞書名の印（`TermDictionaryLookup`。辞書ファイルを
   読み・語の順の二分探索で引く）。テストは macOS版の `TermDictionaryTests` を移したもの
+- 辞書ごとの「ライブ変換にも使う」（2026-11-19、macOS版 ecd6b49・a6ced34 を移した）: ON にした辞書の語は、ユーザ辞書と
+  同じ規則でライブ変換でも読みに当てる。設定は config.json の `termDictionaryLiveConversion`（ID のカンマ区切り・既定は空。
+  キーの名前は macOS版と同じ。Windows版の設定は同期しない）。エンジンはユーザ辞書のすぐ内側の `TermDictionaryLiveEngine`
+  （重ね方は `EngineAssembly`。同じ読みならユーザ辞書が勝つ）で、中身は `UserDictionaryEngine` そのもの。
+  使う語は読みごとに `TermDictionaryLookup::LiveDictionary` で辞書ファイルを二分探索して集める（語の一覧に展開しない）。
+  同じ読みに語が 2 つ以上ある読み・読み 1 文字・読みと同じ語・読みより大幅に長い語は使わない。プライベートモードの間は使わない。
+  変換サーバは、入れた辞書の組が変わっていなければ辞書を読み直さず、読み込んだ辞書から選び直すだけにする
+  （`TermDictionaryLookup::Select`。辞書の中身は候補の印用と共有する）。設定画面は一覧に「ライブ変換」の列を足し、
+  選んだ辞書の「ライブ変換にも使う」を切り替える行を「選んだ辞書」の下に置いた（説明は macOS版と同じ文面）。
+  配布の一覧に無い入れた辞書（データフォルダに手で置いたもの。公開前のお守り辞書など）は、まとまりの欄を「一覧にない辞書」
+  にして一覧の最後に出し、切り替えと削除ができる。テストは macOS版の `TermDictionaryLiveTests` の 3 件を移したもの。
+  確認（2026-11-19、お守り辞書を写したデータフォルダ）: `IROHA_TERM_LIVE=installed iroha-cli convert` で げんき → 元氣・
+  がんばります → 顔晴ります・しごと → 志事・さいこう → 最幸（`IROHA_LATTICE=off` でも同じ）、文の途中の きょうはげんきです は
+  今日は元気です（ユーザ辞書と同じ規則）。開発用の変換サーバでも同じ結果になり、設定を空にして読み直させると 元気 に戻り、
+  プライベートモードの間も 元気 のまま
 - 辞書ラティスへの加え方は macOS版と違う: macOS版は azooKey のユーザ辞書の形式（LOUDS）に書き出して読ませるが、
   Windows版は同じたどり方ができる木をメモリに作り（`src/lattice/term_index.cpp`）、本体の辞書と並べてたどる
   （どちらかに続きがある限り読みを伸ばす。azooKey がユーザ辞書「user」を扱うのと同じ）。品詞・評価値（-10）・
@@ -533,6 +549,9 @@ windows\build\iroha-cli\iroha-cli.exe terms lookup goenseihaien 誤嚥性肺炎
 # 入れた辞書を候補に加えて変換する（既定は使わない。macOS版と同じ）
 $env:IROHA_TERM_DICTIONARIES = "installed"
 windows\build\iroha-cli\iroha-cli.exe lattice goenseihaien
+# 入れた辞書（または =a.tsv,b.tsv の辞書ファイル）をライブ変換にも使って変換する（既定は使わない。macOS版と同じ）
+$env:IROHA_TERM_LIVE = "installed"
+windows\build\iroha-cli\iroha-cli.exe convert げんき
 ```
 
 ## 言語バーのメニュー
