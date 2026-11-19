@@ -77,10 +77,22 @@ void EngineHost::LoadTypoNormalizer(bool enabled) {
     typoSignature_ = signature;
 }
 
-void EngineHost::LoadTermDictionaries() {
+void EngineHost::LoadTermDictionaries(const std::set<std::string>& liveIDs) {
     const std::filesystem::path data = platform::DataDirectory();
     const auto records = TermDictionaryInstall::InstalledRecords(data);
     const std::string signature = TermDictionaryInstall::Signature(records);
+    // ライブ変換にも使う辞書（設定 termDictionaryLiveConversion）。選び方だけが変わったときはファイルを読み直すだけ
+    std::vector<TermDictionaryInstall::Record> live;
+    for (const auto& record : records) {
+        if (liveIDs.count(record.id) > 0) live.push_back(record);
+    }
+    const std::string liveSignature = TermDictionaryInstall::Signature(live);
+    if (!termsLoaded_ || liveSignature != liveTermSignature_ || signature != termSignature_) {
+        liveTermSignature_ = liveSignature;
+        liveTermLookup_ =
+            live.empty() ? nullptr : std::make_shared<TermDictionaryLookup>(TermDictionaryLookup::Load(data, live));
+        if (!live.empty()) Log("term dictionaries for live conversion: " + liveSignature);
+    }
     if (termsLoaded_ && signature == termSignature_) return;
     termsLoaded_ = true;
     termSignature_ = signature;
@@ -287,7 +299,7 @@ void EngineHost::Build() {
             Log("dictionary not found (candidates come from the model only)");
         }
     }
-    LoadTermDictionaries();
+    LoadTermDictionaries(TermDictionaryIDs(config.termDictionaryLiveConversion));
     if (lattice_) lattice_->SetTermDictionary(termIndex_);
     userDictionary_ =
         std::make_unique<UserDictionaryStore>(platform::StorePath("IROHA_USER_DICT", "user-dictionary.json"));
@@ -301,12 +313,14 @@ void EngineHost::Build() {
     rewriteRuleSet_ = std::make_shared<UserRewriteRuleSet>(rewriteRules_->Current());
     // エンジンの重ね方は iroha-cli・iroha-bench と同じ（EngineAssembly）。辞書ラティスは候補ウィンドウにだけ使い、
     // 第一候補はモデルの生成のまま（辞書が無ければモデルだけ）。
-    // プライベートモードの間はユーザ辞書と学習を使わない（変換を iroha 本来の結果にする。macOS版と同じ）
+    // プライベートモードの間はユーザ辞書・ライブ変換にも使う専門辞書・学習を使わない
+    // （変換を iroha 本来の結果にする。macOS版と同じ）
     engine_ = nullptr;
     assembly_ = std::make_unique<EngineAssembly>(
         zenz_.get(), zenz_.get(), lattice_.get(), LatticeUse::Candidates,
         [this] { return privateMode_ ? UserDictionary() : userDictionary_->Current(); },
-        [this] { return privateMode_ || !learningEnabled_ ? LearningDictionary() : learning_->Current(); });
+        [this] { return privateMode_ || !learningEnabled_ ? LearningDictionary() : learning_->Current(); },
+        [this] { return privateMode_ ? nullptr : liveTermLookup_; });
     engine_ = &assembly_->Engine();
 }
 

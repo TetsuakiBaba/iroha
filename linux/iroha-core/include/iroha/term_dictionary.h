@@ -6,14 +6,18 @@
 #include <string>
 #include <vector>
 
+#include "iroha/user_dictionary.h"
+
 namespace iroha {
 
 // 専門辞書（設定の「専門辞書」から入れる「読み → 語」の一覧）。
 // 移植元: macos/Sources/IrohaCore/TermDictionary/（TermDictionary.swift・TermDictionaryCatalog.swift・
 // TermDictionaryLookup.swift。挙動互換を維持すること）
 //
-// 使い道は候補ウィンドウだけ: 辞書ラティス（LatticeConverter）が候補を作るときに語として加わり、
+// 既定の使い道は候補ウィンドウだけ: 辞書ラティス（LatticeConverter）が候補を作るときに語として加わり、
 // できた候補をモデルの対数確率で並べる。ライブ変換の第一候補（モデルの生成）は変えない。
+// 辞書ごとの「ライブ変換にも使う」（設定 termDictionaryLiveConversion）を ON にした辞書だけは、
+// ユーザ辞書と同じ規則でライブ変換でも読みに当てる（TermDictionaryLiveEngine・TermDictionaryLookup::LiveDictionary）。
 // 辞書ラティスへの加え方は LatticeConverter::BuildTermIndex（macOS版は azooKey のユーザ辞書の形式に
 // 書き出して読ませるが、Windows版は同じ探索ができる木をメモリに作る）。
 //
@@ -169,8 +173,23 @@ public:
     // 入れている辞書のファイルを読む（読めないファイルは除く）
     static TermDictionaryLookup Load(const std::filesystem::path& dataDirectory,
                                      const std::vector<TermDictionaryInstall::Record>& records);
+    // 辞書ファイルを直接読む（iroha-cli の IROHA_TERM_LIVE 用。印の名前はファイル名。読めないファイルは除く）
+    static TermDictionaryLookup FromFiles(const std::vector<std::filesystem::path>& files);
 
     bool Empty() const { return tables_.empty(); }
+    // 読んだ辞書の数
+    size_t DictionaryCount() const { return tables_.size(); }
+
+    // 読み reading の中に読みが現れる語のうち、ライブ変換に使えるものを、ユーザ辞書の形にして返す
+    // （TermDictionaryLiveEngine がユーザ辞書と同じ規則で読みに当てる。macOS版 liveDictionary(occurringIn:)）。
+    // 使うのは次の語だけ:
+    // - 読みが TermDictionary::kMinimumReadingLength 文字以上
+    // - その読みの語が、ライブ変換に使う辞書全体で 1 つだけ（「いがん」→ 胃がん・胃ガン・胃癌 のように
+    //   表記が分かれる読みは、どれに置き換えるかを決められないので候補ウィンドウにだけ出す）
+    // - 語が読みと同じでなく、読みより大幅に長くない（UserDictionary::IsSuitableForLiveConversion）
+    // 読みの位置ごとに、その位置から始まる読みを持つ語が辞書にある間だけ 1 文字ずつ延ばして引く
+    // （語の一覧をメモリに展開しない）
+    UserDictionary LiveDictionary(const std::u32string& reading) const;
 
     // 文節の候補 candidate（読み reading）に含まれる専門辞書の語が載っている辞書の名前。
     // 候補が「辞書の語」か「辞書の語＋読みの残り（助詞などのかな）」のときに当てる。
@@ -183,6 +202,12 @@ public:
     // 「#」で始まる行（出典・ライセンスの注記）の後ろの位置
     static size_t BodyStart(const std::string& data);
     static bool Contains(const std::string& key, const Table& table);
+    // 鍵より前に並ぶ行を除いた、最初の行の頭の位置（無ければファイルの終わり）
+    static size_t LowerBound(const std::string& key, const Table& table);
+    // prefix で始まる行があるか
+    static bool HasLineWithPrefix(const std::string& prefix, const Table& table);
+    // 「読み<TAB>」（key）で始まる行の語
+    static std::vector<std::u32string> WordsWithKey(const std::string& key, const Table& table);
 
 private:
     std::vector<Table> tables_;

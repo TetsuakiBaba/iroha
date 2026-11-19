@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
+#include <set>
 #include <sstream>
+#include <string_view>
 
 #include "iroha/json.h"
 #include "iroha/unicode.h"
@@ -374,6 +376,18 @@ TermDictionaryLookup TermDictionaryLookup::Load(
     return TermDictionaryLookup(std::move(tables));
 }
 
+TermDictionaryLookup TermDictionaryLookup::FromFiles(const std::vector<std::filesystem::path>& files) {
+    std::vector<Table> tables;
+    for (const auto& file : files) {
+        Table table;
+        if (!ReadFile(file, &table.data)) continue;
+        table.label = Utf8ToUtf32(PathToUtf8(file.stem()));
+        table.start = BodyStart(table.data);
+        tables.push_back(std::move(table));
+    }
+    return TermDictionaryLookup(std::move(tables));
+}
+
 std::u32string TermDictionaryLookup::Label(const std::u32string& name) {
     const size_t open = name.find_first_of(U"（(");
     if (open == std::u32string::npos || open == 0) return name;
@@ -410,6 +424,79 @@ bool TermDictionaryLookup::Contains(const std::string& key, const Table& table) 
         }
     }
     return false;
+}
+
+size_t TermDictionaryLookup::LowerBound(const std::string& key, const Table& table) {
+    const std::string& bytes = table.data;
+    size_t low = table.start;
+    size_t high = bytes.size();
+    while (low < high) {
+        size_t lineStart = (low + high) / 2;
+        while (lineStart > low && bytes[lineStart - 1] != '\n') --lineStart;
+        size_t lineEnd = lineStart;
+        while (lineEnd < high && bytes[lineEnd] != '\n') ++lineEnd;
+        if (std::string_view(bytes.data() + lineStart, lineEnd - lineStart).compare(std::string_view(key)) < 0) {
+            low = lineEnd + 1;
+        } else {
+            high = lineStart;
+        }
+    }
+    return std::min(low, bytes.size());
+}
+
+bool TermDictionaryLookup::HasLineWithPrefix(const std::string& prefix, const Table& table) {
+    const size_t position = LowerBound(prefix, table);
+    return position + prefix.size() <= table.data.size() &&
+           table.data.compare(position, prefix.size(), prefix) == 0;
+}
+
+std::vector<std::u32string> TermDictionaryLookup::WordsWithKey(const std::string& key, const Table& table) {
+    const std::string& bytes = table.data;
+    std::vector<std::u32string> words;
+    size_t position = LowerBound(key, table);
+    while (position + key.size() <= bytes.size() && bytes.compare(position, key.size(), key) == 0) {
+        size_t lineEnd = position + key.size();
+        while (lineEnd < bytes.size() && bytes[lineEnd] != '\n') ++lineEnd;
+        if (lineEnd > position + key.size()) {
+            words.push_back(Utf8ToUtf32(bytes.substr(position + key.size(), lineEnd - position - key.size())));
+        }
+        position = lineEnd + 1;
+    }
+    return words;
+}
+
+UserDictionary TermDictionaryLookup::LiveDictionary(const std::u32string& reading) const {
+    if (tables_.empty()) return UserDictionary();
+    const std::vector<std::u32string> characters = SplitGraphemes(reading);
+    std::vector<UserDictionaryEntry> entries;
+    std::set<std::u32string> seen;
+    for (size_t start = 0; start < characters.size(); ++start) {
+        std::u32string part;
+        for (size_t length = 1; start + length <= characters.size(); ++length) {
+            part += characters[start + length - 1];
+            const std::string prefix = Utf32ToUtf8(part);
+            if (std::none_of(tables_.begin(), tables_.end(),
+                             [&prefix](const Table& table) { return HasLineWithPrefix(prefix, table); })) {
+                break;
+            }
+            if (length < TermDictionary::kMinimumReadingLength || !seen.insert(part).second) continue;
+            const std::string key = prefix + "\t";
+            std::vector<std::u32string> words;
+            for (const Table& table : tables_) {
+                for (std::u32string& word : WordsWithKey(key, table)) {
+                    if (std::find(words.begin(), words.end(), word) == words.end()) words.push_back(std::move(word));
+                }
+            }
+            if (words.size() == 1 && words[0] != part &&
+                UserDictionary::IsSuitableForLiveConversion(part, words[0])) {
+                UserDictionaryEntry entry;
+                entry.reading = part;
+                entry.word = words[0];
+                entries.push_back(std::move(entry));
+            }
+        }
+    }
+    return entries.empty() ? UserDictionary() : UserDictionary(std::move(entries));
 }
 
 std::vector<std::u32string> TermDictionaryLookup::Labels(const std::u32string& reading,

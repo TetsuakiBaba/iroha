@@ -56,6 +56,28 @@ std::filesystem::path DefaultModelPath(const std::filesystem::path& modelsDirect
     return current;
 }
 
+std::set<std::string> TermDictionaryIDs(const std::string& text) {
+    std::set<std::string> ids;
+    size_t start = 0;
+    while (start <= text.size()) {
+        const size_t end = text.find(',', start);
+        const std::string id = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        if (!id.empty()) ids.insert(id);
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return ids;
+}
+
+std::string TermDictionaryIDsText(const std::set<std::string>& ids) {
+    std::string text;
+    for (const std::string& id : ids) {
+        if (!text.empty()) text += ",";
+        text += id;
+    }
+    return text;
+}
+
 Config LoadConfig(const std::filesystem::path& path) {
     Config config;
     std::ifstream file(path, std::ios::binary);
@@ -180,6 +202,7 @@ Config LoadConfig(const std::filesystem::path& path) {
         config.selectionCharacterCount = count->boolean;
     }
     text("updateCheckURL", &config.updateCheckURL);
+    text("termDictionaryLiveConversion", &config.termDictionaryLiveConversion);
     for (size_t i = 0; i < config.selectionPresets.size(); ++i) {
         const std::string prefix = "selPreset" + std::to_string(i);
         auto& preset = config.selectionPresets[i];
@@ -211,6 +234,7 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                       ",\"punctuation\":" + json::QuoteString(Utf32ToUtf8(config.punctuation)) +
                       ",\"fullWidthSpace\":" + (config.fullWidthSpace ? "true" : "false") +
                       ",\"candidateCount\":" + std::to_string(config.candidateCount) +
+                      ",\"termDictionaryLiveConversion\":" + json::QuoteString(config.termDictionaryLiveConversion) +
                       ",\"predictive\":" + (config.predictive ? "true" : "false") +
                       ",\"privateMode\":" + (config.privateMode ? "true" : "false") +
                       ",\"privateModeHotkey\":" + json::QuoteString(config.privateModeHotkey) +

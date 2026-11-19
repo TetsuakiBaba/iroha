@@ -45,6 +45,7 @@ add_library(iroha-core STATIC
     src/sha256.cpp
     src/symbol_candidates.cpp
     src/term_dictionary.cpp
+    src/term_dictionary_live_engine.cpp
     src/typo_normalizer.cpp
     src/typo_normalizer_catalog.cpp
     src/unicode.cpp

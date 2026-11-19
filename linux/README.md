@@ -83,6 +83,9 @@ $C model-parity <macOS版の出力.jsonl>
 # 同じ形式を Linux版でも書き出せる（llama.cpp の版や設定を変える前に書き出し、変えたあとの model-parity の基準にする。
 # 採点は有効数字 9 桁で書くので、2 つの書き出しの値をそのまま比べてもよい。Windows版と同じ）
 $C ajimee-dump testdata/iroha-bench-v1/evaluation_items.json <出力.jsonl>
+# 専門辞書を候補ウィンドウに加える（installed は入れた辞書）・ライブ変換にも使う（下の「専門辞書」節）
+IROHA_TERM_DICTIONARIES=installed $C convert --n 10 じょくそう
+IROHA_TERM_LIVE=installed $C convert げんき
 ```
 
 #### 変換の速さ（2026-11-14、iroha-bench-v1 の 3,253 項目）
@@ -204,6 +207,26 @@ IROHA_DATA_DIR=/tmp/iroha-e2e IROHA_MODEL=$HOME/.local/share/iroha/models/iroha-
 情報タブ（版・データフォルダ・ライセンスの一覧）を足した。入力タブには、Windows版の設定画面に無い「区切り記号で囲んだ
 英字入力」と「AIで直す」も置いた（記号・キーは config.json の `delimitedAlphabetStart` / `End`・`aiFixShortcut`）。
 時間のかかる処理（取得と照合・AI のモデルの一覧・API キーの読み書き）は裏のスレッドで行う。保存したら `RequestReload()`。
+
+## 専門辞書
+
+設定 > 専門辞書 で、配布している辞書（一覧は `models/term-dictionaries.json`）を 1 つずつ入れ外しする。入れた辞書は
+`<データフォルダ>/dictionaries/<ID>.tsv` と `<ID>.json`（macOS版・Windows版と同じ形式）。
+
+- 既定では候補ウィンドウにだけ効かせる: 辞書ラティスの候補に語として加わり（`LatticeConverter::BuildTermIndex`。
+  LOUDS に書き出さず、同じたどり方ができる木をメモリに作る。Windows版と同じ）、モデルの採点で並ぶ。候補の右に辞書の名前の
+  印を出す（`TermDictionaryLookup::Labels`。辞書ファイルを二分探索で引く）
+- 辞書ごとの「**ライブ変換にも使う**」（2026-11-19、macOS版 ecd6b49 と同じ）を ON にした辞書は、ユーザ辞書と同じ規則で
+  ライブ変換でも読みに当てる（`TermDictionaryLiveEngine`。ユーザ辞書のデコレータのすぐ内側で、中身は `UserDictionaryEngine`
+  そのもの。同じ読みならユーザ辞書が勝つ。重ね方は `EngineAssembly`）。使う語は読みごとに辞書ファイルを二分探索で引き
+  （`TermDictionaryLookup::LiveDictionary`。メモリに展開しない）、同じ読みに語が 2 つ以上ある読み（胃がん・胃癌）・
+  読み 1 文字・読みより大幅に長い語は使わない。語の境目の判定に使う辞書ラティスには専門辞書を入れない。
+  プライベートモードの間は使わない。設定は config.json の `termDictionaryLiveConversion`（辞書の ID のカンマ区切り、既定は空。
+  macOS版と同じキー。Linux版には設定の同期が無い）。設定画面では入れている辞書の行の下に出し、切り替えたら `RequestReload()`
+- 配布の一覧に無い辞書をデータフォルダに置いたとき（公開前の辞書を手で写したときなど）は、一覧の最後に「一覧にない辞書」
+  として出し、「ライブ変換にも使う」と削除ができる（macOS版 a6ced34 と同じ）
+- iroha-cli: `IROHA_TERM_DICTIONARIES=installed`（または `=a.tsv,b.tsv`）で候補ウィンドウに、`IROHA_TERM_LIVE=installed`
+  （または `=a.tsv,b.tsv`）でライブ変換にも使う。`iroha-cli terms list | install <ID> | remove <ID> | lookup <読み> <候補>…`
 
 ## アップデート
 

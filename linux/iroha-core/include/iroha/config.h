@@ -2,6 +2,7 @@
 #include <array>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 
 namespace iroha {
@@ -31,6 +32,9 @@ struct Config {
     std::u32string punctuation = U"、。";
     // 入力していないときの Space を全角スペースにするか（偽なら半角。Shift+Space は常に半角）
     bool fullWidthSpace = true;
+    // 専門辞書のうち「ライブ変換にも使う」にした辞書の ID（カンマ区切り。既定は空。macOS版と同じキー
+    // termDictionaryLiveConversion）。入れた辞書の語をユーザ辞書と同じ規則でライブ変換でも当てる
+    std::string termDictionaryLiveConversion;
     // 文節の候補として求める数（3〜16）
     int candidateCount = 8;
     // 予測変換（入力履歴から読みの先頭が一致する語を出す。入力履歴もこれが ON の間だけ記録する。既定 OFF）
@@ -112,6 +116,11 @@ struct Config {
     bool autoUpdateCheck = true;
     std::string updateCheckURL;
 };
+
+// termDictionaryLiveConversion の読み書き（macOS版 TermDictionarySettings.ids(from:) / text(from:)。
+// 空の項目は除き、書くときは ID の順に並べる）
+std::set<std::string> TermDictionaryIDs(const std::string& text);
+std::string TermDictionaryIDsText(const std::set<std::string>& ids);
 
 Config LoadConfig(const std::filesystem::path& path);
 bool SaveConfig(const std::filesystem::path& path, const Config& config);

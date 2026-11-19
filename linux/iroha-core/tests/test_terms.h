@@ -10,8 +10,11 @@
 #include <string>
 #include <vector>
 
+#include "iroha/kana.h"
 #include "iroha/lattice_converter.h"
 #include "iroha/term_dictionary.h"
+#include "iroha/term_dictionary_live_engine.h"
+#include "iroha/user_dictionary_engine.h"
 
 namespace {
 
@@ -200,6 +203,99 @@ void TestTermLatticeOffersWords() {
     EXPECT_TRUE(!has(withTerms.FullMatchCandidates(U"もげもげざい", 10), U"藻毛藻毛剤"));
 }
 
+// ---- ライブ変換にも使う（移植元: TermDictionaryTests.swift の TermDictionaryLiveTests） ----
+
+// 読みをカタカナにして返すだけのエンジン（2 つ目からは後ろに番号を付ける）
+class TermKatakanaEngine : public iroha::ConversionEngine {
+public:
+    bool Convert(const std::u32string& reading, const std::u32string&, int candidateCount,
+                 std::vector<std::u32string>* results, std::string*) override {
+        results->clear();
+        const std::u32string katakana = iroha::HiraganaToKatakana(reading);
+        for (int i = 0; i < std::max(1, candidateCount); ++i) {
+            results->push_back(i == 0 ? katakana : katakana + iroha::Utf8ToUtf32(std::to_string(i)));
+        }
+        return true;
+    }
+};
+
+std::shared_ptr<const iroha::TermDictionaryLookup> TermLiveLookup() {
+    std::vector<std::pair<std::u32string, std::u32string>> medicinePairs = {
+        {U"いがん", U"胃がん"}, {U"いがん", U"胃癌"}, {U"けっしゅ", U"血腫"}, {U"ぞんで", U"ゾンデ"},
+        {U"けっしゅう", U"結集"}, {U"あ", U"亜"}};
+    for (int i = 0; i < 300; ++i) {
+        const std::u32string number = iroha::Utf8ToUtf32(std::to_string(i));
+        medicinePairs.push_back({U"か" + number, U"火" + number});
+    }
+    auto medicine = TermTable(U"医学", medicinePairs);
+    auto omamori = TermTable(U"お守り辞書", {{U"げんき", U"元氣"}, {U"がんばる", U"顔晴る"},
+                                            {U"ぞんで", U"ゾンデ"}, {U"めーるあどれす", U"abc@example.com"}});
+    return std::make_shared<const iroha::TermDictionaryLookup>(
+        std::vector<iroha::TermDictionaryLookup::Table>{medicine, omamori});
+}
+
+std::vector<std::u32string> TermConvert(iroha::ConversionEngine& engine, const std::u32string& reading,
+                                        int candidateCount) {
+    std::vector<std::u32string> results;
+    std::string error;
+    EXPECT_TRUE(engine.Convert(reading, U"", candidateCount, &results, &error));
+    return results;
+}
+
+void TestTermLiveDictionaryUsesOnlyUnambiguousReadings() {
+    using Words = std::vector<std::u32string>;
+    const auto lookup = TermLiveLookup();
+    const iroha::UserDictionary dictionary = lookup->LiveDictionary(U"いがんとけっしゅうとげんき");
+    // 表記が分かれる読み（いがん）は使わない
+    EXPECT_TRUE(dictionary.LiveWords(U"いがん").empty());
+    EXPECT_TRUE(dictionary.LiveWords(U"けっしゅ") == (Words{U"血腫"}));
+    EXPECT_TRUE(dictionary.LiveWords(U"けっしゅう") == (Words{U"結集"}));
+    EXPECT_TRUE(dictionary.LiveWords(U"げんき") == (Words{U"元氣"}));
+    // 1 文字の読みは使わない
+    EXPECT_TRUE(dictionary.LiveWords(U"あ").empty());
+    // 2 つの辞書に同じ語があっても 1 語として数える
+    EXPECT_TRUE(lookup->LiveDictionary(U"ぞんで").LiveWords(U"ぞんで") == (Words{U"ゾンデ"}));
+    // 読みより大幅に長い語は使わない（ユーザ辞書と同じ）
+    EXPECT_TRUE(lookup->LiveDictionary(U"めーるあどれす").IsEmpty());
+    // 読みに語が現れなければ空
+    EXPECT_TRUE(lookup->LiveDictionary(U"きょうはいいてんき").IsEmpty());
+    EXPECT_TRUE(iroha::TermDictionaryLookup().LiveDictionary(U"げんき").IsEmpty());
+    // 読みの途中に並ぶ数字の語（二分探索の範囲の確認）
+    EXPECT_TRUE(lookup->LiveDictionary(U"か123の").LiveWords(U"か123") == (Words{U"火123"}));
+}
+
+void TestTermLiveEngineReplacesLikeUserDictionary() {
+    using Words = std::vector<std::u32string>;
+    const auto lookup = TermLiveLookup();
+    TermKatakanaEngine katakana;
+    iroha::TermDictionaryLiveEngine engine(&katakana, [lookup] { return lookup; });
+    // 読み全体の一致は置き換える
+    EXPECT_TRUE(TermConvert(engine, U"げんき", 1) == (Words{U"元氣"}));
+    // 途中の一致は語で埋め、残りをエンジンに渡す
+    EXPECT_TRUE(TermConvert(engine, U"げんきです", 1) == (Words{U"元氣デス"}));
+    // 表記が分かれる読みは置き換えない
+    EXPECT_TRUE(TermConvert(engine, U"いがん", 1) == (Words{U"イガン"}));
+    // 候補ウィンドウでは辞書の語を先頭に出す
+    const Words candidates = TermConvert(engine, U"がんばる", 3);
+    EXPECT_TRUE(!candidates.empty() && candidates.front() == U"顔晴る");
+    EXPECT_TRUE(std::find(candidates.begin(), candidates.end(), U"ガンバル") != candidates.end());
+    // 辞書が無ければ素通し
+    iroha::TermDictionaryLiveEngine none(&katakana, [] { return nullptr; });
+    EXPECT_TRUE(TermConvert(none, U"げんき", 1) == (Words{U"ゲンキ"}));
+}
+
+void TestTermUserDictionaryWinsOverTermDictionary() {
+    using Words = std::vector<std::u32string>;
+    const auto lookup = TermLiveLookup();
+    TermKatakanaEngine katakana;
+    iroha::TermDictionaryLiveEngine live(&katakana, [lookup] { return lookup; });
+    const iroha::UserDictionary user({iroha::MakeUserDictionaryEntry(U"げんき", U"ゲンキ堂")});
+    iroha::UserDictionaryEngine engine(&live, [user] { return user; });
+    EXPECT_TRUE(TermConvert(engine, U"げんき", 1) == (Words{U"ゲンキ堂"}));
+    const Words candidates = TermConvert(engine, U"げんき", 3);
+    EXPECT_TRUE(candidates.size() >= 2 && candidates[0] == U"ゲンキ堂" && candidates[1] == U"元氣");
+}
+
 void RunTermTests() {
     TestTermParseSkipsCommentsAndInvalidLines();
     TestTermLookupFindsDictionaryNames();
@@ -207,6 +303,9 @@ void RunTermTests() {
     TestTermInstallRecords();
     TestTermIdMustBeSafeForFileNames();
     TestTermLatticeOffersWords();
+    TestTermLiveDictionaryUsesOnlyUnambiguousReadings();
+    TestTermLiveEngineReplacesLikeUserDictionary();
+    TestTermUserDictionaryWinsOverTermDictionary();
 }
 
 } // namespace

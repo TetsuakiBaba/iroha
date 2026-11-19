@@ -267,9 +267,24 @@ GtkWidget* ListHeading(const std::vector<Cell>& cells, int leadingSpace = 0) {
 }
 
 std::string TermDetailHint() {
-    return "候補ウィンドウに、選んだ分野の用語・人名・地名などを加えます（ライブ変換は変えません）。\n"
+    return "候補ウィンドウに、選んだ分野の用語・人名・地名などを加えます。"
+           "ライブ変換で最初に出る変換は変えません（辞書ごとの「ライブ変換にも使う」をONにした辞書だけは、"
+           "ユーザ辞書と同じくライブ変換でもその語に置き換えます）。\n"
            "一覧から辞書を選ぶと、説明と出典・ライセンスが出ます。";
 }
+
+// 「ライブ変換にも使う」の説明（macOS版 SettingsView の TermDictionaryRow と同じ文面）
+const char kTermLiveConversionHelp[] =
+    "入力中の変換（ライブ変換）でも、この辞書の語に置き換えます。"
+    "ユーザ辞書と同じく、読みが辞書の語と一致すれば、スペースキーを押さなくてもその語になり、"
+    "候補ウィンドウでも先頭に出します。読みの一部が一致したときは、"
+    "そこが語の区切りになる場合だけ置き換えます。"
+    "同じ読みに辞書の語が2つ以上ある読み（胃がん・胃癌など）は、どれにするかを決められないので"
+    "置き換えず、これまでどおり候補ウィンドウにだけ出します。"
+    "ユーザ辞書に同じ読みがあればユーザ辞書の語を使います。"
+    "同じ読みの一般の語（例えば人名の辞書なら、人名と同じ読みの言葉）が出なくなることがあります。"
+    "その語を候補から選んで確定すると、変換の学習で次からその語に戻ります。"
+    "プライベートモードの間は使いません。";
 
 // 専門辞書の一覧の 1 行（カタログの辞書か、カタログに無いが入れてある辞書）
 struct TermRow {
@@ -341,6 +356,8 @@ struct App {
     GtkWidget* termDetail = nullptr;
     std::unique_ptr<iroha::TermDictionaryCatalog> termCatalog;
     std::vector<TermRow> termRows;
+    // 一覧の行の位置 → termRows の位置（「一覧にない辞書」の見出しの行は -1）
+    std::vector<int> termListRows;
     bool termBusy = false;
     bool termCatalogRequested = false;
 
@@ -431,6 +448,10 @@ struct App {
 
     void RefreshTermList();
     void ShowTermDetail();
+    // 一覧で選んでいる辞書（無ければ nullptr）
+    const TermRow* SelectedTermRow() const;
+    // 「ライブ変換にも使う」を切り替える（設定 termDictionaryLiveConversion に書いて、エンジンに読み直してもらう）
+    void SetTermLiveConversion(const std::string& id, bool enabled);
     void StartTermTask(const std::string& busyMessage, bool fetchCatalog, std::string installId, std::string removeId);
 
     void RefreshRuleList();
@@ -1096,9 +1117,9 @@ GtkWidget* App::BuildTermPage() {
                   detailScrolled});
     Connect(termList, "selected-rows-changed", [this] { ShowTermDetail(); });
     const auto onButton = [this](bool add) {
-        const std::vector<int> rows = SelectedRows(termList);
-        if (rows.empty() || rows.front() >= static_cast<int>(termRows.size())) return;
-        const TermRow row = termRows[rows.front()];
+        const TermRow* selected = SelectedTermRow();
+        if (!selected) return;
+        const TermRow row = *selected;
         if (add) {
             StartTermTask(row.name + " を取得しています…", false, row.id, {});
         } else {
@@ -1149,29 +1170,92 @@ void App::RefreshTermList() {
     }
 
     const std::vector<int> selected = SelectedRows(termList);
+    const int selectedRow = !selected.empty() && selected.front() < static_cast<int>(termListRows.size())
+                                ? termListRows[selected.front()]
+                                : -1;
+    const std::string selectedId =
+        selectedRow >= 0 && selectedRow < static_cast<int>(termRows.size()) ? termRows[selectedRow].id : "";
+    const std::set<std::string> liveIDs =
+        iroha::TermDictionaryIDs(iroha::LoadConfig(iroha::settings::ConfigPath()).termDictionaryLiveConversion);
     ClearList(termList);
-    for (const TermRow& row : termRows) {
+    termListRows.clear();
+    bool unlistedHeading = false;
+    for (size_t index = 0; index < termRows.size(); ++index) {
+        const TermRow& row = termRows[index];
+        // データフォルダに置いたが一覧に無い辞書（公開前の辞書を手で置いたときなど）は、見出しを付けて最後に出す
+        // （ライブ変換の切り替えと削除ができる。macOS版と同じ）。一覧が取れていないときは見出しを付けない
+        if (termCatalog && !row.inCatalog && !unlistedHeading) {
+            unlistedHeading = true;
+            GtkWidget* heading = gtk_list_box_row_new();
+            gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(heading), FALSE);
+            gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(heading), FALSE);
+            GtkWidget* label = gtk_label_new(nullptr);
+            gtk_label_set_markup(GTK_LABEL(label), "<b>一覧にない辞書</b>");
+            gtk_label_set_xalign(GTK_LABEL(label), 0);
+            gtk_widget_set_margin_start(label, 6);
+            gtk_widget_set_margin_top(label, 8);
+            gtk_widget_set_margin_bottom(label, 2);
+            gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(heading), label);
+            gtk_list_box_append(GTK_LIST_BOX(termList), heading);
+            termListRows.push_back(-1);
+        }
         const std::string state = !row.installed  ? ""
                                   : row.needsUpdate ? "入れてある（更新あり）"
                                   : row.inCatalog   ? "入れてある"
                                                     : "入れてある（一覧に無い）";
-        gtk_list_box_append(GTK_LIST_BOX(termList), ListRow({{row.name, 16},
-                                                             {row.group, 20},
-                                                             {std::to_string(row.entries), 8},
-                                                             {state, 0}}));
+        GtkWidget* cells = ListRow({{row.name, 16}, {row.group, 20}, {std::to_string(row.entries), 8}, {state, 0}});
+        if (row.installed) {
+            // 入れている辞書の行の下に、少し字下げして「ライブ変換にも使う」を出す
+            GtkWidget* box = Box(GTK_ORIENTATION_VERTICAL, 0);
+            GtkWidget* live = CheckButton("ライブ変換にも使う");
+            gtk_widget_set_tooltip_text(live, kTermLiveConversionHelp);
+            gtk_widget_set_margin_start(live, 6 + 18);
+            gtk_widget_set_margin_bottom(live, 3);
+            gtk_check_button_set_active(GTK_CHECK_BUTTON(live), liveIDs.count(row.id) > 0);
+            const std::string id = row.id;
+            Connect(live, "toggled", [this, live, id] { SetTermLiveConversion(id, Checked(live)); });
+            Append(box, {cells, live});
+            cells = box;
+        }
+        gtk_list_box_append(GTK_LIST_BOX(termList), cells);
+        termListRows.push_back(static_cast<int>(index));
     }
-    if (!selected.empty() && selected.front() < static_cast<int>(termRows.size())) {
+    for (size_t position = 0; position < termListRows.size(); ++position) {
+        const int index = termListRows[position];
+        if (index < 0 || selectedId.empty() || termRows[index].id != selectedId) continue;
         gtk_list_box_select_row(GTK_LIST_BOX(termList),
-                                gtk_list_box_get_row_at_index(GTK_LIST_BOX(termList), selected.front()));
+                                gtk_list_box_get_row_at_index(GTK_LIST_BOX(termList), static_cast<int>(position)));
     }
     ShowTermDetail();
 }
 
+const TermRow* App::SelectedTermRow() const {
+    const std::vector<int> rows = SelectedRows(termList);
+    if (rows.empty() || rows.front() >= static_cast<int>(termListRows.size())) return nullptr;
+    const int index = termListRows[rows.front()];
+    return index >= 0 && index < static_cast<int>(termRows.size()) ? &termRows[index] : nullptr;
+}
+
+void App::SetTermLiveConversion(const std::string& id, bool enabled) {
+    if (updating) return;
+    iroha::Config config = iroha::LoadConfig(iroha::settings::ConfigPath());
+    std::set<std::string> ids = iroha::TermDictionaryIDs(config.termDictionaryLiveConversion);
+    if (enabled) {
+        ids.insert(id);
+    } else {
+        ids.erase(id);
+    }
+    config.termDictionaryLiveConversion = iroha::TermDictionaryIDsText(ids);
+    if (!iroha::SaveConfig(iroha::settings::ConfigPath(), config)) {
+        ShowDialog("設定の保存に失敗しました");
+        return;
+    }
+    iroha::platform::RequestReload();
+}
+
 // 選んでいる辞書の説明・語の例・出典とライセンス
 void App::ShowTermDetail() {
-    const std::vector<int> rows = SelectedRows(termList);
-    const bool valid = !rows.empty() && rows.front() < static_cast<int>(termRows.size());
-    const TermRow* row = valid ? &termRows[rows.front()] : nullptr;
+    const TermRow* row = SelectedTermRow();
     gtk_widget_set_sensitive(termAdd, row && !termBusy && row->inCatalog && (!row->installed || row->needsUpdate));
     gtk_widget_set_sensitive(termRemove, row && !termBusy && row->installed);
     if (!row) {
@@ -1188,12 +1272,16 @@ void App::ShowTermDetail() {
         }
         text += "\n";
     }
+    if (!row->inCatalog && row->installed && termCatalog) {
+        text += "配布している辞書の一覧に無い辞書です（データの保存場所に置かれたもの）。\n";
+    }
     text += "ライセンス: " + row->license + "\n";
     for (const auto& source : row->sources) {
         text += "出典: " + U8(source.name) + "  © " + U8(source.holder) + "  " + U8(source.license) + "\n  " +
                 source.url + "\n";
         if (!source.licenseUrl.empty()) text += "  ライセンス文書: " + source.licenseUrl + "\n";
     }
+    if (row->installed) text += std::string("\n「ライブ変換にも使う」: ") + kTermLiveConversionHelp + "\n";
     gtk_label_set_text(GTK_LABEL(termDetail), text.c_str());
 }
 

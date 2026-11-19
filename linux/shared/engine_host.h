@@ -3,7 +3,7 @@
 // Windows版の変換サーバ（iroha-server/main.cpp の ServerState / ServerBackend）を移したもの。
 // IBus のエンジンと iroha-cli の session が使う。
 //
-// 構成: 学習 → ユーザ辞書 → 長い読みの区切り → 異体字 → 辞書ラティスの候補をモデルで再採点 → モデル。
+// 構成: 学習 → ユーザ辞書 → ライブ変換にも使う専門辞書 → 長い読みの区切り → 異体字 → 辞書ラティスの候補をモデルで再採点 → モデル。
 // 候補を複数求められたとき（候補ウィンドウ）は辞書ラティスで候補を作ってモデルで並べ、
 // 1つだけのとき（全体の変換）はモデルの生成に任せる。辞書が無ければモデル単体で動く。
 // Reload で設定・辞書を読み直す（モデルは変わったときだけ読み込む）
@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -117,7 +118,7 @@ private:
     std::filesystem::path ResourceDirectory() const;
     void LoadTypoNormalizer(bool enabled);
     std::shared_ptr<TypoNormalizer> Typo();
-    void LoadTermDictionaries();
+    void LoadTermDictionaries(const std::set<std::string>& liveIDs);
     // 文節変換の結果が表示していた変換（baseline）と違っていたら、ユーザによる修正として学習する
     // （macOS版 IrohaInputController.learnIfCorrected と同じ規則）
     void RecordCorrection(const std::u32string& reading, const std::optional<std::u32string>& engineBaseline,
@@ -162,6 +163,9 @@ private:
     bool termsLoaded_ = false;
     std::shared_ptr<const TermLatticeIndex> termIndex_;
     std::shared_ptr<const TermDictionaryLookup> termLookup_;
+    // ライブ変換にも使う専門辞書（設定 termDictionaryLiveConversion で選んだもの。無ければ nullptr）
+    std::string liveTermSignature_;
+    std::shared_ptr<const TermDictionaryLookup> liveTermLookup_;
     // AI変換の接続先とプリセット（裏のスレッドから読むので鍵で守る）。API キーは使うときに読み、読めたら覚える
     std::mutex aiMutex_;
     AIConnection aiConnection_;
