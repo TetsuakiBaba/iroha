@@ -2787,6 +2787,14 @@ private struct AboutSettingsTab: View {
                     note: "変換モデルの推論エンジン",
                     url: "https://github.com/ggml-org/llama.cpp")
                 LicenseRow(
+                    name: "MLX Swift", holder: "ml-explore", license: "MIT License",
+                    note: "変換モデルの推論エンジン（Apple シリコンの既定）",
+                    url: "https://github.com/ml-explore/mlx-swift")
+                LicenseRow(
+                    name: "swift-numerics", holder: "Apple", license: "Apache License 2.0",
+                    note: "MLX Swiftの依存",
+                    url: "https://github.com/apple/swift-numerics")
+                LicenseRow(
                     name: "AzooKeyKanaKanjiConverter", holder: "ensan (azooKey)", license: "MIT License",
                     note: "候補ウィンドウの辞書ラティス",
                     url: "https://github.com/azooKey/AzooKeyKanaKanjiConverter")
