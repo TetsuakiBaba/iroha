@@ -596,7 +596,7 @@
       keys: TERMS_SAMPLES.flatMap((ex) => [...ex.typed.map(([k]) => [k]), ...ex.prep.map(([k, n]) => [k, n]), ex.open])
         .concat([["↓"], ["return"], ["esc"]]),
       statuses: TERMS_SAMPLES.flatMap((ex) => [
-        `「${ex.reading}」と打つと…`, `打つそばからの変換では「${ex.live}」になりました。`, found(ex, true), found(ex, false),
+        `「${ex.reading}」と打つと…`, `ライブ変換では「${ex.live}」になりました。`, found(ex, true), found(ex, false),
       ]),
     });
 
@@ -621,7 +621,7 @@
         await wait(150 + key.length * 50);
       }
       if (!alive()) return false;
-      status.textContent = `打つそばからの変換では「${ex.live}」になりました。`;
+      status.textContent = `ライブ変換では「${ex.live}」になりました。`;
       await wait(1800);
       for (const [key, note, first, rest] of ex.prep) {
         if (!alive()) return false;

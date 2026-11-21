@@ -1,22 +1,26 @@
 # iroha（いろは）
 
-ローカルLLMをかな漢字変換エンジンとして用いるmacOS用日本語IME。
+ローカルLLMをかな漢字変換エンジンとして用いる日本語IME。macOS・Windows・Linux 版がある（この README の説明はおもに macOS 版。Windows 版は [windows/README.md](windows/README.md)、Linux 版は [linux/README.md](linux/README.md)）。
 
 - **ライブ変換**: ことえりのライブ変換のように、入力に追従して読みをLLMへ送り、変換結果をリアルタイム表示。Enterで確定
 - **候補変換**: スペースキーでn-best候補を候補ウィンドウに表示
-- **文節の打ち直し**: 文節変換中に文字を打つと、選んでいる文節だけを打ち直せる。打つたびに文全体を変換し直すので、前後の文節も新しい読みに合わせて変わる（「橋を渡る」の「渡る」を「つかう」に打ち直すと「箸を使う」）。Backspaceでは選んでいる文節を後ろから1文字ずつ消せる
+- **文節の打ち直し**: 文節変換中に ← / → で文節を移してから文字を打つと、選んでいる文節だけを打ち直せる。打つたびに文全体を変換し直すので、前後の文節も新しい読みに合わせて変わる（「橋を渡る」の「渡る」を「つかう」に打ち直すと「箸を使う」）。Backspaceでは選んでいる文節を後ろから1文字ずつ消せる
 - **「こえ」モード（試作・設定でON）**: キーを押している間に話した内容を、確定せずに読みとしてかな漢字変換に通す。打った文と同じように候補の選択・文節の打ち直しで直せる（macOS 26以降。音声認識は端末内）
 - **文脈対応**: カーソル手前にあるアプリの文章（読めないアプリでは直前に確定した文字列）を条件としてLLMに与え、文脈に合った変換を行う
 - **ユーザ辞書**: 固有名詞などを登録して変換に反映。macOSのユーザ辞書（システム設定 > キーボード > ユーザ辞書）から取り込める
 - **学習**: 文節変換で修正して確定した変換を、読み全体と直す前の変換結果と対にして覚え、次に同じ読みを入力してLLMが同じ変換結果を出したとき第一候補にする
 - **変換ルール**: よみ（トリガー）と出力の組を登録し、一致したとき出力を候補に加える。`{{date:yyyy/MM/dd}}` `{{time:HH:mm}}` のように変換のたびに変わる動的な出力が書ける（「きょう」→ 2026/09/06）
 - **選択した文字数の表示**: どのアプリでも、マウスで選択したテキストの文字数を選択範囲の近くに表示（設定でON・要アクセシビリティ権限）
-- **AI変換**: 修飾キー+Returnで、未確定文字列をAIに渡す（日本語の結果は文節で返し、Returnで確定）。プロンプトを3つまで登録でき、1つ目は英訳が入っている（Apple Intelligence / Ollama / LM Studio / OpenAI互換 / Claude）
-- **ローカル動作**: 既定の変換モデルは iroha-kkc-v1（自作の文字単位 T5・GGUF Q5_K_M・約82MB）を llama.cpp（Metal）で実行（設定で MLX も選べる）。[zenz-v3.1-small](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf) など zenz の GGUF も設定で指定して使える
+- **AI変換**: 修飾キー+Returnで、未確定文字列をAIに渡す（日本語の結果は文節で返し、Returnで確定）。プロンプトを3つまで登録でき、初めは英訳・敬語・要約が入っている（ショートカットは英訳の Option+Return だけ。Apple Intelligence / Ollama / LM Studio / OpenAI互換 / Claude）
+- **ローカル動作**: 既定の変換モデルは iroha-kkc-v1（自作の文字単位 T5・GGUF Q5_K_M・約82MB）を、Apple シリコンの Mac では MLX で実行（設定で llama.cpp（Metal）も選べる）。[zenz-v3.1-small](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf) など zenz の GGUF も設定で指定して使える
 
 ## インストール
 
 - macOS 14以降 / Apple Silicon（リリースビルドは arm64 のみ）
+- Windows 10 以降（64 ビット、x64）: Releases の `iroha-x.y.z-windows-x64-setup.exe` を実行する（手順は [windows/README.md](windows/README.md)）
+- Linux（Ubuntu 22.04 以降、x86_64、IBus または fcitx5）: Releases の `iroha-x.y.z-linux-x86_64.tar.gz` を展開して `./install.sh` を実行する（手順は展開した中の README.txt と [linux/README.md](linux/README.md)）
+
+macOS 版の手順:
 
 1. [Releases](https://github.com/TetsuakiBaba/iroha/releases/latest) から `iroha-x.y.z.zip` をダウンロードして解凍
 2. `iroha.app` をダブルクリック — 自動で `~/Library/Input Methods/` にインストール・登録される
@@ -425,7 +429,7 @@ v0.17.0 では開発者モードの項目だった）。
 
 ### ビルドとテスト
 
-macOS版のSwiftパッケージは `macos/` 配下にある（Windows版は今後 `windows/` に実装予定）。
+macOS版のSwiftパッケージは `macos/` 配下にある（Windows版は `windows/`、Linux版は `linux/`）。
 ビルドコマンドは `macos/` から実行する:
 
 ```sh

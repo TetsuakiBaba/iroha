@@ -135,12 +135,12 @@
       <p class="eyebrow"><span>かな漢字変換</span><span class="eyebrow-en">CONVERSION</span></p>
       <p class="model-name"><span>iroha-kkc</span> <small>かな漢字変換モデル</small></p>
       <h2 id="kkc-title">従来の正確性をそのままに、<br>変換速度だけを<span style="white-space:nowrap">最大 1.9 倍向上させました。</span></h2>
-      <p class="section-lead" style="margin-bottom:0">iroha-kkc は、iroha のために一から作ったかな漢字変換の AI です。打つたびに変換をやり直すライブ変換に向けて、正解率はこれまでのモデルと同じに保ったまま、変換 1 回にかかる時間を縮めることを第一に設計しました。</p>
+      <p class="section-lead" style="margin-bottom:0">iroha は、打ったローマ字をひらがなの列にしてから、漢字かな交じりの文に変換します。このひらがなの列を「読み」と呼びます。また、打つたびに文全体を変換し直して表示することを「ライブ変換」と呼びます。iroha-kkc は、iroha のために一から作ったかな漢字変換の AI です。ライブ変換に向けて、正解率をこれまでのモデルより下げずに、変換 1 回にかかる時間を縮めることを第一に設計しました。</p>
       <p class="kkc-message">ライブ変換に慣れるほど、この変換の速さの心地よさに気がつくはずです。</p>
       <ul class="points">
-        <li><b>正解率は、これまでのモデルと同じ。</b>3,253 問の変換のテスト（iroha-bench-v1）で、これまでの代表的な AI のかな漢字変換モデル（zenz）は 68.0%、iroha-kkc は 69.0% を正しく変換しました。</li>
-        <li><b>変換 1 回の時間は、最大で約半分。</b>Apple M4 Pro で、変換 1 回の時間（中央値）は zenz の 0.023 秒に対して 0.012 秒でした（1.9 倍）。Apple シリコンの Mac では、iroha-kkc を MLX という仕組みで動かすのが初期設定です。もう 1 つの仕組みの llama.cpp で動かすと 0.015 秒（1.6 倍）です。</li>
-        <li><b>読みが長いほど、縮む時間が大きい。</b>速さの比は読みの長さによらずほぼ同じなので、読みが長いほど縮む秒数が大きくなります。読みが 31〜40 文字のとき、zenz の 0.041 秒に対して iroha-kkc は 0.021 秒でした（Apple M4 Pro・MLX）。</li>
+        <li><b>正解率は、これまでのモデルと同じか、わずかに上。</b>3,253 問の変換のテスト（iroha-bench-v1）で、これまでの代表的な AI のかな漢字変換モデル（zenz）は 68.0%、iroha-kkc は 69.0% を正しく変換しました。</li>
+        <li><b>変換 1 回の時間は、最大で約半分（Apple M4 Pro）。</b>Apple M4 Pro で、変換 1 回の時間（中央値）は zenz の 0.023 秒に対して 0.012 秒でした（1.9 倍）。モデルを計算して動かす仕組みを、推論エンジンと呼びます。この値は、Apple シリコンの Mac の初期設定の推論エンジンである MLX で測ったものです。もう 1 つの推論エンジンの llama.cpp では 0.015 秒（1.6 倍）でした。速さの差は機種によって変わります。Windows の CPU では、ライブ変換の速さは zenz とほぼ同じで、Space で開く候補の一覧を作る時間は約半分でした。</li>
+        <li><b>読みが長いほど、縮む時間が大きい。</b>Apple M4 Pro と MLX では、速さの比は読みの長さによらずほぼ同じでした。そのため、読みが長いほど縮む秒数が大きくなります。読みが 31〜40 文字のとき、zenz の 0.041 秒に対して iroha-kkc は 0.021 秒でした。</li>
       </ul>
       <a class="more-link" href="#papers">しくみと比較の詳細（論文） →</a>
     </div>
@@ -184,7 +184,7 @@
           <text class="bar-val d1" x="338.5" y="217">69.0%</text>
           <g class="axis"><line x1="158" y1="172" x2="158" y2="222"/></g>
         </svg>
-        <figcaption class="speed-note">iroha の開発者モードの「変換のベンチマーク」で、3,253 問のテスト（iroha-bench-v1）を 1 問ずつ変換した結果です（2026 年 11 月 15 日、iroha 0.18.0）。どちらも配布と同じ形式（Q5_K_M）のモデルで、辞書を使わずモデルだけで変換しました。これまでのモデルは zenz-v3.1-small で、推論エンジンは llama.cpp です（zenz は MLX ではかえって遅くなります）。iroha-kkc の推論エンジンは、Apple シリコンの Mac では MLX が初期設定で、開発者モードで llama.cpp に切り替えられます。</figcaption>
+        <figcaption class="speed-note">iroha の開発者モードにある「変換のベンチマーク」で、3,253 問のテスト（iroha-bench-v1）を 1 問ずつ変換した結果です（2026 年 11 月 15 日、iroha 0.18.0）。どちらのモデルも配布と同じ形式（Q5_K_M）で、辞書を使わずモデルだけで変換しました。これまでのモデルは zenz-v3.1-small です。zenz は MLX ではかえって遅くなるため、zenz の推論エンジンには llama.cpp を使いました。iroha-kkc の推論エンジンは、Apple シリコンの Mac では MLX が初期設定です。開発者モードで llama.cpp に切り替えられます。</figcaption>
         <div class="speed-foot">
           <p></p>
           <button class="replay" type="button" data-replay="speed">もう一度</button>
@@ -202,11 +202,11 @@
       <p class="eyebrow"><span>打ち間違いの訂正</span><span class="eyebrow-en">TYPO CORRECTION</span></p>
       <p class="model-name"><span>iroha-typo</span> <small>打ち間違い訂正モデル</small></p>
       <h2 id="typo-title">打ち間違いを、<br>手が止まったときに直す</h2>
-      <p class="section-lead" style="margin-bottom:0">iroha-typo は、変換の前に「読み」の打ち間違いを直す小さな AI です。入力の手が止まったときに読みを見直し、直してから漢字にします。</p>
+      <p class="section-lead" style="margin-bottom:0">iroha-typo は、変換の前に読みの打ち間違いを直す小さな AI です。入力の手が止まったときに読みを見直し、直してから漢字かな交じりの文に変換します。</p>
       <ul class="points">
-        <li><b>打ち間違いの約 4 件に 3 件を直し、正しく打った文は 1 文も書き換えませんでした。</b>（iroha のために書き下ろした 200 文のテストで）</li>
+        <li><b>打ち間違いの約 4 件に 3 件を直しました。</b>iroha のために書き下ろした 200 文のテストの結果です。このテストで、正しく打った文は 1 文も書き換えませんでした。</li>
         <li><b>直したらカーソルの下に知らせます。</b>直してほしくなかったときは、すぐに Backspace を押すと元に戻ります。</li>
-        <li>最初は OFF です。設定で ON にしたときに、訂正に使うデータを 1 回だけダウンロードします。</li>
+        <li>初期設定は OFF です。設定で ON にしたときに、訂正に使うデータを 1 回だけダウンロードします。</li>
       </ul>
       <a class="more-link" href="#papers">しくみと評価の詳細（論文） →</a>
     </div>
@@ -228,7 +228,7 @@
 
 <!-- ===== 専門辞書 ===== -->
 <!-- 実演の候補は iroha-kkc-v1（Q5_K_M）・ユーザ辞書と学習なしで、工学の専門辞書（jmdict-engineering）の有無を
-     iroha-cli convert --n で出したもの（2026-11-08）。語の数は models/term-dictionaries.json の 19 種 -->
+     iroha-cli convert --n で出したもの（2026-11-08）。語の数は models/term-dictionaries.json の 20 種 -->
 <section id="terms" class="section" aria-labelledby="terms-title">
   <div class="wrap split">
     <div>
@@ -237,9 +237,9 @@
       <p class="section-lead" style="margin-bottom:0">仕事や勉強で使う分野の辞書を追加できます。追加した辞書の言葉は、変換の候補に出るようになります。</p>
       <ul class="points">
         <li><b>分野の用語・薬の名前・地名・駅名・人名など 20 種類。</b>医学、情報・コンピュータ、法律、工学、数学など 13 分野の用語と、薬の名前、地名、駅、人名、神社・寺院、旧市区町村、縁起のよい当て字（元氣・顔晴る・志事など）のお守り辞書から、使うものだけを選べます。</li>
-        <li><b>辞書の言葉は、Space で開く候補の一覧に出ます。</b>打つそばからの変換は変えないので、ほかの文の変換が崩れることはありません。</li>
-        <li><b>辞書ごとに「ライブ変換にも使う」を選べます。</b>ONにした辞書の言葉は、ユーザ辞書と同じく、Space を押さなくても打つそばからの変換に出ます。</li>
-        <li>設定 &gt; 辞書・学習 &gt; 専門辞書 で追加します。追加したときに、その辞書を 1 回だけダウンロードします。</li>
+        <li><b>辞書の言葉は、Space で開く候補の一覧に出ます。</b>初期設定ではライブ変換には使わないので、ほかの文の変換が崩れることはありません。</li>
+        <li><b>辞書ごとに「ライブ変換にも使う」を選べます。</b>ON にした辞書の言葉は、ユーザ辞書と同じく、Space を押さなくてもライブ変換に出ます。ただし、読みが同じ言葉が 2 つ以上あるものと、読みよりずっと長いものは使いません。</li>
+        <li>Mac では設定の「辞書・学習」→「専門辞書」、Windows と Linux では設定の「専門辞書」で追加します。辞書は、追加したときにダウンロードします。辞書が作り直されたときは、設定画面を開いたときに入れ直します。</li>
       </ul>
     </div>
 
@@ -273,11 +273,11 @@
       <h2 id="koe-title">声で入れて、<br>キーボードで直す</h2>
       <p class="section-lead" style="margin-bottom:0">決めたキー（初期設定は右 ⌘）を押している間に話した内容が、確定されずに入力中の文字として入ります。</p>
       <ul class="points">
-        <li><b>打った文と同じかな漢字変換に渡します。</b>音声認識が出した漢字かな交じりの結果を読み（ひらがな）に戻してから変換するので、スペースキーの候補・文節の打ち直し・続きのキー入力が、打った文と同じようにできます。</li>
+        <li><b>打った文と同じかな漢字変換に渡します。</b>音声認識が出した漢字かな交じりの結果を、読みに戻してから変換します。そのため、Space で開く候補の一覧、文節（文を意味のまとまりで区切った単位）の打ち直し、続きのキー入力を、打った文と同じように使えます。</li>
         <li><b>音声認識はお使いの Mac の中で行います。</b>音声を外部に送りません。</li>
-        <li><b>言いよどみは、AI に除いてもらえます。</b>「えー」「あー」のような言いよどみが入ったままでも、「AI に書き換えを頼む」に言いよどみを除く指示を登録しておくと、話した文をそのまま整えられます。話したあとに手で直す箇所が減り、文を速く作れます（外部の AI サービスを選んだときは、その文がそのサービスに送られます）。</li>
-        <li>読みは音声認識の表記から求め直すので、人名などで取り違えることがあります。そのときは、スペースキーの候補か文節の打ち直しで直します。</li>
-        <li>使うには、設定 &gt; 入力 &gt;「こえ」モード を ON にします（初期設定は OFF）。今使えるのは Mac 版（macOS 26 以降）だけです。マイクの使用は設定画面から許可します。</li>
+        <li><b>言いよどみは、AI に除いてもらえます。</b>「AI に書き換えを頼む」に言いよどみを除く指示を登録しておくと、「えー」「あー」のような言いよどみを、話したあとに除けます。外部の AI サービスを選んだときは、その文がそこに送られます。</li>
+        <li>読みは音声認識の表記から求め直すので、人名等で取り違えることがあります。そのときは、Space で開く候補の一覧か、文節の打ち直しで直します。</li>
+        <li>使うには、設定の「入力」→「「こえ」モード」を ON にします（初期設定は OFF）。今使えるのは Mac 版（macOS 26 以降）だけです。マイクの使用は設定画面から許可します。</li>
       </ul>
     </div>
 
@@ -300,7 +300,7 @@
   <div class="wrap">
     <p class="eyebrow"><span>そのほか</span><span class="eyebrow-en">MORE</span></p>
     <h2 id="more-title">毎日の入力を手伝う機能</h2>
-    <p class="section-lead">どれも設定で ON・OFF を切り替えられます。くわしい操作は<a href="usage.html">使い方</a>のページにまとめています。</p>
+    <p class="section-lead">くわしい操作は<a href="usage.html">使い方</a>のページにまとめています。</p>
     <div class="feature-grid">
       <div class="feature">
         <h3>ユーザ辞書</h3>
@@ -308,11 +308,11 @@
       </div>
       <div class="feature">
         <h3>変換の学習</h3>
-        <p>選び直して確定した変換を覚え、次に同じ読みを打ったときに最初から出します。</p>
+        <p>選び直して確定した変換を覚え、次に同じ読みを丸ごと打ったときに最初から出します。</p>
       </div>
       <div class="feature">
         <h3>日付や時刻を入れる</h3>
-        <p>読みと出力の組を決めておくと、候補に出します。日付や時刻はその日の値になります。</p>
+        <p>読みと出力の組を決めておくと、Space で開く候補に出します。日付や時刻はその日の値になります。</p>
         <span class="eg"><code>きょう</code> → 2026/11/06</span>
       </div>
       <div class="feature">
@@ -322,11 +322,11 @@
       <div class="feature">
         <h3>AI に書き換えを頼む</h3>
         <p>入力中の文を、英訳や敬語への書き換えなど、登録した指示で AI に書き換えてもらえます。</p>
-        <span class="eg">⌥ + Return で英訳（初期設定）</span>
+        <span class="eg">⌥ + Return で英訳（Mac の初期設定。Windows・Linux は Shift + Space）</span>
       </div>
       <div class="feature">
         <h3>プライベートモード</h3>
-        <p>ON の間は、学習や入力の履歴を残しません。カーソルの横に鍵のマークが出ます。</p>
+        <p>ON の間は、学習や入力の履歴を残しません。Mac ではカーソルの横に鍵のマークが、Windows では言語バーのボタンに印が出ます。</p>
       </div>
       <div class="feature">
         <h3>記号・顔文字・絵文字</h3>
@@ -334,13 +334,13 @@
       </div>
       <div class="feature">
         <h3>文の途中で英字</h3>
-        <p>Shift を押しながら打つと、モードを切り替えずに英字を入れられます。設定で ON にすると、<code>_</code> で囲んだ部分も英字になります。</p>
+        <p>Shift を押しながら打つと、モードを切り替えずに英字を入れられます。開発者モードの設定で ON にすると、<code>_</code> で囲んだ部分も英字になります。</p>
         <span class="eg"><code>きょうは</code> + Shift で <code>AI</code> → 今日はAI</span>
         <span class="eg"><code>kyouha_iroha_wo</code> → 今日はirohaを</span>
       </div>
       <div class="feature">
         <h3>複数のパソコンで同じ辞書</h3>
-        <p>データの置き場所を iCloud Drive や Dropbox にすると、辞書や学習を複数のパソコンで使えます。</p>
+        <p>Mac では、データの置き場所を iCloud Drive や Dropbox にすると、辞書や学習を複数の Mac で使えます。</p>
       </div>
     </div>
   </div>
@@ -371,7 +371,7 @@
       </div>
       <div class="people-item">
         <h3>協力者<small>研究室の学生たち</small></h3>
-        <p>研究室内で iroha を日々使い、フィードバックを寄せてくださった方々です（研究室内の利用フィードバック協力者）: <a href="https://github.com/shiratsumu">shiratsumu</a>、<a href="https://github.com/onoryu">onoryu</a>、<a href="https://github.com/kaishiraishi">kaishiraishi</a>、Taisei Kato、Ryusei Akaike。感謝いたします。</p>
+        <p>研究室内で iroha を日々使い、フィードバックを寄せてくださった方々です: <a href="https://github.com/shiratsumu">shiratsumu</a>、<a href="https://github.com/onoryu">onoryu</a>、<a href="https://github.com/kaishiraishi">kaishiraishi</a>、Taisei Kato、Ryusei Akaike。感謝いたします。</p>
         <p>研究室の学生たちからは、次の気づきをもらいました。</p>
         <ul>
           <li>多くの若い人は、どの日本語入力を使っているかに関心がない。</li>
@@ -392,8 +392,9 @@
       <div class="seal" aria-hidden="true">手元の<br>なかで</div>
       <div>
         <h2 id="privacy-title" style="font-size:24px">打った文字は、外に送りません</h2>
-        <p><strong>かな漢字変換も打ち間違いの訂正も、お使いのパソコンの中だけで行います。</strong>iroha が通信するのは、アップデートの確認と、変換に使うデータのダウンロードのときだけです（どちらも GitHub から）。</p>
-        <p>例外は「AI に書き換えを頼む」機能で、外部の AI サービス（Claude や OpenAI 互換のサービスなど）を自分で選んだときだけ、その文がそのサービスに送られます。パソコンの中で動く Ollama や LM Studio、Mac の Apple Intelligence を選べば、外には送られません。</p>
+        <p><strong>かな漢字変換も打ち間違いの訂正も、お使いのパソコンの中だけで行います。</strong>iroha が通信するのは、アップデートの確認と、変換に使うデータ（モデル・辞書）のダウンロードのときだけです。取得先は GitHub です。ただし、Windows 版・Linux 版で zenz のモデルを選んだときは、Hugging Face から取得します。また、Mac の「こえ」モードの音声認識のデータは、Apple から取得します。</p>
+        <p>例外は、文を AI に渡す 3 つの機能です。「AI に書き換えを頼む」と、ほかのアプリで選んだ文を AI で書き換える機能と、開発者モードの「AIで直す」です。外部の AI サービス（Claude や OpenAI 互換のもの等）を選んだときは、これらを操作したときだけ、その文がそこに送られます。パソコンの中で動く Ollama や LM Studio、Mac の Apple Intelligence を選べば、外には送られません。</p>
+        <p>Mac でデータの置き場所を iCloud Drive や Dropbox にしたときは、辞書や学習などのデータがそのサービスに保存されます。</p>
         <p>Mac では、パスワードの入力欄で macOS が日本語入力そのものを止めるので、iroha には文字が届きません。</p>
       </div>
     </div>
@@ -448,8 +449,8 @@
       <dl class="req">
         <dt>動作環境</dt><dd>Mac: macOS 14 以降、Apple シリコン（M1 以降）<br>Windows: Windows 10 以降（64 ビット、x64）<br>Linux: Ubuntu 22.04 以降（x86_64）、IBus または fcitx5</dd>
         <dt>価格</dt><dd>無料（オープンソース、MIT ライセンス）</dd>
-        <dt>アップデート</dt><dd>Mac・Windows: 新しい版が出ると iroha が知らせます<br>Linux: 新しい版を同じ手順で入れ直します</dd>
-        <dt>アンインストール</dt><dd>Mac: iroha の設定 →「情報」→「iroha をアンインストール…」<br>Windows: Windows の「設定」→「アプリ」→「インストールされているアプリ」で iroha を選ぶ<br>Linux: 展開したフォルダの <code>./uninstall.sh</code></dd>
+        <dt>アップデート</dt><dd>Mac・Windows・Linux: 新しい版が出ると iroha が知らせます</dd>
+        <dt>アンインストール</dt><dd>Mac: iroha の設定 →「情報」→「iroha をアンインストール…」<br>Windows: Windows の「設定」→「アプリ」→「インストールされているアプリ」（Windows 10 では「アプリと機能」）で iroha を選ぶ<br>Linux: 展開したフォルダの <code>./uninstall.sh</code></dd>
       </dl>
     </div>
     <div>
@@ -480,7 +481,7 @@
     </details>
     <details>
       <summary>打った文字がどこかに送られることはありますか？</summary>
-      <p>ありません。変換はお使いのパソコンの中で行います。外部の AI サービスを自分で選んで「AI に書き換えを頼む」機能を使ったときだけ、その文がそのサービスに送られます。</p>
+      <p>ありません。変換はお使いのパソコンの中で行います。例外は文を AI に渡す 3 つの機能で、外部の AI サービスを選んで操作したときだけ、その文がそこに送られます。3 つの機能は、「AI に書き換えを頼む」、ほかのアプリで選んだ文を AI で書き換える機能、開発者モードの「AIで直す」です。</p>
     </details>
     <details>
       <summary>Windows や Linux、Intel の Mac で使えますか？</summary>
@@ -496,7 +497,7 @@
     </details>
     <details>
       <summary>打ち間違いの訂正が、正しく打った言葉を変えてしまいました。</summary>
-      <p>直した直後に Backspace を押すと元に戻ります。訂正の回数が多いと感じるときは、設定の「入力」→「打ち間違いの訂正」で訂正を控えめにできます。</p>
+      <p>直した直後に Backspace を押すと元に戻ります。訂正の回数が多いと感じるときは、設定の「入力」で打ち間違いの訂正を OFF にできます。開発者モードを ON にすると、訂正を控えめにする細かな調整（確信の強さ・最低文字数・休止時間）もできます。</p>
     </details>
     <details>
       <summary>やめるときはどうすればよいですか？</summary>
@@ -564,20 +565,20 @@
       </div>
 
       <div class="devmode-body" id="devmode-body" hidden>
-        <p>iroha の <strong>設定 &gt; 情報 &gt; 開発者向け「開発者モード」</strong>を ON にすると、設定画面に次の項目が増えます。OFF に戻すと項目が見えなくなるだけで、変えた設定はそのまま効きます（推論の時間の表示だけは止まります）。この設定はほかの Mac と同期しません。</p>
+        <p>iroha の<strong>設定の「情報」→「開発者向け」→「開発者モード」</strong>を ON にすると、設定画面に次の項目が増えます。OFF に戻すと項目が見えなくなるだけで、変えた設定はそのまま効きます（推論の時間の表示だけは止まります）。この設定はほかの Mac と同期しません。</p>
         <dl class="devmode-list">
-          <dt>入力</dt><dd>アプリの文章を文脈に使う、打ち間違いの訂正の細かな調整（訂正モデル・休止時間・最低文字数・確信の強さ）、区切り記号で英字を入力、タップ入力（加速度センサを利用するとき）</dd>
-          <dt>辞書・学習</dt><dd>記号・顔文字・絵文字を候補に出す</dd>
+          <dt>入力</dt><dd>アプリの文章を文脈に使う、打ち間違いの訂正の細かな調整（訂正モデル・休止時間・最低文字数・確信の強さ）、区切り記号で英字を入力、タップ入力（加速度センサを利用するとき）、AIで直す、「こえ」モードの認識結果を記録する</dd>
+          <dt>辞書・学習</dt><dd>自分の原稿に合わせる、記号・顔文字・絵文字を候補に出す</dd>
           <dt>選択テキスト</dt><dd>除外するアプリ</dd>
-          <dt>モデル</dt><dd>推論エンジン（llama.cpp ／ MLX）、モデルファイルの指定、iroha を再起動、自分の入力で追加学習</dd>
+          <dt>モデル</dt><dd>推論エンジン（llama.cpp ／ MLX）、モデルファイルの指定、iroha を再起動、自分の入力で追加学習、変換のベンチマーク</dd>
           <dt>情報</dt><dd>推論の時間の表示、加速度センサを利用する</dd>
         </dl>
 
         <h4>自分の入力で追加学習（試験的）</h4>
         <p>確定した変換の記録を使って、かな漢字変換のモデルに自分の文章の癖を覚えさせる機能です（LoRA と呼ばれる方法）。元のモデルは変えずに、小さな追加のファイル（アダプタ）を作ります。学習はこの Mac の中で行い、記録をどこにも送りません。iroha-kkc と zenz のモデルで使えます。</p>
         <ol class="devmode-steps">
-          <li><strong>設定 &gt; 辞書・学習 &gt; 変換記録</strong>の「確定した変換を記録する」を ON にして、ふだんどおり使います。記録されるのは、前に書いた文があるところでの確定だけです。</li>
-          <li>記録が 30 件以上たまったら、<strong>設定 &gt; モデル</strong>の「自分の入力で追加学習」で「学習を開始」を押します。数十秒から数分かかり、その間は GPU を使います。</li>
+          <li><strong>設定の「辞書・学習」→「変換記録」</strong>の「確定した変換を記録する」を ON にして、ふだんどおり使います。記録されるのは、前に書いた文があるところでの確定だけです。</li>
+          <li>記録が 30 件以上たまったら、<strong>設定の「モデル」</strong>の「自分の入力で追加学習」で「学習を開始」を押します。数十秒から数分かかり、その間は GPU を使います。</li>
           <li>結果を見ます。今のモデルが「間違えていた変換」をいくつ当てられるようになったかと、「できていた変換」をいくつ保てたかが並びます。</li>
           <li>よければ「このアダプタを使う」を押して、iroha を再起動します。</li>
         </ol>
@@ -603,7 +604,7 @@
       <li class="tl-major">
         <p class="tl-date"><time datetime="2025-09">2025年9月</time></p>
         <h3>GenGo を作る</h3>
-        <p>はじめはかな漢字変換を作るつもりで、IMESidecar という名前で開発を始めたが、AI で文章を変換する機能が面白く、選んだ文を AI で翻訳・校正・書き換える Mac のアプリ <a href="https://tetsuakibaba.github.io/GenGo/">GenGo</a> に特化した。9月4日に最初の版を公開。</p>
+        <p>はじめはかな漢字変換を作るつもりで、IMESidecar という名前で開発を始めた。開発の中で AI で文章を変換する機能が面白くなり、選んだ文を AI で翻訳・校正・書き換える Mac のアプリ <a href="https://tetsuakibaba.github.io/GenGo/">GenGo</a> に絞った。9月4日に最初の版を公開。</p>
       </li>
       <li>
         <p class="tl-date"><time datetime="2026-05">2026年5月</time></p>
@@ -703,9 +704,11 @@
       <li>かな漢字変換モデル iroha-kkc: CC BY-SA 4.0。学習データ <a href="https://huggingface.co/datasets/Miwa-Keita/zenz-v2.5-dataset">zenz-v2.5-dataset</a>（Keita Miwa 氏、CC BY-SA 4.0）</li>
       <li>打ち間違い訂正モデル iroha-typo: CC BY-SA 4.0。学習元の一覧はアプリの設定 →「情報」→「ライセンス」にあります</li>
       <li><a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a>: MIT License</li>
+      <li>Mac 版の推論の仕組み <a href="https://github.com/ml-explore/mlx-swift">MLX Swift</a>（ml-explore）: MIT License</li>
       <li>候補を作るしくみ <a href="https://github.com/azooKey/AzooKeyKanaKanjiConverter">AzooKeyKanaKanjiConverter</a>（ensan / azooKey）: MIT License。辞書データ <a href="https://github.com/azooKey/azooKey_dictionary_storage">azooKey_dictionary_storage</a>: Apache License 2.0</li>
       <li>専門辞書（設定で追加したときにダウンロード）: 分野の用語は <a href="https://www.edrdg.org/wiki/JMdict-EDICT_Dictionary_Project.html">JMdict</a>（James William Breen and the Electronic Dictionary Research and Development Group、<a href="https://www.edrdg.org/edrdg/licence.html">CC BY-SA 4.0</a>）、薬の名前は百薬辞書（CC BY 4.0）、地名は日本郵便の郵便番号データ、駅・人名・神社・寺院・旧市区町村は <a href="https://www.wikidata.org/">Wikidata</a>（CC0 1.0）から作っています。お守り辞書は iroha が作ったもの（CC0 1.0）です。追加した辞書の出典とライセンスは、アプリの設定 →「情報」→「ライセンス」に出ます</li>
       <li>記号・顔文字・絵文字のデータ <a href="https://github.com/google/mozc">Mozc</a>（Google Inc.）: BSD 3-Clause License</li>
+      <li>そのほかに使っている部品のライセンスは、アプリの設定 →「情報」→「ライセンス」にあります</li>
       <li>ロゴの書体 <a href="https://github.com/mt-funa/Tsukimi-Rounded">Tsukimi Rounded</a>（Takashi Funayama 氏）: <a href="assets/fonts/OFL.txt">SIL Open Font License 1.1</a></li>
       <li>このサイトの書体 Yuji Syuku・Shippori Mincho・Zen Kaku Gothic New（<a href="https://fonts.google.com/">Google Fonts</a> から読み込み）: SIL Open Font License 1.1</li>
     </ul>
