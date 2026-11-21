@@ -123,6 +123,7 @@ private:
     void ShowNotice(ITfContext* context, const std::u32string& text);
     // 打ち間違いを直したときの「打った読み → 直した読み」を出す・閉じる（問い合わせで届いたときは非同期で出す）
     void UpdateTypoFeedback(ITfContext* context, const iroha::SessionOutput& output, bool synchronous);
+    void OnAIFixNoticeClicked();
     // デバッグ表示（開発者モード。推論にかかった時間と左文脈）を未確定文字列の上に出す
     void UpdateDebugOverlay(ITfContext* context, const iroha::SessionOutput& output, bool synchronous);
     // 未確定文字列（無ければカーソル）のスクリーン座標と、窓の持ち主

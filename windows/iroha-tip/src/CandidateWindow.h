@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,9 @@ public:
               const std::vector<std::u32string>& annotations, size_t selectedIndex,
               bool numbered = true, bool expanded = false, bool above = false);
     void Hide();
+    // クリックされたときに呼ぶもの（「AIで直す」の窓。空ならクリックしても何もしない）。
+    // Show では変わらず、Hide で外れる。持っている間はマウスポインタを手の形にする
+    void SetClickHandler(std::function<void()> handler) { clickHandler_ = std::move(handler); }
 
     // 絵文字として描く候補か（絵文字のフォントで描く）
     static bool IsEmojiText(const std::wstring& text);
@@ -71,6 +75,7 @@ private:
     void PaintWithGdi(HDC dc, const RECT& client) const;
 
     HWND hwnd_ = nullptr;
+    std::function<void()> clickHandler_;
     HFONT font_ = nullptr;
     UINT dpi_ = 96;
     float fontSize_ = 13.3f; // DirectWrite の文字の大きさ（ピクセル）

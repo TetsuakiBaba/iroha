@@ -756,12 +756,17 @@ bool TextService::CompositionRectIn(TfEditCookie ec, ITfContext* context, RECT* 
 void TextService::UpdateTypoFeedback(ITfContext* context, const iroha::SessionOutput& output, bool synchronous) {
     // 出すものの順: 打ち間違いの訂正 → AI の案（「今の変換 → AI の案」）→ AIで直すの窓・知らせ
     std::u32string text;
+    // 「AIで直す」の窓（案を出している間）。クリックするとショートカットと同じく AI に送る（macOS版 AIFixBadge）。
+    // macOS版と同じく、案がある間は出したままにする（時間では閉じない）
+    bool aiFixOffer = false;
     if (output.typoFeedback) {
         text = output.typoFeedback->Original() + U" → " + output.typoFeedback->Corrected() + U"　（⌫ で戻す）";
     } else if (output.aiFixFeedback) {
         text = output.aiFixFeedback->Original() + U" → " + output.aiFixFeedback->Corrected() + U"　（⌫ で戻す）";
     } else if (!output.aiFixNotice.empty()) {
         text = output.aiFixNotice;
+        // 案の窓の文面は「AIで直す（ショートカット）」。確かめている間・結果の知らせは別の文面
+        aiFixOffer = text.compare(0, 5, U"AIで直す") == 0;
     } else {
         text = output.voiceNotice;
     }
@@ -779,9 +784,15 @@ void TextService::UpdateTypoFeedback(ITfContext* context, const iroha::SessionOu
     }
     if (text == typoFeedbackShown_ || !EnsurePollWindow()) return;
     typoFeedbackShown_ = text;
-    const auto show = [this, text, duration](const RECT& rect, HWND owner) {
+    const auto show = [this, text, duration, aiFixOffer](const RECT& rect, HWND owner) {
         noticeWindow_.Show(owner, rect, {text}, {}, SIZE_MAX, /*numbered=*/false);
-        SetTimer(pollWindow_, reinterpret_cast<UINT_PTR>(this) + 1, duration, &TextService::NoticeTimerProc);
+        if (aiFixOffer) {
+            noticeWindow_.SetClickHandler([this] { OnAIFixNoticeClicked(); });
+            KillTimer(pollWindow_, reinterpret_cast<UINT_PTR>(this) + 1);
+        } else {
+            noticeWindow_.SetClickHandler(nullptr);
+            SetTimer(pollWindow_, reinterpret_cast<UINT_PTR>(this) + 1, duration, &TextService::NoticeTimerProc);
+        }
     };
     if (synchronous) {
         RECT rect = {};
@@ -869,7 +880,21 @@ void TextService::ShowNotice(ITfContext* context, const std::u32string& text) {
     HWND owner = nullptr;
     if (!CompositionRect(context, &rect, &owner) || !EnsurePollWindow()) return;
     noticeWindow_.Show(owner, rect, {text}, {}, SIZE_MAX, /*numbered=*/false);
+    noticeWindow_.SetClickHandler(nullptr);
     SetTimer(pollWindow_, reinterpret_cast<UINT_PTR>(this) + 1, 2500, &TextService::NoticeTimerProc);
+}
+
+// 「AIで直す」の窓をクリックした: ショートカットを押したときと同じく、今の変換を AI に送る（macOS版 AIFixBadge の
+// onClick）。キーの処理の外なので、返事は非同期のエディットセッションで反映する（メニューの切り替えと同じ）
+void TextService::OnAIFixNoticeClicked() {
+    if (!composition_ || !compositionContext_ || sessionId_ == 0) return;
+    ITfContext* context = compositionContext_;
+    context->AddRef();
+    iroha::SessionOutput output;
+    if (ConvertClient::SendKey(sessionId_, iroha::SessionKey::AIFix, 0, false, nullptr, &output)) {
+        ApplyOutput(context, output, /*synchronous=*/false);
+    }
+    context->Release();
 }
 
 // 選んでいる文節の位置に候補ウィンドウを出す。

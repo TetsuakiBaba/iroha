@@ -59,6 +59,20 @@ LRESULT CALLBACK CandidateWindow::WndProcThunk(HWND hwnd, UINT message, WPARAM w
         }
         case WM_MOUSEACTIVATE:
             return MA_NOACTIVATE; // クリックされてもフォーカスを奪わない
+        case WM_SETCURSOR:
+            if (self && self->clickHandler_ && LOWORD(lParam) == HTCLIENT) {
+                SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                return TRUE;
+            }
+            return DefWindowProcW(hwnd, message, wParam, lParam);
+        case WM_LBUTTONUP:
+            if (self && self->clickHandler_) {
+                // 呼んだ先で窓を出し直す・閉じることがあるので、写してから呼ぶ
+                const std::function<void()> handler = self->clickHandler_;
+                handler();
+                return 0;
+            }
+            return DefWindowProcW(hwnd, message, wParam, lParam);
         default:
             return DefWindowProcW(hwnd, message, wParam, lParam);
     }
@@ -443,6 +457,7 @@ void CandidateWindow::Show(HWND owner, const RECT& anchor,
 }
 
 void CandidateWindow::Hide() {
+    clickHandler_ = nullptr;
     if (!hwnd_ || !IsWindowVisible(hwnd_)) return;
     ShowWindow(hwnd_, SW_HIDE);
     NotifyWinEvent(EVENT_OBJECT_IME_HIDE, hwnd_, OBJID_CLIENT, CHILDID_SELF);
