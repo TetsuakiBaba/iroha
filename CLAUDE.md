@@ -425,6 +425,8 @@ cd macos && swift build --build-system native && swift test --build-system nativ
     ホットキーに登録できないので、`NSEvent.addGlobalMonitorForEvents(.flagsChanged)`（アクセシビリティの許可が要る）で見る。
     録音を始めるとき（押してから 0.12 秒後。ショートカットに使ったときは切り替えない）に `TISSelectInputSource` で iroha の
     ひらがなに切り替え、`controllerActivated` で受け持ったコントローラを入れ先にする。確定後も iroha のまま。
+    切り替えた直後は受け持ちが「始める → 外れる → 始める」と動くことがある（間は 1ms ほど）ので、切り替えから 1 秒の間に
+    入れ先が外れても録音を捨てず、次に受け持ったコントローラを入れ先にする（捨てると最初の 1 回が入らなかった）。
     受け持つコントローラが現れなければ認識結果を小窓に出すだけ（貼り付けはしない）
   ・`SpeechTranscriber` の途中結果は `.fastResults` を付けないと発話中に届かない（`.volatileResults` だけでは入力を締めた
     あとにまとめて届く。2026-11-10、`iroha-cli voice --stream` で再現）

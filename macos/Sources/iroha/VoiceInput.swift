@@ -149,6 +149,8 @@ final class VoiceInput {
     private var lastPartial = ""
     /// 録音を始めるときに入力ソースを iroha に切り替える回か（iroha 以外の入力ソースのときに押した）
     private var switchesInputSource = false
+    /// 入力ソースを iroha に切り替えた時刻
+    private var switchedAt: Double?
     /// 修飾キーの変化を全体で受け取る見張り（`VoiceInputSettings.usesOtherInputSources`）
     private var globalMonitor: Any?
     /// 見張りを付けたときにアクセシビリティの許可があったか（許可の前に付けた見張りにはキーが届かないので付け直す）
@@ -159,6 +161,8 @@ final class VoiceInput {
 
     /// 押してから録音を始めるまでの待ち（ショートカットに使うたびにマイクが動かないように）
     private static let startDelay = 0.12
+    /// iroha に切り替えてから、受け持ちが外れても録音を続ける時間
+    private static let switchSettleTime = 1.0
     /// 押していた時間がこれより短ければ捨てる
     private static let minimumHold = 0.35
     /// 押し続けていてもここで締める
@@ -250,7 +254,14 @@ final class VoiceInput {
     /// 入力先が変わった（そのコントローラ宛ての録音は捨てる）
     func controllerDeactivated(_ controller: IrohaInputController) {
         if activeController === controller { activeController = nil }
-        if self.controller === controller, phase != .idle {
+        if self.controller === controller, phase != .idle, switchesInputSource,
+           let switchedAt, Self.now() - switchedAt < Self.switchSettleTime {
+            // iroha に切り替えた直後は、受け持ちが「始める → 外れる → 始める」と動く（2026-11-25 実測。間は 1ms ほど）。
+            // 外れたら入れ先を外して、次に受け持ったコントローラを入れ先にする
+            controller.clearVoicePartial()
+            partialShownInPlace = false
+            self.controller = nil
+        } else if self.controller === controller, phase != .idle {
             cancel()
         } else if phase == .idle, activeController == nil {
             stopPolling()
@@ -292,6 +303,7 @@ final class VoiceInput {
             TapInputFeedback.shared.show("こえ: iroha に切り替えられませんでした", duration: 3)
             return
         }
+        if switchesInputSource, controller == nil { switchedAt = Self.now() }
         let generation = self.generation
         let session = VoiceSession(kind: VoiceInputSettings.recognizer) { text in
             DispatchQueue.main.async { VoiceInput.shared.receivePartial(text, generation: generation) }
@@ -405,6 +417,7 @@ final class VoiceInput {
         startTask = nil
         controller = nil
         switchesInputSource = false
+        switchedAt = nil
         lastPartial = ""
         TapInputFeedback.shared.hide()
     }
