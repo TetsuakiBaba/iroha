@@ -40,6 +40,101 @@ final class RomajiComposerTests: XCTestCase {
         XCTAssertEqual(compose("ryaryuryo"), "りゃりゅりょ")
     }
 
+    /// Google日本語入力（Mozc の romanji-hiragana.tsv）にあって iroha に無かった綴り（2026-11-24 に照合して足した）
+    func testGoogleJapaneseInputSpellings() {
+        let expected: [String: String] = [
+            "cya": "ちゃ",
+            "cyi": "ちぃ",
+            "cyu": "ちゅ",
+            "cye": "ちぇ",
+            "cyo": "ちょ",
+            "xn": "ん",
+            "lyi": "ぃ",
+            "xyi": "ぃ",
+            "lye": "ぇ",
+            "xye": "ぇ",
+            "lka": "ヵ",
+            "lke": "ヶ",
+            "xtsu": "っ",
+            "vya": "ゔゃ",
+            "vyi": "ゔぃ",
+            "vyu": "ゔゅ",
+            "vye": "ゔぇ",
+            "vyo": "ゔょ",
+            "hwa": "ふぁ",
+            "hwi": "ふぃ",
+            "hwe": "ふぇ",
+            "hwo": "ふぉ",
+            "hwyu": "ふゅ",
+            "gyi": "ぎぃ",
+            "gye": "ぎぇ",
+            "dyi": "ぢぃ",
+            "dye": "ぢぇ",
+            "hyi": "ひぃ",
+            "hye": "ひぇ",
+            "byi": "びぃ",
+            "bye": "びぇ",
+            "pyi": "ぴぃ",
+            "pye": "ぴぇ",
+            "myi": "みぃ",
+            "mye": "みぇ",
+            "ryi": "りぃ",
+            "rye": "りぇ",
+            "jyi": "じぃ",
+            "jye": "じぇ",
+            "twa": "とぁ",
+            "twi": "とぃ",
+            "twe": "とぇ",
+            "two": "とぉ",
+            "dwa": "どぁ",
+            "dwi": "どぃ",
+            "dwe": "どぇ",
+            "dwo": "どぉ",
+            "kwa": "くぁ",
+            "kwi": "くぃ",
+            "kwu": "くぅ",
+            "kwe": "くぇ",
+            "kwo": "くぉ",
+            "gwa": "ぐぁ",
+            "gwi": "ぐぃ",
+            "gwu": "ぐぅ",
+            "gwe": "ぐぇ",
+            "gwo": "ぐぉ",
+            "swa": "すぁ",
+            "swi": "すぃ",
+            "swu": "すぅ",
+            "swe": "すぇ",
+            "swo": "すぉ",
+            "zwa": "ずぁ",
+            "zwi": "ずぃ",
+            "zwu": "ずぅ",
+            "zwe": "ずぇ",
+            "zwo": "ずぉ",
+            "t'i": "てぃ",
+            "t'yu": "てゅ",
+            "d'i": "でぃ",
+            "d'yu": "でゅ",
+            "t'u": "とぅ",
+            "d'u": "どぅ",
+            "wyi": "ゐ",
+            "wye": "ゑ",
+            "whu": "う",
+        ]
+        for (romaji, kana) in expected {
+            XCTAssertEqual(compose(romaji), kana, romaji)
+        }
+    }
+
+    /// 足した綴りの頭だけを打ったときは、足す前と同じ結果になる
+    func testPartialNewSpellingsKeepPreviousResult() {
+        XCTAssertEqual(compose("t'a"), "t'あ")
+        XCTAssertEqual(compose("d'a"), "d'あ")
+        XCTAssertEqual(compose("kwyo"), "kwよ")
+        XCTAssertEqual(compose("hwya"), "hwや")
+        XCTAssertEqual(compose("xnn"), "んn")
+        XCTAssertEqual(compose("kkwa"), "っくぁ")
+    }
+
     func testSokuon() {
         XCTAssertEqual(compose("katta"), "かった")
         XCTAssertEqual(compose("kippu"), "きっぷ")
