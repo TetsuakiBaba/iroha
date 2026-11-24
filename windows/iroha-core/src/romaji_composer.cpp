@@ -4,6 +4,7 @@ namespace iroha {
 
 namespace {
 
+// Google日本語入力（Mozc の romanji-hiragana.tsv）と同じ綴りを受け付ける（2026-11-24 に照合して足りない綴りを足した。macOS版と同じ）
 const std::unordered_map<std::u32string, std::u32string>& DefaultTable() {
     static const std::unordered_map<std::u32string, std::u32string> table = {
         // 母音
@@ -11,64 +12,75 @@ const std::unordered_map<std::u32string, std::u32string>& DefaultTable() {
         // か行
         {U"ka", U"か"}, {U"ki", U"き"}, {U"ku", U"く"}, {U"ke", U"け"}, {U"ko", U"こ"},
         {U"kya", U"きゃ"}, {U"kyi", U"きぃ"}, {U"kyu", U"きゅ"}, {U"kye", U"きぇ"}, {U"kyo", U"きょ"},
+        {U"kwa", U"くぁ"}, {U"kwi", U"くぃ"}, {U"kwu", U"くぅ"}, {U"kwe", U"くぇ"}, {U"kwo", U"くぉ"},
         {U"ga", U"が"}, {U"gi", U"ぎ"}, {U"gu", U"ぐ"}, {U"ge", U"げ"}, {U"go", U"ご"},
-        {U"gya", U"ぎゃ"}, {U"gyu", U"ぎゅ"}, {U"gyo", U"ぎょ"},
+        {U"gya", U"ぎゃ"}, {U"gyi", U"ぎぃ"}, {U"gyu", U"ぎゅ"}, {U"gye", U"ぎぇ"}, {U"gyo", U"ぎょ"},
+        {U"gwa", U"ぐぁ"}, {U"gwi", U"ぐぃ"}, {U"gwu", U"ぐぅ"}, {U"gwe", U"ぐぇ"}, {U"gwo", U"ぐぉ"},
         // さ行
         {U"sa", U"さ"}, {U"si", U"し"}, {U"su", U"す"}, {U"se", U"せ"}, {U"so", U"そ"},
         {U"sha", U"しゃ"}, {U"shi", U"し"}, {U"shu", U"しゅ"}, {U"she", U"しぇ"}, {U"sho", U"しょ"},
         {U"sya", U"しゃ"}, {U"syi", U"しぃ"}, {U"syu", U"しゅ"}, {U"sye", U"しぇ"}, {U"syo", U"しょ"},
+        {U"swa", U"すぁ"}, {U"swi", U"すぃ"}, {U"swu", U"すぅ"}, {U"swe", U"すぇ"}, {U"swo", U"すぉ"},
         {U"za", U"ざ"}, {U"zi", U"じ"}, {U"zu", U"ず"}, {U"ze", U"ぜ"}, {U"zo", U"ぞ"},
         {U"ja", U"じゃ"}, {U"ji", U"じ"}, {U"ju", U"じゅ"}, {U"je", U"じぇ"}, {U"jo", U"じょ"},
-        {U"jya", U"じゃ"}, {U"jyu", U"じゅ"}, {U"jyo", U"じょ"},
+        {U"jya", U"じゃ"}, {U"jyi", U"じぃ"}, {U"jyu", U"じゅ"}, {U"jye", U"じぇ"}, {U"jyo", U"じょ"},
         {U"zya", U"じゃ"}, {U"zyi", U"じぃ"}, {U"zyu", U"じゅ"}, {U"zye", U"じぇ"}, {U"zyo", U"じょ"},
+        {U"zwa", U"ずぁ"}, {U"zwi", U"ずぃ"}, {U"zwu", U"ずぅ"}, {U"zwe", U"ずぇ"}, {U"zwo", U"ずぉ"},
         // た行
         {U"ta", U"た"}, {U"ti", U"ち"}, {U"tu", U"つ"}, {U"te", U"て"}, {U"to", U"と"},
         {U"cha", U"ちゃ"}, {U"chi", U"ち"}, {U"chu", U"ちゅ"}, {U"che", U"ちぇ"}, {U"cho", U"ちょ"},
         {U"tya", U"ちゃ"}, {U"tyi", U"ちぃ"}, {U"tyu", U"ちゅ"}, {U"tye", U"ちぇ"}, {U"tyo", U"ちょ"},
+        {U"cya", U"ちゃ"}, {U"cyi", U"ちぃ"}, {U"cyu", U"ちゅ"}, {U"cye", U"ちぇ"}, {U"cyo", U"ちょ"},
         {U"tsu", U"つ"}, {U"tsa", U"つぁ"}, {U"tsi", U"つぃ"}, {U"tse", U"つぇ"}, {U"tso", U"つぉ"},
         {U"tha", U"てゃ"}, {U"thi", U"てぃ"}, {U"thu", U"てゅ"}, {U"the", U"てぇ"}, {U"tho", U"てょ"},
-        {U"twu", U"とぅ"},
+        {U"twa", U"とぁ"}, {U"twi", U"とぃ"}, {U"twu", U"とぅ"}, {U"twe", U"とぇ"}, {U"two", U"とぉ"},
+        {U"t'i", U"てぃ"}, {U"t'u", U"とぅ"}, {U"t'yu", U"てゅ"},
         {U"da", U"だ"}, {U"di", U"ぢ"}, {U"du", U"づ"}, {U"de", U"で"}, {U"do", U"ど"},
-        {U"dya", U"ぢゃ"}, {U"dyu", U"ぢゅ"}, {U"dyo", U"ぢょ"},
+        {U"dya", U"ぢゃ"}, {U"dyi", U"ぢぃ"}, {U"dyu", U"ぢゅ"}, {U"dye", U"ぢぇ"}, {U"dyo", U"ぢょ"},
         {U"dha", U"でゃ"}, {U"dhi", U"でぃ"}, {U"dhu", U"でゅ"}, {U"dhe", U"でぇ"}, {U"dho", U"でょ"},
-        {U"dwu", U"どぅ"},
+        {U"dwa", U"どぁ"}, {U"dwi", U"どぃ"}, {U"dwu", U"どぅ"}, {U"dwe", U"どぇ"}, {U"dwo", U"どぉ"},
+        {U"d'i", U"でぃ"}, {U"d'u", U"どぅ"}, {U"d'yu", U"でゅ"},
         // な行
         {U"na", U"な"}, {U"ni", U"に"}, {U"nu", U"ぬ"}, {U"ne", U"ね"}, {U"no", U"の"},
         {U"nya", U"にゃ"}, {U"nyi", U"にぃ"}, {U"nyu", U"にゅ"}, {U"nye", U"にぇ"}, {U"nyo", U"にょ"},
         {U"nn", U"ん"}, {U"n'", U"ん"},
         // は行
         {U"ha", U"は"}, {U"hi", U"ひ"}, {U"hu", U"ふ"}, {U"he", U"へ"}, {U"ho", U"ほ"},
-        {U"hya", U"ひゃ"}, {U"hyu", U"ひゅ"}, {U"hyo", U"ひょ"},
+        {U"hya", U"ひゃ"}, {U"hyi", U"ひぃ"}, {U"hyu", U"ひゅ"}, {U"hye", U"ひぇ"}, {U"hyo", U"ひょ"},
         {U"fa", U"ふぁ"}, {U"fi", U"ふぃ"}, {U"fu", U"ふ"}, {U"fe", U"ふぇ"}, {U"fo", U"ふぉ"},
         {U"fya", U"ふゃ"}, {U"fyu", U"ふゅ"}, {U"fyo", U"ふょ"},
+        {U"hwa", U"ふぁ"}, {U"hwi", U"ふぃ"}, {U"hwe", U"ふぇ"}, {U"hwo", U"ふぉ"}, {U"hwyu", U"ふゅ"},
         {U"ba", U"ば"}, {U"bi", U"び"}, {U"bu", U"ぶ"}, {U"be", U"べ"}, {U"bo", U"ぼ"},
-        {U"bya", U"びゃ"}, {U"byu", U"びゅ"}, {U"byo", U"びょ"},
+        {U"bya", U"びゃ"}, {U"byi", U"びぃ"}, {U"byu", U"びゅ"}, {U"bye", U"びぇ"}, {U"byo", U"びょ"},
         {U"pa", U"ぱ"}, {U"pi", U"ぴ"}, {U"pu", U"ぷ"}, {U"pe", U"ぺ"}, {U"po", U"ぽ"},
-        {U"pya", U"ぴゃ"}, {U"pyu", U"ぴゅ"}, {U"pyo", U"ぴょ"},
+        {U"pya", U"ぴゃ"}, {U"pyi", U"ぴぃ"}, {U"pyu", U"ぴゅ"}, {U"pye", U"ぴぇ"}, {U"pyo", U"ぴょ"},
         // ま行
         {U"ma", U"ま"}, {U"mi", U"み"}, {U"mu", U"む"}, {U"me", U"め"}, {U"mo", U"も"},
-        {U"mya", U"みゃ"}, {U"myu", U"みゅ"}, {U"myo", U"みょ"},
+        {U"mya", U"みゃ"}, {U"myi", U"みぃ"}, {U"myu", U"みゅ"}, {U"mye", U"みぇ"}, {U"myo", U"みょ"},
         // や行
         {U"ya", U"や"}, {U"yu", U"ゆ"}, {U"yo", U"よ"}, {U"ye", U"いぇ"},
         // ら行
         {U"ra", U"ら"}, {U"ri", U"り"}, {U"ru", U"る"}, {U"re", U"れ"}, {U"ro", U"ろ"},
-        {U"rya", U"りゃ"}, {U"ryu", U"りゅ"}, {U"ryo", U"りょ"},
+        {U"rya", U"りゃ"}, {U"ryi", U"りぃ"}, {U"ryu", U"りゅ"}, {U"rye", U"りぇ"}, {U"ryo", U"りょ"},
         // わ行
         {U"wa", U"わ"}, {U"wi", U"うぃ"}, {U"wu", U"う"}, {U"we", U"うぇ"}, {U"wo", U"を"},
-        {U"wha", U"うぁ"}, {U"whi", U"うぃ"}, {U"whe", U"うぇ"}, {U"who", U"うぉ"},
+        {U"wha", U"うぁ"}, {U"whi", U"うぃ"}, {U"whu", U"う"}, {U"whe", U"うぇ"}, {U"who", U"うぉ"},
+        {U"wyi", U"ゐ"}, {U"wye", U"ゑ"},
         // ゔ
         {U"va", U"ゔぁ"}, {U"vi", U"ゔぃ"}, {U"vu", U"ゔ"}, {U"ve", U"ゔぇ"}, {U"vo", U"ゔぉ"},
+        {U"vya", U"ゔゃ"}, {U"vyi", U"ゔぃ"}, {U"vyu", U"ゔゅ"}, {U"vye", U"ゔぇ"}, {U"vyo", U"ゔょ"},
         // c/q 系（Google日本語入力互換）
         {U"ca", U"か"}, {U"ci", U"し"}, {U"cu", U"く"}, {U"ce", U"せ"}, {U"co", U"こ"},
         {U"qa", U"くぁ"}, {U"qi", U"くぃ"}, {U"qu", U"く"}, {U"qe", U"くぇ"}, {U"qo", U"くぉ"},
         // 小書き
         {U"la", U"ぁ"}, {U"li", U"ぃ"}, {U"lu", U"ぅ"}, {U"le", U"ぇ"}, {U"lo", U"ぉ"},
         {U"xa", U"ぁ"}, {U"xi", U"ぃ"}, {U"xu", U"ぅ"}, {U"xe", U"ぇ"}, {U"xo", U"ぉ"},
-        {U"ltu", U"っ"}, {U"xtu", U"っ"}, {U"ltsu", U"っ"},
-        {U"lya", U"ゃ"}, {U"lyu", U"ゅ"}, {U"lyo", U"ょ"},
-        {U"xya", U"ゃ"}, {U"xyu", U"ゅ"}, {U"xyo", U"ょ"},
+        {U"ltu", U"っ"}, {U"xtu", U"っ"}, {U"ltsu", U"っ"}, {U"xtsu", U"っ"},
+        {U"lya", U"ゃ"}, {U"lyi", U"ぃ"}, {U"lyu", U"ゅ"}, {U"lye", U"ぇ"}, {U"lyo", U"ょ"},
+        {U"xya", U"ゃ"}, {U"xyi", U"ぃ"}, {U"xyu", U"ゅ"}, {U"xye", U"ぇ"}, {U"xyo", U"ょ"},
         {U"lwa", U"ゎ"}, {U"xwa", U"ゎ"},
-        {U"xka", U"ヵ"}, {U"xke", U"ヶ"},
+        {U"xka", U"ヵ"}, {U"xke", U"ヶ"}, {U"lka", U"ヵ"}, {U"lke", U"ヶ"},
+        {U"xn", U"ん"},
         // 記号
         {U"-", U"ー"}, {U",", U"、"}, {U".", U"。"}, {U"/", U"・"},
         {U"[", U"「"}, {U"]", U"」"}, {U"!", U"！"}, {U"?", U"？"}, {U"~", U"〜"},
