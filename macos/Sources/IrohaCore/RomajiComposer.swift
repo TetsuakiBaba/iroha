@@ -175,6 +175,7 @@ public struct RomajiComposer: Sendable, Equatable {
         "ta": "た", "ti": "ち", "tu": "つ", "te": "て", "to": "と",
         "cha": "ちゃ", "chi": "ち", "chu": "ちゅ", "che": "ちぇ", "cho": "ちょ",
         "tya": "ちゃ", "tyi": "ちぃ", "tyu": "ちゅ", "tye": "ちぇ", "tyo": "ちょ",
+        "cya": "ちゃ", "cyu": "ちゅ", "cyo": "ちょ", // Microsoft IME などと同じ打ち方
         "tsu": "つ", "tsa": "つぁ", "tsi": "つぃ", "tse": "つぇ", "tso": "つぉ",
         "tha": "てゃ", "thi": "てぃ", "thu": "てゅ", "the": "てぇ", "tho": "てょ",
         "twu": "とぅ",

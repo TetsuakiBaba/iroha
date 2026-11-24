@@ -35,6 +35,7 @@ final class RomajiComposerTests: XCTestCase {
         XCTAssertEqual(compose("kyakyukyo"), "きゃきゅきょ")
         XCTAssertEqual(compose("shashusho"), "しゃしゅしょ")
         XCTAssertEqual(compose("chachucho"), "ちゃちゅちょ")
+        XCTAssertEqual(compose("cyacyucyo"), "ちゃちゅちょ")
         XCTAssertEqual(compose("jajujo"), "じゃじゅじょ")
         XCTAssertEqual(compose("ryaryuryo"), "りゃりゅりょ")
     }
@@ -44,6 +45,7 @@ final class RomajiComposerTests: XCTestCase {
         XCTAssertEqual(compose("kippu"), "きっぷ")
         XCTAssertEqual(compose("zasshi"), "ざっし")
         XCTAssertEqual(compose("matcha"), "まっちゃ")
+        XCTAssertEqual(compose("maccya"), "まっちゃ")
         XCTAssertEqual(compose("ltu"), "っ")
         XCTAssertEqual(compose("xtu"), "っ")
     }
