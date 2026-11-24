@@ -10,6 +10,7 @@ enum VoiceInputSettings {
     static let enabledKey = "voiceInputEnabled"
     static let holdKeyKey = "voiceInputHoldKey"
     static let recognizerKey = "voiceInputRecognizer"
+    static let otherInputSourcesKey = "voiceInputOtherInputSources"
 
     /// 押している間だけ録音するキー。修飾キー単独にする（普通のキーは離したことが入力メソッドに届かない）
     enum HoldKey: String, CaseIterable, Identifiable {
@@ -76,6 +77,14 @@ enum VoiceInputSettings {
         UserDefaults.standard.string(forKey: holdKeyKey).flatMap(HoldKey.init(rawValue:)) ?? .rightCommand
     }
 
+    /// iroha 以外の入力ソース（ABC・別の IME の英数など）を選んでいるときも、決めたキーで録音を始めるか
+    /// （既定OFF・同期しない。2026-11-25）。録音を始めるときに入力ソースを iroha に切り替え、
+    /// 切り替わって入力を受け持ったコントローラに認識結果を入れる。キーは修飾キーの変化を全体で受け取って見る
+    /// （`NSEvent.addGlobalMonitorForEvents`。アクセシビリティの許可が要る）
+    static var usesOtherInputSources: Bool {
+        isEnabled && UserDefaults.standard.bool(forKey: otherInputSourcesKey)
+    }
+
     static var recognizer: VoiceRecognizerKind {
         UserDefaults.standard.string(forKey: recognizerKey).flatMap(VoiceRecognizerKind.init(rawValue:)) ?? .speech
     }
@@ -138,6 +147,13 @@ final class VoiceInput {
     private var session: AnyObject?
     private var startTask: Task<Void, Error>?
     private var lastPartial = ""
+    /// 録音を始めるときに入力ソースを iroha に切り替える回か（iroha 以外の入力ソースのときに押した）
+    private var switchesInputSource = false
+    /// 修飾キーの変化を全体で受け取る見張り（`VoiceInputSettings.usesOtherInputSources`）
+    private var globalMonitor: Any?
+    /// 見張りを付けたときにアクセシビリティの許可があったか（許可の前に付けた見張りにはキーが届かないので付け直す）
+    private var globalMonitorTrusted = false
+    private var started = false
     /// 途中結果を入力先の未確定文字列として見せているか（小窓には出さない）
     private var partialShownInPlace = false
 
@@ -156,8 +172,48 @@ final class VoiceInput {
     /// 録音中・認識待ちか（このあいだ修飾キーの変化を受け取り続ける）
     var isBusy: Bool { phase != .idle }
 
-    /// 入力メソッドに届いた修飾キーの変化
-    func handleFlagsChanged(_ event: NSEvent, controller: IrohaInputController) {
+    /// 起動時に 1 回呼ぶ（main.swift）。以後は設定が変わるたび・前面のアプリが替わるたびに、全体の見張りを合わせる
+    func start() {
+        guard !started else { return }
+        started = true
+        syncGlobalMonitor()
+        NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.syncGlobalMonitor() }
+        // アクセシビリティの許可は設定を変えずに与えられるので、アプリが替わるたびにも確かめる
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.syncGlobalMonitor() }
+    }
+
+    private func syncGlobalMonitor() {
+        let wanted = VoiceInputSettings.usesOtherInputSources
+        let trusted = AXIsProcessTrusted()
+        if globalMonitor != nil, !wanted || trusted != globalMonitorTrusted {
+            if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
+            globalMonitor = nil
+        }
+        guard wanted, globalMonitor == nil else { return }
+        globalMonitorTrusted = trusted
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { event in
+            VoiceInput.shared.handleGlobalFlagsChanged(event)
+        }
+    }
+
+    /// ほかのアプリに届いた修飾キーの変化（全体の見張り）。iroha が入力を受け持っていないときだけ扱う
+    /// （受け持っているときは入力メソッドに同じ変化が届く）
+    private func handleGlobalFlagsChanged(_ event: NSEvent) {
+        if phase == .idle {
+            guard VoiceInputSettings.usesOtherInputSources, activeController == nil,
+                  !IrohaInputSource.isCurrent else { return }
+        } else if controller != nil || !switchesInputSource {
+            return
+        }
+        handleFlagsChanged(event, controller: nil)
+    }
+
+    /// 入力メソッドに届いた修飾キーの変化（`controller` が nil なら全体の見張りから。入力ソースを iroha に切り替えて入れる）
+    func handleFlagsChanged(_ event: NSEvent, controller: IrohaInputController?) {
         guard VoiceInputSettings.isEnabled || phase != .idle else { return }
         let key = phase == .idle ? VoiceInputSettings.holdKey : holdKey
         guard Int(event.keyCode) == key.keyCode else {
@@ -183,6 +239,11 @@ final class VoiceInput {
     /// （修飾キーの変化が入力メソッドに届かない場合に備える。届けばそちらが先に拾う）
     func controllerActivated(_ controller: IrohaInputController) {
         activeController = controller
+        // iroha に切り替えて録音している回: 切り替わって受け持ったコントローラを入れ先にする
+        if phase != .idle, switchesInputSource, self.controller == nil {
+            self.controller = controller
+            if !lastPartial.isEmpty, controller.showVoicePartial(lastPartial) { partialShownInPlace = true }
+        }
         if VoiceInputSettings.isEnabled { startPolling() }
     }
 
@@ -196,7 +257,7 @@ final class VoiceInput {
         }
     }
 
-    private func press(_ key: VoiceInputSettings.HoldKey, controller: IrohaInputController) {
+    private func press(_ key: VoiceInputSettings.HoldKey, controller: IrohaInputController?) {
         generation += 1
         let generation = self.generation
         phase = .waiting
@@ -204,6 +265,7 @@ final class VoiceInput {
         pressedAt = Self.now()
         wasDown = true
         self.controller = controller
+        switchesInputSource = controller == nil
         lastPartial = ""
         partialShownInPlace = false
         startPolling()
@@ -221,6 +283,13 @@ final class VoiceInput {
         }
         guard #available(macOS 26.0, *) else {
             reset()
+            return
+        }
+        // iroha 以外の入力ソースで押した: ここで iroha に切り替える（ショートカットに使ったときに切り替えないよう、
+        // 押してすぐではなく録音を始めるときに行う）。受け持ったコントローラは `controllerActivated` で入れ先になる
+        if switchesInputSource, controller == nil, !IrohaInputSource.selectJapanese() {
+            reset()
+            TapInputFeedback.shared.show("こえ: iroha に切り替えられませんでした", duration: 3)
             return
         }
         let generation = self.generation
@@ -300,7 +369,12 @@ final class VoiceInput {
                 TapInputFeedback.shared.show("こえ: 聞き取れませんでした", duration: 1.5)
                 return
             }
-            controller?.insertVoiceTranscript(trimmed)
+            guard let controller else {
+                // iroha に切り替えたが、入力を受け持つコントローラが現れなかった
+                TapInputFeedback.shared.show("こえ: 入れ先が見つかりませんでした（\(trimmed)）", duration: 5)
+                return
+            }
+            controller.insertVoiceTranscript(trimmed)
         case .failure(let error):
             controller?.clearVoicePartial()
             let reason = (error as? VoiceRecognitionError)?.description ?? error.localizedDescription
@@ -330,6 +404,7 @@ final class VoiceInput {
         session = nil
         startTask = nil
         controller = nil
+        switchesInputSource = false
         lastPartial = ""
         TapInputFeedback.shared.hide()
     }
@@ -392,4 +467,28 @@ final class VoiceInput {
     }
 
     private static func now() -> Double { ProcessInfo.processInfo.systemUptime }
+}
+
+/// iroha の入力ソース（「こえ」モードで iroha 以外の入力ソースから切り替えるため）
+enum IrohaInputSource {
+    static let japaneseID = "dev.iroha.inputmethod.iroha.Japanese"
+
+    /// 今の入力ソースが iroha（ひらがな・英数のどちらでも）か
+    static var isCurrent: Bool {
+        let current = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+        return stringProperty(current, kTISPropertyBundleID) == Bundle.main.bundleIdentifier
+    }
+
+    /// iroha のひらがなに切り替える。切り替えられたら true
+    static func selectJapanese() -> Bool {
+        let filter = [kTISPropertyInputSourceID as String: japaneseID] as CFDictionary
+        guard let sources = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource],
+              let source = sources.first else { return false }
+        return TISSelectInputSource(source) == noErr
+    }
+
+    private static func stringProperty(_ source: TISInputSource, _ key: CFString) -> String? {
+        guard let pointer = TISGetInputSourceProperty(source, key) else { return nil }
+        return Unmanaged<CFString>.fromOpaque(pointer).takeUnretainedValue() as String
+    }
 }

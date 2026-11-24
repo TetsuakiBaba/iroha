@@ -157,6 +157,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // タップ入力（加速度センサを利用する設定とタップ入力が ON のときだけセンサを動かす。開発者モード・試験的）
         TapInput.shared.start()
+
+        // 「こえ」モードを iroha 以外の入力ソースでも使う設定なら、修飾キーの変化を全体で見張る
+        VoiceInput.shared.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

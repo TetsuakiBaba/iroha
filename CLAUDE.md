@@ -420,6 +420,12 @@ cd macos && swift build --build-system native && swift test --build-system nativ
     フィラーの除去を評価する材料を集めるためのもの。`<データフォルダ>/logs/voice/voice-<ホスト名>-YYYY-MM.jsonl` に、発話ごとの
     `utterance`（音声認識が返した文字列・表記・読み）と、声を含む合成を確定したときの `commit`（確定した文字列と発話の id）を残す。
     確定の記録はほかの記録と同じく `deferCommitEffect` で包む。プライベートモードの間は残さない。音声は残さない
+  ・iroha 以外の入力ソース（ABC・別の IME の英数）のときも使える（`VoiceInputSettings.usesOtherInputSources`、設定
+    「iroha 以外の入力ソースでも使う」、既定OFF・同期しない。2026-11-25）。決めたキーは修飾キー単独で Carbon のグローバル
+    ホットキーに登録できないので、`NSEvent.addGlobalMonitorForEvents(.flagsChanged)`（アクセシビリティの許可が要る）で見る。
+    録音を始めるとき（押してから 0.12 秒後。ショートカットに使ったときは切り替えない）に `TISSelectInputSource` で iroha の
+    ひらがなに切り替え、`controllerActivated` で受け持ったコントローラを入れ先にする。確定後も iroha のまま。
+    受け持つコントローラが現れなければ認識結果を小窓に出すだけ（貼り付けはしない）
   ・`SpeechTranscriber` の途中結果は `.fastResults` を付けないと発話中に届かない（`.volatileResults` だけでは入力を締めた
     あとにまとめて届く。2026-11-10、`iroha-cli voice --stream` で再現）
   ・`SpeechTranscriber` は英字・数字の前に空白を入れ、句点・疑問符は文が終わったと見たときだけ付ける。

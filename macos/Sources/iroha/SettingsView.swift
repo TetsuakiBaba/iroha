@@ -412,6 +412,8 @@ private struct VoiceInputSection: View {
     @AppStorage(VoiceInputSettings.enabledKey) private var enabled = false
     @AppStorage(VoiceInputSettings.holdKeyKey) private var holdKey = VoiceInputSettings.HoldKey.rightCommand.rawValue
     @AppStorage(VoiceInputSettings.recognizerKey) private var recognizer = VoiceRecognizerKind.speech.rawValue
+    @AppStorage(VoiceInputSettings.otherInputSourcesKey) private var otherInputSources = false
+    @State private var accessibilityGranted = AXIsProcessTrusted()
     @AppStorage(VoiceLogSettings.enabledKey) private var logEnabled = false
     @AppStorage(DeveloperModeSettings.enabledKey) private var developerMode = false
     @AppStorage(PrivateModeSettings.enabledKey) private var privateMode = false
@@ -453,6 +455,33 @@ private struct VoiceInputSection: View {
                     isDisabled: !enabled)
             }
             .disabled(!enabled)
+            HelpToggle(
+                title: "iroha 以外の入力ソースでも使う", isOn: $otherInputSources,
+                help: "ONの間、ABC やほかの入力メソッド（英数の入力に別の入力メソッドを使っている場合など）を選んでいるときも、"
+                    + "上で決めたキーを押し続けると録音を始めます。録音を始めるときに入力ソースを iroha（ひらがな）に切り替え、"
+                    + "認識結果は iroha の入力中の文字（未確定文字列）に入ります。確定したあとも入力ソースは iroha のままです。"
+                    + "iroha 以外の入力ソースのときにキーを見るため、アクセシビリティの許可が要ります。"
+                    + "iroha が一度も起動していないとき（ログインしてから iroha を一度も選んでいないなど）は使えません。"
+                    + "この設定は他のMacと同期しません。",
+                isDisabled: !enabled)
+                .disabled(!enabled)
+            if enabled && otherInputSources && !accessibilityGranted {
+                HStack {
+                    Label("iroha 以外の入力ソースでキーを見るにはアクセシビリティの許可が要ります",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button("システム設定を開く") {
+                        if let url = URL(
+                            string: "x-apple.systempreferences:"
+                                + "com.apple.preference.security?Privacy_Accessibility") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    Button("再確認") { accessibilityGranted = AXIsProcessTrusted() }
+                }
+            }
             Picker(selection: $recognizer) {
                 Text("新しいモデル").tag(VoiceRecognizerKind.speech.rawValue)
                 Text("音声入力と同じ系統").tag(VoiceRecognizerKind.dictation.rawValue)
@@ -481,6 +510,7 @@ private struct VoiceInputSection: View {
         }
         .task(id: recognizer) { await refresh() }
         .onChange(of: enabled) { _, _ in Task { await refresh() } }
+        .onAppear { accessibilityGranted = AXIsProcessTrusted() }
         .task(id: logEnabled) { await refreshLoggedCount() }
     }
 
