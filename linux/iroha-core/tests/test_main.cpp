@@ -2,6 +2,8 @@
 // 移植元: macos/Tests/IrohaCoreTests/（テストケースは1対1で対応させること）
 #include <cstdio>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "iroha/kana.h"
 #include "iroha/reading_aligner.h"
@@ -68,8 +70,105 @@ void TestYouon() {
     EXPECT_EQ(Compose(U"kyakyukyo"), U"きゃきゅきょ");
     EXPECT_EQ(Compose(U"shashusho"), U"しゃしゅしょ");
     EXPECT_EQ(Compose(U"chachucho"), U"ちゃちゅちょ");
+    EXPECT_EQ(Compose(U"cyacyucyo"), U"ちゃちゅちょ");
     EXPECT_EQ(Compose(U"jajujo"), U"じゃじゅじょ");
     EXPECT_EQ(Compose(U"ryaryuryo"), U"りゃりゅりょ");
+}
+
+// Google日本語入力（Mozc の romanji-hiragana.tsv）にあって iroha に無かった綴り（2026-11-24 に照合して足した。macOS版 40e2c45）
+void TestGoogleJapaneseInputSpellings() {
+    const std::vector<std::pair<std::u32string, std::u32string>> expected = {
+        {U"cya", U"ちゃ"},
+        {U"cyi", U"ちぃ"},
+        {U"cyu", U"ちゅ"},
+        {U"cye", U"ちぇ"},
+        {U"cyo", U"ちょ"},
+        {U"xn", U"ん"},
+        {U"lyi", U"ぃ"},
+        {U"xyi", U"ぃ"},
+        {U"lye", U"ぇ"},
+        {U"xye", U"ぇ"},
+        {U"lka", U"ヵ"},
+        {U"lke", U"ヶ"},
+        {U"xtsu", U"っ"},
+        {U"vya", U"ゔゃ"},
+        {U"vyi", U"ゔぃ"},
+        {U"vyu", U"ゔゅ"},
+        {U"vye", U"ゔぇ"},
+        {U"vyo", U"ゔょ"},
+        {U"hwa", U"ふぁ"},
+        {U"hwi", U"ふぃ"},
+        {U"hwe", U"ふぇ"},
+        {U"hwo", U"ふぉ"},
+        {U"hwyu", U"ふゅ"},
+        {U"gyi", U"ぎぃ"},
+        {U"gye", U"ぎぇ"},
+        {U"dyi", U"ぢぃ"},
+        {U"dye", U"ぢぇ"},
+        {U"hyi", U"ひぃ"},
+        {U"hye", U"ひぇ"},
+        {U"byi", U"びぃ"},
+        {U"bye", U"びぇ"},
+        {U"pyi", U"ぴぃ"},
+        {U"pye", U"ぴぇ"},
+        {U"myi", U"みぃ"},
+        {U"mye", U"みぇ"},
+        {U"ryi", U"りぃ"},
+        {U"rye", U"りぇ"},
+        {U"jyi", U"じぃ"},
+        {U"jye", U"じぇ"},
+        {U"twa", U"とぁ"},
+        {U"twi", U"とぃ"},
+        {U"twe", U"とぇ"},
+        {U"two", U"とぉ"},
+        {U"dwa", U"どぁ"},
+        {U"dwi", U"どぃ"},
+        {U"dwe", U"どぇ"},
+        {U"dwo", U"どぉ"},
+        {U"kwa", U"くぁ"},
+        {U"kwi", U"くぃ"},
+        {U"kwu", U"くぅ"},
+        {U"kwe", U"くぇ"},
+        {U"kwo", U"くぉ"},
+        {U"gwa", U"ぐぁ"},
+        {U"gwi", U"ぐぃ"},
+        {U"gwu", U"ぐぅ"},
+        {U"gwe", U"ぐぇ"},
+        {U"gwo", U"ぐぉ"},
+        {U"swa", U"すぁ"},
+        {U"swi", U"すぃ"},
+        {U"swu", U"すぅ"},
+        {U"swe", U"すぇ"},
+        {U"swo", U"すぉ"},
+        {U"zwa", U"ずぁ"},
+        {U"zwi", U"ずぃ"},
+        {U"zwu", U"ずぅ"},
+        {U"zwe", U"ずぇ"},
+        {U"zwo", U"ずぉ"},
+        {U"t'i", U"てぃ"},
+        {U"t'yu", U"てゅ"},
+        {U"d'i", U"でぃ"},
+        {U"d'yu", U"でゅ"},
+        {U"t'u", U"とぅ"},
+        {U"d'u", U"どぅ"},
+        {U"wyi", U"ゐ"},
+        {U"wye", U"ゑ"},
+        {U"whu", U"う"},
+    };
+    EXPECT_TRUE(expected.size() == 76);
+    for (const auto& [romaji, kana] : expected) {
+        EXPECT_EQ(Compose(romaji), kana);
+    }
+}
+
+// 足した綴りの頭だけを打ったときは、足す前と同じ結果になる
+void TestPartialNewSpellingsKeepPreviousResult() {
+    EXPECT_EQ(Compose(U"t'a"), U"t'あ");
+    EXPECT_EQ(Compose(U"d'a"), U"d'あ");
+    EXPECT_EQ(Compose(U"kwyo"), U"kwよ");
+    EXPECT_EQ(Compose(U"hwya"), U"hwや");
+    EXPECT_EQ(Compose(U"xnn"), U"んn");
+    EXPECT_EQ(Compose(U"kkwa"), U"っくぁ");
 }
 
 void TestSokuon() {
@@ -77,6 +176,7 @@ void TestSokuon() {
     EXPECT_EQ(Compose(U"kippu"), U"きっぷ");
     EXPECT_EQ(Compose(U"zasshi"), U"ざっし");
     EXPECT_EQ(Compose(U"matcha"), U"まっちゃ");
+    EXPECT_EQ(Compose(U"maccya"), U"まっちゃ");
     EXPECT_EQ(Compose(U"ltu"), U"っ");
     EXPECT_EQ(Compose(U"xtu"), U"っ");
 }
@@ -404,6 +504,8 @@ int main() {
     TestBasicGojuon();
     TestDakutenHandakuten();
     TestYouon();
+    TestGoogleJapaneseInputSpellings();
+    TestPartialNewSpellingsKeepPreviousResult();
     TestSokuon();
     TestHatsuon();
     TestSmallVowels();
