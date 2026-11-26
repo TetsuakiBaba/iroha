@@ -1,11 +1,15 @@
 // iroha-coreの単体テスト。
 // 移植元: macos/Tests/IrohaCoreTests/（テストケースは1対1で対応させること）
 #include <cstdio>
+#include <filesystem>
+#include <unistd.h>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "iroha/config.h"
 #include "iroha/kana.h"
+#include "iroha/kana_type_keys.h"
 #include "iroha/reading_aligner.h"
 #include "iroha/reading_constraint.h"
 #include "iroha/romaji_composer.h"
@@ -204,6 +208,69 @@ void TestSmallVowels() {
     EXPECT_EQ(Compose(U"thi"), U"てぃ");
     EXPECT_EQ(Compose(U"dhi"), U"でぃ");
     EXPECT_EQ(Compose(U"vaiorin"), U"ゔぁいおりn");
+}
+
+// 文字の種類を変える Control のキーの系列（macOS版 KanaTypeKeysTests）
+void TestKanaTypeKeys() {
+    using iroha::KanaTypeConversion;
+    using iroha::KanaTypeConversionForControlKey;
+    using iroha::KanaTypeKeyStyle;
+    const auto is = [](KanaTypeKeyStyle style, char32_t key, KanaTypeConversion expected) {
+        const auto conversion = KanaTypeConversionForControlKey(style, key);
+        return conversion && *conversion == expected;
+    };
+    const auto none = [](KanaTypeKeyStyle style, char32_t key) {
+        return !KanaTypeConversionForControlKey(style, key).has_value();
+    };
+    // Windows
+    EXPECT_TRUE(is(KanaTypeKeyStyle::Windows, U'u', KanaTypeConversion::Hiragana));
+    EXPECT_TRUE(is(KanaTypeKeyStyle::Windows, U'i', KanaTypeConversion::Katakana));
+    EXPECT_TRUE(is(KanaTypeKeyStyle::Windows, U'o', KanaTypeConversion::HalfWidthKatakana));
+    EXPECT_TRUE(is(KanaTypeKeyStyle::Windows, U'p', KanaTypeConversion::FullWidthAlphanumeric));
+    EXPECT_TRUE(is(KanaTypeKeyStyle::Windows, U't', KanaTypeConversion::HalfWidthAlphanumeric));
+    EXPECT_TRUE(none(KanaTypeKeyStyle::Windows, U'k'));
+    // macOS 標準（ことえり）
+    EXPECT_TRUE(is(KanaTypeKeyStyle::Kotoeri, U'j', KanaTypeConversion::Hiragana));
+    EXPECT_TRUE(is(KanaTypeKeyStyle::Kotoeri, U'k', KanaTypeConversion::Katakana));
+    EXPECT_TRUE(is(KanaTypeKeyStyle::Kotoeri, U';', KanaTypeConversion::HalfWidthKatakana));
+    EXPECT_TRUE(is(KanaTypeKeyStyle::Kotoeri, U'l', KanaTypeConversion::FullWidthAlphanumeric));
+    EXPECT_TRUE(is(KanaTypeKeyStyle::Kotoeri, U':', KanaTypeConversion::HalfWidthAlphanumeric));
+    EXPECT_TRUE(is(KanaTypeKeyStyle::Kotoeri, U'\'', KanaTypeConversion::HalfWidthAlphanumeric));
+    EXPECT_TRUE(none(KanaTypeKeyStyle::Kotoeri, U'u'));
+    EXPECT_TRUE(none(KanaTypeKeyStyle::Kotoeri, U'i'));
+    // ATOK
+    EXPECT_TRUE(is(KanaTypeKeyStyle::Atok, U'u', KanaTypeConversion::Hiragana));
+    EXPECT_TRUE(is(KanaTypeKeyStyle::Atok, U'@', KanaTypeConversion::HalfWidthAlphanumeric));
+    EXPECT_TRUE(none(KanaTypeKeyStyle::Atok, U't'));
+    // どの系列も 5 種類の変換をすべて持つ
+    const std::u32string keys = U"abcdefghijklmnopqrstuvwxyz;:'@";
+    for (const KanaTypeKeyStyle style : {KanaTypeKeyStyle::Windows, KanaTypeKeyStyle::Kotoeri, KanaTypeKeyStyle::Atok}) {
+        bool covered[5] = {false, false, false, false, false};
+        for (const char32_t key : keys) {
+            if (const auto conversion = KanaTypeConversionForControlKey(style, key)) {
+                covered[static_cast<int>(*conversion)] = true;
+            }
+        }
+        EXPECT_TRUE(covered[0] && covered[1] && covered[2] && covered[3] && covered[4]);
+    }
+    // 設定の値（知らない値・空なら windows）
+    EXPECT_TRUE(iroha::ParseKanaTypeKeyStyle("kotoeri") == KanaTypeKeyStyle::Kotoeri);
+    EXPECT_TRUE(iroha::ParseKanaTypeKeyStyle("atok") == KanaTypeKeyStyle::Atok);
+    EXPECT_TRUE(iroha::ParseKanaTypeKeyStyle("windows") == KanaTypeKeyStyle::Windows);
+    EXPECT_TRUE(iroha::ParseKanaTypeKeyStyle("") == KanaTypeKeyStyle::Windows);
+    EXPECT_TRUE(iroha::ParseKanaTypeKeyStyle("emacs") == KanaTypeKeyStyle::Windows);
+    for (const KanaTypeKeyStyle style : {KanaTypeKeyStyle::Windows, KanaTypeKeyStyle::Kotoeri, KanaTypeKeyStyle::Atok}) {
+        EXPECT_TRUE(iroha::ParseKanaTypeKeyStyle(iroha::KanaTypeKeyStyleName(style)) == style);
+    }
+    // config.json に書いて読み戻せる（既定は windows）
+    EXPECT_TRUE(iroha::Config{}.kanaTypeKeyStyle == "windows");
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / ("iroha-kana-type-keys-" + std::to_string(::getpid()) + ".json");
+    iroha::Config config;
+    config.kanaTypeKeyStyle = "kotoeri";
+    EXPECT_TRUE(iroha::SaveConfig(path, config));
+    EXPECT_TRUE(iroha::LoadConfig(path).kanaTypeKeyStyle == "kotoeri");
+    std::filesystem::remove(path);
 }
 
 void TestSymbols() {
@@ -509,6 +576,7 @@ int main() {
     TestSokuon();
     TestHatsuon();
     TestSmallVowels();
+    TestKanaTypeKeys();
     TestSymbols();
     TestPendingDisplay();
     TestDeleteBackward();

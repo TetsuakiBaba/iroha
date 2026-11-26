@@ -32,6 +32,9 @@ struct Config {
     std::u32string punctuation = U"、。";
     // 入力していないときの Space を全角スペースにするか（偽なら半角。Shift+Space は常に半角）
     bool fullWidthSpace = true;
+    // 入力中の文字の種類を変える Control のキーの系列（"windows"・"kotoeri"・"atok"。macOS版と同じキー kanaTypeKeyStyle。
+    // 知らない値・空なら windows。iroha/kana_type_keys.h の ParseKanaTypeKeyStyle で読む）
+    std::string kanaTypeKeyStyle = "windows";
     // 専門辞書のうち「ライブ変換にも使う」にした辞書の ID（カンマ区切り。既定は空。macOS版と同じキー
     // termDictionaryLiveConversion）。入れた辞書の語をユーザ辞書と同じ規則でライブ変換でも当てる
     std::string termDictionaryLiveConversion;

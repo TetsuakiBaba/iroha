@@ -24,6 +24,7 @@
 #include "iroha/config.h"
 #include "iroha/conversion_log.h"
 #include "iroha/engine_assembly.h"
+#include "iroha/kana_type_keys.h"
 #include "iroha/input_history.h"
 #include "iroha/lattice_converter.h"
 #include "iroha/learning_engine.h"
@@ -64,6 +65,8 @@ public:
     const SessionSettings& Settings() const { return sessionSettings_; }
     // かな・英数を切り替えるキー（KeyShortcut::Encode。0 なら割り当てなし。設定 inputModeHotkey）
     uint32_t InputModeShortcut() const { return inputModeShortcut_; }
+    // 入力中の文字の種類を変える Control のキーの系列（設定 kanaTypeKeyStyle。既定 Windows）
+    KanaTypeKeyStyle KanaTypeKeys() const { return kanaTypeKeyStyle_; }
     // かな・英数を切り替えたときにカーソルの近くに「あ」「A」を出すか（設定 inputModeIndicator）
     bool InputModeIndicator() const { return inputModeIndicator_; }
     // 入力メニューを組むのに使う今の状態（入力モード・版は呼ぶ側で入れる）
@@ -144,6 +147,7 @@ private:
     // 変換の学習を使うか（設定 learningEnabled。OFF なら記録も適用もしない）
     std::atomic<bool> learningEnabled_{true};
     uint32_t inputModeShortcut_ = 0;
+    KanaTypeKeyStyle kanaTypeKeyStyle_ = kDefaultKanaTypeKeyStyle;
     bool inputModeIndicator_ = true;
     std::string inputModeShortcutLabel_;
     std::string privateModeShortcutLabel_;

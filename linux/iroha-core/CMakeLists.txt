@@ -25,6 +25,7 @@ add_library(iroha-core STATIC
     src/input_session.cpp
     src/json.cpp
     src/kana.cpp
+    src/kana_type_keys.cpp
     src/lattice_converter.cpp
     src/lattice_rescoring_engine.cpp
     src/lattice/dicdata.cpp

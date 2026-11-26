@@ -229,6 +229,7 @@ void EngineHost::Build() {
     inputModeShortcut_ = modeShortcut ? modeShortcut->Encode() : 0;
     inputModeShortcutLabel_ = modeShortcut ? config.inputModeHotkey : "";
     inputModeIndicator_ = config.inputModeIndicator;
+    kanaTypeKeyStyle_ = ParseKanaTypeKeyStyle(config.kanaTypeKeyStyle);
     learningEnabled_ = config.learningEnabled;
     sessionSettings_.conversionLog = config.conversionLog;
     sessionSettings_.typoCorrection = config.typoCorrection;

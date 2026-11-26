@@ -487,7 +487,9 @@ cd macos && swift build --build-system native && swift test --build-system nativ
   macOS 標準（ことえり。Ctrl+J/K/;/L/:、英語配列は Ctrl+'）・ATOK（Ctrl+U/I/O/P/@）から選ぶ。並びは Mozc の
   `src/data/keymap/{ms-ime,kotoeri,atok}.tsv` に合わせた。F6〜F10 はどの系列でも効く。効くのは入力中（Space の前）だけ。
   Shift つきは扱わない（Ctrl+Shift+J などのモード切り替えに当てないため。@ だけは英語配列で Shift+2 なので許す）。
-  Windows版・Linux版の `InputSession` は Ctrl+U/I/O/P/T のまま（系列の設定は未移植）
+  Windows版の `InputSession` は Ctrl+U/I/O/P/T のまま（系列の設定は未移植）。
+  Linux版は IBus・fcitx5 が共有するキーの読み替え（`linux/ibus-iroha/key_decision`）で系列を判定する（表は `iroha/kana_type_keys.h`、
+  設定は config.json の `kanaTypeKeyStyle`。2026-11-26）。キーの文字は配列で決まる keysym（JIS の : ; @、英語配列の ' と Shift+2 の @）
 - 候補ウィンドウの辞書ラティスには azooKey の特別な候補（`LatticeConverter.specialCandidateProviders`、2026-10-27）を
   入れている: 桁区切り（「12345」→ 12,345）・時刻（「1230」→ 12:30）・和暦西暦（「2026ねん」→ 令和8年）。
   和暦西暦だけは azooKey の実装ではなく iroha の `EraYearCandidates`（2026-11-13）: azooKey v0.11.2 は明治の年で

@@ -4,12 +4,15 @@
 // 規則は Windows版 TIP の TextService::DecideKey（macOS版 IrohaInputController.handleKey と同じ扱い）:
 //   印字できる ASCII 文字は常に、Enter / Esc / Backspace / Space・矢印は合成中だけ
 //   （矢印は文節変換中は文節の移動、入力中は握りつぶす）。入力していないときの Space は設定で全角にする。
-//   F6〜F10・Ctrl+U/I/O/P/T は入力中（文節変換中でない）だけ、Ctrl+. は常に受ける。
+//   F6〜F10 と、文字の種類を変える Control のキー（設定で選んだ系列。Windows なら Ctrl+U/I/O/P/T、ことえりなら
+//   Ctrl+J/K/;/L/:（英語配列は Ctrl+'）、ATOK なら Ctrl+U/I/O/P/@。iroha/kana_type_keys.h）は入力中（文節変換中でない）だけ、
+//   Ctrl+. は常に受ける。系列にない Control のキーは、ほかの Control のキーと同じく確定してからアプリに渡す。
 //   合成中に IME が扱わないキー（Ctrl+S・Alt・Super の組み合わせなど）は、確定してからアプリに渡す
 #include <cstdint>
 #include <vector>
 
 #include "iroha/input_session.h"
+#include "iroha/kana_type_keys.h"
 
 namespace iroha::ibus {
 
@@ -37,6 +40,7 @@ struct KeyContext {
     std::vector<uint32_t> aiShortcuts;       // AI変換のプリセットのキー（同じ形。0 なら割り当てなし）
     uint32_t privateModeShortcut = 0x50 | (1u << 16) | (1u << 17); // プライベートモードのキー（既定 Ctrl+Alt+P。0 なら無し）
     uint32_t inputModeShortcut = 0x20 | (1u << 16); // かな・英数を切り替えるキー（既定 Ctrl+Space。0 なら無し）
+    KanaTypeKeyStyle kanaTypeKeyStyle = kDefaultKanaTypeKeyStyle; // 文字の種類を変える Control のキーの系列（設定）
 };
 
 struct KeyDecision {

@@ -570,7 +570,10 @@ gboolean ProcessKeyEvent(IBusEngine* engine, guint keyval, guint keycode, guint 
         context.aiFixShortcut = state.shown.aiFixShortcut;
         context.aiShortcuts = state.shown.aiShortcuts;
         context.privateModeShortcut = state.privateModeShortcut;
-        if (sharedHost) context.inputModeShortcut = sharedHost->InputModeShortcut();
+        if (sharedHost) {
+            context.inputModeShortcut = sharedHost->InputModeShortcut();
+            context.kanaTypeKeyStyle = sharedHost->KanaTypeKeys();
+        }
         const iroha::ibus::KeyDecision decision = iroha::ibus::DecideKey(keyval, modifiers, context);
         using Kind = iroha::ibus::KeyDecision::Kind;
         switch (decision.kind) {

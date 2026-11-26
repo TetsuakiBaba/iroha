@@ -86,12 +86,74 @@ void TestDisplayForms() {
     EXPECT_TRUE(IsSession(DecideKey(0xffc7, 0, Composing()), SessionKey::DisplayHalfAlphanumeric));
     EXPECT_TRUE(DecideKey(0xffc4, 0, Idle()).kind == Kind::Pass);
     EXPECT_TRUE(DecideKey(0xffc4, 0, Segmenting()).kind == Kind::CommitThenPass);
-    // Ctrl+U/I/O/P/T（大文字で来ても同じ）
+    // Ctrl+U/I/O/P/T（既定の Windows の系列。Caps Lock で大文字で来ても同じ）
     EXPECT_TRUE(IsSession(DecideKey('u', m::kControl, Composing()), SessionKey::DisplayHiragana));
-    EXPECT_TRUE(IsSession(DecideKey('I', m::kControl | m::kShift, Composing()), SessionKey::DisplayKatakana));
+    EXPECT_TRUE(IsSession(DecideKey('i', m::kControl, Composing()), SessionKey::DisplayKatakana));
+    EXPECT_TRUE(IsSession(DecideKey('o', m::kControl, Composing()), SessionKey::DisplayHalfKatakana));
+    EXPECT_TRUE(IsSession(DecideKey('p', m::kControl, Composing()), SessionKey::DisplayFullAlphanumeric));
     EXPECT_TRUE(IsSession(DecideKey('t', m::kControl, Composing()), SessionKey::DisplayHalfAlphanumeric));
+    EXPECT_TRUE(IsSession(DecideKey('U', m::kControl, Composing()), SessionKey::DisplayHiragana));
+    // Shift つき（Ctrl+Shift+I）は系列のキーとして扱わない（macOS版と同じ。2026-11-26 から）
+    EXPECT_TRUE(DecideKey('I', m::kControl | m::kShift, Composing()).kind == Kind::CommitThenPass);
+    // 文節変換中は確定してアプリに渡す
+    EXPECT_TRUE(DecideKey('u', m::kControl, Segmenting()).kind == Kind::CommitThenPass);
     // 入力していなければアプリのショートカット
     EXPECT_TRUE(DecideKey('u', m::kControl, Idle()).kind == Kind::Pass);
+}
+
+KeyContext ComposingWith(iroha::KanaTypeKeyStyle style) {
+    KeyContext c = Composing();
+    c.kanaTypeKeyStyle = style;
+    return c;
+}
+
+// 文字の種類を変える Control のキーの系列（macOS版 KanaTypeKeysTests と同じ組み合わせ）。
+// keyval は配列で決まる文字の keysym（JIS の : は colon、; は semicolon、@ は at。英語配列の ' は apostrophe、
+// @ は Shift+2 の at）
+void TestKanaTypeKeyStyles() {
+    using Style = iroha::KanaTypeKeyStyle;
+    const KeyContext windows = ComposingWith(Style::Windows);
+    EXPECT_TRUE(IsSession(DecideKey('u', m::kControl, windows), SessionKey::DisplayHiragana));
+    EXPECT_TRUE(IsSession(DecideKey('t', m::kControl, windows), SessionKey::DisplayHalfAlphanumeric));
+    // 系列にない Control のキーは今と同じく確定してアプリに渡す
+    EXPECT_TRUE(DecideKey('k', m::kControl, windows).kind == Kind::CommitThenPass);
+    EXPECT_TRUE(DecideKey('@', m::kControl | m::kShift, windows).kind == Kind::CommitThenPass);
+
+    const KeyContext kotoeri = ComposingWith(Style::Kotoeri);
+    EXPECT_TRUE(IsSession(DecideKey('j', m::kControl, kotoeri), SessionKey::DisplayHiragana));
+    EXPECT_TRUE(IsSession(DecideKey('k', m::kControl, kotoeri), SessionKey::DisplayKatakana));
+    EXPECT_TRUE(IsSession(DecideKey(';', m::kControl, kotoeri), SessionKey::DisplayHalfKatakana));
+    EXPECT_TRUE(IsSession(DecideKey('l', m::kControl, kotoeri), SessionKey::DisplayFullAlphanumeric));
+    EXPECT_TRUE(IsSession(DecideKey(':', m::kControl, kotoeri), SessionKey::DisplayHalfAlphanumeric));
+    EXPECT_TRUE(IsSession(DecideKey('\'', m::kControl, kotoeri), SessionKey::DisplayHalfAlphanumeric));
+    EXPECT_TRUE(DecideKey('u', m::kControl, kotoeri).kind == Kind::CommitThenPass);
+    EXPECT_TRUE(DecideKey('i', m::kControl, kotoeri).kind == Kind::CommitThenPass);
+    // Ctrl+Shift+J（モード切り替えに使う組み合わせ）と、英語配列の Shift+; の : は扱わない
+    EXPECT_TRUE(DecideKey('J', m::kControl | m::kShift, kotoeri).kind == Kind::CommitThenPass);
+    EXPECT_TRUE(DecideKey(':', m::kControl | m::kShift, kotoeri).kind == Kind::CommitThenPass);
+    // 入力していなければアプリのショートカット、文節変換中は確定して渡す
+    KeyContext kotoeriIdle = Idle();
+    kotoeriIdle.kanaTypeKeyStyle = Style::Kotoeri;
+    EXPECT_TRUE(DecideKey('k', m::kControl, kotoeriIdle).kind == Kind::Pass);
+    KeyContext kotoeriSegmenting = Segmenting();
+    kotoeriSegmenting.kanaTypeKeyStyle = Style::Kotoeri;
+    EXPECT_TRUE(DecideKey('k', m::kControl, kotoeriSegmenting).kind == Kind::CommitThenPass);
+
+    const KeyContext atok = ComposingWith(Style::Atok);
+    EXPECT_TRUE(IsSession(DecideKey('u', m::kControl, atok), SessionKey::DisplayHiragana));
+    EXPECT_TRUE(IsSession(DecideKey('i', m::kControl, atok), SessionKey::DisplayKatakana));
+    EXPECT_TRUE(IsSession(DecideKey('o', m::kControl, atok), SessionKey::DisplayHalfKatakana));
+    EXPECT_TRUE(IsSession(DecideKey('p', m::kControl, atok), SessionKey::DisplayFullAlphanumeric));
+    // @ は JIS では Shift なし、英語配列では Shift+2
+    EXPECT_TRUE(IsSession(DecideKey('@', m::kControl, atok), SessionKey::DisplayHalfAlphanumeric));
+    EXPECT_TRUE(IsSession(DecideKey('@', m::kControl | m::kShift, atok), SessionKey::DisplayHalfAlphanumeric));
+    EXPECT_TRUE(DecideKey('t', m::kControl, atok).kind == Kind::CommitThenPass);
+
+    // F6〜F10 はどの系列でも効く
+    for (const Style style : {Style::Windows, Style::Kotoeri, Style::Atok}) {
+        EXPECT_TRUE(IsSession(DecideKey(0xffc3, 0, ComposingWith(style)), SessionKey::DisplayHiragana));
+        EXPECT_TRUE(IsSession(DecideKey(0xffc7, 0, ComposingWith(style)), SessionKey::DisplayHalfAlphanumeric));
+    }
 }
 
 void TestShortcuts() {
@@ -224,6 +286,7 @@ int main() {
     TestEditingKeys();
     TestSpace();
     TestDisplayForms();
+    TestKanaTypeKeyStyles();
     TestShortcuts();
     TestTabAndUndo();
     TestInputModes();

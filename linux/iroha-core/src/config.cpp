@@ -192,6 +192,7 @@ Config LoadConfig(const std::filesystem::path& path) {
     text("selectionTriggerMode", &config.selectionTriggerMode);
     text("privateModeHotkey", &config.privateModeHotkey);
     text("inputModeHotkey", &config.inputModeHotkey);
+    text("kanaTypeKeyStyle", &config.kanaTypeKeyStyle);
     if (const json::Value* indicator = root.Find("inputModeIndicator");
         indicator && indicator->type == json::Value::Type::Bool) {
         config.inputModeIndicator = indicator->boolean;
@@ -239,6 +240,7 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                       ",\"privateMode\":" + (config.privateMode ? "true" : "false") +
                       ",\"privateModeHotkey\":" + json::QuoteString(config.privateModeHotkey) +
                       ",\"inputModeHotkey\":" + json::QuoteString(config.inputModeHotkey) +
+                      ",\"kanaTypeKeyStyle\":" + json::QuoteString(config.kanaTypeKeyStyle) +
                       ",\"inputModeIndicator\":" + (config.inputModeIndicator ? "true" : "false") +
                       ",\"learningEnabled\":" + (config.learningEnabled ? "true" : "false") +
                       ",\"documentContext\":" + (config.documentContext ? "true" : "false") +

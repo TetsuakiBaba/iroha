@@ -34,6 +34,7 @@
 #include "iroha/config.h"
 #include "iroha/conversion_log.h"
 #include "iroha/input_history.h"
+#include "iroha/kana_type_keys.h"
 #include "iroha/learning_store.h"
 #include "iroha/platform.h"
 #include "iroha/term_dictionary.h"
@@ -60,6 +61,21 @@ constexpr char kApplicationId[] = "jp.iroha.Settings";
 
 // 句読点の組（設定の値と表示）
 const char* const kPunctuations[] = {"、。", "，．"};
+// 文字の種類を変える Control のキーの系列（設定 kanaTypeKeyStyle の値と表示。macOS版の設定画面と同じ並び）
+const iroha::KanaTypeKeyStyle kKanaTypeKeyStyles[] = {iroha::KanaTypeKeyStyle::Windows, iroha::KanaTypeKeyStyle::Kotoeri,
+                                                      iroha::KanaTypeKeyStyle::Atok};
+const char* const kKanaTypeKeyStyleLabels[] = {"Windows（Ctrl+U・I・O・P・T）", "macOS 標準（Ctrl+J・K・;・L・:）",
+                                               "ATOK（Ctrl+U・I・O・P・@）"};
+// 説明（macOS版 SettingsView の「文字の種類を変えるキー」の ? と同じ文面）
+const char kKanaTypeKeyHelp[] =
+    "入力中（Spaceを押す前）に、入力中の文字をひらがな・カタカナ・半角カタカナ・全角英数・半角英数に変える"
+    "Controlのキーの組み合わせを、ほかの日本語入力に合わせて選びます。"
+    "Windows（Microsoft IME）: Ctrl+U ひらがな・Ctrl+I カタカナ・Ctrl+O 半角カタカナ・Ctrl+P 全角英数・Ctrl+T 半角英数。"
+    "macOS 標準（日本語入力・ことえり）: Ctrl+J ひらがな・Ctrl+K カタカナ・Ctrl+; 半角カタカナ・Ctrl+L 全角英数・"
+    "Ctrl+: 半角英数（英語配列のキーボードでは Ctrl+'）。"
+    "ATOK: Windows と同じで、半角英数だけ Ctrl+@。"
+    "F6〜F10（ひらがな・カタカナ・半角カタカナ・全角英数・半角英数）はどれを選んでも使えます。"
+    "選んだ組み合わせにないControlのキーを入力中に押すと、入力中の文字を確定してから、キーをアプリに渡します。";
 // 候補の数の範囲（Windows版の設定画面と同じ）
 constexpr int kMinCandidateCount = 3;
 constexpr int kMaxCandidateCount = 16;
@@ -327,6 +343,7 @@ struct App {
     GtkWidget* symbolsCheck = nullptr;
     GtkWidget* spaceCheck = nullptr;
     GtkWidget* punctuationDrop = nullptr;
+    GtkWidget* kanaTypeDrop = nullptr;
     GtkWidget* countDrop = nullptr;
     GtkWidget* modeKeyEntry = nullptr;
     GtkWidget* modeKeyStatus = nullptr;
@@ -814,6 +831,17 @@ GtkWidget* App::BuildInputPage() {
     gtk_grid_attach(GTK_GRID(grid), Label("かな・英数を切り替えるキー:"), 0, 2, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), modeKeyEntry, 1, 2, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), modeKeyStatus, 2, 2, 1, 1);
+    // 文字の種類を変える Control のキー（macOS版の「文字の種類を変えるキー」。説明はマウスを載せたときに出す）
+    kanaTypeDrop = DropDown({kKanaTypeKeyStyleLabels[0], kKanaTypeKeyStyleLabels[1], kKanaTypeKeyStyleLabels[2]});
+    GtkWidget* kanaTypeLabel = Label("文字の種類を変えるキー:");
+    GtkWidget* kanaTypeNote = Label("F6〜F10 はどれを選んでも使えます", true);
+    gtk_widget_add_css_class(kanaTypeNote, "dim-label");
+    for (GtkWidget* widget : {kanaTypeLabel, kanaTypeDrop, kanaTypeNote}) {
+        gtk_widget_set_tooltip_text(widget, kKanaTypeKeyHelp);
+    }
+    gtk_grid_attach(GTK_GRID(grid), kanaTypeLabel, 0, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), kanaTypeDrop, 1, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), kanaTypeNote, 2, 3, 1, 1);
     modeIndicatorCheck = CheckButton("かな・英数を切り替えたときに、カーソルの近くに「あ」「A」を出す");
     privateCheck = CheckButton("プライベートモード（Ctrl+Alt+P でも切り替え）");
     // macOS版では開発者モードの項目。記号・キーは config.json の delimitedAlphabetStart / End・aiFixShortcut で変えられる
@@ -844,7 +872,7 @@ GtkWidget* App::BuildInputPage() {
             if (!updating) SaveInputPage();
         });
     }
-    for (GtkWidget* drop : {punctuationDrop, countDrop}) {
+    for (GtkWidget* drop : {punctuationDrop, countDrop, kanaTypeDrop}) {
         ConnectNotify(drop, "selected", [this] {
             if (!updating) SaveInputPage();
         });
@@ -883,6 +911,10 @@ void App::RefreshInputPage() {
     const int count = std::clamp(config.candidateCount, kMinCandidateCount, kMaxCandidateCount);
     gtk_drop_down_set_selected(GTK_DROP_DOWN(countDrop), static_cast<guint>(count - kMinCandidateCount));
     gtk_editable_set_text(GTK_EDITABLE(modeKeyEntry), config.inputModeHotkey.c_str());
+    const iroha::KanaTypeKeyStyle kanaTypeStyle = iroha::ParseKanaTypeKeyStyle(config.kanaTypeKeyStyle);
+    for (guint i = 0; i < 3; ++i) {
+        if (kKanaTypeKeyStyles[i] == kanaTypeStyle) gtk_drop_down_set_selected(GTK_DROP_DOWN(kanaTypeDrop), i);
+    }
     updating = false;
     RefreshTypoStatus();
     // ON なら、開いたときに 1 回だけ新しい版のモデルが出ていないか確かめる（macOS版・Windows版と同じ）
@@ -907,6 +939,8 @@ void App::SaveInputPage() {
     config.punctuation = U32(kPunctuations[Selected(punctuationDrop) == 1 ? 1 : 0]);
     const int count = Selected(countDrop);
     if (count >= 0) config.candidateCount = kMinCandidateCount + count;
+    const int kanaType = Selected(kanaTypeDrop);
+    if (kanaType >= 0 && kanaType < 3) config.kanaTypeKeyStyle = iroha::KanaTypeKeyStyleName(kKanaTypeKeyStyles[kanaType]);
     // かな・英数のキーは読めるとき（か空）だけ書く。読めなければ前の値のまま
     const std::string modeKey = Trimmed(EditableText(modeKeyEntry));
     if (modeKey.empty() || iroha::KeyShortcut::Parse(modeKey)) config.inputModeHotkey = modeKey;

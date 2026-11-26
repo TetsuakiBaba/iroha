@@ -163,14 +163,18 @@ KeyDecision DecideKey(uint32_t keyval, uint32_t modifiers, const KeyContext& con
     if (alt || super) return commitThenPass();
     if (control) {
         if (keyval == U'.') return session(SessionKey::TogglePunctuation);
-        if (composing && !segmenting) {
-            switch (Lower(printable)) {
-                case U'u': return session(SessionKey::DisplayHiragana);
-                case U'i': return session(SessionKey::DisplayKatakana);
-                case U'o': return session(SessionKey::DisplayHalfKatakana);
-                case U'p': return session(SessionKey::DisplayFullAlphanumeric);
-                case U't': return session(SessionKey::DisplayHalfAlphanumeric);
-                default: break;
+        // 文字の種類を変える Control のキー（設定で選んだ系列）。keyval は配列で決まる文字（JIS の : ; @、英語配列の '）。
+        // Shift つき（Ctrl+Shift+J などのモード切り替え）は扱わない。@ だけは英語配列で Shift+2 なので許す（macOS版と同じ）
+        const char32_t controlKey = Lower(printable);
+        if (composing && !segmenting && controlKey != 0 && (!decision.shift || controlKey == U'@')) {
+            if (const auto conversion = KanaTypeConversionForControlKey(context.kanaTypeKeyStyle, controlKey)) {
+                switch (*conversion) {
+                    case KanaTypeConversion::Hiragana: return session(SessionKey::DisplayHiragana);
+                    case KanaTypeConversion::Katakana: return session(SessionKey::DisplayKatakana);
+                    case KanaTypeConversion::HalfWidthKatakana: return session(SessionKey::DisplayHalfKatakana);
+                    case KanaTypeConversion::FullWidthAlphanumeric: return session(SessionKey::DisplayFullAlphanumeric);
+                    case KanaTypeConversion::HalfWidthAlphanumeric: return session(SessionKey::DisplayHalfAlphanumeric);
+                }
             }
         }
         if (keyval == key::BackSpace && !composing && context.idleUndoable && !decision.shift) {

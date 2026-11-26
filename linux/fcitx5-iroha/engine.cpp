@@ -209,6 +209,7 @@ public:
             context.aiShortcuts = state.shown.aiShortcuts;
             context.privateModeShortcut = state.privateModeShortcut;
             context.inputModeShortcut = host_.InputModeShortcut();
+            context.kanaTypeKeyStyle = host_.KanaTypeKeys();
             const ibus::KeyDecision decision =
                 ibus::DecideKey(static_cast<uint32_t>(key.sym()), static_cast<uint32_t>(key.states()), context);
             using Kind = ibus::KeyDecision::Kind;
