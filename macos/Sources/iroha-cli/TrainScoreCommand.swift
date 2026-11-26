@@ -10,20 +10,24 @@ import IrohaDocuments
 // tokens は [表記, 読み（ひらがな。付かなければ null）] の並び。line は入力の行番号（0 始まり）。
 // 入力は 1 行ずつ読む（train-full.txt は 26GB あり、丸ごとは読めない）。
 // --shard 2/8 は行番号を 8 で割った余りが 2 の行だけを処理する（複数のプロセスで分けて走らせるとき）
+//
+// --check を付けると、データの読みとの照合もここで行い、読みが合わない行だけを出す（reading_check.py と同じ規則）:
+//   {"line", "reading", "output", "culprits": [[表記, macOS の読み, データでその語に当たる読み], …]}
+// culprits が空なら、合わない語を 1 つに絞れなかった行。あわせて次も書く:
+//   <out>.pairs.tsv    合わない語を 1 つに絞れた行の（回数・表記・データの読み・macOS の読み）
+//   <out>.summary.json 処理した行・合わない行・絞れた行の数
 func runTrainReadingCommand(_ arguments: [String]) {
     guard arguments.count >= 2, let input = fopen(arguments[0], "r") else {
-        FileHandle.standardError.write("使い方: iroha-cli train-reading <train.txt> <out.jsonl> [--shard 番号/数]\n".data(using: .utf8)!)
+        FileHandle.standardError.write("使い方: iroha-cli train-reading <train.txt> <out.jsonl> [--shard 番号/数] [--check]\n".data(using: .utf8)!)
         exit(1)
     }
-    defer { fclose(input) }
-    var shardIndex = 0, shardCount = 1
-    if let index = arguments.firstIndex(of: "--shard"), index + 1 < arguments.count {
-        let parts = arguments[index + 1].split(separator: "/").compactMap { Int($0) }
-        if parts.count == 2, parts[1] > 0, (0..<parts[1]).contains(parts[0]) {
-            shardIndex = parts[0]
-            shardCount = parts[1]
-        }
+    if arguments.contains("--check") {
+        runTrainReadingCheck(input: input, outputPath: arguments[1], arguments: arguments)
+        fclose(input)
+        return
     }
+    defer { fclose(input) }
+    let (shardIndex, shardCount) = parseShard(arguments)
     FileManager.default.createFile(atPath: arguments[1], contents: nil)
     guard let out = FileHandle(forWritingAtPath: arguments[1]) else { exit(1) }
     defer { try? out.close() }
@@ -59,6 +63,199 @@ func runTrainReadingCommand(_ arguments: [String]) {
         }
     }
     out.write(buffer)
+}
+
+/// `--shard 番号/数` を読む（無い・不正なら 0/1）
+private func parseShard(_ arguments: [String]) -> (index: Int, count: Int) {
+    if let index = arguments.firstIndex(of: "--shard"), index + 1 < arguments.count {
+        let parts = arguments[index + 1].split(separator: "/").compactMap { Int($0) }
+        if parts.count == 2, parts[1] > 0, (0..<parts[1]).contains(parts[0]) {
+            return (parts[0], parts[1])
+        }
+    }
+    return (0, 1)
+}
+
+/// データの読み（カタカナ）と、変換結果に macOS で付けた読みの照合。
+/// 文字列は Unicode のスカラー値の並びで扱う（Python の reading_check.py と同じ単位にするため）
+enum ReadingCheck {
+    typealias Text = [UInt32]
+
+    enum Part: Equatable {
+        case wild
+        case literal(Text)
+    }
+
+    static func scalars(_ string: String) -> Text { string.unicodeScalars.map(\.value) }
+
+    static func katakana(_ string: String) -> Text {
+        string.unicodeScalars.map { (0x3041...0x3096).contains($0.value) ? $0.value + 0x60 : $0.value }
+    }
+
+    static func containsKanji(_ string: String) -> Bool {
+        string.unicodeScalars.contains {
+            let v = $0.value
+            return (0x3400...0x9FFF).contains(v) || (0xF900...0xFAFF).contains(v)
+                || v == 0x3005 || v == 0x3006 || v == 0x30F6 || v == 0x30F5
+        }
+    }
+
+    /// 語の並びを「決まった読み」と「任意の文字列」の並びにする（隣り合う決まった読みはつなげる）
+    static func segments(_ tokens: [ReadingToken], free: Int? = nil) -> [Part] {
+        var parts: [Part] = []
+        for (i, token) in tokens.enumerated() {
+            if i == free || token.reading == nil || (containsKanji(token.surface) && token.reading == "") {
+                if parts.last != .wild || i == free { parts.append(.wild) }
+            } else {
+                let reading = katakana(token.reading ?? "")
+                if case .literal(let previous)? = parts.last {
+                    parts[parts.count - 1] = .literal(previous + reading)
+                } else {
+                    parts.append(.literal(reading))
+                }
+            }
+        }
+        return parts
+    }
+
+    static func hasPrefix(_ text: Text, _ part: Text, at position: Int) -> Bool {
+        guard position + part.count <= text.count else { return false }
+        return text[position..<position + part.count].elementsEqual(part)
+    }
+
+    static func find(_ text: Text, _ part: Text, from position: Int) -> Int? {
+        guard position <= text.count else { return nil }
+        if part.isEmpty { return position }
+        guard text.count >= part.count else { return nil }
+        var start = position
+        while start + part.count <= text.count {
+            if text[start] == part[0], hasPrefix(text, part, at: start) { return start }
+            start += 1
+        }
+        return nil
+    }
+
+    /// parts が text 全体に一致するか。一致すれば freeIndex 番目の「任意の文字列」に当たる部分を返す（無ければ空）。
+    /// 決まった読みは前から順に最も左で探し、最後の決まった読みだけは末尾に固定する
+    static func match(_ parts: [Part], _ text: Text, freeIndex: Int? = nil) -> Text? {
+        var position = 0
+        var captured: Text = []
+        var wildStart: Int?
+        var wildCount = -1
+        for (k, part) in parts.enumerated() {
+            guard case .literal(let literal) = part else {
+                wildCount += 1
+                wildStart = position
+                continue
+            }
+            let last = k == parts.count - 1
+            let found: Int
+            if wildStart == nil {
+                guard hasPrefix(text, literal, at: position) else { return nil }
+                found = position
+            } else if last {
+                guard text.count >= literal.count,
+                      text[(text.count - literal.count)...].elementsEqual(literal),
+                      text.count - literal.count >= position else { return nil }
+                found = text.count - literal.count
+            } else {
+                guard let index = find(text, literal, from: position) else { return nil }
+                found = index
+            }
+            if let start = wildStart, wildCount == freeIndex {
+                captured = Array(text[start..<found])
+            }
+            position = found + literal.count
+            wildStart = nil
+        }
+        guard let start = wildStart else {
+            return position == text.count ? captured : nil
+        }
+        if wildCount == freeIndex { captured = Array(text[start...]) }
+        return captured
+    }
+
+    /// 合わなければ合わない語の一覧（表記・macOS の読み・データでその語に当たる読み）。合えば nil
+    static func check(tokens: [ReadingToken], reading: String) -> [[String]]? {
+        let text = scalars(reading)
+        if match(segments(tokens), text) != nil { return nil }
+        var culprits: [[String]] = []
+        for (i, token) in tokens.enumerated() where containsKanji(token.surface) {
+            let parts = segments(tokens, free: i)
+            let freeIndex = segments(Array(tokens[...i]), free: i).filter { $0 == .wild }.count - 1
+            if let captured = match(parts, text, freeIndex: freeIndex) {
+                culprits.append([token.surface, string(katakana(token.reading ?? "")), string(captured)])
+            }
+        }
+        return culprits
+    }
+
+    static func string(_ text: Text) -> String {
+        var result = String.UnicodeScalarView()
+        for value in text { if let scalar = Unicode.Scalar(value) { result.append(scalar) } }
+        return String(result)
+    }
+}
+
+private func runTrainReadingCheck(input: UnsafeMutablePointer<FILE>, outputPath: String, arguments: [String]) {
+    let shard = parseShard(arguments)
+    FileManager.default.createFile(atPath: outputPath, contents: nil)
+    guard let out = FileHandle(forWritingAtPath: outputPath) else { exit(1) }
+    defer { try? out.close() }
+    struct Row: Encodable {
+        let line: Int
+        let reading: String
+        let output: String
+        let culprits: [[String]]
+    }
+    let tokenizer = SystemReadingTokenizer()
+    let encoder = JSONEncoder()
+    var buffer = Data()
+    var pairs: [String: Int] = [:]
+    var processed = 0, flagged = 0, single = 0
+    var linePointer: UnsafeMutablePointer<CChar>?
+    var capacity = 0
+    defer { free(linePointer) }
+    var lineIndex = -1
+    let started = Date()
+    while getline(&linePointer, &capacity, input) > 0 {
+        lineIndex += 1
+        guard lineIndex % shard.count == shard.index, let linePointer else { continue }
+        var line = String(cString: linePointer)
+        if line.hasSuffix("\n") { line.removeLast() }
+        guard let inputRange = line.range(of: "\u{EE00}"),
+              let outputRange = line.range(of: "\u{EE01}", range: inputRange.upperBound..<line.endIndex) else { continue }
+        let reading = String(line[inputRange.upperBound..<outputRange.lowerBound])
+        let output = String(line[outputRange.upperBound...])
+        processed += 1
+        if processed % 1_000_000 == 0 {
+            let elapsed = Date().timeIntervalSince(started)
+            FileHandle.standardError.write(String(format: "[%d/%d] %d 行 %.0f 秒 合わない %d\n",
+                                                  shard.index, shard.count, processed, elapsed, flagged).data(using: .utf8)!)
+        }
+        guard let culprits = ReadingCheck.check(tokens: tokenizer.tokens(in: output), reading: reading) else { continue }
+        flagged += 1
+        if culprits.count == 1 {
+            single += 1
+            let c = culprits[0]
+            pairs[c[0] + "\t" + c[2] + "\t" + c[1], default: 0] += 1
+        }
+        guard let data = try? encoder.encode(Row(line: lineIndex, reading: reading, output: output, culprits: culprits)) else { continue }
+        buffer.append(data)
+        buffer.append(0x0A)
+        if buffer.count >= 1 << 20 {
+            out.write(buffer)
+            buffer.removeAll(keepingCapacity: true)
+        }
+    }
+    out.write(buffer)
+
+    let tsv = pairs.sorted { $0.value > $1.value }.map { "\($0.value)\t\($0.key)" }.joined(separator: "\n")
+    try? (tsv + "\n").write(toFile: outputPath + ".pairs.tsv", atomically: true, encoding: .utf8)
+    let elapsed = Date().timeIntervalSince(started)
+    let summary = "{\"processed\": \(processed), \"flagged\": \(flagged), \"single\": \(single), \"seconds\": \(Int(elapsed))}\n"
+    try? summary.write(toFile: outputPath + ".summary.json", atomically: true, encoding: .utf8)
+    FileHandle.standardError.write("[\(shard.index)/\(shard.count)] 完了: \(summary)".data(using: .utf8)!)
 }
 
 // 学習データ（U+EE02文脈 U+EE00カタカナ読み U+EE01変換結果 の行）の各行を、かな漢字変換モデルで採点する。
