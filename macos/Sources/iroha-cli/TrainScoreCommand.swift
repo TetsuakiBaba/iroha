@@ -16,10 +16,21 @@ import IrohaDocuments
 // culprits が空なら、合わない語を 1 つに絞れなかった行。あわせて次も書く:
 //   <out>.pairs.tsv    合わない語を 1 つに絞れた行の（回数・表記・データの読み・macOS の読み）
 //   <out>.summary.json 処理した行・合わない行・絞れた行の数
+//
+// --fix <組.tsv> を付けると、合わない語を 1 つに絞れた行のうち、その組（表記・データの読み・macOS の読み の TSV。
+// 「データの読みが誤り」と判定した組）に当たる行について、データの読みのその語の部分を macOS の読みに置き換えた
+// 訂正を出す: {"line", "reading"（元の読み）, "fixed"（直した読み）, "surface", "from", "to"}。
+// 直した読みが変換結果の読みと全体で合うことを確かめ、合わなければ出さない。
+// --lines <行番号.txt>（昇順、1 行に 1 つ）を付けると、その行だけを処理する（照合し直す行を絞って速くする）
 func runTrainReadingCommand(_ arguments: [String]) {
     guard arguments.count >= 2, let input = fopen(arguments[0], "r") else {
-        FileHandle.standardError.write("使い方: iroha-cli train-reading <train.txt> <out.jsonl> [--shard 番号/数] [--check]\n".data(using: .utf8)!)
+        FileHandle.standardError.write("使い方: iroha-cli train-reading <train.txt> <out.jsonl> [--shard 番号/数] [--check | --fix <組.tsv> [--lines <行番号.txt>]]\n".data(using: .utf8)!)
         exit(1)
+    }
+    if let index = arguments.firstIndex(of: "--fix"), index + 1 < arguments.count {
+        runTrainReadingFix(input: input, outputPath: arguments[1], pairsPath: arguments[index + 1], arguments: arguments)
+        fclose(input)
+        return
     }
     if arguments.contains("--check") {
         runTrainReadingCheck(input: input, outputPath: arguments[1], arguments: arguments)
@@ -138,8 +149,13 @@ enum ReadingCheck {
     /// parts が text 全体に一致するか。一致すれば freeIndex 番目の「任意の文字列」に当たる部分を返す（無ければ空）。
     /// 決まった読みは前から順に最も左で探し、最後の決まった読みだけは末尾に固定する
     static func match(_ parts: [Part], _ text: Text, freeIndex: Int? = nil) -> Text? {
+        matchSpan(parts, text, freeIndex: freeIndex).map { Array(text[$0]) }
+    }
+
+    /// match と同じ照合で、freeIndex 番目の「任意の文字列」に当たる位置（text の添字の範囲）を返す
+    static func matchSpan(_ parts: [Part], _ text: Text, freeIndex: Int? = nil) -> Range<Int>? {
         var position = 0
-        var captured: Text = []
+        var captured: Range<Int> = 0..<0
         var wildStart: Int?
         var wildCount = -1
         for (k, part) in parts.enumerated() {
@@ -163,7 +179,7 @@ enum ReadingCheck {
                 found = index
             }
             if let start = wildStart, wildCount == freeIndex {
-                captured = Array(text[start..<found])
+                captured = start..<found
             }
             position = found + literal.count
             wildStart = nil
@@ -171,8 +187,23 @@ enum ReadingCheck {
         guard let start = wildStart else {
             return position == text.count ? captured : nil
         }
-        if wildCount == freeIndex { captured = Array(text[start...]) }
+        if wildCount == freeIndex { captured = start..<text.count }
         return captured
+    }
+
+    /// 合わない語が 1 つに絞れたとき、その語（tokens の添字）と、データでその語に当たる読みの位置。
+    /// 合う行・絞れない行は nil
+    static func singleCulprit(tokens: [ReadingToken], text: Text) -> (token: Int, span: Range<Int>)? {
+        if match(segments(tokens), text) != nil { return nil }
+        var found: (Int, Range<Int>)?
+        for (i, token) in tokens.enumerated() where containsKanji(token.surface) {
+            let freeIndex = segments(Array(tokens[...i]), free: i).filter { $0 == .wild }.count - 1
+            if let span = matchSpan(segments(tokens, free: i), text, freeIndex: freeIndex) {
+                if found != nil { return nil }
+                found = (i, span)
+            }
+        }
+        return found
     }
 
     /// 合わなければ合わない語の一覧（表記・macOS の読み・データでその語に当たる読み）。合えば nil
@@ -254,6 +285,95 @@ private func runTrainReadingCheck(input: UnsafeMutablePointer<FILE>, outputPath:
     try? (tsv + "\n").write(toFile: outputPath + ".pairs.tsv", atomically: true, encoding: .utf8)
     let elapsed = Date().timeIntervalSince(started)
     let summary = "{\"processed\": \(processed), \"flagged\": \(flagged), \"single\": \(single), \"seconds\": \(Int(elapsed))}\n"
+    try? summary.write(toFile: outputPath + ".summary.json", atomically: true, encoding: .utf8)
+    FileHandle.standardError.write("[\(shard.index)/\(shard.count)] 完了: \(summary)".data(using: .utf8)!)
+}
+
+private func runTrainReadingFix(input: UnsafeMutablePointer<FILE>, outputPath: String, pairsPath: String, arguments: [String]) {
+    let shard = parseShard(arguments)
+    guard let pairsText = try? String(contentsOfFile: pairsPath, encoding: .utf8) else {
+        FileHandle.standardError.write("組の TSV を読めない: \(pairsPath)\n".data(using: .utf8)!)
+        exit(1)
+    }
+    // 表記 \t データの読み \t macOS の読み
+    var pairs = Set<String>()
+    for line in pairsText.split(separator: "\n") where line.split(separator: "\t", omittingEmptySubsequences: false).count == 3 {
+        pairs.insert(String(line))
+    }
+    var targetLines: [Int]?
+    if let index = arguments.firstIndex(of: "--lines"), index + 1 < arguments.count {
+        guard let text = try? String(contentsOfFile: arguments[index + 1], encoding: .utf8) else {
+            FileHandle.standardError.write("行番号のファイルを読めない\n".data(using: .utf8)!)
+            exit(1)
+        }
+        targetLines = text.split(separator: "\n").compactMap { Int($0) }
+    }
+    FileManager.default.createFile(atPath: outputPath, contents: nil)
+    guard let out = FileHandle(forWritingAtPath: outputPath) else { exit(1) }
+    defer { try? out.close() }
+    struct Row: Encodable {
+        let line: Int
+        let reading: String
+        let fixed: String
+        let surface: String
+        let from: String
+        let to: String
+    }
+    let tokenizer = SystemReadingTokenizer()
+    let encoder = JSONEncoder()
+    var buffer = Data()
+    var processed = 0, fixed = 0, notSingle = 0, otherPair = 0, inconsistent = 0
+    var linePointer: UnsafeMutablePointer<CChar>?
+    var capacity = 0
+    defer { free(linePointer) }
+    var lineIndex = -1
+    var next = 0
+    let started = Date()
+    while getline(&linePointer, &capacity, input) > 0 {
+        lineIndex += 1
+        guard lineIndex % shard.count == shard.index, let linePointer else { continue }
+        if let targets = targetLines {
+            while next < targets.count, targets[next] < lineIndex { next += 1 }
+            if next >= targets.count { break }
+            guard targets[next] == lineIndex else { continue }
+        }
+        var line = String(cString: linePointer)
+        if line.hasSuffix("\n") { line.removeLast() }
+        guard let inputRange = line.range(of: "\u{EE00}"),
+              let outputRange = line.range(of: "\u{EE01}", range: inputRange.upperBound..<line.endIndex) else { continue }
+        let reading = String(line[inputRange.upperBound..<outputRange.lowerBound])
+        let output = String(line[outputRange.upperBound...])
+        processed += 1
+        if processed % 1_000_000 == 0 {
+            FileHandle.standardError.write(String(format: "[%d/%d] %d 行 %.0f 秒 直した %d\n", shard.index, shard.count,
+                                                  processed, Date().timeIntervalSince(started), fixed).data(using: .utf8)!)
+        }
+        let tokens = tokenizer.tokens(in: output)
+        let text = ReadingCheck.scalars(reading)
+        guard let culprit = ReadingCheck.singleCulprit(tokens: tokens, text: text) else { notSingle += 1; continue }
+        let surface = tokens[culprit.token].surface
+        let from = Array(text[culprit.span])
+        let to = ReadingCheck.katakana(tokens[culprit.token].reading ?? "")
+        guard pairs.contains(surface + "\t" + ReadingCheck.string(from) + "\t" + ReadingCheck.string(to)) else {
+            otherPair += 1
+            continue
+        }
+        let fixedText = Array(text[..<culprit.span.lowerBound]) + to + Array(text[culprit.span.upperBound...])
+        guard ReadingCheck.match(ReadingCheck.segments(tokens), fixedText) != nil else { inconsistent += 1; continue }
+        fixed += 1
+        let row = Row(line: lineIndex, reading: reading, fixed: ReadingCheck.string(fixedText), surface: surface,
+                      from: ReadingCheck.string(from), to: ReadingCheck.string(to))
+        guard let data = try? encoder.encode(row) else { continue }
+        buffer.append(data)
+        buffer.append(0x0A)
+        if buffer.count >= 1 << 20 {
+            out.write(buffer)
+            buffer.removeAll(keepingCapacity: true)
+        }
+    }
+    out.write(buffer)
+    let summary = "{\"processed\": \(processed), \"fixed\": \(fixed), \"notSingle\": \(notSingle), \"otherPair\": \(otherPair), "
+        + "\"inconsistent\": \(inconsistent), \"seconds\": \(Int(Date().timeIntervalSince(started)))}\n"
     try? summary.write(toFile: outputPath + ".summary.json", atomically: true, encoding: .utf8)
     FileHandle.standardError.write("[\(shard.index)/\(shard.count)] 完了: \(summary)".data(using: .utf8)!)
 }
