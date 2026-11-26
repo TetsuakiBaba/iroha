@@ -27,6 +27,9 @@ import IrohaMLX
 //                                                   変換が直る余地の計測（DocumentsCommand.swift の冒頭に使い方）
 //   iroha-cli voice <音声ファイル>... | --text <表記> : 「こえ」モードの確認（音声認識 → 読み → 変換。VoiceCommand.swift の
 //                                                   冒頭に使い方）
+//   iroha-cli train-score <train.txt> <out.jsonl>  : 学習データの各行の変換結果をモデルで採点する（データの誤りを拾う調査用。
+//                                                   TrainScoreCommand.swift の冒頭に使い方）
+//   iroha-cli train-reading <train.txt> <out.jsonl> : 学習データの各行の変換結果に macOS の分かち書きで読みを付け直す（同上）
 //   iroha-cli repl                                : 対話モード（1行ずつ変換、レイテンシ表示）
 //   iroha-cli lattice <読み>                       : 辞書ラティス（azooKey）の生の候補を表示（調査用）
 //   iroha-cli symbols [読み...]                    : 記号・顔文字・絵文字の表（Mozc のデータ）から引いた候補を表示。
@@ -1622,6 +1625,12 @@ case "docs":
 
 case "voice":
     await runVoiceCommand(Array(arguments.dropFirst(2)))
+
+case "train-score":
+    await runTrainScoreCommand(Array(arguments.dropFirst(2)))
+
+case "train-reading":
+    runTrainReadingCommand(Array(arguments.dropFirst(2)))
 
 case "convert":
     var context = ""
