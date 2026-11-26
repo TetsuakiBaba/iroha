@@ -85,6 +85,7 @@ private struct InputSettingsTab: View {
     @AppStorage("punctuationStyle") private var punctuationStyle = "、。"
     @AppStorage(KeyInputSettings.yenKeyCharacterKey) private var yenKeyCharacter = KeyInputSettings.yen
     @AppStorage(KeyInputSettings.alwaysHalfWidthSpaceKey) private var alwaysHalfWidthSpace = true
+    @AppStorage(KeyInputSettings.kanaTypeKeyStyleKey) private var kanaTypeKeyStyle = KanaTypeKeyStyle.defaultStyle.rawValue
     @AppStorage(SecureInputNoticeSettings.enabledKey) private var secureInputNotice = true
     @AppStorage(PredictionSettings.predictiveEnabledKey) private var predictiveConversion = false
     @AppStorage(PrivateModeSettings.enabledKey) private var privateMode = false
@@ -210,6 +211,22 @@ private struct InputSettingsTab: View {
                     help: "ONでは、ひらがなモードで入力していないときのスペースも半角になります。"
                         + "OFFにすると全角スペースが入り、Shift+スペースで半角が入ります。"
                         + "入力中のスペースは変換に使うので、この設定には関係しません。英数モードでは常に半角です。")
+                Picker(selection: $kanaTypeKeyStyle) {
+                    Text("Windows（Ctrl+U・I・O・P・T）").tag(KanaTypeKeyStyle.windows.rawValue)
+                    Text("macOS 標準（Ctrl+J・K・;・L・:）").tag(KanaTypeKeyStyle.kotoeri.rawValue)
+                    Text("ATOK（Ctrl+U・I・O・P・@）").tag(KanaTypeKeyStyle.atok.rawValue)
+                } label: {
+                    HelpLabel(
+                        title: "文字の種類を変えるキー",
+                        help: "入力中（Spaceを押す前）に、入力中の文字をひらがな・カタカナ・半角カタカナ・全角英数・半角英数に変える"
+                            + "Controlのキーの組み合わせを、ほかの日本語入力に合わせて選びます。"
+                            + "Windows（Microsoft IME）: Ctrl+U ひらがな・Ctrl+I カタカナ・Ctrl+O 半角カタカナ・Ctrl+P 全角英数・Ctrl+T 半角英数。"
+                            + "macOS 標準（日本語入力・ことえり）: Ctrl+J ひらがな・Ctrl+K カタカナ・Ctrl+; 半角カタカナ・Ctrl+L 全角英数・"
+                            + "Ctrl+: 半角英数（英語配列のキーボードでは Ctrl+'）。"
+                            + "ATOK: Windows と同じで、半角英数だけ Ctrl+@。"
+                            + "F6〜F10（ひらがな・カタカナ・半角カタカナ・全角英数・半角英数）はどれを選んでも使えます。"
+                            + "選んだ組み合わせにないControlのキーを入力中に押すと、入力中の文字を確定してから、キーをアプリに渡します。")
+                }
             }
 
             Section("入力メニュー") {

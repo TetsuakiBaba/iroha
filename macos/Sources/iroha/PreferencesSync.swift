@@ -23,6 +23,7 @@ final class PreferencesSync {
         var keys: Set<String> = [
             "liveConversion", "candidateCount", "punctuationStyle",
             KeyInputSettings.yenKeyCharacterKey, KeyInputSettings.alwaysHalfWidthSpaceKey,
+            KeyInputSettings.kanaTypeKeyStyleKey,
             DocumentContextSettings.enabledKey,
             PredictionSettings.predictiveEnabledKey,
             LearningSettings.enabledKey, UserDictionarySync.autoSyncKey,

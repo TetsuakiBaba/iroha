@@ -630,17 +630,23 @@ final class IrohaInputController: IMKInputController {
 
         guard japaneseMode else { return false }
 
-        // Windows IME互換ショートカット（Ctrl+U/I/O/P/T = ひらがな/カタカナ/半角カナ/全角英数/半角英数）
+        // 文字の種類を変える Control のキー（設定で選んだ系列。Windows なら Ctrl+U/I/O/P/T、
+        // ことえりなら Ctrl+J/K/;/L/:、ATOK なら Ctrl+U/I/O/P/@。`KanaTypeKeyStyle`）
         if event.modifierFlags.contains(.control), !event.modifierFlags.contains(.command),
-           isComposing, mode == .composing {
-            switch event.charactersIgnoringModifiers {
-            case "u": return applyFunctionKeyConversion(keyCode: kVK_F6, client: client)
-            case "i": return applyFunctionKeyConversion(keyCode: kVK_F7, client: client)
-            case "o": return applyFunctionKeyConversion(keyCode: kVK_F8, client: client)
-            case "p": return applyFunctionKeyConversion(keyCode: kVK_F9, client: client)
-            case "t": return applyFunctionKeyConversion(keyCode: kVK_F10, client: client)
-            default: break
+           isComposing, mode == .composing,
+           let characters = event.charactersIgnoringModifiers,
+           // Shift つき（Ctrl+Shift+J のモード切り替えなど）は扱わない。@ だけは英語配列で Shift+2 なので許す
+           !event.modifierFlags.contains(.shift) || characters == "@",
+           let conversion = KeyInputSettings.kanaTypeKeyStyle.conversion(forControlKey: characters) {
+            let keyCode: Int
+            switch conversion {
+            case .hiragana: keyCode = kVK_F6
+            case .katakana: keyCode = kVK_F7
+            case .halfWidthKatakana: keyCode = kVK_F8
+            case .fullWidthAlphanumeric: keyCode = kVK_F9
+            case .halfWidthAlphanumeric: keyCode = kVK_F10
             }
+            return applyFunctionKeyConversion(keyCode: keyCode, client: client)
         }
 
         // Command/Control付きのキーはIMEでは扱わない（未確定文字列は確定して逃がす）

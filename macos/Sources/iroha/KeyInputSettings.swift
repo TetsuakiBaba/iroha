@@ -1,4 +1,5 @@
 import Foundation
+import IrohaCore
 
 /// キーで入る文字の設定（¥キーの文字・スペースの幅）。どちらも既定は設定を足す前と同じ動き
 enum KeyInputSettings {
@@ -25,5 +26,13 @@ enum KeyInputSettings {
 
     static var alwaysHalfWidthSpace: Bool {
         UserDefaults.standard.object(forKey: alwaysHalfWidthSpaceKey) as? Bool ?? true
+    }
+
+    /// 入力中の文字の種類を変える Control のキーの系列（`KanaTypeKeyStyle`。既定は Windows・同期する。2026-11-26）
+    static let kanaTypeKeyStyleKey = "kanaTypeKeyStyle"
+
+    static var kanaTypeKeyStyle: KanaTypeKeyStyle {
+        UserDefaults.standard.string(forKey: kanaTypeKeyStyleKey).flatMap(KanaTypeKeyStyle.init(rawValue:))
+            ?? .defaultStyle
     }
 }

@@ -482,6 +482,12 @@ cd macos && swift build --build-system native && swift test --build-system nativ
     80文字を超える読みも対象外（第一版の制限）。判定のマージンは推論エンジンに合わせて llama.cpp か MLX（`MLXConversionEngine.convertWithConfidence`、2026-11-08 追加）で求める
   ・依頼の文面と答えの読み方（複数行なら最後の行）は測定と同じにしてある。変えたら測り直す
   ・AI の案で確定した文は学習にも変換記録にも残さない（`segmentsFromAI`）
+- 文字の種類を変える Control のキー（IrohaCore の `KanaTypeKeyStyle`、設定 > 入力 > 句読点・記号・スペース
+  「文字の種類を変えるキー」、一般ユーザ向け・既定は Windows・同期する。2026-11-26）は、Windows（Ctrl+U/I/O/P/T）・
+  macOS 標準（ことえり。Ctrl+J/K/;/L/:、英語配列は Ctrl+'）・ATOK（Ctrl+U/I/O/P/@）から選ぶ。並びは Mozc の
+  `src/data/keymap/{ms-ime,kotoeri,atok}.tsv` に合わせた。F6〜F10 はどの系列でも効く。効くのは入力中（Space の前）だけ。
+  Shift つきは扱わない（Ctrl+Shift+J などのモード切り替えに当てないため。@ だけは英語配列で Shift+2 なので許す）。
+  Windows版・Linux版の `InputSession` は Ctrl+U/I/O/P/T のまま（系列の設定は未移植）
 - 候補ウィンドウの辞書ラティスには azooKey の特別な候補（`LatticeConverter.specialCandidateProviders`、2026-10-27）を
   入れている: 桁区切り（「12345」→ 12,345）・時刻（「1230」→ 12:30）・和暦西暦（「2026ねん」→ 令和8年）。
   和暦西暦だけは azooKey の実装ではなく iroha の `EraYearCandidates`（2026-11-13）: azooKey v0.11.2 は明治の年で
