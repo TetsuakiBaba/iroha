@@ -2533,6 +2533,7 @@ SessionOutput InputSession::Current() const {
     output.voiceNotice = voiceMessage_;
     output.privateModeShortcut = settings_.privateModeShortcut;
     output.inputModeShortcut = settings_.inputModeShortcut;
+    output.kanaTypeKeyStyle = settings_.kanaTypeKeyStyle;
     if (settings_.developerOverlay) {
         for (const std::u32string* line : {&debug_.context, &debug_.conversion, &debug_.typo}) {
             if (line->empty()) continue;

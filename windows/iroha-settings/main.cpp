@@ -125,6 +125,7 @@ enum ControlId {
     kIdHistoryReset,
     kIdPunctuation,
     kIdFullWidthSpace,
+    kIdKanaTypeKeys,
     kIdVoice,
     kIdVoiceKey,
     kIdVoiceToggleHotkey,
@@ -209,6 +210,9 @@ enum ControlId {
 
 // 句読点の組（設定の値と表示）
 const wchar_t* const kPunctuations[] = {L"、。", L"，．"};
+// 文字の種類を変える Control のキーの系列（並びは iroha::KanaTypeKeyStyle と同じ。表示は macOS版と同じ）
+const wchar_t* const kKanaTypeKeyStyles[] = {L"Windows（Ctrl+U・I・O・P・T）", L"macOS 標準（Ctrl+J・K・;・L・:）",
+                                             L"ATOK（Ctrl+U・I・O・P・@）"};
 // 候補の数の範囲（変換サーバの設定と同じ）
 constexpr int kMinCandidateCount = 3;
 constexpr int kMaxCandidateCount = 16;
@@ -351,7 +355,7 @@ struct App {
     HWND typoToggle = nullptr, typoLicense = nullptr, typoRemove = nullptr;
     HWND typoDelay = nullptr, typoMinLength = nullptr, typoThreshold = nullptr, typoThresholdDefault = nullptr;
     HWND predictiveToggle = nullptr, historyReset = nullptr;
-    HWND punctuationCombo = nullptr, spaceToggle = nullptr;
+    HWND punctuationCombo = nullptr, spaceToggle = nullptr, kanaTypeCombo = nullptr;
     HWND voiceToggle = nullptr, voiceKeyCombo = nullptr, voiceToggleHotkey = nullptr;
     Row* voiceToggleHotkeyRow = nullptr;
     HWND delimitedToggle = nullptr, delimitedStart = nullptr, delimitedEnd = nullptr;
@@ -687,6 +691,19 @@ void App::BuildInputPage() {
                   L"OFF にすると、かなモードで入力していないときのスペースも半角になります。"
                   L"入力中のスペースは変換に使うので、この設定には関係しません。英数モードでは常に半角です。")
         ->right = {{spaceToggle, 110}};
+    kanaTypeCombo = MakeCombo(page, kIdKanaTypeKeys, {kKanaTypeKeyStyles[0], kKanaTypeKeyStyles[1], kKanaTypeKeyStyles[2]});
+    // 説明は macOS版（SettingsView.swift の同じ項目）と同じ
+    page->AddItem(
+        L"文字の種類を変えるキー", L"",
+        L"入力中（Spaceを押す前）に、入力中の文字をひらがな・カタカナ・半角カタカナ・全角英数・半角英数に変える"
+        L"Controlのキーの組み合わせを、ほかの日本語入力に合わせて選びます。"
+        L"Windows（Microsoft IME）: Ctrl+U ひらがな・Ctrl+I カタカナ・Ctrl+O 半角カタカナ・Ctrl+P 全角英数・Ctrl+T 半角英数。"
+        L"macOS 標準（日本語入力・ことえり）: Ctrl+J ひらがな・Ctrl+K カタカナ・Ctrl+; 半角カタカナ・Ctrl+L 全角英数・"
+        L"Ctrl+: 半角英数（英語配列のキーボードでは Ctrl+'）。"
+        L"ATOK: Windows と同じで、半角英数だけ Ctrl+@。"
+        L"F6〜F10（ひらがな・カタカナ・半角カタカナ・全角英数・半角英数）はどれを選んでも使えます。"
+        L"選んだ組み合わせにないControlのキーを入力中に押すと、入力中の文字を確定してから、キーをアプリに渡します。")
+        ->right = {{kanaTypeCombo, 260, 32, 120}};
 
     page->AddHeader(L"「こえ」モード",
                     L"試作中の機能です。音声で話した内容を、キーボードで打った読みと同じようにかな漢字変換へ通します。"
@@ -1312,6 +1329,7 @@ void App::Refresh() {
     SetCheck(predictiveToggle, config.predictive);
     SendMessageW(punctuationCombo, CB_SETCURSEL, Wide(config.punctuation) == kPunctuations[1] ? 1 : 0, 0);
     SetCheck(spaceToggle, config.fullWidthSpace);
+    SendMessageW(kanaTypeCombo, CB_SETCURSEL, static_cast<WPARAM>(config.kanaTypeKeyStyle), 0);
     SetCheck(voiceToggle, config.voiceInput);
     SendMessageW(voiceKeyCombo, CB_SETCURSEL,
                  config.voiceInputHoldKey == "rightShift" ? 1
@@ -2252,6 +2270,14 @@ void App::OnCommand(int id, int code, HWND control) {
         return;
     case kIdFullWidthSpace:
         if (clicked) Update([&](iroha::Config& c) { c.fullWidthSpace = Checked(control); });
+        return;
+    case kIdKanaTypeKeys:
+        if (selected) {
+            const int index = comboIndex();
+            if (index >= 0 && index <= 2) {
+                Update([&](iroha::Config& c) { c.kanaTypeKeyStyle = static_cast<iroha::KanaTypeKeyStyle>(index); });
+            }
+        }
         return;
     case kIdVoice:
         if (clicked) Update([&](iroha::Config& c) { c.voiceInput = Checked(control); });

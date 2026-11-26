@@ -13,6 +13,7 @@
 #include "LangBarButton.h"
 #include "key_shortcut.h"
 #include "iroha/config.h"
+#include "iroha/kana_type_keys.h"
 #include "iroha/unicode.h"
 
 TextService::TextService() : refCount_(1) { DllAddRef(); }
@@ -290,6 +291,23 @@ wchar_t CharFromKey(WPARAM wParam, LPARAM lParam) {
     return n == 1 ? buf[0] : 0;
 }
 
+// Control と一緒に押したキーの文字（macOS版の charactersIgnoringModifiers にあたる。Control を除き、Shift はそのまま）。
+// Control を押したままだと ToUnicode は制御文字（Ctrl+U なら 0x15）を返すので、キーボードの状態から Control を外して求める。
+// 英字は仮想キーコードから小文字で返す（Caps Lock によらない）。記号は配列に従う
+// （JIS 配列: ; は VK_OEM_PLUS、: は VK_OEM_1、@ は VK_OEM_3。英語配列: ; は VK_OEM_1、' は VK_OEM_7、@ は Shift+2）
+char32_t ControlKeyCharacter(WPARAM wParam, LPARAM lParam) {
+    if (wParam >= 'A' && wParam <= 'Z') return static_cast<char32_t>(wParam - 'A' + 'a');
+    BYTE state[256];
+    if (!GetKeyboardState(state)) return 0;
+    state[VK_CONTROL] = state[VK_LCONTROL] = state[VK_RCONTROL] = 0;
+    state[VK_MENU] = state[VK_LMENU] = state[VK_RMENU] = 0;
+    wchar_t buf[4] = {};
+    const UINT scanCode = (lParam >> 16) & 0xFF;
+    // 4: キーボードの状態（デッドキー）を変えない（Windows 10 1607 以降）
+    const int n = ToUnicode(static_cast<UINT>(wParam), scanCode, state, buf, ARRAYSIZE(buf), 4);
+    return n == 1 ? static_cast<char32_t>(buf[0]) : 0;
+}
+
 // 修飾キー・ロックキー（単独では何もしない。合成を確定させない）
 bool IsModifierKey(WPARAM key) {
     switch (key) {
@@ -313,7 +331,9 @@ bool IsModifierKey(WPARAM key) {
 // （macOS版 IrohaInputController.handleKey と同じ扱い）:
 //   印字できる ASCII 文字は常に、Enter / Esc / Backspace / Space・矢印は合成中だけ
 //   （矢印は文節変換中は文節の移動、入力中は握りつぶす）。入力していないときの Space は設定で全角にする。
-//   F6〜F10・Ctrl+U/I/O/P/T は入力中（文節変換中でない）だけ、Ctrl+. は常に受ける。
+//   F6〜F10 と、文字の種類を変える Control のキー（設定の系列。Windows なら Ctrl+U/I/O/P/T、ことえりなら
+//   Ctrl+J/K/;/L/:、ATOK なら Ctrl+U/I/O/P/@）は入力中（文節変換中でない）だけ、Ctrl+. は常に受ける。
+//   系列に無い Control のキーは、ほかの Control のキーと同じく確定してからアプリに渡す。
 //   合成中に IME が扱わないキー（Tab・Ctrl+S・Alt の組み合わせなど）は、確定してからアプリに渡す
 TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) const {
     KeyDecision decision;
@@ -419,13 +439,20 @@ TextService::KeyDecision TextService::DecideKey(WPARAM wParam, LPARAM lParam) co
     if (control) {
         if (wParam == VK_OEM_PERIOD) return session(iroha::SessionKey::TogglePunctuation);
         if (composing && !segmenting) {
-            switch (wParam) {
-                case 'U': return session(iroha::SessionKey::DisplayHiragana);
-                case 'I': return session(iroha::SessionKey::DisplayKatakana);
-                case 'O': return session(iroha::SessionKey::DisplayHalfKatakana);
-                case 'P': return session(iroha::SessionKey::DisplayFullAlphanumeric);
-                case 'T': return session(iroha::SessionKey::DisplayHalfAlphanumeric);
-                default: break;
+            // Shift つき（Ctrl+Shift+J など）は扱わない。@ だけは英語配列で Shift+2 なので受ける（KanaTypeConversionForControlKey）
+            const auto conversion = iroha::KanaTypeConversionForControlKey(
+                kanaTypeKeyStyle_, ControlKeyCharacter(wParam, lParam), decision.shift);
+            if (conversion) {
+                switch (*conversion) {
+                    case iroha::KanaTypeConversion::Hiragana: return session(iroha::SessionKey::DisplayHiragana);
+                    case iroha::KanaTypeConversion::Katakana: return session(iroha::SessionKey::DisplayKatakana);
+                    case iroha::KanaTypeConversion::HalfWidthKatakana:
+                        return session(iroha::SessionKey::DisplayHalfKatakana);
+                    case iroha::KanaTypeConversion::FullWidthAlphanumeric:
+                        return session(iroha::SessionKey::DisplayFullAlphanumeric);
+                    case iroha::KanaTypeConversion::HalfWidthAlphanumeric:
+                        return session(iroha::SessionKey::DisplayHalfAlphanumeric);
+                }
             }
         }
         if (wParam == VK_BACK && !composing && !idleUndoable_.empty() && !decision.shift) {
@@ -547,6 +574,7 @@ HRESULT TextService::ApplyOutput(ITfContext* context, const iroha::SessionOutput
     voiceToggleShortcut_ = output.voiceToggleShortcut;
     privateShortcut_ = output.privateModeShortcut;
     inputModeShortcut_ = output.inputModeShortcut;
+    kanaTypeKeyStyle_ = output.kanaTypeKeyStyle;
     liveConversion_ = output.liveConversion;
     predictive_ = output.predictive;
     punctuation_ = output.punctuation;
@@ -1107,6 +1135,7 @@ void TextService::LoadVoiceKeyFromConfig() {
     privateShortcut_ = privateShortcut ? privateShortcut->Encode() : 0;
     const auto inputModeShortcut = iroha::KeyShortcut::Parse(config.inputModeHotkey);
     inputModeShortcut_ = inputModeShortcut ? inputModeShortcut->Encode() : 0;
+    kanaTypeKeyStyle_ = config.kanaTypeKeyStyle;
     liveConversion_ = config.liveConversion;
     predictive_ = config.predictive;
     punctuation_ = config.punctuation;

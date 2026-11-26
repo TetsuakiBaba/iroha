@@ -262,7 +262,12 @@ windows\build\iroha-cli\iroha-cli.exe session --interval 120 "kyouhaiitenkidesun
   Space で候補を選んで続きを打つと、選んだ文節が消えていた）。最初の文節を打ち直すときは Backspace から始める。
   Backspace は選んでいる文節の読みを後ろから消す。Esc で打ち直す前に戻す。打ち直した確定は学習しない
 - F6〜F10・Ctrl+U/I/O/P/T で表示形（ひらがな・カタカナ・半角カナ・全角英数・半角英数）。続けて打つと、
-  指定した部分は固定され、残りだけをライブ変換する。学習で差し替えた表示を退けて確定したら、その学習を消す
+  指定した部分は固定され、残りだけをライブ変換する。学習で差し替えた表示を退けて確定したら、その学習を消す。
+  Control のキーは設定「文字の種類を変えるキー」（config.json の `kanaTypeKeyStyle`、2026-11-26、macOS版と同じ）で
+  Windows（Ctrl+U/I/O/P/T、既定）・macOS 標準（Ctrl+J/K/;/L/:、英語配列は Ctrl+'）・ATOK（Ctrl+U/I/O/P/@）から選ぶ。
+  表は `iroha/kana_type_keys.h`、キーの読み替えは TIP の `DecideKey`（受けるかの判定も同じ所）。キーの文字は Control を
+  外したキーボードの状態から `ToUnicode` で求める（配列に従う）。Shift つきは扱わない（@ だけは英語配列の Shift+2 なので受ける）。
+  系列に無い Control のキーは、これまでどおり確定してからアプリに渡す。変換サーバは系列を返事に載せて TIP に渡す
 - Shift+英字（大文字）で英字入力。Shift を押している間は記号・数字も英字に足し、離して打つとかなに戻る
   （「今日はAIを使う」を 1 回の Enter で確定できる）
 - z で始まる記号（2026-11-18、macOS版と同じ。`RomajiComposer`）: Google日本語入力と同じ zh ← / zj ↓ / zk ↑ / zl → / z. … /

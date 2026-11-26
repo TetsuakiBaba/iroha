@@ -80,6 +80,9 @@ Config LoadConfig(const std::filesystem::path& path) {
     if (const json::Value* space = root.Find("fullWidthSpace")) {
         if (space->type == json::Value::Type::Bool) config.fullWidthSpace = space->boolean;
     }
+    if (const json::Value* style = root.Find("kanaTypeKeyStyle")) {
+        config.kanaTypeKeyStyle = ParseKanaTypeKeyStyle(style->AsString());
+    }
     if (const json::Value* predictive = root.Find("predictive")) {
         if (predictive->type == json::Value::Type::Bool) config.predictive = predictive->boolean;
     }
@@ -213,6 +216,7 @@ bool SaveConfig(const std::filesystem::path& path, const Config& config) {
                       ",\"termDictionaryLiveConversion\":" + json::QuoteString(config.termDictionaryLiveConversion) +
                       ",\"punctuation\":" + json::QuoteString(Utf32ToUtf8(config.punctuation)) +
                       ",\"fullWidthSpace\":" + (config.fullWidthSpace ? "true" : "false") +
+                      ",\"kanaTypeKeyStyle\":" + json::QuoteString(KanaTypeKeyStyleName(config.kanaTypeKeyStyle)) +
                       ",\"candidateCount\":" + std::to_string(config.candidateCount) +
                       ",\"predictive\":" + (config.predictive ? "true" : "false") +
                       ",\"privateMode\":" + (config.privateMode ? "true" : "false") +

@@ -30,7 +30,8 @@
 //                    u32 aiFixShortcut, string aiFixNotice, u32 aiFixFeedbackCount（0 か 4）, string×aiFixFeedbackCount,
 //                    u32 voiceKey, string voiceNotice（「こえ」モード）, u32 privateModeShortcut,
 //                    string debugOverlay（デバッグ表示の行。改行区切り）, u32 inputModeShortcut（かな・英数を切り替えるキー）,
-//                    u32 voiceToggleShortcut（「こえ」モードを押して始め・もう一度押して終えるキー）
+//                    u32 voiceToggleShortcut（「こえ」モードを押して始め・もう一度押して終えるキー）,
+//                    u32 kanaTypeKeyStyle（文字の種類を変える Control のキーの系列。0 Windows / 1 ことえり / 2 ATOK）
 //                    （印と取り消せる確定から後は後から足したので、無い返事も読めるようにしてある）
 //                flags: 1 文節変換中 / 2 変換の結果待ち / 4 候補ウィンドウ / 8 入力していないときの Space は全角 /
 //                       16 確定した文字列を未確定文字列に置き換える（UndoCommit への返事） / 32 プライベートモード /
@@ -63,7 +64,7 @@ namespace iroha::ipc {
 constexpr uint32_t kProtocolVersion = 1;
 // TIP の版。変換サーバは、これより古い（送ってこない）TIP を読み込んだままのアプリを知らせる。
 // TIP と変換サーバの間で、新しい機能のために TIP を入れ替える必要が出たら上げる
-constexpr uint32_t kTipRevision = 3;
+constexpr uint32_t kTipRevision = 4; // 4: 文字の種類を変える Control のキーの系列・「AIで直す」のクリック（2026-11-26）
 constexpr DWORD kMaxMessageBytes = 64 * 1024;
 
 enum class MessageType : uint32_t {
@@ -360,6 +361,7 @@ inline std::vector<char> BuildSessionResponse(const SessionOutput* output) {
     PutString(&buf, Utf32ToUtf8(output->debugOverlay));
     PutU32(&buf, output->inputModeShortcut);
     PutU32(&buf, output->voiceToggleShortcut);
+    PutU32(&buf, static_cast<uint32_t>(output->kanaTypeKeyStyle));
     return buf;
 }
 
@@ -502,7 +504,11 @@ inline SessionResponse ParseSessionResponse(const std::vector<char>& bytes) {
                         std::string debugOverlay;
                         if (reader.U32(&output.privateModeShortcut) && reader.String(&debugOverlay)) {
                             output.debugOverlay = Utf8ToUtf32(debugOverlay);
-                            if (reader.U32(&output.inputModeShortcut)) reader.U32(&output.voiceToggleShortcut);
+                            uint32_t kanaTypeKeyStyle = 0;
+                            if (reader.U32(&output.inputModeShortcut) && reader.U32(&output.voiceToggleShortcut) &&
+                                reader.U32(&kanaTypeKeyStyle) && kanaTypeKeyStyle <= 2) {
+                                output.kanaTypeKeyStyle = static_cast<KanaTypeKeyStyle>(kanaTypeKeyStyle);
+                            }
                         }
                     }
                 }

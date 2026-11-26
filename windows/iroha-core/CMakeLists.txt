@@ -19,6 +19,7 @@ add_library(iroha-core STATIC
     src/input_history.cpp
     src/conversion_log.cpp
     src/input_session.cpp
+    src/kana_type_keys.cpp
     src/json.cpp
     src/kana.cpp
     src/lattice_converter.cpp

@@ -14,6 +14,7 @@
 #include "iroha/conversion_log.h"
 #include "iroha/debug_overlay.h"
 #include "iroha/input_history.h"
+#include "iroha/kana_type_keys.h"
 #include "iroha/romaji_composer.h"
 #include "iroha/symbol_candidates.h"
 #include "iroha/term_dictionary.h"
@@ -142,6 +143,8 @@ struct SessionOutput {
     std::u32string debugOverlay;
     // かな・英数を切り替えるキー（KeyShortcut::Encode。0 なら割り当てなし。TIP が受けて切り替える）
     uint32_t inputModeShortcut = 0;
+    // 文字の種類を変える Control のキーの系列（TIP が Control のキーを読み替えるのに使う）
+    KanaTypeKeyStyle kanaTypeKeyStyle = kDefaultKanaTypeKeyStyle;
     // 今の設定（言語バーのメニューの印に使う）: ライブ変換・予測変換・句読点の組
     bool liveConversion = true;
     bool predictive = false;
@@ -200,6 +203,8 @@ struct SessionSettings {
     uint32_t privateModeShortcut = 0;
     // かな・英数を切り替えるキー（TIP に渡すだけ。KeyShortcut::Encode。0 なら割り当てなし）
     uint32_t inputModeShortcut = 0;
+    // 文字の種類を変える Control のキーの系列（TIP に渡すだけ。セッションは SessionKey::Display… を受ける）
+    KanaTypeKeyStyle kanaTypeKeyStyle = kDefaultKanaTypeKeyStyle;
     // デバッグ表示（macOS版の DeveloperOverlaySettings。開発者モードが ON で、デバッグ表示を ON にしたとき）
     bool developerOverlay = false;
 };

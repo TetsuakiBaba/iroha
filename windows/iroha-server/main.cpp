@@ -405,6 +405,7 @@ struct ServerState {
         sessionSettings.privateModeShortcut = privateShortcut ? privateShortcut->Encode() : 0;
         const auto inputModeShortcut = iroha::KeyShortcut::Parse(config.inputModeHotkey);
         sessionSettings.inputModeShortcut = inputModeShortcut ? inputModeShortcut->Encode() : 0;
+        sessionSettings.kanaTypeKeyStyle = config.kanaTypeKeyStyle;
         // デバッグ表示は開発者モードが ON のときだけ（macOS版と同じ）
         sessionSettings.developerOverlay = config.developerMode && config.developerOverlay;
         learningEnabled = config.learningEnabled;

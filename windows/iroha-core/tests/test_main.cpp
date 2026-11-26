@@ -443,6 +443,7 @@ void TestUnicodeRoundTrip() {
 #include "test_update.h"
 #include "test_config.h"
 #include "test_benchmark.h"
+#include "test_kana_type_keys.h"
 
 int main() {
     TestBasicGojuon();
@@ -503,6 +504,7 @@ int main() {
     RunUpdateTests();
     RunConfigTests();
     RunBenchmarkTests();
+    RunKanaTypeKeyTests();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

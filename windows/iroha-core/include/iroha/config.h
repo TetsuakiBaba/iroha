@@ -4,6 +4,8 @@
 #include <optional>
 #include <string>
 
+#include "iroha/kana_type_keys.h"
+
 namespace iroha {
 
 // 既定のかな漢字変換モデル（macOS版の DataDirectory.defaultModelFileName と同じ。
@@ -34,6 +36,9 @@ struct Config {
     std::u32string punctuation = U"、。";
     // 入力していないときの Space を全角スペースにするか（偽なら半角。Shift+Space は常に半角）
     bool fullWidthSpace = true;
+    // 入力中の文字の種類を変える Control のキーの系列（macOS版と同じキー kanaTypeKeyStyle。値は "windows"・"kotoeri"・"atok"、
+    // 知らない値・値が無いときは windows）
+    KanaTypeKeyStyle kanaTypeKeyStyle = kDefaultKanaTypeKeyStyle;
     // 文節の候補として求める数（3〜16）
     int candidateCount = 8;
     // 予測変換（入力履歴から読みの先頭が一致する語を出す。入力履歴もこれが ON の間だけ記録する。既定 OFF）
